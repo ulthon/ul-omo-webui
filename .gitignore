@@ -4,6 +4,12 @@ dist/
 build/
 *.log
 
+# 运行数据（壳层元数据库与密码文件）
+server/data/
+
+# QA 证据不入库
+.omo/qa/
+
 # 环境与密钥
 .env
 .env.*

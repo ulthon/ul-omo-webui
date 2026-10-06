@@ -1,0 +1,8 @@
+{
+  "name": "senpi-webui",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ]
+}
