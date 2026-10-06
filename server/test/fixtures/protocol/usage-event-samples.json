@@ -1,0 +1,59 @@
+{
+  "messageEndUsage": {
+    "usage": {
+      "input": 30470,
+      "output": 78,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "reasoning": 27,
+      "totalTokens": 30548,
+      "cost": {
+        "input": 0.0045705,
+        "output": 0.000039,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0.0046095
+      }
+    },
+    "role": "assistant"
+  },
+  "turnEndMessageUsage": {
+    "usage": {
+      "input": 30470,
+      "output": 78,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "reasoning": 27,
+      "totalTokens": 30548,
+      "cost": {
+        "input": 0.0045705,
+        "output": 0.000039,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0.0046095
+      }
+    }
+  },
+  "agentEndLastAssistantUsage": {
+    "usage": {
+      "input": 30470,
+      "output": 78,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "reasoning": 27,
+      "totalTokens": 30548,
+      "cost": {
+        "input": 0.0045705,
+        "output": 0.000039,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0.0046095
+      }
+    },
+    "model": "glm-5.3-flash"
+  },
+  "messageUpdateUsageSamples": [
+    null,
+    null
+  ]
+}

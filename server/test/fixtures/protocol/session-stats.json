@@ -1,0 +1,32 @@
+{
+  "sessionFile": "/root/.pi/agent/sessions/--tmp-opencode-w2-7-proj--/2026-10-06T12-47-33-849Z_9739d845-6ecc-424e-a41a-8d0b16528466.jsonl",
+  "sessionId": "01a11141-49e9-7fb0-a845-952b49731e54",
+  "userMessages": 1,
+  "assistantMessages": 1,
+  "toolCalls": 0,
+  "toolResults": 0,
+  "totalMessages": 2,
+  "tokens": {
+    "input": 30470,
+    "output": 78,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "total": 30548
+  },
+  "cost": 0.0046095,
+  "contextUsage": {
+    "tokens": 30548,
+    "contextWindow": 1000000,
+    "percent": 3.0547999999999997
+  },
+  "failures": {
+    "requests": 1,
+    "erroredRequests": 0,
+    "abortedRequests": 0,
+    "failureShare": 0,
+    "failedDurationMs": 0,
+    "postFailureRequests": 0,
+    "postFailureFullMissRequests": 0,
+    "postFailureFullMissInputTokens": 0
+  }
+}

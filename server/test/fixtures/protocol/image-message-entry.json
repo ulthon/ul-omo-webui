@@ -1,0 +1,21 @@
+{
+  "type": "message",
+  "id": "98e20680",
+  "parentId": "c97c13ba",
+  "timestamp": "2026-10-06T12:47:50.086Z",
+  "message": {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "图片已附上。请只回复四个字：已看到图片"
+      },
+      {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==",
+        "mimeType": "image/png"
+      }
+    ],
+    "timestamp": 1791290869930
+  }
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "_source": "docs/verification/02-permission-roundtrip.md（P0-2 录制样本，原样摘录）",
+    "method": "select",
+    "request": {
+      "type": "extension_ui_request",
+      "id": "57114366-c83c-404c-9bd2-3ef5fef8dcbc",
+      "method": "select",
+      "title": "Permission required: bash\n\nCommand: $ ls -la\n\nPatterns:\n  - ls",
+      "options": ["Allow once", "Allow always", "Deny", "Deny with feedback"]
+    },
+    "reply": { "value": "Allow once" }
+  },
+  {
+    "_source": "docs/verification/02-permission-roundtrip.md（select 拒绝路径 -> input 连环）",
+    "method": "input",
+    "request": {
+      "type": "extension_ui_request",
+      "id": "b1a3f4aa-0000-0000-0000-000000000000",
+      "method": "input",
+      "title": "Feedback",
+      "placeholder": "Why are you denying this permission? (optional)"
+    },
+    "reply": { "value": "P0-2 roundtrip: denied with feedback text" }
+  },
+  {
+    "_source": "docs/verification/02-permission-roundtrip.md（/rpc-editor 编辑器样本）",
+    "method": "editor",
+    "request": {
+      "type": "extension_ui_request",
+      "id": "b69ac079-5ec1-481a-a9c8-e5b80315955c",
+      "method": "editor",
+      "title": "Edit some text",
+      "prefill": "Line 1\nLine 2\nLine 3"
+    },
+    "reply": { "value": "Line 1\nLine 2\nLine 3\nLine 4 appended by P0-2" }
+  },
+  {
+    "_source": "docs/verification/02-permission-roundtrip.md（/commands 连环 confirm 样本）",
+    "method": "confirm",
+    "request": {
+      "type": "extension_ui_request",
+      "id": "b28d8432-a70b-4b09-b048-3d24c6e3b2e1",
+      "method": "confirm",
+      "title": "timed",
+      "message": "View source path?\n/data/projects/…/examples/extensions/timed-confirm.ts"
+    },
+    "reply": { "confirmed": true }
+  },
+  {
+    "_source": "docs/verification/02-permission-roundtrip.md（取消语义：{cancelled:true}）",
+    "method": "select",
+    "request": {
+      "type": "extension_ui_request",
+      "id": "00000000-cancel-0000-0000-000000000000",
+      "method": "select",
+      "title": "Permission required: bash",
+      "options": ["Allow once"]
+    },
+    "reply": { "cancelled": true }
+  }
+]

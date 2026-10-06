@@ -1,0 +1,24 @@
+[
+  {
+    "path": "/root/.pi/agent/sessions/--tmp-opencode-w2-7-proj--/2026-10-06T12-47-33-849Z_9739d845-6ecc-424e-a41a-8d0b16528466.jsonl",
+    "id": "01a11141-49e9-7fb0-a845-952b49731e54",
+    "cwd": "/tmp/opencode/w2-7-proj",
+    "name": null,
+    "parentSessionPath": null,
+    "created": "2026-10-06T12:47:33.865Z",
+    "modified": "2026-10-06T12:49:33.576Z",
+    "messageCount": 23,
+    "firstMessage": "回复：OK"
+  },
+  {
+    "path": "/root/.pi/agent/sessions/--tmp-opencode-w2-7-proj--/2026-10-06T12-48-59-587Z_01a11142-98c3-71e3-a372-059ada7db4b0.jsonl",
+    "id": "01a11142-98c3-71e3-a372-059ada7db4b0",
+    "cwd": "/tmp/opencode/w2-7-proj",
+    "name": null,
+    "parentSessionPath": "/root/.pi/agent/sessions/--tmp-opencode-w2-7-proj--/2026-10-06T12-47-33-849Z_9739d845-6ecc-424e-a41a-8d0b16528466.jsonl",
+    "created": "2026-10-06T12:48:59.587Z",
+    "modified": "2026-10-06T12:49:29.170Z",
+    "messageCount": 7,
+    "firstMessage": "回复：OK"
+  }
+]
