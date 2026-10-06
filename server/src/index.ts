@@ -3,8 +3,36 @@ import { serveStatic } from "hono/bun";
 import { relative } from "node:path";
 import { DATA_DIR, HOST, PORT, STATIC_DIR } from "./config";
 import { createAuth, resolvePassword } from "./auth/password";
+import { openMetaDb } from "./db/meta";
+import { EngineProcessManager } from "./engine/process-manager";
+import { EngineRuntimeRegistry } from "./api/engine-runtime";
+import { createSessionRoutes } from "./api/routes-session";
+import { createMetaRoutes } from "./api/routes-meta";
+import { createProjectRoutes } from "./api/routes-project";
+import { createGitRoutes } from "./api/routes-git";
+import { createFsRoutes } from "./api/routes-fs";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
+
+// 组合根装配（todo 9）：元数据库 → 引擎子进程管理器单例 → 按项目懒加载运行时 → 注入各路由
+const meta = openMetaDb();
+const manager = new EngineProcessManager({
+  // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
+  agentDir: process.env.SENPI_WEBUI_AGENT_DIR,
+});
+const engines = new EngineRuntimeRegistry(manager, {
+  listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
+});
+
+// 启动孤儿清扫：清理上次遗留的引擎子进程（todo 8 语义，registry+cwd+argv 三因子判定）
+void manager
+  .reapOrphans(engines.listProjectPaths())
+  .then((r) => {
+    if (r.killed.length > 0) console.log(`孤儿引擎清扫：${r.killed.length} 个（${r.killed.map((k) => k.pid).join(",")}）`);
+  })
+  .catch((err: unknown) => {
+    console.warn(`孤儿引擎清扫失败：${err instanceof Error ? err.message : String(err)}`);
+  });
 
 const app = new Hono();
 
@@ -12,9 +40,17 @@ const app = new Hono();
 app.post("/api/auth/login", auth.login);
 app.post("/api/auth/logout", auth.logout);
 
-// 保护全部 /api/*：后续 todo 9/10 追加的业务路由自动纳入保护
+// 保护全部 /api/*：后续追加的业务路由自动纳入保护
 app.use("/api/*", auth.middleware);
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
+const deps = { meta, engines };
+app.route("/", createSessionRoutes(deps));
+app.route("/", createMetaRoutes(deps));
+app.route("/", createProjectRoutes(deps));
+app.route("/", createGitRoutes(deps));
+app.route("/", createFsRoutes(deps));
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
 // 页面路由的未授权跳转由前端依据 API 401 处理（todo 13）。
@@ -27,10 +63,26 @@ app.use("*", serveStatic({ root: staticRoot }));
 const serveIndex = serveStatic({ root: staticRoot, path: "index.html" });
 app.get("*", async (c) => {
   if (c.req.path.startsWith("/api/")) {
-    return c.json({ error: "not found" }, 404);
+    return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
   }
-  return (await serveIndex(c, async () => {})) ?? c.json({ error: "not found" }, 404);
+  return (await serveIndex(c, async () => {})) ?? c.json({ error: { code: "not_found", message: "route not found" } }, 404);
 });
+
+// 优雅关停：停全部引擎子进程（SIGTERM→兜底强杀）+ 关元数据库
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await engines.stopAll();
+  } catch {
+    // 尽力关停
+  }
+  meta.close();
+  process.exit(0);
+}
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 
 try {
   const server = Bun.serve({ fetch: app.fetch, hostname: HOST, port: PORT });
