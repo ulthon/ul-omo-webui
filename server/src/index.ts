@@ -6,6 +6,8 @@ import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { EngineProcessManager } from "./engine/process-manager";
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
+import { EventBus, attachEventBus } from "./engine/events";
+import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
 import { createMetaRoutes } from "./api/routes-meta";
 import { createProjectRoutes } from "./api/routes-project";
@@ -23,6 +25,13 @@ const manager = new EngineProcessManager({
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
 });
+
+// SSE 事件桥装配（todo 10 收口）：manager 的 engine_event 透传进桥 → 注入
+// sseRoutes（进程启动期一次）；完整路径 GET /api/events，自动处于上方
+// /api/* 鉴权中间件保护内。关停时退订（attachEventBus 返回值）。
+const eventBus = new EventBus({ capacity: 1000 });
+const detachEventBus = attachEventBus(manager, eventBus);
+setEventBus(eventBus, { heartbeatMs: 15000 });
 
 // 启动孤儿清扫：清理上次遗留的引擎子进程（todo 8 语义，registry+cwd+argv 三因子判定）
 void manager
@@ -51,6 +60,7 @@ app.route("/", createMetaRoutes(deps));
 app.route("/", createProjectRoutes(deps));
 app.route("/", createGitRoutes(deps));
 app.route("/", createFsRoutes(deps));
+app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
 // 页面路由的未授权跳转由前端依据 API 401 处理（todo 13）。
@@ -73,6 +83,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  detachEventBus();
   try {
     await engines.stopAll();
   } catch {
