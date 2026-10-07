@@ -87,10 +87,11 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
+        {/* todo 26 走查修复：手机无 hover，opacity-0 使消息操作不可达——lg 以下常显；触控 44px */}
         <Button
           variant="ghost"
           size="icon"
-          className="size-5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+          className="size-11 shrink-0 text-muted-foreground opacity-100 transition-opacity data-[state=open]:opacity-100 lg:size-5 lg:opacity-0 lg:group-hover:opacity-100"
           aria-label="消息操作"
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MoreVertical className="size-3.5" />}

@@ -203,7 +203,7 @@ export function PermissionCard({
           disabled={busy}
           data-testid="permission-dismiss"
           onClick={() => void cancel()}
-          className="flex min-h-9 items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="flex min-h-11 items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
         >
           <X className="size-3" />
           忽略并取消

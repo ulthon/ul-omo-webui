@@ -145,6 +145,9 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
 
   const onSelect = () => {
     select(session.id);
+    // todo 26 走查修复：抽屉态（lg 以下）选中会话后自动收起——390 宽下 w-72 抽屉遮住主区，
+    // 不收起时用户看到的还是抽屉；桌面抽屉常驻此调用无视觉效果。
+    useUiStore.getState().setDrawerOpen(false);
   };
 
   /** 单会话导出 HTML（todo 25）：GET /:id/export attachment 下载，文件名由服务端给出 */
@@ -177,7 +180,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
             role="checkbox"
             aria-checked={!!checked}
             aria-label={`选择会话：${session.title}`}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
+            className="flex size-11 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground lg:size-5"
             onClick={(e) => {
               e.stopPropagation();
               onToggleCheck?.(session);
@@ -190,7 +193,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
           <button
             type="button"
             aria-label={expanded ? "收起子会话" : "展开子会话"}
-            className={`flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted ${
+            className={`flex size-11 shrink-0 items-center justify-center rounded hover:bg-muted lg:size-4 ${
               hasKnownChildren ? "text-muted-foreground" : "text-muted-foreground/40"
             }`}
             onClick={(e) => {
@@ -205,7 +208,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
             )}
           </button>
         ) : (
-          <span className="size-4 shrink-0" />
+          <span className="size-11 shrink-0 lg:size-4" />
         )}
         <StatusDot runState={runState} active={session.active} />
 
@@ -233,10 +236,12 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            {/* todo 26 走查修复：手机无 hover，opacity-0 使操作菜单不可达——lg 以下常显；
+                触控目标 44px（lg 保持桌面紧凑 32px） */}
             <Button
               variant="ghost"
               size="icon"
-              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+              className="size-11 shrink-0 opacity-100 transition-opacity data-[state=open]:opacity-100 lg:size-8 lg:opacity-0 lg:group-hover:opacity-100"
               aria-label="会话操作"
             >
               <MoreVertical className="size-3.5" />

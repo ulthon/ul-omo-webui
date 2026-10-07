@@ -40,6 +40,7 @@ function isMessageEntry(entry: WireEntry): entry is WireEntry & { id: string; me
 function ChatSession({ sessionId }: { sessionId: string }) {
   const [loadState, setLoadState] = useState<"loading" | "done" | "error">("loading");
   const [retrySeq, setRetrySeq] = useState(0);
+  const [autoRetried, setAutoRetried] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const syncingUntilRef = useRef(0);
@@ -119,6 +120,18 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       cancelled = true;
     };
   }, [sessionId, retrySeq]);
+
+  // todo 26 走查修复：首次加载失败自动重试一次（手机弱网/引擎冷启动窗口常见 503；
+  // 引擎 restart 后打开会话实测撞 engine_not_ready 停错误态）。只自动试一次，避免死循环。
+  useEffect(() => {
+    if (loadState !== "error" || autoRetried) return;
+    const timer = setTimeout(() => {
+      setAutoRetried(true);
+      setLoadState("loading");
+      setRetrySeq((n) => n + 1);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [loadState, autoRetried]);
 
   // 顶部触顶：游标增量同步（引擎 getEntries 为 since 语义，首载即全量，此钩子兜底补漏；
   // 10s 冷却防贴顶滚动反复请求）

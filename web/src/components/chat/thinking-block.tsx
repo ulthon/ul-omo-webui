@@ -13,7 +13,7 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:min-h-0 lg:px-1.5 lg:py-1"
       >
         <BrainCircuit className="size-3.5 shrink-0" data-icon="inline-start" />
         <span className="truncate">

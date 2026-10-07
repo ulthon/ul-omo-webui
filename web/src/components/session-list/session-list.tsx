@@ -5,7 +5,7 @@
 // 批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗，逐个调既有 API
 // 循环 + 进度反馈，失败逐条报告不中断整批）。
 import { useCallback, useEffect, useState } from "react";
-import { Archive, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { refreshSessions } from "@/lib/bootstrap";
@@ -278,9 +278,10 @@ export function SessionList() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 工具条：新建 + 全局搜索 + 视图/归档切换（搜索模式下隐藏后者） */}
+      {/* 工具条：新建 + 全局搜索 + 视图/归档切换（搜索模式下隐藏后者）。
+          触控目标（todo 26 走查修复）：手机 ≥44px（lg 保持桌面紧凑尺寸） */}
       <div className="shrink-0 space-y-2 border-b px-2 py-2">
-        <Button size="sm" className="h-7 w-full gap-1 text-xs" disabled={creating || !currentProject} onClick={() => void createSession()}>
+        <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession()}>
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
           新建会话
         </Button>
@@ -290,16 +291,16 @@ export function SessionList() {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="搜索全部项目的会话…"
-            className="h-7 pl-7 pr-7 text-xs"
+            className="h-11 pl-7 pr-7 text-xs lg:h-7"
           />
           {searchInput && (
             <button
               type="button"
               aria-label="清空搜索"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted"
+              className="absolute right-1.5 top-1/2 size-7 -translate-y-1/2 rounded text-muted-foreground hover:bg-muted"
               onClick={() => setSearchInput("")}
             >
-              <X className="size-3.5" />
+              <X className="mx-auto size-3.5" />
             </button>
           )}
         </div>
@@ -308,14 +309,14 @@ export function SessionList() {
             <div className="flex rounded-md border p-0.5 text-xs">
               <button
                 type="button"
-                className={`rounded px-2 py-0.5 ${view === "human" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                className={`rounded px-2 py-2 lg:py-0.5 ${view === "human" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => switchFilter({ view: "human" })}
               >
                 人工
               </button>
               <button
                 type="button"
-                className={`rounded px-2 py-0.5 ${view === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                className={`rounded px-2 py-2 lg:py-0.5 ${view === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => switchFilter({ view: "all" })}
               >
                 全部活动
@@ -324,7 +325,7 @@ export function SessionList() {
             <Button
               variant="ghost"
               size="sm"
-              className={`ml-auto h-6 gap-1 px-1.5 text-xs ${batchMode ? "text-foreground" : "text-muted-foreground"}`}
+              className={`ml-auto h-11 gap-1 px-1.5 text-xs lg:h-6 ${batchMode ? "text-foreground" : "text-muted-foreground"}`}
               onClick={() => (batchMode ? exitBatch() : setBatchMode(true))}
               data-testid="batch-toggle"
             >
@@ -333,7 +334,7 @@ export function SessionList() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-xs text-muted-foreground">
+                <Button variant="ghost" size="sm" className="h-11 gap-1 px-1.5 text-xs text-muted-foreground lg:h-6">
                   <Filter className="size-3" />
                   {archivedLabel}
                 </Button>
@@ -352,23 +353,24 @@ export function SessionList() {
       {batchMode && (
         <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5 text-xs" data-testid="batch-bar">
           <span className="text-muted-foreground">已选 {selectedIds.size}</span>
-          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" disabled={batchBusy} onClick={selectAllVisible}>
+          <Button variant="ghost" size="sm" className="h-11 px-1.5 text-xs lg:h-6" disabled={batchBusy} onClick={selectAllVisible}>
             全选
           </Button>
+          {/* todo 26 走查修复：已归档视图下批量动作应为取消归档（原写死归档，归档会话无法批量恢复） */}
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-1 px-1.5 text-xs"
+            className="h-11 gap-1 px-1.5 text-xs lg:h-6"
             disabled={batchBusy || selectedIds.size === 0}
-            onClick={() => void runBatchArchive(true)}
+            onClick={() => void runBatchArchive(archived !== "true")}
           >
-            <Archive className="size-3" />
-            归档
+            {archived === "true" ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
+            {archived === "true" ? "取消归档" : "归档"}
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-1 px-1.5 text-xs text-destructive hover:text-destructive"
+            className="h-11 gap-1 px-1.5 text-xs text-destructive hover:text-destructive lg:h-6"
             disabled={batchBusy || selectedIds.size === 0}
             onClick={openBatchDelete}
           >
@@ -380,7 +382,7 @@ export function SessionList() {
               {batchProgress.label} {batchProgress.done}/{batchProgress.total}…
             </span>
           )}
-          <Button variant="ghost" size="sm" className="ml-auto h-6 px-1.5 text-xs" disabled={batchBusy} onClick={exitBatch}>
+          <Button variant="ghost" size="sm" className="ml-auto h-11 px-1.5 text-xs lg:h-6" disabled={batchBusy} onClick={exitBatch}>
             完成
           </Button>
         </div>

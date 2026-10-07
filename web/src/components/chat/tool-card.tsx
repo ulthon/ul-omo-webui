@@ -123,7 +123,7 @@ export function ToolCard({
                       type="button"
                       aria-pressed={resultMode === mode}
                       onClick={() => setResultMode(mode)}
-                      className={`min-h-6 rounded px-1.5 text-[11px] transition-colors ${
+                      className={`min-h-9 rounded px-1.5 text-[11px] transition-colors lg:min-h-6 ${
                         resultMode === mode
                           ? "bg-muted font-medium text-foreground"
                           : "text-muted-foreground hover:bg-muted/50"
