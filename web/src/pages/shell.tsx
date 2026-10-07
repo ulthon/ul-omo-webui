@@ -4,7 +4,7 @@
 // components/diff/changes-view 的 ChangesView。页签状态为 shell 本地 state（无跨组件消费）。
 // todo 26：页签栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；visualViewport 高度
 // 同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { FolderOpen, GitBranch } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
@@ -13,8 +13,12 @@ import { useUiStore } from "@/stores/ui";
 import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
-import { ChangesView } from "@/components/diff/changes-view";
 import { Button } from "@/components/ui/button";
+
+// W5-27 首屏拆分：变更页签（react-diff-view）按需加载，首屏对话页不下载该模块
+const ChangesView = lazy(() =>
+  import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
+);
 
 type MainTab = "chat" | "changes";
 
@@ -175,7 +179,15 @@ export function AppShell() {
             ) : mainTab === "chat" ? (
               <ChatPlaceholder />
             ) : (
-              <ChangesView />
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    加载变更视图…
+                  </div>
+                }
+              >
+                <ChangesView />
+              </Suspense>
             )}
           </div>
         </main>

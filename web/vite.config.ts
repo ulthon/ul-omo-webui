@@ -20,5 +20,33 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        // W5-27 bundle 拆分：vendor 按域分包（缓存稳定 + 首屏并行加载），
+        // react-diff-view 另经组件层 lazy() 做到首屏零加载（ ChangesView/工具卡 diff 按需）。
+        advancedChunks: {
+          groups: [
+            {
+              name: 'react-vendor',
+              test: /[\\/]node_modules[\\/]\.bun[\\/](react|react-dom|react-reconciler|scheduler|zustand|@tanstack)@/,
+            },
+            {
+              name: 'markdown-vendor',
+              test: /[\\/]node_modules[\\/]\.bun[\\/](unified|remark-|rehype-|micromark|mdast-|hast-|unist-|vfile|devlop|zwitch|bail|trough|is-plain-obj|property-information|space-separated-tokens|comma-separated-tokens|web-namespaces|ccount|html-url-attributes|decode-named|character-entities|markdown-|shiki)@/,
+            },
+            {
+              name: 'diff-vendor',
+              test: /[\\/]node_modules[\\/]\.bun[\\/](react-diff-view|gitdiff-parser)@/,
+            },
+            {
+              name: 'ui-vendor',
+              test: /[\\/]node_modules[\\/]\.bun[\\/](radix-ui|@radix-ui\+|lucide-react|class-variance-authority|clsx|tailwind-merge)@/,
+            },
+          ],
+        },
+      },
+    },
+  },
   ...apiProxy,
 })

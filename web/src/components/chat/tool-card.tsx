@@ -7,12 +7,16 @@
 // diff 视图（todo 19）：编辑类工具结果文本含 unified diff（```diff 围栏 / git diff 头 /
 // @@ hunk 头启发式识别）时默认切 diff 渲染，可切回纯文本；解析不出结构的误判自动回退文本。
 // 未知工具类型（未登记的 toolName / 异形 args / 无结果）一律走通用兜底，不崩。
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
 import { RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeArgs } from "./tool-card-data";
-import { DiffView } from "@/components/diff/diff-view";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
+
+// W5-27 首屏拆分：diff 视图（react-diff-view）按需加载，未展开过 diff 的会话不下载该模块
+const DiffView = lazy(() =>
+  import("@/components/diff/diff-view").then((m) => ({ default: m.DiffView })),
+);
 
 /** entries 中按 toolCallId 反向找配对的 toolResult 消息（引用稳定：命中返回消息对象本身）。
  *  entry.type 两种来源：GET messages 定格条目为 "message"，SSE 实时入列为 wire 原样 "message_start"/"message_end"。 */
@@ -141,7 +145,9 @@ export function ToolCard({
                   data-testid="tool-diff-view"
                   className="max-h-64 overflow-y-auto rounded-md bg-muted/20 p-1.5"
                 >
-                  <DiffView diffText={diffText} />
+                  <Suspense fallback={<div className="p-2 text-xs text-muted-foreground">加载 diff 视图…</div>}>
+                    <DiffView diffText={diffText} />
+                  </Suspense>
                 </div>
               ) : (
                 <>
