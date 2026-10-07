@@ -222,6 +222,17 @@ function jsonInit(method: string, body: unknown, opts?: RequestOptions): Request
   };
 }
 
+// ---------- prompt 命令门（todo 24：chat-view 注册，拦截不支持命令直通模型） ----------
+
+/** 命令门：同步校验 prompt 文本，不支持时抛 ApiError（composer 行内展示） */
+type PromptGate = (text: string) => void;
+
+let promptGate: PromptGate | null = null;
+
+export function setPromptGate(gate: PromptGate | null): void {
+  promptGate = gate;
+}
+
 // ---------- API ----------
 
 export interface ListSessionsParams {
@@ -269,6 +280,8 @@ export const api = {
     if (ui.modelsLoaded && ui.models.length === 0) {
       throw new ApiError(400, "no_models_available", "无可用模型，无法发送（请检查引擎模型配置）");
     }
+    // 命令门（todo 24）：/ 前缀命中不支持命令时抛 ApiError（chat-view 注册的 commandGate）
+    promptGate?.(body.text);
     // 顶栏选中的当前偏好随下一条 prompt 生效：服务端对活跃会话执行 setModel（会话 jsonl
     // 追加 model_change 条目，verification/01 有该条目形态）；调用方显式传 model 时以其为准。
     const model = body.model ?? ui.selectedModel ?? undefined;

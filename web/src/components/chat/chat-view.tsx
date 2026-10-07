@@ -3,16 +3,20 @@
 // 并发锁：会话回合中（本地 SSE 流式态，含另一窗口驾驶的会话）输入禁用；prompt 撞上
 // 409 already_processing 时给出明确提示（verification/05 P2-11：引擎无跨进程锁，webui 自律单驱动）。
 // 中断定格：abort 后 settleStreaming 把半截内容定格进 entries，气泡带"已中断"标注直至下一次发送。
+// todo 24：/ 命令门注册（拦截不支持命令直通模型）+ 命令按钮行 + 底部 token/费用状态条。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, setPromptGate } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { Composer } from "@/components/composer/composer";
+import { CommandBar } from "./command-bar";
+import { commandGate } from "./commands";
 import { MessageList, type ChatListItem } from "./message-list";
 import { PermissionQueue } from "./permission-queue";
+import { StatusBar } from "./status-bar";
 
 /** 无选中会话时的空态提示 */
 function EmptyHint() {
@@ -50,6 +54,13 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 输入锁：流式中或权限未决都阻塞回合（P0-2 实证：挂起权限回合不结束）。
   // 权限锁不依赖 agent_start 时序（个别回合该帧缺失，todo 16 QA 第 3 轮实证）。
   const composerLocked = streaming || hasPendingPermission;
+
+  // / 命令门（todo 24）：注册到 api.prompt 链路，输入以 / 开头且命中不支持命令时
+  // 抛 ApiError（composer 行内明示），阻止引擎把命令当普通消息交给模型（模型会伪造已执行）。
+  useEffect(() => {
+    setPromptGate(commandGate);
+    return () => setPromptGate(null);
+  }, []);
 
   // 僵尸流式兜底：agent_start 已置流式，但 assistant 流式始终未开始（实测引擎个别回合
   // 收尾事件缺席——message_start/end、turn_end、agent_end 全缺，QA 第 2 轮实证），
@@ -178,13 +189,17 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       <MessageList items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
       <PermissionQueue sessionId={sessionId} />
       <div className="shrink-0 border-t p-3">
-        <Composer
-          sessionId={sessionId}
-          busy={composerLocked}
-          onSent={() => setInterrupted(false)}
-          onAborted={() => setInterrupted(true)}
-        />
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+          <CommandBar sessionId={sessionId} busy={composerLocked} />
+          <Composer
+            sessionId={sessionId}
+            busy={composerLocked}
+            onSent={() => setInterrupted(false)}
+            onAborted={() => setInterrupted(true)}
+          />
+        </div>
       </div>
+      <StatusBar sessionId={sessionId} />
     </div>
   );
 }
