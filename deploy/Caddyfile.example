@@ -1,0 +1,48 @@
+# senpi-webui 反向代理参考配置（Caddy）
+#
+# 用途：单域名下按路径分发——/ 走 senpi-webui 主服务，/git /files 外链独立
+# 自托管工具（cgit / filebrowser，编排见 docker-compose.example.yml）。
+# 本文件是参考件，不承担编排验收；把 <你的域名> 换成真实域名后按需取用。
+#
+# 要点说明：
+# - Caddy 对公网域名自动签发 HTTPS 证书，无需手动配置 TLS。
+# - senpi-webui 的对话流走 SSE（GET /api/events，服务端每 8 秒一帧心跳），
+#   反代必须关闭缓冲、实时冲刷，否则页面会被缓冲卡成"永远等不到回复"。
+#   下面的 flush_interval -1 + reverse_proxy（Caddy v2 默认不缓冲响应体）
+#   就是为此；若换 Nginx 等价配置是 proxy_buffering off + proxy_cache off。
+
+<你的域名> {
+	# 主服务：senpi-webui 单二进制（缺省监听 0.0.0.0:7788）。
+	# SSE 长连接关键配置：
+	#   flush_interval -1  立即冲刷每一帧到客户端（-1 = 不等攒批）。
+	#     不设的话 Caddy 会缓冲响应，SSE 心跳/事件帧被攒住，前端表现为
+	#     连接 OPEN 但永远收不到流式输出。
+	reverse_proxy /* 127.0.0.1:7788 {
+		flush_interval -1
+	}
+
+	# 外链：Git 历史浏览（cgit，纯看）。
+	# 注意：strip_prefix 把 /git 前缀剥掉再转给 cgit——cgit 以 / 为根部署，
+	# 若你的 cgit 配置带 virtual root，请相应调整（详见 cgitrc 文档）。
+	reverse_proxy /git/* cgit:8080 {
+		flush_interval -1
+		uri strip_prefix /git
+	}
+
+	# 外链：文件管理（filebrowser，按需部署，compose 里注释掉了）。
+	reverse_proxy /files/* filebrowser:80 {
+		flush_interval -1
+		uri strip_prefix /files
+	}
+}
+
+# 直连局域网用（不开域名/不想要 TLS）时，可以改用这种站点块：
+#
+# http://:8081 {
+# 	reverse_proxy /* 127.0.0.1:7788 {
+# 		flush_interval -1
+# 	}
+# }
+#
+# senpi-webui 自身是纯 HTTP，口令与 cookie 明文传输——只用 Caddy 做了 TLS
+# 终结时才是密文过公网。应用绑 127.0.0.1 + 由 Caddy 对外是最小安全形态。
