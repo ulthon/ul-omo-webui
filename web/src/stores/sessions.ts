@@ -6,9 +6,16 @@ import type { SessionListItem } from "@/lib/api";
 export type SessionView = "human" | "all";
 export type ArchivedFilter = "true" | "false" | "all";
 
+/** 会话运行态（SSE 驱动的状态点覆盖值；不在 runStates 中 = 未见 SSE 事件，用引擎探询 active 兜底）。
+ * 一旦写入即权威（GET sessions 的 active 字段在本环境回合结束后不回落——learnings todo 14，
+ * agent_end/settled/idle 落 "idle" 压过过期的 active=true）。 */
+export type SessionRunState = "running" | "waiting" | "idle" | "error";
+
 interface SessionsState {
   /** 按项目绝对路径分组的会话列表 */
   byProject: Record<string, SessionListItem[]>;
+  /** 会话运行态覆盖（SSE 事件写入，id → 状态；回合结束清除） */
+  runStates: Record<string, SessionRunState>;
   /** 默认只列人工会话（服务端 view=human 已过滤 fork） */
   view: SessionView;
   /** 全局搜索：标题/会话名子串（服务端实现，此状态作请求参数） */
@@ -29,7 +36,12 @@ interface SessionsState {
   upsertSession(project: string, session: SessionListItem): void;
   /** 元数据局部更新：置顶/归档/重命名/未读清零等 */
   patchSession(id: string, patch: Partial<SessionListItem>): void;
+  /** 未读计数 +1（SSE 新消息且非查看态；跨项目查找） */
+  bumpUnread(id: string): void;
   removeSession(id: string): void;
+  /** 运行态写入/清除（todo 15 event-dispatch 调用） */
+  setRunState(id: string, state: SessionRunState): void;
+  clearRunState(id: string): void;
 }
 
 function replaceIn(list: SessionListItem[], session: SessionListItem): SessionListItem[] {
@@ -44,6 +56,7 @@ function replaceIn(list: SessionListItem[], session: SessionListItem): SessionLi
 
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
+  runStates: {},
   view: "human",
   q: "",
   archived: "false",
@@ -94,5 +107,34 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       }
       const selectedId = s.selectedId === id ? null : s.selectedId;
       return changed || selectedId !== s.selectedId ? { byProject, selectedId } : s;
+    }),
+
+  bumpUnread: (id) =>
+    set((s) => {
+      let changed = false;
+      const byProject: Record<string, SessionListItem[]> = {};
+      for (const [project, list] of Object.entries(s.byProject)) {
+        const idx = list.findIndex((item) => item.id === id);
+        if (idx < 0) {
+          byProject[project] = list;
+          continue;
+        }
+        changed = true;
+        const next = list.slice();
+        next[idx] = { ...list[idx], unreadCount: list[idx].unreadCount + 1 };
+        byProject[project] = next;
+      }
+      return changed ? { byProject } : s;
+    }),
+
+  setRunState: (id, state) =>
+    set((s) => (s.runStates[id] === state ? s : { runStates: { ...s.runStates, [id]: state } })),
+
+  clearRunState: (id) =>
+    set((s) => {
+      if (!(id in s.runStates)) return s;
+      const runStates = { ...s.runStates };
+      delete runStates[id];
+      return { runStates };
     }),
 }));

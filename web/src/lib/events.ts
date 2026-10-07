@@ -26,6 +26,7 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "agent_end",
   "agent_settled",
   "agent_idle",
+  "extension_ui_request", // 四型权限/表单请求（todo 15 状态点"等待权限"信号；按 method 过滤噪音）
   "engine_event", // 服务端对无 type wire 事件的兜底 event 行名
 ];
 

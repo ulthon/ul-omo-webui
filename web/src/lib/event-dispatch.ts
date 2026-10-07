@@ -15,6 +15,15 @@ let lastCursor: number | null = null;
 /** 进行中的全量重取（按会话去重：gap + 游标回退连击时不重复拉取） */
 const refetching = new Set<string>();
 
+/** 四型对话框 UI method（verification/02）；extension_ui_request 其余 method
+ * （omo 扩展的 setStatus/notify 等噪音）不计入"等待权限"。 */
+const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
+
+/** 页面可见性（bun 单测环境无 document，按可见兜底） */
+function pageVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
 /** 当前分发游标（单测断言用） */
 export function getDispatchCursor(): number | null {
   return lastCursor;
@@ -86,11 +95,31 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const sessionId = durableSessionId ?? wireSessionId;
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
 
-  // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询）
+  // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
+  const sessions = useSessionsStore.getState();
   if (wire.type === "agent_start") {
-    useSessionsStore.getState().patchSession(sessionId, { active: true });
+    sessions.patchSession(sessionId, { active: true });
+    sessions.setRunState(sessionId, "running");
   } else if (wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle") {
-    useSessionsStore.getState().patchSession(sessionId, { active: false });
+    sessions.patchSession(sessionId, { active: false });
+    // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
+    // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
+    sessions.setRunState(sessionId, "idle");
+  } else if (wire.type === "extension_ui_request") {
+    const method = typeof wire.method === "string" ? wire.method : null;
+    if (method !== null && DIALOG_UI_METHODS.has(method)) sessions.setRunState(sessionId, "waiting");
+  } else if (wire.type === "error" || wire.type.endsWith("_error")) {
+    // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点
+    sessions.setRunState(sessionId, "error");
+  }
+
+  // 未读计数：新 assistant 消息到达且非查看态（未选中或页面后台）→ +1。
+  // 清零由列表组件在选中且页面可见时 POST /:id/read（"任一设备查看即清零"）。
+  if (wire.type === "message_end") {
+    const msg = wire.message;
+    const isAssistant = typeof msg === "object" && msg !== null && (msg as { role?: unknown }).role === "assistant";
+    const viewing = sessions.selectedId === sessionId && pageVisible();
+    if (isAssistant && !viewing) sessions.bumpUnread(sessionId);
   }
 
   // 消息主通道（未知类型在 store 内静默忽略）

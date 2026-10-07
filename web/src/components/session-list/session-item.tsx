@@ -1,0 +1,254 @@
+// 会话列表行（计划 todo 15）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
+// 引擎探询 active 兜底）+ 标题 + 来源标识（人工/agent 创建——引擎无 agent 协议面，
+// agent 名徽标以通用 "agent" 标记呈现，字段就绪后在此接入）+ 未读徽标 + 相对时间
+// + 子会话钻取（knownChildren 已带则免请求，否则懒加载 view=all 按血缘过滤）
+// + 元数据操作菜单（置顶/重命名/归档/删除——重命名与删除弹窗由父级单例托管）。
+import { useState } from "react";
+import { Bot, ChevronRight, Loader2, MoreVertical, Pin, SquarePen, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import type { SessionListItem } from "@/lib/api";
+import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
+import { useUiStore } from "@/stores/ui";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return "";
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "刚刚";
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} 天前`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function StatusDot({ runState, active }: { runState: SessionRunState | null; active: boolean | null }) {
+  // runStates 一旦有值即权威（SSE 见过事件）；null 才回落引擎探询的 active（不回落，仅初始参考）
+  let cls = "bg-muted-foreground/30";
+  let title = "空闲";
+  if (runState === "waiting") {
+    cls = "bg-amber-500 animate-pulse";
+    title = "等待权限";
+  } else if (runState === "error") {
+    cls = "bg-destructive";
+    title = "出错";
+  } else if (runState === "running" || (runState === null && active === true)) {
+    cls = "bg-sky-500 animate-pulse";
+    title = "运行中";
+  }
+  return <span className={`size-1.5 shrink-0 rounded-full ${cls}`} title={title} />;
+}
+
+/** 来源标识：人工/agent 创建（docs/01 会话来源标识）。仅钻取展开与"全部活动"/搜索视图显示。 */
+function SourceBadge({ session }: { session: SessionListItem }) {
+  if (session.parentSessionPath) {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
+        title={`agent 创建的子会话（fork 自 ${session.parentSessionPath}）`}
+      >
+        <Bot className="size-2.5" />
+        agent
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
+      title="人工创建"
+    >
+      <User className="size-2.5" />
+      人工
+    </span>
+  );
+}
+
+export interface SessionItemProps {
+  session: SessionListItem;
+  /** 来源标识可见性：human 视图顶层不显示（全是人工，冗余） */
+  showSource: boolean;
+  /** 搜索模式下显示来源项目名（basename） */
+  projectLabel?: string;
+  /** all 视图下已随列表带出的子会话（省一次懒加载请求）；human 视图缺省走懒加载 */
+  knownChildren?: SessionListItem[];
+  /** 是否可钻取子会话（顶层会话 true，子会话行 false） */
+  expandable: boolean;
+  /** "全部活动"视图：子会话随血缘直接平铺显示（免点击展开） */
+  childrenOpen?: boolean;
+  /** 打开重命名/删除弹窗（父级单例托管） */
+  onDialog: (kind: "rename" | "delete", session: SessionListItem) => void;
+  /** 元数据/删除成功后回调（父级刷新列表与搜索结果） */
+  onChanged: () => void;
+}
+
+export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onChanged }: SessionItemProps) {
+  const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
+  const selected = useSessionsStore((s) => s.selectedId === session.id);
+  const select = useSessionsStore((s) => s.select);
+  const showToast = useUiStore((s) => s.showToast);
+
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<SessionListItem[] | null>(null);
+  const [loadingChildren, setLoadingChildren] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // 展示用子会话：懒加载结果优先，否则用 all 视图已带的 knownChildren（视图切换后 props 会变，
+  // 不能在 useState 初始值里固化——那会让 all 视图拿不到 human 期之后才出现的数据）
+  const childRows = children ?? knownChildren ?? [];
+
+  const toggle = async () => {
+    if (!expanded && children === null) {
+      setLoadingChildren(true);
+      try {
+        const res = await api.listSessions({ project: session.project, view: "all", archived: "all" });
+        setChildren(res.sessions.filter((s) => s.parentSessionPath === session.path));
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 401)) {
+          showToast("子会话加载失败", "error");
+        }
+      } finally {
+        setLoadingChildren(false);
+      }
+    }
+    setExpanded((v) => !v);
+  };
+
+  const patch = async (p: { pinned?: boolean; archived?: boolean }) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.patchSessionMeta(session.id, p);
+      useSessionsStore.getState().patchSession(session.id, {
+        ...(p.pinned !== undefined ? { pinned: p.pinned } : {}),
+        ...(p.archived !== undefined ? { archivedAt: p.archived ? new Date().toISOString() : null } : {}),
+      });
+      onChanged();
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : "操作失败", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSelect = () => {
+    select(session.id);
+  };
+
+  const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
+
+  return (
+    <div>
+      <div
+        className={`group flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm ${
+          selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+        }`}
+      >
+        {expandable ? (
+          <button
+            type="button"
+            aria-label={expanded ? "收起子会话" : "展开子会话"}
+            className={`flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted ${
+              hasKnownChildren ? "text-muted-foreground" : "text-muted-foreground/40"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggle();
+            }}
+          >
+            {loadingChildren ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <ChevronRight className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            )}
+          </button>
+        ) : (
+          <span className="size-4 shrink-0" />
+        )}
+        <StatusDot runState={runState} active={session.active} />
+
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={onSelect}>
+          <span className={`truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
+            {session.pinned && <Pin className="mr-1 inline size-3 shrink-0 align-[-1px] text-muted-foreground" />}
+            {session.title}
+          </span>
+          {showSource && <SourceBadge session={session} />}
+          {session.archivedAt && (
+            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">已归档</span>
+          )}
+          {projectLabel && (
+            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground" title={session.project}>
+              {projectLabel}
+            </span>
+          )}
+          <span className="ml-auto shrink-0 text-[11px] text-muted-foreground/70">{formatRelative(session.modified)}</span>
+          {session.unreadCount > 0 && (
+            <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
+              {session.unreadCount > 99 ? "99+" : session.unreadCount}
+            </span>
+          )}
+        </button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+              aria-label="会话操作"
+            >
+              <MoreVertical className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem disabled={busy} onSelect={() => void patch({ pinned: !session.pinned })}>
+              {session.pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
+              {session.pinned ? "取消置顶" : "置顶"}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => onDialog("rename", session)}>
+              <SquarePen className="mr-2 size-4" />
+              重命名
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => void patch({ archived: !session.archivedAt })}>
+              {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
+              {session.archivedAt ? "取消归档" : "归档"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => onDialog("delete", session)}>
+              <Trash2 className="mr-2 size-4" />
+              删除
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* 子会话钻取（缩进一层；血缘 = parentSessionPath 关联，omo task 子会话不落盘天然不出现）。
+          "全部活动"视图 childrenOpen 直接平铺（knownChildren 已带，无需懒加载）。 */}
+      {expandable && (expanded || (childrenOpen && knownChildren !== undefined)) && (
+        <div className="ml-4 border-l pl-1.5">
+          {(childRows.length === 0 && !loadingChildren && !childrenOpen) ? (
+            <div className="px-2 py-1 text-xs text-muted-foreground/60">无子会话</div>
+          ) : (
+            childRows.map((child) => (
+              <SessionItem
+                key={child.id}
+                session={child}
+                showSource
+                expandable={false}
+                onDialog={onDialog}
+                onChanged={onChanged}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
