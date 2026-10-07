@@ -4,6 +4,7 @@ import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage, WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
+import { ImagePart } from "./image-lightbox";
 
 function formatTime(timestamp: string | null): string | null {
   if (!timestamp) return null;
@@ -66,7 +67,16 @@ function MessageContent({
       .filter((p) => p.type === "text" && typeof p.text === "string")
       .map((p) => p.text as string)
       .join("\n");
-    return <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">{text}</div>;
+    // 用户上传图内联 base64 image part（P1-3 实证）：文本 + 图片同气泡渲染（todo 23）
+    const images = parts.filter((p) => p.type === "image");
+    return (
+      <div className="space-y-2">
+        {text ? <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">{text}</div> : null}
+        {images.map((p, i) => (
+          <ImagePart key={i} part={p} />
+        ))}
+      </div>
+    );
   }
   if (message.role === "toolResult") {
     return <ToolResultLine message={message} />;

@@ -1,7 +1,9 @@
 // part 渲染分发（todo 16 建分发点；todo 17 起工具卡片接管）：
-//   text → Markdown；thinking → ThinkingBlock；toolCall → ToolCard（tool-card.tsx，含结果折叠展示，
-//   toolResult 消息经 toolCallId 关联进卡片，不再单独渲染 ToolResultLine）。
-//   todo 23 todo 渲染、todo 25 消息级操作同挂此分发点。
+//   text → Markdown；thinking → ThinkingBlock；toolCall → name=todo 走 TodoList 结构化清单
+//   （todo-list.tsx，details 缺失时组件内自行降级 ToolCard），其余工具 → ToolCard（tool-card.tsx，
+//   含结果折叠展示，toolResult 消息经 toolCallId 关联进卡片，不再单独渲染 ToolResultLine）；
+//   image → 内联缩略 + 灯箱；image_ref → 占位降级（todo 23）。
+//   todo 25 消息级操作同挂此分发点。
 // 流式期间以 part 下标为订阅粒度（StreamingPart 单独订阅 content[i]），
 // 单个 part 的 delta 只重渲染该 part 的子树，不触碰兄弟 part 与列表其他气泡。
 import { useMessagesStore } from "@/stores/messages";
@@ -9,8 +11,10 @@ import type { WireMessage, WirePart } from "@/lib/api";
 import { Markdown } from "./markdown";
 import { ThinkingBlock } from "./thinking-block";
 import { ToolCard } from "./tool-card";
+import { ImagePart, ImageRefPlaceholder } from "./image-lightbox";
+import { TodoList } from "./todo-list";
 
-/** 单个 part 分发；未知类型静默忽略（图片等后续 todo 再补） */
+/** 单个 part 分发；未知类型静默忽略 */
 export function PartView({ part, sessionId, live }: { part: WirePart; sessionId: string; live: boolean }) {
   switch (part.type) {
     case "text": {
@@ -22,10 +26,25 @@ export function PartView({ part, sessionId, live }: { part: WirePart; sessionId:
       const thinking = typeof part.thinking === "string" ? part.thinking : "";
       return <ThinkingBlock thinking={thinking} live={live} />;
     }
+    case "image":
+      return <ImagePart part={part} />;
+    case "image_ref":
+      return <ImageRefPlaceholder />;
     case "toolCall": {
       const toolCallId = typeof part.id === "string" ? part.id : "";
       const name = typeof part.name === "string" ? part.name : "unknown";
       if (!toolCallId) return null;
+      if (name === "todo") {
+        return (
+          <TodoList
+            sessionId={sessionId}
+            toolCallId={toolCallId}
+            name={name}
+            args={part.arguments}
+            live={live}
+          />
+        );
+      }
       return (
         <ToolCard
           sessionId={sessionId}
