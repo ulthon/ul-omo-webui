@@ -141,7 +141,8 @@ describe("重连退避", () => {
     client.start();
     const es0 = MockEventSource.instances[0];
     es0.emitOpen();
-    es0.emitError(); // 进入退避等待（1s 挂起）
+    es0.emit("message_start", { projectPath: "/p", event: { type: "message_start", sessionId: "s1", id: "e1", message: { role: "user", content: [] } } }, 1);
+    es0.emitError(); // 收到过帧的正常断开：走 EventSource 退避重建（不触发降级）
     expect(MockEventSource.instances[0].closed).toBe(true);
     expect(scheduler.pendingCount()).toBe(1);
 
@@ -150,6 +151,8 @@ describe("重连退避", () => {
     expect(MockEventSource.instances).toHaveLength(2); // 立即重建
 
     // 退避已复位：新连接再断仍是 1s
+    MockEventSource.instances[1].emitOpen();
+    MockEventSource.instances[1].emit("message_update", { projectPath: "/p", event: { type: "message_update", sessionId: "s1", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" } } }, 2);
     MockEventSource.instances[1].emitError();
     scheduler.flush();
     expect(scheduler.delays().at(-1)).toBe(1000);
@@ -394,5 +397,222 @@ describe("单例约束", () => {
     scheduler.flush();
     expect(MockEventSource.live).toHaveLength(1);
     client.stop();
+  });
+});
+
+// ---------- fetch 流降级（Chrome 153 EventSource 停摆兜底） ----------
+
+/** 可控 ReadableStream：测试按需 push chunk / close 断流 */
+class MockSseStream {
+  readonly stream: ReadableStream<Uint8Array>;
+  private controller!: ReadableStreamDefaultController<Uint8Array>;
+  constructor() {
+    this.stream = new ReadableStream({
+      start: (c) => {
+        this.controller = c;
+      },
+    });
+  }
+  push(text: string): void {
+    this.controller.enqueue(new TextEncoder().encode(text));
+  }
+  close(): void {
+    this.controller.close();
+  }
+}
+
+interface MockFetchRecord {
+  url: string;
+  lastEventId: string | null;
+}
+
+/** transport 级 fetch mock：返回可控 SSE 流并记录请求（与 refetch 的 globalThis.fetch 独立） */
+function makeFetchMock(stream: MockSseStream, calls: MockFetchRecord[]): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    calls.push({ url: String(input), lastEventId: headers["Last-Event-ID"] ?? null });
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+      body: stream.stream,
+    } as unknown as Response;
+  }) as typeof fetch;
+}
+
+describe("fetch 流降级", () => {
+  test("SSE 解析：多行 data 合并 / 跨 chunk 分帧 / id 记录 / 心跳注释跳过", async () => {
+    resetDispatchState();
+    useMessagesStore.setState({ bySession: {} });
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const client = new EventsClient({
+      forceFetchTransport: true,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    await tick(); // fetch 发起并连上
+
+    // 单 chunk 完整帧（user message 入列）
+    stream.push(
+      'event: message_start\ndata: {"event":{"type":"message_start","sessionId":"s1","id":"e1","message":{"role":"user","content":[]}}}\nid: 10\n\n',
+    );
+    // 跨 chunk 分帧：事件行被切断
+    stream.push('event: message_start\ndata: {"event":{"type":"message_start","sess');
+    stream.push('ionId":"s1","id":"e2","message":{"role":"user","content":[]}}}\nid: 11\n\n');
+    // 多行 data 合并（换行在 JSON token 之间，parse 合法）
+    stream.push('event: message_start\ndata: {"event":\ndata: {"type":"message_start","sessionId":"s1","id":"e3","message":{"role":"user","content":[]}}}\nid: 12\n\n');
+    // 心跳注释行：不产生派发
+    stream.push(": ping\n\n");
+    await tick();
+
+    const session = useMessagesStore.getState().bySession["s1"];
+    expect(session?.entries).toHaveLength(3);
+    expect(session?.entries.map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
+    expect(getDispatchCursor()).toBe(12);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("/api/events");
+    client.stop();
+  });
+
+  test("fetch 模式收到 gap 帧走既有 refetch 兜底", async () => {
+    resetDispatchState();
+    useMessagesStore.setState({ bySession: { s1: loadedMessages([]) } });
+    const page = { sessionId: "s1", entries: [{ type: "message", id: "m1" }], leafId: "m1", cursor: "m1" };
+    const refetchCalls: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      refetchCalls.push(String(input));
+      return new Response(JSON.stringify(page), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const scheduler = new MockScheduler();
+      const stream = new MockSseStream();
+      const client = new EventsClient({
+        forceFetchTransport: true,
+        schedule: scheduler.schedule,
+        fetchImpl: makeFetchMock(stream, []),
+      });
+      client.start();
+      await tick();
+      stream.push('event: gap\ndata: {"from":1,"to":0}\nid: 5\n\n');
+      await tick();
+      await tick();
+      expect(refetchCalls.some((c) => c.includes("/api/sessions/s1/messages"))).toBe(true);
+      expect(useMessagesStore.getState().bySession["s1"]!.entries).toEqual([{ type: "message", id: "m1" }]);
+      client.stop();
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("重连请求自带 Last-Event-ID 头（游标取自分发层记账）", async () => {
+    resetDispatchState();
+    dispatchSseEvent("agent_start", JSON.stringify({ projectPath: "/p", event: { type: "agent_start", sessionId: "s1" } }), 42);
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const client = new EventsClient({
+      forceFetchTransport: true,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    await tick();
+    expect(calls[0].lastEventId).toBe("42");
+    client.stop();
+  });
+
+  test("EventSource OPEN 后停滞 5s 零消息切 fetch；模式粘滞（断流重连不再回 EventSource）", async () => {
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const client = new EventsClient({
+      stallTimeoutMs: 5000,
+      createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    MockEventSource.instances[0].emitOpen(); // 布防停滞判定
+    expect(scheduler.delays().at(-1)).toBe(5000);
+
+    scheduler.flush(); // 5s 零消息 → 停摆判定，挂重连退避
+    scheduler.flush(); // 退避到期 → fetch 接管
+    expect(calls).toHaveLength(1);
+    await tick();
+
+    // fetch 流正常派发（同一条 dispatch 入口）
+    stream.push('event: message_start\ndata: {"event":{"type":"message_start","sessionId":"s1","id":"e1","message":{"role":"user","content":[]}}}\nid: 20\n\n');
+    await tick();
+    expect(useMessagesStore.getState().bySession["s1"]).toBeDefined();
+
+    // 断流 → 退避重连仍走 fetch（EventSource 不再新建：模式粘滞）
+    stream.close();
+    await tick();
+    scheduler.flush();
+    expect(calls).toHaveLength(2);
+    expect(MockEventSource.instances).toHaveLength(1);
+    client.stop();
+  });
+
+  test("EventSource OPEN 后零帧即断同样判定停摆切 fetch（Chrome 153 断开式停摆形态）", async () => {
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const instancesBefore = MockEventSource.instances.length;
+    const client = new EventsClient({
+      stallTimeoutMs: 5000,
+      createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    MockEventSource.instances.at(-1)!.emitOpen();
+    MockEventSource.instances.at(-1)!.emitError(); // OPEN 后零帧即断
+    scheduler.flush();
+    expect(calls).toHaveLength(1); // 切 fetch 接管
+    expect(MockEventSource.instances.length).toBe(instancesBefore + 1); // 不再回 EventSource（粘滞）
+    client.stop();
+  });
+
+  test("收到帧即解除停滞判定（活跃收流期绝不误切）", () => {
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const client = new EventsClient({
+      stallTimeoutMs: 5000,
+      createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    MockEventSource.instances[0].emitOpen();
+    MockEventSource.instances[0].emit("message_start", { projectPath: "/p", event: { type: "message_start", sessionId: "s1", id: "e1", message: { role: "user", content: [] } } }, 1);
+    expect(scheduler.pendingCount()).toBe(0); // 停滞计时已取消
+    scheduler.flush();
+    expect(calls).toHaveLength(0); // 未切换
+    client.stop();
+  });
+
+  test("stop 中止 fetch 连接（AbortController），断流不触发重连", async () => {
+    const scheduler = new MockScheduler();
+    const stream = new MockSseStream();
+    const calls: MockFetchRecord[] = [];
+    const client = new EventsClient({
+      forceFetchTransport: true,
+      schedule: scheduler.schedule,
+      fetchImpl: makeFetchMock(stream, calls),
+    });
+    client.start();
+    await tick();
+    client.stop();
+    stream.close(); // abort 后的流结束不应引发重连
+    await tick();
+    scheduler.flush();
+    expect(calls).toHaveLength(1);
+    expect(MockEventSource.instances).toHaveLength(0);
   });
 });
