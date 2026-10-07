@@ -1,5 +1,7 @@
 // 类型化 REST client：覆盖 server 全部端点（shape 见 .omo/notepads/senpi-webui/learnings.md W2 todo 9）。
 // 统一错误形状 {error:{code,message}} 解析；401（未登录/过期）统一跳登录页。
+// prompt 的模型防呆/偏好注入读 ui store（ui.ts 对 api.ts 仅类型引用，无运行时环）。
+import { useUiStore } from "@/stores/ui";
 
 // ---------- 领域类型 ----------
 
@@ -261,7 +263,19 @@ export const api = {
     sessionId: string,
     body: { text: string; images?: Array<{ data: string; mimeType: string }>; model?: string; agent?: string },
   ): Promise<PromptReceipt> {
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, jsonInit("POST", body));
+    // 防呆（todo 22）：模型列表已确认为空时引擎无可用模型，发送必然失败——客户端直接拦截，
+    // 不发请求；输入区捕获 ApiError 后行内展示。
+    const ui = useUiStore.getState();
+    if (ui.modelsLoaded && ui.models.length === 0) {
+      throw new ApiError(400, "no_models_available", "无可用模型，无法发送（请检查引擎模型配置）");
+    }
+    // 顶栏选中的当前偏好随下一条 prompt 生效：服务端对活跃会话执行 setModel（会话 jsonl
+    // 追加 model_change 条目，verification/01 有该条目形态）；调用方显式传 model 时以其为准。
+    const model = body.model ?? ui.selectedModel ?? undefined;
+    return request(
+      `/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
+      jsonInit("POST", { ...body, model }),
+    );
   },
   async abort(sessionId: string): Promise<{ ok: boolean; sessionId: string }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, jsonInit("POST", {}));
