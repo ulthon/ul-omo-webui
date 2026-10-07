@@ -377,9 +377,19 @@ export class SenpiAdapter implements EngineAdapter {
 
   async messages(cursor?: string): Promise<EngineMessagesPage> {
     this.requireActive()
-    const page = await this.rpc().getEntries(cursor)
-    // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
-    return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
+    try {
+      const page = await this.rpc().getEntries(cursor)
+      // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
+      return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
+    } catch (err) {
+      // 引擎对未知 since 报 "Entry not found: <id>"——游标失效（如引擎重启后会话态
+      // 重建）属异常路径，降级全量让客户端按条目 id 幂等收敛，历史完整性优先
+      if (err instanceof Error && err.message.includes("Entry not found")) {
+        const page = await this.rpc().getEntries()
+        return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
+      }
+      throw err
+    }
   }
 
   async prompt(input: EnginePromptInput): Promise<{ disposition: string }> {

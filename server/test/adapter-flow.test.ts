@@ -256,6 +256,21 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(fake.calls.some((c) => c.method === "abort")).toBe(true)
   })
 
+  test("无效 cursor（引擎 Entry not found）降级全量返回", async () => {
+    const fake = new FakeRpcClient()
+    const rawGetEntries = fake.getEntries.bind(fake)
+    fake.getEntries = async (since?: string) => {
+      if (since) throw new Error("Entry not found: stale-cursor")
+      return rawGetEntries()
+    }
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ thinkingLevel: "low" })
+    const page = await adapter.messages("stale-cursor")
+    expect(page.entries.length).toBe(sampleEntries.length)
+    expect(page.cursor).toBe("b2")
+  })
+
   test("无活跃会话时 prompt/messages 报 no_active_session", async () => {
     const adapter = makeAdapter(new FakeRpcClient())
     await adapter.start()
