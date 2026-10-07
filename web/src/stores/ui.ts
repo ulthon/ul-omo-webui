@@ -10,6 +10,13 @@ export interface Toast {
   text: string;
 }
 
+/** 外链入口（todo 26）：服务端 kv 配置（键 external-git-url / external-files-url），
+ * 未配置为 null 时对应入口隐藏——"未提交变更"页签是核心自有功能不受影响。 */
+export interface ExternalLinks {
+  gitUrl: string | null;
+  filesUrl: string | null;
+}
+
 interface UiState {
   /** SSE 连接状态（todo 14 写入；初始 online） */
   connection: ConnectionStatus;
@@ -27,6 +34,8 @@ interface UiState {
   agentsDegraded: boolean;
   /** 当前选中模型 "provider/model"（项目切换时应用该项目 preferred_model 偏好） */
   selectedModel: string | null;
+  /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
+  externalLinks: ExternalLinks;
   toast: Toast | null;
 
   setConnection(status: ConnectionStatus): void;
@@ -39,6 +48,7 @@ interface UiState {
   resetModels(): void;
   setAgentsDegraded(degraded: boolean): void;
   setSelectedModel(model: string | null): void;
+  setExternalLinks(links: ExternalLinks): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
 }
@@ -55,6 +65,7 @@ export const useUiStore = create<UiState>()((set) => ({
   modelsLoaded: false,
   agentsDegraded: false,
   selectedModel: null,
+  externalLinks: { gitUrl: null, filesUrl: null },
   toast: null,
 
   setConnection: (status) => set({ connection: status }),
@@ -66,6 +77,7 @@ export const useUiStore = create<UiState>()((set) => ({
   resetModels: () => set({ models: [], modelsLoaded: false }),
   setAgentsDegraded: (degraded) => set({ agentsDegraded: degraded }),
   setSelectedModel: (model) => set({ selectedModel: model }),
+  setExternalLinks: (links) => set({ externalLinks: links }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;

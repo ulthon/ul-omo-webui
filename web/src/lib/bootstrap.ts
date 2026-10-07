@@ -83,6 +83,20 @@ export async function bootstrap(): Promise<void> {
     }
   }
 
+  // 外链入口配置（todo 26）：kv 键 external-git-url / external-files-url，空值视为未配置（入口隐藏）。
+  // 拉取失败不阻塞主流程（入口缺失无害，设置弹层保存后会更新 store）。
+  try {
+    const { settings } = await api.getSettings();
+    ui.setExternalLinks({
+      gitUrl: settings["external-git-url"]?.trim() || null,
+      filesUrl: settings["external-files-url"]?.trim() || null,
+    });
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) {
+      // 静默：无外链配置时入口不渲染，属预期形态
+    }
+  }
+
   const latest = pickLatestProject(projectsRes.projects);
   if (latest) await openProject(latest.projectPath);
 }

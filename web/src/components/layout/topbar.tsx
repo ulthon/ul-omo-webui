@@ -1,9 +1,10 @@
 // 顶栏：项目下拉（含添加项目入口，POST /api/projects 服务端路径校验 + 错误回显）、
 // 模型切换下拉（todo 22：选择落 meta_project 偏好，防抖 PATCH；agentsList=false 降级已定——
-// 不渲染 agent 下拉，"当前 provider/model"语义由模型下拉承担）、连接状态点。
+// 不渲染 agent 下拉，"当前 provider/model"语义由模型下拉承担）、设置入口（todo 26：外链
+// 地址 kv 配置）、连接状态点。
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Check, ChevronDown, FolderPlus, Menu } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, Menu, Settings } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
@@ -112,6 +113,89 @@ function AddProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   );
 }
 
+/** 外链地址设置（todo 26）：kv 键 external-git-url / external-files-url，留空即隐藏对应入口。
+ * 反代按路径挂载的自托管工具（cgit/filebrowser），web 只做入口不做页面。
+ * 表单体条件挂载（open && <Form>）：每次打开全新初始态，初始值即 store 最新值，无 effect 同步。 */
+function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">{open && <SettingsForm onDone={() => onOpenChange(false)} />}</DialogContent>
+    </Dialog>
+  );
+}
+
+function SettingsForm({ onDone }: { onDone: () => void }) {
+  const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
+  const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
+  const [git, setGit] = useState(gitUrl ?? "");
+  const [files, setFiles] = useState(filesUrl ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const next = { gitUrl: git.trim(), filesUrl: files.trim() };
+      await api.putSettings({ "external-git-url": next.gitUrl, "external-files-url": next.filesUrl });
+      useUiStore.getState().setExternalLinks({ gitUrl: next.gitUrl || null, filesUrl: next.filesUrl || null });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "保存失败，请重试");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit}>
+      <DialogHeader>
+        <DialogTitle>设置</DialogTitle>
+        <DialogDescription>
+          外链指向反代挂载的自托管工具（如 cgit、filebrowser），留空则隐藏对应入口。
+        </DialogDescription>
+      </DialogHeader>
+      <div className="mt-4 space-y-3">
+        <div className="space-y-1.5">
+          <label htmlFor="settings-git-url" className="text-sm font-medium">
+            Git 外链地址
+          </label>
+          <Input
+            id="settings-git-url"
+            value={git}
+            onChange={(e) => setGit(e.target.value)}
+            placeholder="https://git.example.com 或 /git"
+            inputMode="url"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="settings-files-url" className="text-sm font-medium">
+            文件管理外链地址
+          </label>
+          <Input
+            id="settings-files-url"
+            value={files}
+            onChange={(e) => setFiles(e.target.value)}
+            placeholder="https://files.example.com 或 /files"
+            inputMode="url"
+          />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </div>
+      <DialogFooter className="mt-4">
+        <Button type="button" variant="outline" onClick={onDone}>
+          取消
+        </Button>
+        <Button type="submit" disabled={submitting}>
+          {submitting ? "保存中…" : "保存"}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
 export function Topbar() {
   const connection = useUiStore((s) => s.connection);
   const projects = useUiStore((s) => s.projects);
@@ -122,6 +206,7 @@ export function Topbar() {
   const selectedModel = useUiStore((s) => s.selectedModel);
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
   const [addOpen, setAddOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 过滤决策（todo 22 决策点）：GET /api/models 无活跃会话时返回全 provider 超集（todo 9 降级
   // 直读 models-store.json）。选择"全列展示、按 provider 分组"而非按当前会话 provider 过滤：
@@ -156,7 +241,8 @@ export function Topbar() {
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="max-w-[45vw] gap-1.5 px-2 sm:max-w-xs">
+          {/* 窄屏 max-w 收敛（todo 26 走查修复：390 顶栏溢出 scrollWidth=430；sm 起保持原桌面宽度） */}
+          <Button variant="ghost" className="max-w-[32vw] gap-1.5 px-2 sm:max-w-xs">
             <span className="truncate font-medium">
               {currentProject ? basename(currentProject) : "选择项目"}
             </span>
@@ -191,7 +277,7 @@ export function Topbar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-1">
         {/* agent 语义：引擎无 agent 枚举协议面（verification/05 P1-5），如实降级展示，不做假下拉 */}
         {agentsDegraded && (
           <span
@@ -207,7 +293,7 @@ export function Topbar() {
               variant="ghost"
               data-testid="model-switch"
               disabled={noModels}
-              className="max-w-[45vw] gap-1.5 px-2 sm:max-w-[240px]"
+              className="max-w-[26vw] gap-1.5 px-2 sm:max-w-[240px]"
               title={noModels ? "引擎未提供可用模型，发送已禁用" : (selectedModel ?? undefined)}
             >
               <span className={`truncate text-xs ${noModels ? "text-muted-foreground" : ""}`}>{modelLabel}</span>
@@ -236,13 +322,25 @@ export function Topbar() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-11"
+          aria-label="设置"
+          data-testid="settings-button"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Settings className="size-5" />
+        </Button>
         <span
-          className={`size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
+          className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
           title={connection === "online" ? "已连接" : "重连中"}
         />
       </div>
 
       <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </header>
   );
 }
