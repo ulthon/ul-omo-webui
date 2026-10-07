@@ -7,7 +7,9 @@
 // 先取后换，重取期间界面不清空），替代增量补发——覆盖手机杀后台数分钟的场景。
 import { api } from "@/lib/api";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
+import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
+import { useUiStore } from "@/stores/ui";
 
 /** 最后见到的全局游标（SSE id 行）；null = 尚未收到任何事件。用于服务端游标归零检测。 */
 let lastCursor: number | null = null;
@@ -105,9 +107,31 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
     // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
     sessions.setRunState(sessionId, "idle");
+    // 回合落定即权限队列全落定（含应答后 UI 未及时移除的残留），整队清空
+    usePermissionsStore.getState().clearSession(sessionId);
   } else if (wire.type === "extension_ui_request") {
     const method = typeof wire.method === "string" ? wire.method : null;
-    if (method !== null && DIALOG_UI_METHODS.has(method)) sessions.setRunState(sessionId, "waiting");
+    if (method !== null && DIALOG_UI_METHODS.has(method)) {
+      sessions.setRunState(sessionId, "waiting");
+      // 四型载荷入权限队列（todo 18）：无 toolCallId，按会话内未决请求建模
+      const request = wire as unknown as PermissionRequest & { id?: unknown; method?: unknown };
+      if (typeof request.id === "string" && request.id) {
+        usePermissionsStore.getState().pushRequest(sessionId, {
+          id: request.id,
+          method: method as PermissionMethod,
+          title: typeof request.title === "string" ? request.title : "",
+          options: Array.isArray(request.options) ? request.options.map(String) : undefined,
+          message: typeof request.message === "string" ? request.message : undefined,
+          placeholder: typeof request.placeholder === "string" ? request.placeholder : undefined,
+          prefill: typeof request.prefill === "string" ? request.prefill : undefined,
+        });
+      }
+    } else if (method === "notify") {
+      // fire-and-forget 型决策（计划 249）：notify 做轻提示不应答；setStatus/setWidget/setTitle
+      // 纯引擎/扩展内部状态，忽略不渲染（决策记录见 learnings todo 18）。
+      const message = typeof wire.message === "string" ? wire.message : "";
+      if (message) useUiStore.getState().showToast(message, "info");
+    }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点
     sessions.setRunState(sessionId, "error");
