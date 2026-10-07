@@ -128,3 +128,26 @@
     @apply font-sans;
     }
 }
+
+/* ---- markdown 正文（todo 16，无 typography 插件，手工收敛间距） ---- */
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body p { margin: 0.5em 0; }
+.md-body ul { list-style: disc; padding-left: 1.4em; margin: 0.5em 0; }
+.md-body ol { list-style: decimal; padding-left: 1.4em; margin: 0.5em 0; }
+.md-body li { margin: 0.2em 0; }
+.md-body li > ul, .md-body li > ol { margin: 0.2em 0; }
+.md-body h1 { font-size: 1.25em; font-weight: 600; margin: 0.8em 0 0.4em; }
+.md-body h2 { font-size: 1.15em; font-weight: 600; margin: 0.8em 0 0.4em; }
+.md-body h3, .md-body h4 { font-size: 1.05em; font-weight: 600; margin: 0.7em 0 0.35em; }
+.md-body blockquote { border-left: 2px solid var(--border); padding-left: 0.75em; margin: 0.5em 0; color: var(--muted-foreground); }
+.md-body hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.md-body table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; display: block; overflow-x: auto; }
+.md-body th, .md-body td { border: 1px solid var(--border); padding: 0.3em 0.6em; text-align: left; }
+.md-body th { background: var(--muted); font-weight: 600; }
+
+/* ---- Shiki 代码块（双主题：亮色内联，暗色走 CSS 变量切换） ---- */
+.md-body .shiki { margin: 0; background-color: transparent !important; }
+.md-body .shiki code { display: block; font-size: 0.75rem; line-height: 1.6; }
+.dark .md-body .shiki span { color: var(--shiki-dark); }
+.dark .md-body .shiki { background-color: transparent !important; }

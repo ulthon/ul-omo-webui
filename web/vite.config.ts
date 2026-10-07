@@ -11,6 +11,10 @@ const apiProxy = process.env.SENPI_WEBUI_QA_TARGET
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // ES worker：Shiki worker 内按需动态 import 语言/主题 grammar 需要 code splitting（iife 不支持）
+  worker: {
+    format: 'es',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
