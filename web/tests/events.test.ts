@@ -227,6 +227,42 @@ describe("事件分发", () => {
     client.stop();
   });
 
+  test("信封 durableSessionId 优先作 store 路由键；缺席帧回退 wire sessionId", () => {
+    const scheduler = new MockScheduler();
+    const client = freshClient(scheduler);
+    client.start();
+    const es = MockEventSource.instances[0];
+    es.emitOpen();
+
+    // 带 durableSessionId：路由键 = durable id（非 holder 别名 rpc-1）
+    es.emit(
+      "message_start",
+      { projectPath: "/p", event: { type: "message_start", sessionId: "rpc-1", id: "e1", message: { role: "user", content: [] } }, durableSessionId: "dur-1" },
+      1,
+    );
+    // 缺席 durableSessionId：回退 wire sessionId
+    es.emit(
+      "message_start",
+      { projectPath: "/p", event: { type: "message_start", sessionId: "rpc-2", id: "e2", message: { role: "user", content: [] } } },
+      2,
+    );
+
+    const keys = Object.keys(useMessagesStore.getState().bySession);
+    expect(keys).toContain("dur-1");
+    expect(keys).toContain("rpc-2");
+    expect(keys).not.toContain("rpc-1");
+
+    // 会话级状态同样落在 durable 键下（todo 15 的 SessionListItem.id 即 durable id）
+    useSessionsStore.setState({ byProject: { "/p": [makeSession("dur-1")] } });
+    es.emit(
+      "agent_start",
+      { projectPath: "/p", event: { type: "agent_start", sessionId: "rpc-1" }, durableSessionId: "dur-1" },
+      3,
+    );
+    expect(useSessionsStore.getState().byProject["/p"][0].active).toBe(true);
+    client.stop();
+  });
+
   test("重放幂等：同一回合事件流整体重喂一遍（重连缓冲重放路径），entries 不重复", () => {
     const scheduler = new MockScheduler();
     const client = freshClient(scheduler);

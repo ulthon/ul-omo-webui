@@ -1,6 +1,8 @@
-// SSE 帧分发（计划 todo 14）：把 {projectPath, event} wire 帧按 sessionId 路由进 stores。
-// 主通道 messages.applyWireEvent（消息/流式/工具生命周期，未知类型静默忽略）；会话级
-// 运行状态（agent_start/end/settled/idle）同步进 sessions store，供 todo 15 状态点消费。
+// SSE 帧分发（计划 todo 14）：把 {projectPath, event, durableSessionId?} wire 帧按会话路由进 stores。
+// 路由键优先取信封 durableSessionId（durable 会话 id，与 REST 的会话 id 一致），缺席回退
+// wire sessionId（holder 别名 rpc-N，服务端映射不明时如实不注入）。主通道 messages.applyWireEvent
+// （消息/流式/工具生命周期，未知类型静默忽略）；会话级运行状态（agent_start/end/settled/idle）
+// 同步进 sessions store，供 todo 15 状态点消费。
 // gap 帧 / 游标回退（服务端重启游标归零）→ 对已加载会话做全量 refetch（GET messages
 // 先取后换，重取期间界面不清空），替代增量补发——覆盖手机杀后台数分钟的场景。
 import { api } from "@/lib/api";
@@ -56,9 +58,9 @@ export function refetchLoadedSessions(): void {
  * cursor = id: 行游标（缺失/非法为 null）。
  */
 export function dispatchSseEvent(eventType: string, data: string, cursor: number | null): void {
-  let frame: { event?: unknown };
+  let frame: { event?: unknown; durableSessionId?: unknown };
   try {
-    frame = JSON.parse(data) as { event?: unknown };
+    frame = JSON.parse(data) as { event?: unknown; durableSessionId?: unknown };
   } catch {
     return; // 非 JSON 帧容错忽略
   }
@@ -77,7 +79,11 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const event = frame.event;
   if (event === null || typeof event !== "object") return;
   const wire = event as WireEvent;
-  const sessionId = typeof wire.sessionId === "string" ? wire.sessionId : null;
+  // store 路由键：信封 durableSessionId 优先（与 REST 会话 id 一致），缺席回退 wire sessionId
+  const durableSessionId =
+    typeof frame.durableSessionId === "string" && frame.durableSessionId.length > 0 ? frame.durableSessionId : null;
+  const wireSessionId = typeof wire.sessionId === "string" ? wire.sessionId : null;
+  const sessionId = durableSessionId ?? wireSessionId;
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询）
