@@ -22,7 +22,7 @@
 // 生命周期钩子（start/stop）为 no-op——引擎崩溃重启后管理器会造新 client，
 // ensure() 检测到 client 更换即重建 adapter 并清空会话态。
 import type { RpcClient } from "@code-yeongyu/senpi";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -66,10 +66,15 @@ export interface EngineGateway {
   modelsList(project: string): Promise<EngineModelInfo[]>;
   /**
    * 删除会话：引擎无删除协议面（rpc-client 全方法核对），实行为删磁盘会话文件
-   * （活跃中先 abort+close），元数据行由路由层清理。
+   * 与对应 -artifacts 目录（存在才删，删失败不阻塞），元数据行由路由层清理。
    */
   deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }>;
-  /** 引擎已就绪时返回其活跃会话路径列表；未就绪返回 null（不触发 spawn） */
+  /**
+   * 引擎就绪时返回**回合进行中**（webui 驱动的流式回合）会话路径列表；
+   * 未就绪返回 null（不触发 spawn），就绪且空闲返回 []。
+   * 语义注意：不是引擎 open 会话全集——open 态在回合结束后仍保留，
+   * 前端 `active` 字段语义 = 回合进行中（todo 15 实证修复）。
+   */
   peekActiveSessionPaths(project: string): Promise<string[] | null>;
   stopAll(): Promise<void>;
 }
@@ -79,6 +84,18 @@ export interface EngineRuntimeOptions {
   listProjects(): string[];
   /** OMO_CODING_AGENT_DIR / SENPI_CODING_AGENT_DIR（缺省 ~/.pi/agent，W1 spawn 规范） */
   agentDir?: string;
+  /**
+   * 合成收尾事件出口（组合根接 EventBus.publish，进同一 SSE 信封管道）。
+   * 仅在「prompt 已接受、引擎 get_state 复核已空闲、真实收尾事件宽限期内仍未到」
+   * 时调用（todo 16 实证的收尾事件缺席缺陷的权威空闲判定回退），严禁常态化轮询。
+   */
+  publishSyntheticEvent?(projectPath: string, event: Record<string, unknown>): void;
+  /** 新 assistant 消息落地回调（组合根接 meta.incrementUnread；未读计数服务端接线） */
+  recordUnread?(projectPath: string, durableSessionId: string): void;
+  /** 收尾监视轮询间隔毫秒（默认 2000，仅回合进行中运行）。 */
+  settlePollMs?: number;
+  /** 引擎空闲观察到真实收尾事件缺席时，合成前的宽限毫秒（默认 5000）。 */
+  settleGraceMs?: number;
 }
 
 function defaultAgentDir(): string {
@@ -161,10 +178,22 @@ class ProjectRuntime {
   private readonly handleToDurable = new Map<string, string>();
   /** 防抖：handle 查询 miss 时至多一个在途的 activeSessions 刷新 */
   private refreshInFlight = false;
+  /** 已验证的 durable id 集合（合成事件 sessionId 直接是 durable id，
+   * 信封 durableLookup 需要能识别它以注入 durableSessionId）。 */
+  private readonly knownDurable = new Set<string>();
   /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化） */
   private readonly aliases = new Map<string, string>();
   /** 操作互斥链：串行化「切换活跃会话 + 作用于活跃会话」的关键区 */
   private chain: Promise<unknown> = Promise.resolve();
+  /** 回合进行中会话的 sessionPath（GET /api/sessions 的 active 字段依据，todo 15 修复） */
+  private streamingPath: string | null = null;
+  /** 回合序号：每次 prompt 接受自增；收尾监视的过期判定用 */
+  private roundSeq = 0;
+  /** 收尾监视定时器（仅回合进行中运行，严禁常态化轮询） */
+  private settleTimer: ReturnType<typeof setInterval> | null = null;
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 已计过未读的 assistant 消息 id（幂等去重；封顶防泄漏） */
+  private readonly countedMessages = new Set<string>();
 
   constructor(
     private readonly manager: EngineProcessManager,
@@ -191,8 +220,11 @@ class ProjectRuntime {
       this.wrappedClient = client;
       this.activeId = null;
       this.streamingId = null;
+      this.streamingPath = null;
       this.aliases.clear();
       this.handleToDurable.clear();
+      this.knownDurable.clear();
+      this.stopSettleWatch();
       const adapter: SenpiAdapter = new SenpiAdapter({
         projectDir: this.projectPath,
         agentDir: this.opts.agentDir ?? defaultAgentDir(),
@@ -201,12 +233,120 @@ class ProjectRuntime {
       await adapter.start();
       this.adapter = adapter;
       // 回合结束信号：abort 与正常收尾都会发 agent_end / agent_settled
-      // （docs/verification/01 abort 实证），清单驱动标记。
+      // （docs/verification/01 abort 实证），清单驱动标记与收尾监视。
       adapter.events((event) => {
-        const type = (event as { type?: string }).type;
-        if (type === "agent_end" || type === "agent_settled") this.streamingId = null;
+        const wire = event as {
+          type?: string;
+          sessionId?: unknown;
+          entry?: { type?: unknown; id?: unknown; message?: { role?: unknown } };
+        };
+        const type = wire.type;
+        if (type === "agent_end" || type === "agent_settled" || type === "agent_idle") {
+          this.settleRound();
+          return;
+        }
+        // 未读计数接线（todo 15 发现刷新归零）：assistant 消息条目落地即 unread+1。
+        // 事件源取 entry_appended（entry.type==="message" 且 role=assistant）——
+        // entry.id 是磁盘条目 id，天然满足「按 entryId 幂等」；message_end 的
+        // message 体无 id 字段（实证），不作未读源。
+        // 设计取舍：主动查看中的会话同样递增——前端在回合落定时对当前选中会话
+        // 补发 POST /:id/read（清零+last_read），服务端不做「正在看」判定。
+        if (type === "entry_appended" && wire.entry && wire.entry.type === "message") {
+          const role = wire.entry.message?.role;
+          const entryId = typeof wire.entry.id === "string" ? wire.entry.id : undefined;
+          const handle = typeof wire.sessionId === "string" ? wire.sessionId : undefined;
+          if (role === "assistant" && entryId && handle) {
+            this.recordUnreadFor(handle, entryId);
+          }
+        }
       });
     }
+  }
+
+  /** assistant 消息条目落地 → unread+1；按 entry id 幂等（同一 entry 只计一次）。 */
+  private recordUnreadFor(handle: string, entryId: string): void {
+    if (this.countedMessages.has(entryId)) return;
+    this.countedMessages.add(entryId);
+    if (this.countedMessages.size > 2000) {
+      // Set 保持插入序，裁掉最早的半量，防长驻进程缓慢泄漏
+      for (const key of [...this.countedMessages].slice(0, 1000)) this.countedMessages.delete(key);
+    }
+    const durable = this.durableSessionIdFor(handle);
+    if (durable) this.opts.recordUnread?.(this.projectPath, durable);
+  }
+
+  // ---- 收尾监视（todo 16 实证：个别回合收尾 wire 事件全部缺席）----
+  // prompt 接受后以 settlePollMs 间隔 get_state 辅助监视：引擎确实空闲
+  // （isStreaming=false）且宽限期内真实收尾事件未到 → 合成 agent_settled
+  //（synthetic:true）进事件流，保证下游「回合结束」语义完整。仅在回合
+  // 进行中运行，回合正常收尾即停；消息内容补全靠前端 GET messages 兜底。
+
+  /** prompt 接受后启动收尾监视（幂等；同一时刻只有一个回合在驱动的项目级单例） */
+  private startSettleWatch(): void {
+    if (this.settleTimer) return;
+    const pollMs = this.opts.settlePollMs ?? 2000;
+    this.settleTimer = setInterval(() => {
+      void this.checkSettle().catch(() => undefined);
+    }, pollMs);
+    this.settleTimer.unref?.();
+  }
+
+  private stopSettleWatch(): void {
+    if (this.settleTimer) {
+      clearInterval(this.settleTimer);
+      this.settleTimer = null;
+    }
+    if (this.graceTimer) {
+      clearTimeout(this.graceTimer);
+      this.graceTimer = null;
+    }
+  }
+
+  private async checkSettle(): Promise<void> {
+    if (this.streamingId === null || !this.adapter) {
+      this.stopSettleWatch();
+      return;
+    }
+    const seq = this.roundSeq;
+    const client = this.wrappedClient;
+    if (!client) return;
+    let isStreaming: unknown;
+    try {
+      const state = await (client as unknown as { getState: () => Promise<{ isStreaming?: unknown }> }).getState();
+      isStreaming = state.isStreaming;
+    } catch {
+      return; // get_state 偶发失败不判收尾，下一轮再查
+    }
+    if (isStreaming !== false || this.streamingId === null || seq !== this.roundSeq) return;
+    // 引擎已空闲但真实收尾事件未到：宽限一次（真实事件迟到则落定后跳过）
+    if (this.graceTimer) return;
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      if (this.streamingId === null || seq !== this.roundSeq) return;
+      this.synthesizeSettled(seq);
+    }, this.opts.settleGraceMs ?? 5000);
+    this.graceTimer.unref?.();
+  }
+
+  /** 合成 agent_settled：带 synthetic 标记；sessionId 直接用 durable id
+   *（流式中的会话必已 open，identity 已知），前端信封回退路径可直接路由。 */
+  private synthesizeSettled(seq: number): void {
+    if (this.streamingId === null || seq !== this.roundSeq) return;
+    const sessionId = this.streamingId;
+    this.settleRound();
+    this.opts.publishSyntheticEvent?.(this.projectPath, {
+      type: "agent_settled",
+      synthetic: true,
+      sessionId,
+      reason: "settle_watchdog",
+    });
+  }
+
+  /** 回合落定：清流式标记（GET /api/sessions active 随之清位）+ 停监视 */
+  private settleRound(): void {
+    this.streamingId = null;
+    this.streamingPath = null;
+    this.stopSettleWatch();
   }
 
   /** 崩溃/重启时清空会话态（adapter 留给 ensure() 按 client 更换重建）。
@@ -214,16 +354,24 @@ class ProjectRuntime {
   invalidate(): void {
     this.activeId = null;
     this.streamingId = null;
+    this.streamingPath = null;
     this.aliases.clear();
     this.handleToDurable.clear();
+    this.knownDurable.clear();
+    this.stopSettleWatch();
   }
 
-  /** 引擎就绪时的活跃会话路径列表 */
+  /** 引擎就绪时的**回合进行中**会话路径（active 字段语义 = 回合进行中，todo 15 修复） */
   async activeSessionPaths(): Promise<string[]> {
     if (!this.adapter) return [];
-    const rows = await this.adapter.activeSessions();
-    this.rememberHandleRows(rows);
-    return rows.map((r) => r.sessionPath).filter((p): p is string => typeof p === "string");
+    // open 态行有副产物价值：顺带回填 handle→durable 映射（权威来源）
+    try {
+      const rows = await this.adapter.activeSessions();
+      this.rememberHandleRows(rows);
+    } catch {
+      // 探询失败不阻塞 active 判定
+    }
+    return this.streamingPath ? [this.streamingPath] : [];
   }
 
   /** 活跃会话行的 handle→durableSessionId 回填（list_sessions 行两个字段都有，权威来源） */
@@ -231,15 +379,18 @@ class ProjectRuntime {
     for (const row of rows) {
       if (row.sessionId && row.durableSessionId) {
         this.handleToDurable.set(row.sessionId, row.durableSessionId);
+        this.knownDurable.add(row.durableSessionId);
       }
     }
   }
 
-  /** wire sessionId（routing handle）→ durable id；查不到返回 undefined（SSE 透传不猜）。
-   * miss 时异步刷新一次活跃会话行（去重防事件风暴期间 RPC 刷屏），本次仍如实返回 undefined。 */
+  /** wire sessionId → durable id：routing handle 查映射；合成事件的 sessionId
+   * 本身就是 durable id（直认）。其余（未知 handle）返回 undefined（透传不猜）。
+   * miss 时异步刷新一次活跃会话行（去重防事件风暴期间 RPC 刷屏）。 */
   durableSessionIdFor(handle: string): string | undefined {
     const hit = this.handleToDurable.get(handle);
     if (hit !== undefined) return hit;
+    if (this.knownDurable.has(handle)) return handle;
     if (!this.refreshInFlight && this.adapter) {
       this.refreshInFlight = true;
       void this.adapter
@@ -321,6 +472,7 @@ class ProjectRuntime {
   private rememberHandle(handle: string | undefined, durableId: string | undefined): void {
     if (!handle || !durableId) return;
     this.handleToDurable.set(handle, durableId);
+    this.knownDurable.add(durableId);
   }
 
   requireAdapter(): EngineAdapter {
@@ -394,7 +546,12 @@ class ProjectRuntime {
       try {
         const receipt = await adapter.prompt({ text: input.text, images: input.images });
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
-        if (receipt.disposition !== "handled") this.streamingId = sessionId;
+        if (receipt.disposition !== "handled") {
+          this.streamingId = sessionId;
+          this.streamingPath = adapter.getActiveSession()?.sessionPath ?? null;
+          this.roundSeq += 1;
+          this.startSettleWatch();
+        }
         return receipt;
       } catch (err) {
         // 外部驱动或事件丢失兜底：引擎进程内守卫的报错映射为同一 409 语义
@@ -478,7 +635,18 @@ class ProjectRuntime {
     } catch {
       // 文件尚未落盘（空会话）或已被删：仅清元数据
     }
+    // 同清理 open_session 预建的 <sessionFile 去 .jsonl>-artifacts 目录
+    //（todo 15 实证残留空目录）；存在才删，删失败不阻塞主删除。
+    const artifactsDir = row.path.replace(/\.jsonl$/, "") + "-artifacts";
+    try {
+      if (existsSync(artifactsDir) && statSync(artifactsDir).isDirectory()) {
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    } catch {
+      // 残留不阻塞删除主流程
+    }
     this.aliases.delete(sessionId);
+    this.countedMessages.clear();
     return { sessionPath: row.path, fileExisted };
   }
 }
@@ -597,7 +765,9 @@ export class EngineRuntimeRegistry implements EngineGateway {
     return this.runtimes.get(projectPath)?.durableSessionIdFor(handle);
   }
 
-  stopAll(): Promise<void> {
-    return this.manager.stopAll();
+  async stopAll(): Promise<void> {
+    await this.manager.stopAll();
+    // 引擎全停即会话态全失效：清流式标记并停收尾监视定时器
+    for (const rt of this.runtimes.values()) rt.invalidate();
   }
 }

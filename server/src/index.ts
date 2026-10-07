@@ -24,6 +24,16 @@ const manager = new EngineProcessManager({
 });
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
+  // 收尾监视的合成 agent_settled 进同一事件桥（todo 16 实证：个别回合收尾
+  // wire 事件全部缺席；get_state 复核空闲 + 宽限后合成，带 synthetic 标记）
+  publishSyntheticEvent: (projectPath, event) => {
+    eventBus.publish(projectPath, event as never);
+  },
+  // 未读计数服务端接线：assistant 消息落地 → meta_session.unread_count++
+  //（主动查看中的会话同样递增；前端回合落定时对选中会话补发 read 清零）
+  recordUnread: (_projectPath, durableSessionId) => {
+    meta.incrementUnread(durableSessionId);
+  },
 });
 
 // SSE 事件桥装配（todo 10 收口 + todo 9 后续修复）：manager 的 engine_event 透传进桥

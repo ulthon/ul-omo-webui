@@ -113,7 +113,10 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
         (s) => s.title.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q),
       );
     }
-    // 活跃标记：仅在引擎已就绪时探询（列表请求不触发冷启动 spawn），null 表示未知
+    // active 语义 = 回合进行中（webui 驱动的流式回合）：true/false，引擎未就绪为
+    // null（不触发 spawn）。注意不是引擎 open 态——open 在回合结束后仍保留，
+    // 按 open 判定会导致 active 永远 true（todo 15 实证，已修复）。
+    // 状态点（运行中/等待权限/空闲/出错）仍以 SSE 状态事件为准（todo 15）。
     const activePaths = await deps.engines.peekActiveSessionPaths(project);
     const withActive = sessions.map((s) => ({
       ...s,

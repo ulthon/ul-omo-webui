@@ -4,7 +4,7 @@
 // - 会话列表合并/过滤（view=human、archived、q、置顶排序、元数据合并）
 // - 单驱动约束：回合中再次 prompt 409（真实 EngineProcessManager + fake 引擎连接）
 import { describe, expect, test, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -560,6 +560,8 @@ class FakeEngineClient implements EngineClientLike {
   readonly prompts: string[] = [];
   readonly modelSwitches: Array<{ provider: string; modelId: string }> = [];
   closed = 0;
+  /** get_state 的 isStreaming 返回值（收尾监视测试用） */
+  fakeStreaming = false;
 
   constructor(opts: RpcClientOptions) {
     this.spawnOpts = opts;
@@ -623,6 +625,9 @@ class FakeEngineClient implements EngineClientLike {
   async getAvailableThinkingLevels(): Promise<string[]> {
     return ["low"];
   }
+  async getState(): Promise<Record<string, unknown>> {
+    return { isStreaming: this.fakeStreaming, messageCount: 2 };
+  }
   async getSessionStats(): Promise<Record<string, unknown>> {
     return {
       sessionId: "holder-1",
@@ -676,14 +681,20 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
   let probe: StaticProbe;
   let manager: EngineProcessManager;
   let registry: EngineRuntimeRegistry;
+  let syntheticEvents: Array<{ projectPath: string; event: Record<string, unknown> }>;
+  let unreadCalls: Array<{ projectPath: string; durableSessionId: string }>;
 
   function setup(durableSessionId: string | undefined): void {
     proj = mkdtempSync(join(tmpdir(), "runtime-proj-"));
     mkdirSync(join(proj, "sessions"), { recursive: true });
     client = new FakeEngineClient({ cwd: proj } as RpcClientOptions);
     client.durableSessionId = durableSessionId;
+    // 默认流式中：收尾监视见到 isStreaming=true 不合成（需要空闲的测试显式置 false）
+    client.fakeStreaming = true;
     probe = new StaticProbe();
     probe.pids.add(client.process.pid);
+    syntheticEvents = [];
+    unreadCalls = [];
     manager = new EngineProcessManager({
       clientFactory: () => client,
       probe,
@@ -692,7 +703,14 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
       readyProbeMaxAttempts: 10,
       crashPollMs: 60_000,
     });
-    registry = new EngineRuntimeRegistry(manager, { listProjects: () => [proj], agentDir: proj });
+    registry = new EngineRuntimeRegistry(manager, {
+      listProjects: () => [proj],
+      agentDir: proj,
+      settlePollMs: 30,
+      settleGraceMs: 80,
+      publishSyntheticEvent: (projectPath, event) => syntheticEvents.push({ projectPath, event }),
+      recordUnread: (projectPath, durableSessionId) => unreadCalls.push({ projectPath, durableSessionId }),
+    });
   }
 
   afterEach(async () => {
@@ -747,11 +765,16 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
 
     const sessionFile = created.sessionPath;
     writeFileSync(sessionFile, "{}\n");
+    // (d) 回归：open_session 预建的 artifacts 目录随会话一并清理
+    const artifactsDir = sessionFile.replace(/\.jsonl$/, "") + "-artifacts";
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(join(artifactsDir, "blob.bin"), "x");
     const removed = await registry.deleteSession(created.id);
     expect(removed.fileExisted).toBe(true);
     expect(removed.sessionPath).toBe(sessionFile);
     const exists = await Bun.file(sessionFile).exists();
     expect(exists).toBe(false);
+    expect(existsSync(artifactsDir)).toBe(false);
     expect(client.closed).toBeGreaterThanOrEqual(1);
   });
 
@@ -765,6 +788,74 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const r = await registry.prompt(created.id, { text: "别名追问" });
     expect(r.disposition).toBe("started");
     expect(client.prompts).toEqual(["别名追问"]);
+  });
+
+  test("(c) active 语义 = 回合进行中：settled 事件清位", async () => {
+    setup("durable-1");
+    const created = await registry.createSession(proj, {});
+    await registry.prompt(created.id, { text: "第一问" });
+    // 回合进行中：active 命中该会话路径
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([created.sessionPath]);
+    // 真实收尾事件：清位且不触发合成
+    client.emit({ type: "agent_end", sessionId: "routing-1" });
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
+    await Bun.sleep(200); // 越过轮询+宽限窗口
+    expect(syntheticEvents).toEqual([]);
+  });
+
+  test("(a) 收尾事件缺席 + get_state 空闲 → 宽限后合成 agent_settled（synthetic:true）", async () => {
+    setup("durable-1");
+    const created = await registry.createSession(proj, {});
+    await registry.prompt(created.id, { text: "只回复：好" });
+    // 引擎实际已空闲（get_state isStreaming=false）但收尾事件永不到来
+    client.fakeStreaming = false;
+    // 轮询 30ms + 宽限 80ms，留裕量
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && syntheticEvents.length === 0) {
+      await Bun.sleep(20);
+    }
+    expect(syntheticEvents).toHaveLength(1);
+    const { projectPath, event } = syntheticEvents[0];
+    expect(projectPath).toBe(proj);
+    expect(event.type).toBe("agent_settled");
+    expect(event.synthetic).toBe(true);
+    // 合成事件 sessionId = durable id（前端信封回退路径直接可路由）
+    expect(event.sessionId).toBe(created.id);
+    // 合成后 active 清位（僵尸流式态消除）
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
+    // 引擎仍在流式（get_state isStreaming=true）时不合成
+    setup("durable-1");
+    const c2 = await registry.createSession(proj, {});
+    await registry.prompt(c2.id, { text: "第二问" });
+    client.fakeStreaming = true;
+    await Bun.sleep(250);
+    expect(syntheticEvents).toHaveLength(0);
+  });
+
+  test("(b) assistant 消息条目落地 → unread 递增（按 entryId 幂等）", async () => {
+    setup("durable-1");
+    await registry.createSession(proj, {});
+    const appended = (id: string, role: string, entryType = "message") =>
+      client.emit({
+        type: "entry_appended",
+        sessionId: "routing-1",
+        entry: { type: entryType, id, message: { role } },
+      });
+    // assistant 消息条目落地：递增一次
+    appended("e-1", "assistant");
+    expect(unreadCalls).toEqual([{ projectPath: proj, durableSessionId: "durable-1" }]);
+    // 同一条目重复投递：不重复计
+    appended("e-1", "assistant");
+    expect(unreadCalls).toHaveLength(1);
+    // 另一条 assistant：再计
+    appended("e-2", "assistant");
+    expect(unreadCalls).toHaveLength(2);
+    // 用户消息 / 自定义条目 / message_end（无 entry id，不作未读源）：不计
+    appended("e-3", "user");
+    appended("e-4", "assistant", "custom");
+    client.emit({ type: "message_end", sessionId: "routing-1", message: { role: "assistant" } });
+    client.emit({ type: "agent_start", sessionId: "routing-1" });
+    expect(unreadCalls).toHaveLength(2);
   });
 });
 
