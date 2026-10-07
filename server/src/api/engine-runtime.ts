@@ -389,6 +389,27 @@ class ProjectRuntime {
     this.stopSettleWatch();
   }
 
+  /** 引擎进程崩溃/不可用：回合进行中则先合成收尾事件（reason:"engine_crash"）——
+   * 前端 agent_settled 驱动 settleStreaming 立即解锁、可继续发新 prompt（消息内容
+   * 缺口靠 GET messages 兜底）；随后 invalidate 清态（active 清位 + handle 映射清空，
+   * adapter 由 ensure() 按 client 更换重建）。不合成则前端流式态挂死至手动刷新。 */
+  crashSettle(): void {
+    if (this.streamingId !== null) {
+      const sessionId = this.streamingId;
+      const seq = this.roundSeq;
+      this.settleRound();
+      if (seq === this.roundSeq) {
+        this.opts.publishSyntheticEvent?.(this.projectPath, {
+          type: "agent_settled",
+          synthetic: true,
+          sessionId,
+          reason: "engine_crash",
+        });
+      }
+    }
+    this.invalidate();
+  }
+
   /** 崩溃/重启时清空会话态（adapter 留给 ensure() 按 client 更换重建）。
    * handle→durable 映射一并清空：旧 handle 属于已死进程，保留只会误映射。 */
   invalidate(): void {
@@ -786,11 +807,12 @@ export class EngineRuntimeRegistry implements EngineGateway {
     private readonly manager: EngineProcessManager,
     private readonly opts: EngineRuntimeOptions,
   ) {
-    // 引擎崩溃/不可用即清对应运行时会话态（adapter 由 ensure() 按 client 更换重建）
+    // 引擎崩溃/不可用：回合进行中先合成收尾事件（前端解锁），再清会话态
+    //（adapter 由 ensure() 按 client 更换重建）
     manager.onEvent((event) => {
       if (event.type === "process_crashed" || event.type === "engine_unavailable") {
         const projectPath = (event as { projectPath?: string }).projectPath;
-        if (projectPath) this.runtimes.get(projectPath)?.invalidate();
+        if (projectPath) this.runtimes.get(projectPath)?.crashSettle();
       }
     });
   }

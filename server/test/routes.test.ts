@@ -1012,6 +1012,75 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     expect(syntheticEvents).toHaveLength(0);
   });
 
+  test("(a-2) 流式中引擎崩溃 → 合成 agent_settled（engine_crash）+ 清位 + 可继续 prompt", async () => {
+    // 独立 manager：crashPoll 1ms 快速检出（setup 默认 60s 抑制崩溃检测）
+    proj = mkdtempSync(join(tmpdir(), "runtime-proj-"));
+    mkdirSync(join(proj, "sessions"), { recursive: true });
+    client = new FakeEngineClient({ cwd: proj } as RpcClientOptions);
+    client.durableSessionId = "durable-1";
+    client.fakeStreaming = true;
+    probe = new StaticProbe();
+    probe.pids.add(client.process.pid);
+    syntheticEvents = [];
+    unreadCalls = [];
+    const crashManager = new EngineProcessManager({
+      clientFactory: () => {
+        probe.pids.add(client.process.pid);
+        return client;
+      },
+      probe,
+      registryPath: join(proj, "registry.json"),
+      readyProbeIntervalMs: 1,
+      readyProbeMaxAttempts: 10,
+      crashPollMs: 1,
+      backoffBaseMs: 5,
+    });
+    registry = new EngineRuntimeRegistry(crashManager, {
+      listProjects: () => [proj],
+      agentDir: proj,
+      publishSyntheticEvent: (projectPath, event) => syntheticEvents.push({ projectPath, event }),
+      recordUnread: (projectPath, durableSessionId) => unreadCalls.push({ projectPath, durableSessionId }),
+    });
+
+    const created = await registry.createSession(proj, {});
+    await registry.prompt(created.id, { text: "长任务" });
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([created.sessionPath]);
+    // 模拟 kill -9：进程从探针消失 → crashPoll 检出 process_crashed → crashSettle
+    probe.pids.delete(client.process.pid);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && syntheticEvents.length === 0) {
+      await Bun.sleep(10);
+    }
+    expect(syntheticEvents).toHaveLength(1);
+    const { projectPath, event } = syntheticEvents[0];
+    expect(projectPath).toBe(proj);
+    expect(event.type).toBe("agent_settled");
+    expect(event.synthetic).toBe(true);
+    expect(event.reason).toBe("engine_crash");
+    expect(event.sessionId).toBe(created.id);
+    // active 清位（重启窗口期 peek 引擎未就绪返回 null 也属预期语义）
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
+    // 真实场景会话已落盘：写最小 jsonl（header id=durable-1）供 store 扫描重解析
+    //（invalidate 清空了内存索引，durable id 靠磁盘 jsonl 找回）
+    const encode = (cwd: string) => `--${cwd.replace(/^\//, "").replaceAll("/", "-")}--`;
+    const storeDir = join(proj, "sessions", encode(proj));
+    mkdirSync(storeDir, { recursive: true });
+    const persistedPath = join(storeDir, "2026-10-07T01-00-00-000Z_durable-1.jsonl");
+    writeFileSync(
+      persistedPath,
+      `${JSON.stringify({ type: "session", version: 3, id: created.id, cwd: proj, timestamp: "2026-10-07T01:00:00.000Z" })}\n` +
+        `${JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-10-07T01:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "长任务" }] } })}\n`,
+    );
+    // 引擎重启（fake 同实例重新出现）后可继续发新 prompt（不再 409）
+    const r = await registry.prompt(created.id, { text: "继续" });
+    expect(r.disposition).toBe("started");
+    expect(client.prompts).toEqual(["长任务", "继续"]);
+    // 崩溃会话态已清（invalidate）：stopAll 走 registry
+    probe.pids.clear();
+    await registry.stopAll();
+    rmSync(proj, { recursive: true, force: true });
+  });
+
   test("(b) assistant 消息条目落地 → unread 递增（按 entryId 幂等）", async () => {
     setup("durable-1");
     await registry.createSession(proj, {});
