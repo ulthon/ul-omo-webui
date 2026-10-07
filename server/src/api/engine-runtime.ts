@@ -22,8 +22,9 @@
 // 生命周期钩子（start/stop）为 no-op——引擎崩溃重启后管理器会造新 client，
 // ensure() 检测到 client 更换即重建 adapter 并清空会话态。
 import type { RpcClient } from "@code-yeongyu/senpi";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type EngineAdapter,
@@ -69,6 +70,21 @@ export interface EngineGateway {
    * 与对应 -artifacts 目录（存在才删，删失败不阻塞），元数据行由路由层清理。
    */
   deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }>;
+  /**
+   * 导出会话 HTML（omo CLI --export，verification/05 P1-7；CLI 子命令不依赖引擎进程活跃，
+   * 但会话文件须已落盘——空会话 409 session_not_persisted）。row 供路由层取导出文件名。
+   */
+  exportSessionHtml(sessionId: string): Promise<{ html: string; row: EngineSessionSummary }>;
+  /**
+   * 从指定条目 fork 新会话（重试语义：position="before" 仅接受 user 消息条目，
+   * 新会话为该消息之前的上下文，text 返回原消息文本供上层重发）。
+   * 返回 durable id（fork 即物化落盘，createBranchedSession 直接写文件；未解析到时退化别名）。
+   */
+  forkSession(
+    sessionId: string,
+    entryId: string,
+    position?: "before" | "at",
+  ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }>;
   /**
    * 引擎就绪时返回**回合进行中**（webui 驱动的流式回合）会话路径列表；
    * 未就绪返回 null（不触发 spawn），就绪且空闲返回 []。
@@ -172,6 +188,7 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
     closeSession: (sessionId?: string) => client.closeSession(sessionId),
     listSessions: () => client.listSessions(),
     getEntries: (since?: string) => client.getEntries(since),
+    fork: (entryId: string, options?: { position?: "before" | "at" }) => client.fork(entryId, options),
     prompt: (message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"] }) =>
       client.prompt(message, options as never),
     abort: () => client.abort(),
@@ -672,6 +689,91 @@ class ProjectRuntime {
     this.countedMessages.clear();
     return { sessionPath: row.path, fileExisted };
   }
+
+  async exportSessionHtml(sessionId: string): Promise<{ html: string; row: EngineSessionSummary }> {
+    const row = await this.resolveSession(sessionId);
+    if (!existsSync(row.path)) {
+      throw new ApiError(409, "session_not_persisted", "会话尚未落盘（空会话），无法导出");
+    }
+    // --export 是 CLI 子命令（spawnSync），不依赖引擎进程活跃；adapter 未建时用裸
+    // SenpiAdapter 携带正确的 agentDir/projectDir 即可（exportHtml 不走 rpc）。
+    const adapter = this.adapter ?? new SenpiAdapter({
+      projectDir: this.projectPath,
+      agentDir: this.opts.agentDir ?? defaultAgentDir(),
+    });
+    const tmp = join(tmpdir(), `senpi-webui-export-${randomUUID()}.html`);
+    try {
+      await adapter.exportHtml(row.path, tmp);
+      return { html: readFileSync(tmp, "utf8"), row };
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+  }
+
+  async forkSession(
+    sessionId: string,
+    entryId: string,
+    position: "before" | "at" = "before",
+  ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }> {
+    await this.ensure();
+    return this.runExclusive(async () => {
+      // fork 会让引擎 teardown 当前活跃会话并切换到新会话——项目内存在 webui 驱动
+      // 回合时一律拒绝（单驱动纪律，P2-11），避免把回合中的会话拆掉。
+      if (this.streamingId !== null) {
+        throw new ApiError(409, "already_processing", "该项目有进行中的回合，fork 前请等待回合结束或 abort");
+      }
+      await this.switchTo(sessionId);
+      const client = this.wrappedClient;
+      if (!client) throw new ApiError(503, "engine_not_ready", "项目引擎未就绪");
+      let forked: { text: string; cancelled: boolean };
+      try {
+        forked = await client.fork(entryId, { position });
+      } catch (err) {
+        // 引擎侧条目校验：position="before" 仅接受 user 消息条目（agent-session-runtime fork）
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("Invalid entry ID")) {
+          throw new ApiError(400, "invalid_entry", `entryId 不能作为 fork 点（${position} 语义不接受该条目）`);
+        }
+        if (message.includes("has not been saved yet")) {
+          throw new ApiError(409, "session_not_persisted", "会话尚未落盘，无法 fork");
+        }
+        throw err;
+      }
+      if (forked.cancelled) {
+        throw new ApiError(409, "fork_cancelled", "fork 被扩展取消");
+      }
+      // fork 后引擎活跃会话已切换为新会话（createBranchedSession 即物化落盘并写
+      // parentSession 血缘）；durable id 解析同 createSession：活跃行 sessionPath
+      // 匹配 durableSessionId 为准，退化用 getState().sessionId + 内存别名。
+      const state = await (
+        client as unknown as { getState: () => Promise<{ sessionId?: unknown; sessionFile?: unknown }> }
+      ).getState();
+      const sessionPath = typeof state.sessionFile === "string" ? state.sessionFile : "";
+      if (!sessionPath) {
+        throw new ApiError(500, "fork_failed", "fork 后未取得新会话文件路径");
+      }
+      let id = typeof state.sessionId === "string" ? state.sessionId : "";
+      let durable = false;
+      try {
+        const rows = await this.requireAdapter().activeSessions();
+        this.rememberHandleRows(rows);
+        const row = rows.find((r) => r.sessionPath === sessionPath && r.durableSessionId);
+        if (row?.durableSessionId) {
+          id = row.durableSessionId;
+          durable = true;
+        }
+      } catch {
+        // 活跃行查询失败不影响 fork，退化为别名
+      }
+      if (!durable) {
+        if (!id) throw new ApiError(500, "fork_failed", "fork 后未取得新会话 id");
+        this.aliases.set(id, sessionPath);
+      }
+      // 引擎活跃已是新会话，API 活跃跟随切换（后续 prompt 直达 fork 会话）
+      this.activeId = id;
+      return { id, sessionPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
+    });
+  }
 }
 
 /** 引擎网关：路由层唯一入口。按项目懒加载运行时，会话 id 全局反查。 */
@@ -774,6 +876,22 @@ export class EngineRuntimeRegistry implements EngineGateway {
     const result = await rt.deleteSession(sessionId);
     this.index.delete(sessionId);
     return result;
+  }
+
+  async exportSessionHtml(sessionId: string): Promise<{ html: string; row: EngineSessionSummary }> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.exportSessionHtml(sessionId);
+  }
+
+  async forkSession(
+    sessionId: string,
+    entryId: string,
+    position?: "before" | "at",
+  ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }> {
+    const rt = await this.resolveRuntime(sessionId);
+    const forked = await rt.forkSession(sessionId, entryId, position);
+    this.index.set(forked.id, rt);
+    return forked;
   }
 
   async peekActiveSessionPaths(project: string): Promise<string[] | null> {

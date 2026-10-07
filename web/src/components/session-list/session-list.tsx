@@ -1,9 +1,11 @@
-// 会话列表主组件（计划 todo 15）：项目分组（当前项目置顶默认展开，其余组懒加载）、
-// 视图切换（人工 / 全部活动）、归档过滤、全局搜索（跨项目并行查询合并，结果标注来源项目）、
+// 会话列表主组件（计划 todo 15/25）：项目分组（当前项目置顶默认展开，其余组懒加载）、
+// 视图切换（人工 / 全部活动）、归档三态、全局搜索（跨项目并行查询合并，结果标注来源项目）、
 // 新建会话（空会话未落盘先 upsert 占位，发送首条消息落盘后被刷新数据替换）、
-// 未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、元数据操作弹窗。
+// 未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、元数据操作弹窗、
+// 批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗，逐个调既有 API
+// 循环 + 进度反馈，失败逐条报告不中断整批）。
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Filter, Loader2, MessageSquare, Plus, Search, X } from "lucide-react";
+import { Archive, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { refreshSessions } from "@/lib/bootstrap";
@@ -73,6 +75,11 @@ export function SessionList() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [dialog, setDialog] = useState<SessionDialogState | null>(null);
   const [creating, setCreating] = useState(false);
+  // 批量模式（todo 25）：勾选集合提升到容器层；归档循环的进度反馈
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ label: string; done: number; total: number } | null>(null);
 
   useMarkReadOnView();
 
@@ -187,6 +194,86 @@ export function SessionList() {
     ...projects.filter((p) => p.projectPath !== currentProject),
   ];
 
+  // ---- 批量操作（todo 25）----
+
+  const exitBatch = () => {
+    setBatchMode(false);
+    setSelectedIds(new Set());
+    setBatchProgress(null);
+  };
+
+  const toggleCheck = (session: SessionListItem) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(session.id)) next.delete(session.id);
+      else next.add(session.id);
+      return next;
+    });
+  };
+
+  /** 当前可见行（搜索结果或已展开分组）——"全选"的范围 */
+  const visibleSessions = (): SessionListItem[] => {
+    if (searchResults !== null) return searchResults;
+    const out: SessionListItem[] = [];
+    for (const p of sortedProjects) {
+      if (!expandedGroups[p.projectPath]) continue;
+      out.push(...(byProject[p.projectPath] ?? []));
+    }
+    return out;
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(visibleSessions().map((s) => s.id)));
+  };
+
+  /** 按 id 跨项目查会话行（批量删除弹窗取标题用） */
+  const findSessions = (ids: Set<string>): SessionListItem[] => {
+    const out: SessionListItem[] = [];
+    for (const list of Object.values(byProject)) {
+      for (const s of list) if (ids.has(s.id)) out.push(s);
+    }
+    return out;
+  };
+
+  /** 批量归档/取消归档：逐个调既有 PATCH 循环 + 进度反馈，失败逐条收集不中断整批 */
+  const runBatchArchive = async (archived: boolean) => {
+    if (batchBusy || selectedIds.size === 0) return;
+    setBatchBusy(true);
+    const ids = [...selectedIds];
+    const failed: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      setBatchProgress({ label: archived ? "归档中" : "取消归档中", done: i, total: ids.length });
+      try {
+        await api.patchSessionMeta(ids[i], { archived });
+      } catch {
+        failed.push(ids[i]);
+      }
+    }
+    setBatchProgress({ label: archived ? "归档中" : "取消归档中", done: ids.length, total: ids.length });
+    setBatchBusy(false);
+    setBatchProgress(null);
+    setSelectedIds(new Set());
+    if (failed.length === 0) {
+      useUiStore.getState().showToast(`已${archived ? "归档" : "取消归档"} ${ids.length} 个会话`);
+    } else {
+      useUiStore
+        .getState()
+        .showToast(`${ids.length - failed.length}/${ids.length} 成功，${failed.length} 个失败（见网络日志）`, "error");
+    }
+    onChanged();
+  };
+
+  /** 批量删除入口：确认弹窗托管在 SessionDialogs（>20 个强化确认 + 进度） */
+  const openBatchDelete = () => {
+    if (selectedIds.size === 0) return;
+    const sessions = findSessions(selectedIds);
+    setDialog({
+      kind: "batch-delete",
+      ids: sessions.map((s) => s.id),
+      titles: sessions.map((s) => s.title),
+    });
+  };
+
   const archivedLabel = archived === "false" ? "未归档" : archived === "true" ? "已归档" : "含归档";
 
   return (
@@ -234,9 +321,19 @@ export function SessionList() {
                 全部活动
               </button>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`ml-auto h-6 gap-1 px-1.5 text-xs ${batchMode ? "text-foreground" : "text-muted-foreground"}`}
+              onClick={() => (batchMode ? exitBatch() : setBatchMode(true))}
+              data-testid="batch-toggle"
+            >
+              <ListChecks className="size-3" />
+              批量
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="ml-auto h-6 gap-1 px-1.5 text-xs text-muted-foreground">
+                <Button variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-xs text-muted-foreground">
                   <Filter className="size-3" />
                   {archivedLabel}
                 </Button>
@@ -250,6 +347,44 @@ export function SessionList() {
           </div>
         )}
       </div>
+
+      {/* 批量操作条（todo 25）：勾选集合上的归档/删除（删除走确认弹窗）+ 全选 + 进度 */}
+      {batchMode && (
+        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5 text-xs" data-testid="batch-bar">
+          <span className="text-muted-foreground">已选 {selectedIds.size}</span>
+          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" disabled={batchBusy} onClick={selectAllVisible}>
+            全选
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-1.5 text-xs"
+            disabled={batchBusy || selectedIds.size === 0}
+            onClick={() => void runBatchArchive(true)}
+          >
+            <Archive className="size-3" />
+            归档
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-1.5 text-xs text-destructive hover:text-destructive"
+            disabled={batchBusy || selectedIds.size === 0}
+            onClick={openBatchDelete}
+          >
+            <Trash2 className="size-3" />
+            删除
+          </Button>
+          {batchProgress && (
+            <span className="text-muted-foreground" data-testid="batch-progress">
+              {batchProgress.label} {batchProgress.done}/{batchProgress.total}…
+            </span>
+          )}
+          <Button variant="ghost" size="sm" className="ml-auto h-6 px-1.5 text-xs" disabled={batchBusy} onClick={exitBatch}>
+            完成
+          </Button>
+        </div>
+      )}
 
       {/* 列表主体 */}
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -268,6 +403,9 @@ export function SessionList() {
                 expandable={s.parentSessionPath === null}
                 onDialog={(kind, session) => setDialog({ kind, session })}
                 onChanged={onChanged}
+                selectable={batchMode}
+                checked={batchMode ? selectedIds.has(s.id) : undefined}
+                onToggleCheck={batchMode ? toggleCheck : undefined}
               />
             ))
           )
@@ -327,6 +465,9 @@ export function SessionList() {
                           childrenOpen={view === "all"}
                           onDialog={(kind, session) => setDialog({ kind, session })}
                           onChanged={onChanged}
+                          selectable={batchMode}
+                          checked={batchMode ? selectedIds.has(s.id) : undefined}
+                          onToggleCheck={batchMode ? toggleCheck : undefined}
                         />
                       ))
                     )}

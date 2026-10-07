@@ -92,6 +92,8 @@ export interface SenpiRpcClient {
   closeSession(sessionId?: string): Promise<void>
   listSessions(): Promise<Array<Record<string, unknown>>>
   getEntries(since?: string): Promise<{ entries: EngineEntry[]; leafId: string | null }>
+  /** 从指定条目 fork 新会话（verification/05 P1-1 实证可用；"before" 仅接受 user 消息条目） */
+  fork(entryId: string, options?: { position?: "before" | "at" }): Promise<{ text: string; cancelled: boolean }>
   prompt(message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"] }): Promise<unknown>
   abort(): Promise<void>
   onEvent(listener: (event: EngineEvent) => void): () => void

@@ -64,6 +64,23 @@ export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | n
   };
 }
 
+/**
+ * 导出文件名清洗（会话名可能含路径非法字符/控制字符/首尾点空格）。
+ * 返回 {ascii, utf8}：ascii 作 filename 兜底（非 ASCII 会话名退化为 id 前缀），
+ * utf8 作 filename*（RFC 5987，中文会话名的权威来源）。
+ */
+export function exportFilename(title: string, sessionId: string): { ascii: string; utf8: string } {
+  const cleaned = title
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 60)
+    .trim();
+  const utf8 = `${cleaned || sessionId || "session"}.html`;
+  const asciiSafe = cleaned.replace(/[^\x20-\x7e]/g, "").trim() || sessionId.slice(0, 8) || "session";
+  return { ascii: `${asciiSafe}.html`, utf8 };
+}
+
 export function createSessionRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
 
@@ -247,6 +264,40 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
     const removed = await deps.engines.deleteSession(id);
     deps.meta.deleteSessionMeta(id);
     return c.json({ ok: true, deleted: { id, ...removed } });
+  }));
+
+  // 单会话导出 HTML（verification/05 P1-7：omo --export 实证可用）。
+  // 空会话未落盘 → gateway 409 session_not_persisted，前端无感（按钮点了才报）。
+  app.get("/api/sessions/:id/export", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const { html, row } = await deps.engines.exportSessionHtml(id);
+    const title = deps.meta.getSessionMeta(id)?.renamedTitle ?? row.name ?? (row.firstMessage ? row.firstMessage.slice(0, 80) : "");
+    const name = exportFilename(title || id, id);
+    return c.body(html, 200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${name.ascii.replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(name.utf8)}`,
+    });
+  }));
+
+  // 从指定条目 fork 新会话（重试语义）：position 默认 "before"（仅接受 user 消息条目，
+  // 新会话 = 该消息之前的上下文，text 返回原消息文本供前端重发）。
+  // "编辑后重发"降级不在此路由实现——capabilities.editResend=false（verification/05 P1-6：
+  // 官配引擎无 continue_from_leaf），入口不渲染，fork 重试为替代路径。
+  app.post("/api/sessions/:id/fork", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const body = await parseJsonBody(c);
+    if (typeof body.entryId !== "string" || !body.entryId) {
+      throw new ApiError(400, "invalid_entry", "entryId 必填");
+    }
+    const position = body.position === undefined ? undefined : body.position;
+    if (position !== undefined && position !== "before" && position !== "at") {
+      throw new ApiError(400, "invalid_position", "position 仅支持 before|at");
+    }
+    const forked = await deps.engines.forkSession(id, body.entryId, position);
+    return c.json({
+      session: { id: forked.id, sessionPath: forked.sessionPath, durable: forked.durable },
+      text: forked.text,
+    });
   }));
 
   // 会话 usage 统计（会话级累计，verification/05 P1-4：get_session_stats）

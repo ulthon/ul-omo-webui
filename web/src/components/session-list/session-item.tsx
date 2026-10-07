@@ -4,7 +4,7 @@
 // + 子会话钻取（knownChildren 已带则免请求，否则懒加载 view=all 按血缘过滤）
 // + 元数据操作菜单（置顶/重命名/归档/删除——重命名与删除弹窗由父级单例托管）。
 import { useState } from "react";
-import { Bot, ChevronRight, Loader2, MoreVertical, Pin, SquarePen, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, SquarePen, SquareCheckBig, Square, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -88,9 +88,13 @@ export interface SessionItemProps {
   onDialog: (kind: "rename" | "delete", session: SessionListItem) => void;
   /** 元数据/删除成功后回调（父级刷新列表与搜索结果） */
   onChanged: () => void;
+  /** 批量模式（todo 25）：行首渲染选择框，勾选集合提升到 session-list 容器 */
+  selectable?: boolean;
+  checked?: boolean;
+  onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onChanged }: SessionItemProps) {
+export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onChanged, selectable, checked, onToggleCheck }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -100,6 +104,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
   const [children, setChildren] = useState<SessionListItem[] | null>(null);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   // 展示用子会话：懒加载结果优先，否则用 all 视图已带的 knownChildren（视图切换后 props 会变，
   // 不能在 useState 初始值里固化——那会让 all 视图拿不到 human 期之后才出现的数据）
   const childRows = children ?? knownChildren ?? [];
@@ -142,6 +147,20 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
     select(session.id);
   };
 
+  /** 单会话导出 HTML（todo 25）：GET /:id/export attachment 下载，文件名由服务端给出 */
+  const exportHtml = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await api.exportSession(session.id, session.title);
+      showToast("已导出 HTML");
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : "导出失败", "error");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
 
   return (
@@ -151,6 +170,22 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
           selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
         }`}
       >
+        {/* 批量选择框（行首；勾选集合提升到 session-list） */}
+        {selectable && (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={!!checked}
+            aria-label={`选择会话：${session.title}`}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCheck?.(session);
+            }}
+          >
+            {checked ? <SquareCheckBig className="size-3.5 text-primary" /> : <Square className="size-3.5" />}
+          </button>
+        )}
         {expandable ? (
           <button
             type="button"
@@ -220,6 +255,10 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
               {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
               {session.archivedAt ? "取消归档" : "归档"}
             </DropdownMenuItem>
+            <DropdownMenuItem disabled={exporting} onSelect={() => void exportHtml()}>
+              {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
+              导出 HTML
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => onDialog("delete", session)}>
               <Trash2 className="mr-2 size-4" />
@@ -244,6 +283,9 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
                 expandable={false}
                 onDialog={onDialog}
                 onChanged={onChanged}
+                selectable={selectable}
+                checked={checked}
+                onToggleCheck={onToggleCheck}
               />
             ))
           )}

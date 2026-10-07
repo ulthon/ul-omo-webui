@@ -1,10 +1,12 @@
 // 消息气泡（todo 16）：定格条目按 entryId 订阅（条目对象引用稳定，别的消息更新不触发本气泡）；
 // 流式气泡只订阅 streamingMessage 存在性，part 级更新下沉到 parts.tsx 的单下标订阅。
+// 消息级操作（todo 25）：user/assistant 定格气泡挂 MessageActions（复制原文/重试 fork）。
 import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage, WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { ImagePart } from "./image-lightbox";
+import { MessageActions } from "./message-actions";
 
 function formatTime(timestamp: string | null): string | null {
   if (!timestamp) return null;
@@ -18,18 +20,21 @@ function BubbleShell({
   timestamp,
   interrupted,
   live,
+  actions,
   children,
 }: {
   role: "user" | "assistant";
   timestamp: string | null;
   interrupted?: boolean;
   live?: boolean;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const time = formatTime(timestamp);
   if (role === "user") {
     return (
-      <div className="flex w-full justify-end">
+      <div className="group flex w-full items-center justify-end gap-1">
+        {actions}
         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-primary-foreground">
           {children}
         </div>
@@ -37,7 +42,7 @@ function BubbleShell({
     );
   }
   return (
-    <div className="w-full" data-streaming={live ? "true" : undefined}>
+    <div className="group w-full" data-streaming={live ? "true" : undefined}>
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <span>{live ? "正在回复" : "助手"}</span>
         {live && <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />}
@@ -45,6 +50,7 @@ function BubbleShell({
         {interrupted && (
           <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">已中断</span>
         )}
+        {actions}
       </div>
       <div className="pl-0.5">{children}</div>
     </div>
@@ -103,11 +109,14 @@ export const EntryBubble = memo(function EntryBubble({
   if (!entry) return null;
   const message = entry.message as WireMessage;
   const role = message.role === "user" ? "user" : "assistant";
+  // 消息级操作仅挂 user/assistant 定格气泡（toolResult 走 ToolCard 关联展示，无气泡菜单）
+  const showActions = message.role === "user" || message.role === "assistant";
   return (
     <BubbleShell
       role={role}
       timestamp={typeof entry.timestamp === "string" ? entry.timestamp : null}
       interrupted={role === "assistant" ? interrupted : undefined}
+      actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
     >
       <MessageContent message={message} sessionId={sessionId} live={false} />
     </BubbleShell>

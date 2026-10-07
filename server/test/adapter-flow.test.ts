@@ -98,6 +98,11 @@ class FakeRpcClient implements SenpiRpcClient {
     return { entries: this.entries, leafId: this.leafId }
   }
 
+  async fork(): Promise<{ text: string; cancelled: boolean }> {
+    this.calls.push({ method: "fork" })
+    throw new Error("fork not expected in adapter tests")
+  }
+
   async prompt(message: string, options?: { thinkingLevel?: string }): Promise<unknown> {
     this.calls.push({ method: "prompt", args: { message, thinkingLevel: options?.thinkingLevel } })
     if (!this.opened) throw new Error("no active session")

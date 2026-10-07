@@ -18,7 +18,7 @@ import {
 } from "../src/api/engine-runtime";
 import { EventBus } from "../src/engine/events";
 import { setEventBus, sseRoutes } from "../src/api/sse";
-import { createSessionRoutes } from "../src/api/routes-session";
+import { createSessionRoutes, exportFilename } from "../src/api/routes-session";
 import { createMetaRoutes } from "../src/api/routes-meta";
 import { createProjectRoutes } from "../src/api/routes-project";
 import { createGitRoutes } from "../src/api/routes-git";
@@ -104,6 +104,28 @@ class FakeGateway implements EngineGateway {
   async deleteSession(id: string): Promise<{ sessionPath: string; fileExisted: boolean }> {
     this.deleted.push(id);
     return { sessionPath: `/proj/${id}.jsonl`, fileExisted: true };
+  }
+  exportCalls: string[] = [];
+  exportResults: Array<{ html: string; row: EngineSessionSummary } | Error> = [];
+  async exportSessionHtml(sessionId: string): Promise<{ html: string; row: EngineSessionSummary }> {
+    this.exportCalls.push(sessionId);
+    const next = this.exportResults.shift();
+    if (!next) throw new ApiError(404, "session_not_found", `会话不存在：${sessionId}`);
+    if (next instanceof Error) throw next;
+    return next;
+  }
+  forkCalls: Array<{ sessionId: string; entryId: string; position?: "before" | "at" }> = [];
+  forkResults: Array<{ id: string; sessionPath: string; durable: boolean; text: string } | Error> = [];
+  async forkSession(
+    sessionId: string,
+    entryId: string,
+    position?: "before" | "at",
+  ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }> {
+    this.forkCalls.push({ sessionId, entryId, position });
+    const next = this.forkResults.shift();
+    if (!next) throw new ApiError(404, "session_not_found", `会话不存在：${sessionId}`);
+    if (next instanceof Error) throw next;
+    return next;
   }
   async peekActiveSessionPaths(): Promise<string[] | null> {
     return this.activePaths;
@@ -578,6 +600,123 @@ describe("项目与元数据杂项路由", () => {
       rmSync(nonRepo, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------- 导出与 fork（todo 25）
+
+describe("导出与 fork 路由", () => {
+  test("exportFilename：非法字符清洗、中文回退 ascii、空标题回退 id", () => {
+    // 路径分隔符与非法字符清洗
+    expect(exportFilename('a/b\\c:d*e?f"g<h>i|j', "sid")).toEqual({
+      ascii: "a b c d e f g h i j.html",
+      utf8: "a b c d e f g h i j.html",
+    });
+    // 首尾点/空格剥离、控制字符、长度截断
+    const dotted = exportFilename("  ..hidden name..  ", "sid");
+    expect(dotted.utf8).toBe("hidden name.html");
+    // 中文标题：utf8 保留，ascii 回退 id 前缀
+    const zh = exportFilename("季度总结报告", "12345678-9abc");
+    expect(zh.utf8).toBe("季度总结报告.html");
+    expect(zh.ascii).toBe("12345678.html");
+    // 空标题回退 id
+    expect(exportFilename("", "abc").utf8).toBe("abc.html");
+  });
+
+  test("导出：200 HTML + Content-Disposition 附件（utf8 文件名）", async () => {
+    const engines = new FakeGateway();
+    engines.exportResults.push({
+      html: "<html><body>会话内容</body></html>",
+      row: summary({ id: "s1", path: "/proj/s1.jsonl", name: "冒烟会话" }),
+    });
+    const { app } = buildApp(engines);
+    const res = await req(app, "/api/sessions/s1/export");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const disposition = res.headers.get("content-disposition") ?? "";
+    expect(disposition).toContain("attachment");
+    expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent("冒烟会话.html")}`);
+    expect(await res.text()).toBe("<html><body>会话内容</body></html>");
+    expect(engines.exportCalls).toEqual(["s1"]);
+  });
+
+  test("导出：会话不存在 404、未落盘 409（错误形状统一）", async () => {
+    const { app } = buildApp(new FakeGateway());
+    const missing = await req(app, "/api/sessions/nope/export");
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error.code).toBe("session_not_found");
+
+    const engines = new FakeGateway();
+    engines.exportResults.push(new ApiError(409, "session_not_persisted", "会话尚未落盘（空会话），无法导出"));
+    const { app: app2 } = buildApp(engines);
+    const empty = await req(app2, "/api/sessions/s-empty/export");
+    expect(empty.status).toBe(409);
+    expect((await empty.json()).error.code).toBe("session_not_persisted");
+  });
+
+  test("fork：200 返回新会话身份与原文，position 透传", async () => {
+    const engines = new FakeGateway();
+    engines.forkResults.push({
+      id: "fork-1",
+      sessionPath: "/proj/fork-1.jsonl",
+      durable: true,
+      text: "原始提问",
+    });
+    const { app } = buildApp(engines);
+    const res = await req(
+      app,
+      "/api/sessions/s1/fork",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entryId: "entry-u1", position: "before" }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      session: { id: "fork-1", sessionPath: "/proj/fork-1.jsonl", durable: true },
+      text: "原始提问",
+    });
+    expect(engines.forkCalls).toEqual([{ sessionId: "s1", entryId: "entry-u1", position: "before" }]);
+
+    // 缺省 position 透传 undefined（gateway 层默认 before）
+    engines.forkResults.push({ id: "fork-2", sessionPath: "/proj/fork-2.jsonl", durable: false, text: "" });
+    await req(app, "/api/sessions/s1/fork", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "entry-u2" }),
+    });
+    expect(engines.forkCalls[1]).toEqual({ sessionId: "s1", entryId: "entry-u2", position: undefined });
+  });
+
+  test("fork：缺 entryId 400、非法 position 400、gateway 409 透传", async () => {
+    const { app } = buildApp(new FakeGateway());
+    const noEntry = await req(app, "/api/sessions/s1/fork", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(noEntry.status).toBe(400);
+    expect((await noEntry.json()).error.code).toBe("invalid_entry");
+
+    const badPos = await req(app, "/api/sessions/s1/fork", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e1", position: "middle" }),
+    });
+    expect(badPos.status).toBe(400);
+    expect((await badPos.json()).error.code).toBe("invalid_position");
+
+    const engines = new FakeGateway();
+    engines.forkResults.push(new ApiError(409, "already_processing", "该项目有进行中的回合"));
+    const { app: app2 } = buildApp(engines);
+    const busy = await req(app2, "/api/sessions/s1/fork", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e1" }),
+    });
+    expect(busy.status).toBe(409);
+    expect((await busy.json()).error.code).toBe("already_processing");
   });
 });
 

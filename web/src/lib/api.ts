@@ -304,6 +304,57 @@ export const api = {
   async deleteSession(sessionId: string): Promise<{ ok: boolean; deleted: { id: string; sessionPath: string; fileExisted: boolean } }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   },
+  /** 从指定条目 fork 新会话（重试语义；position 默认 before，仅接受 user 消息条目） */
+  async forkSession(
+    sessionId: string,
+    body: { entryId: string; position?: "before" | "at" },
+  ): Promise<{ session: { id: string; sessionPath: string; durable: boolean }; text: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, jsonInit("POST", body));
+  },
+  /** 导出会话 HTML 下载（GET /:id/export 返回 attachment；文件名取服务端 Content-Disposition） */
+  async exportSession(sessionId: string, fallbackTitle: string): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/export`);
+    } catch (err) {
+      throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
+    }
+    if (res.status === 401) {
+      redirectToLogin();
+      throw new ApiError(401, "unauthorized", "未登录或会话已过期");
+    }
+    if (!res.ok) {
+      let code = "unknown";
+      let message = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: { code?: string; message?: string } };
+        if (body.error?.code) code = body.error.code;
+        if (body.error?.message) message = body.error.message;
+      } catch {
+        // 非 JSON 错误体，保留默认文案
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    const disposition = res.headers.get("content-disposition") ?? "";
+    let filename = `${fallbackTitle || sessionId}.html`;
+    const utf8Match = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+    if (utf8Match) {
+      try {
+        filename = decodeURIComponent(utf8Match[1]);
+      } catch {
+        // 编码异常保留回退名
+      }
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   async getUsage(session: string): Promise<{ sessionId: string; usage: UsageInfo }> {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
   },
