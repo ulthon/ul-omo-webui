@@ -1,10 +1,13 @@
 // 输入框（todo 21）：多行自增高文本域、图片粘贴/选择上传、草稿（use-draft）、
 // 输入历史（上箭头翻阅 / 按钮入口）、409 锁提示与中断按钮（16 语义原样保留）。
-// 扩展挂点：todo 24 命令解析与 todo 20 @引用都接在本组件的 send/keydown 链路上。
+// todo 20：@ 按钮（输入框旁）或键入 @ 弹出文件选择器，选中后经 update() 插入 `@path `
+// 引用（光标落插入点之后），路径随 prompt 文本自然发送。
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, History, ImagePlus, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { FilePickerDialog } from "@/components/file-tree/file-picker";
+import { insertMention } from "@/components/file-tree/file-tree-logic";
 import {
   MAX_IMAGES,
   dataUrlToBase64,
@@ -72,6 +75,38 @@ export function Composer({
   const [history, setHistory] = useState<ActiveHistory | null>(null);
   /** 进入历史翻阅前的输入内容（下翻越过最新一条时还原） */
   const draftBeforeHistoryRef = useRef("");
+
+  // @ 引用选择器（todo 20）：trigger = 触发时 @ 字符在文本中的下标（按钮入口为 null，
+  // 在当前光标处插入）。选中后经 update() 走草稿链路插入 `@path `，光标落插入点之后。
+  const [picker, setPicker] = useState<{ open: boolean; trigger: number | null } | null>(null);
+
+  const openPicker = useCallback((trigger: number | null) => {
+    setPicker({ open: true, trigger });
+  }, []);
+
+  const insertRef = useCallback(
+    (path: string, trigger: number | null) => {
+      const el = textareaRef.current;
+      const caret = el?.selectionStart ?? textRef.current.length;
+      const { content, caret: nextCaret } = insertMention(textRef.current, caret, trigger, path);
+      update(content);
+      requestAnimationFrame(() => {
+        const node = textareaRef.current;
+        if (!node) return;
+        node.focus();
+        node.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [update, textRef],
+  );
+
+  const onPickFile = useCallback(
+    (path: string) => {
+      insertRef(path, picker?.trigger ?? null);
+      setPicker(null);
+    },
+    [insertRef, picker],
+  );
 
   // 多行自增高：每次渲染后按内容校正高度；超过 max-h-48 由 CSS 截断并内部滚动
   useEffect(() => {
@@ -231,6 +266,18 @@ export function Composer({
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
       if (e.nativeEvent.isComposing) return;
+      // 键入 @ 弹出文件选择器（todo 20）：preventDefault 后自行插入字符——
+      // 弹窗打开时 radix Dialog 会立刻抢走焦点，浏览器默认插入会误落进弹窗搜索框
+      if (e.key === "@") {
+        const el = e.currentTarget;
+        if (el.selectionStart === el.selectionEnd) {
+          e.preventDefault();
+          const pos = el.selectionStart;
+          update(el.value.slice(0, pos) + "@" + el.value.slice(el.selectionEnd));
+          openPicker(pos);
+        }
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         void send();
@@ -261,7 +308,7 @@ export function Composer({
         closeHistory();
       }
     },
-    [history, send, historyOlder, historyNewer, closeHistory, openHistory],
+    [history, send, historyOlder, historyNewer, closeHistory, openHistory, openPicker, update],
   );
 
   // ---------- 中断态（原 16 行为：状态行 + 停止按钮，输入区让位） ----------
@@ -358,6 +405,17 @@ export function Composer({
         </button>
         <button
           type="button"
+          data-testid="at-btn"
+          aria-label="引用文件"
+          title="引用文件（插入 @路径）"
+          disabled={!project}
+          onClick={() => openPicker(null)}
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        >
+          <AtSign className="size-5" />
+        </button>
+        <button
+          type="button"
           data-testid="image-btn"
           aria-label="添加图片"
           title="添加图片（可粘贴截图）"
@@ -406,6 +464,16 @@ export function Composer({
         <p className="text-xs text-destructive" data-testid="composer-error">
           {error}
         </p>
+      )}
+      {picker?.open && project && (
+        <FilePickerDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPicker(null);
+          }}
+          project={project}
+          onPick={onPickFile}
+        />
       )}
     </div>
   );
