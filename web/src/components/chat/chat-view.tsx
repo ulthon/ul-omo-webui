@@ -1,16 +1,16 @@
-// 对话流主视图（todo 16）：按会话加载消息（游标增量）、虚拟列表渲染、最小输入区。
+// 对话流主视图（todo 16）：按会话加载消息（游标增量）、虚拟列表渲染。
+// 输入区为 composer/ 模块（todo 21：多行/图片/草稿/历史）。
 // 并发锁：会话回合中（本地 SSE 流式态，含另一窗口驾驶的会话）输入禁用；prompt 撞上
 // 409 already_processing 时给出明确提示（verification/05 P2-11：引擎无跨进程锁，webui 自律单驱动）。
 // 中断定格：abort 后 settleStreaming 把半截内容定格进 entries，气泡带"已中断"标注直至下一次发送。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
 import { MessagesSquare } from "lucide-react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
-import { useUiStore } from "@/stores/ui";
 import type { WireEntry, WireMessage } from "@/lib/api";
+import { Composer } from "@/components/composer/composer";
 import { MessageList, type ChatListItem } from "./message-list";
 import { PermissionQueue } from "./permission-queue";
 
@@ -30,109 +30,6 @@ function isMessageEntry(entry: WireEntry): entry is WireEntry & { id: string; me
   if (entry.type !== "message" || typeof entry.id !== "string") return false;
   const msg = entry.message as WireMessage | undefined;
   return Boolean(msg && typeof msg.role === "string");
-}
-
-/** 最小输入区（完整输入框归 todo 21）：多行 textarea、Enter 发送、流式禁用 + 停止按钮 */
-function Composer({
-  sessionId,
-  streaming,
-  onSent,
-  onAborted,
-}: {
-  sessionId: string;
-  streaming: boolean;
-  onSent: () => void;
-  onAborted: () => void;
-}) {
-  const showToast = useUiStore((s) => s.showToast);
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const send = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed || streaming || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      await api.prompt(sessionId, { text: trimmed });
-      setText("");
-      onSent();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError("该会话正在被另一个窗口处理中，请等待其完成后再发送");
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      setSending(false);
-    }
-  }, [text, streaming, sending, sessionId, onSent]);
-
-  const abort = useCallback(async () => {
-    try {
-      await api.abort(sessionId);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "中断失败", "error");
-    } finally {
-      onAborted();
-    }
-  }, [sessionId, onAborted, showToast]);
-
-  if (streaming) {
-    return (
-      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
-          会话处理中，暂不能发送
-        </span>
-        <button
-          type="button"
-          data-testid="abort-btn"
-          onClick={abort}
-          className="flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
-        >
-          <Square className="size-3" />
-          停止生成
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
-      <div className="flex items-end gap-2">
-        <textarea
-          ref={textareaRef}
-          data-testid="composer-input"
-          value={text}
-          rows={1}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          disabled={sending}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          className="max-h-32 min-h-9 w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-        />
-        <button
-          type="button"
-          data-testid="send-btn"
-          aria-label="发送"
-          disabled={!text.trim() || sending}
-          onClick={() => void send()}
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
-        >
-          <ArrowUp className="size-4" />
-        </button>
-      </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  );
 }
 
 /** 单会话视图：sessionId 变化时整体重挂载（key 保证滚动/状态干净） */
@@ -283,7 +180,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       <div className="shrink-0 border-t p-3">
         <Composer
           sessionId={sessionId}
-          streaming={composerLocked}
+          busy={composerLocked}
           onSent={() => setInterrupted(false)}
           onAborted={() => setInterrupted(true)}
         />
