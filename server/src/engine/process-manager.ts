@@ -92,6 +92,9 @@ export interface EngineManagerOptions {
   crashPollMs?: number
   /** PID 登记表路径（默认 server/data/engine-processes.json）。 */
   registryPath?: string
+  /** 按项目的 spawn 附加参数（如 meta_kv 权限预设 → ["--permission-preset", 值]）。
+   * spawn 参数级：变更后需重启项目引擎进程才生效。 */
+  extraSpawnArgs?: (projectPath: string) => string[]
   /** 时钟（测试注入）。 */
   now?: () => number
   /** 进程探针（测试注入；默认 Linux /proc）。 */
@@ -365,6 +368,8 @@ export class EngineProcessManager {
       PI_OFFLINE: "1",
     }
     const args = ["--extension", pluginDir, "--multi-session"]
+    // 按项目附加参数（权限预设等 meta_kv 派生；缺省无附加）
+    args.push(...(this.opts.extraSpawnArgs?.(engine.projectPath) ?? []))
     // RpcClient 约束：单 --provider 是 CLI 错误，必须成对
     const provider = this.opts.defaultProvider
     const model = this.opts.defaultModel

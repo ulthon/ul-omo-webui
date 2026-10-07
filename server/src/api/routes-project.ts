@@ -21,8 +21,7 @@ export function createProjectRoutes(deps: ApiDeps): Hono {
   }));
 
   // 项目偏好：preferred_agent/preferred_model/last_opened_at（部分更新）
-  app.patch("/api/projects/meta", route(async (c: Context) => {
-    const body = await parseJsonBody(c);
+  app.patch("/api/projects/meta", route(async (c: Context) => {    const body = await parseJsonBody(c);
     const project = validateProjectInput(body.path);
     const patch: {
       preferredAgent?: string | null;
@@ -52,6 +51,15 @@ export function createProjectRoutes(deps: ApiDeps): Hono {
     }
     deps.meta.updateProjectMeta(project, patch);
     return c.json({ ok: true, project: deps.meta.getProjectMeta(project) });
+  }));
+
+  // 重建项目引擎进程：spawn 参数级配置（权限预设 permission-preset:<project> 等）
+  // 变更后的生效口。会话态失效属预期（下次访问懒加载重建）。
+  app.post("/api/projects/restart", route(async (c: Context) => {
+    const body = await parseJsonBody(c);
+    const project = validateProjectInput(body.project);
+    await deps.engines.restartProject(project);
+    return c.json({ ok: true, project });
   }));
 
   return app;

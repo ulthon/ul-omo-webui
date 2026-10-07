@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import {
   EngineRuntimeRegistry,
+  permissionPresetArgs,
+  permissionPresetKey,
   type EngineGateway,
 } from "../src/api/engine-runtime";
 import { EventBus } from "../src/engine/events";
@@ -102,6 +104,10 @@ class FakeGateway implements EngineGateway {
   }
   async peekActiveSessionPaths(): Promise<string[] | null> {
     return this.activePaths;
+  }
+  restarts: string[] = [];
+  async restartProject(project: string): Promise<void> {
+    this.restarts.push(project);
   }
   async stopAll(): Promise<void> {}
 }
@@ -464,6 +470,30 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("POST /api/projects/restart 调用网关重建并校验路径", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-restart-"));
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+    try {
+      const res = await req(app, "/api/projects/restart", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: proj }),
+      });
+      expect(res.status).toBe(200);
+      expect(engines.restarts).toEqual([proj]);
+      const bad = await req(app, "/api/projects/restart", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: "/definitely/missing-w2-preset" }),
+      });
+      expect(bad.status).toBe(400);
+      expect(engines.restarts).toEqual([proj]);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
   test("agents 降级响应；models 需已知项目；input-history 去重上限；settings 校验", async () => {
     const engines = new FakeGateway();
     engines.models = [{ provider: "zai-coding-cn", id: "glm-5.3-flash", reasoning: true }];
@@ -562,6 +592,8 @@ class FakeEngineClient implements EngineClientLike {
   closed = 0;
   /** get_state 的 isStreaming 返回值（收尾监视测试用） */
   fakeStreaming = false;
+  /** stop() 时的旁路钩子（测试模拟进程随 stop 退出：从探针摘除 pid）。 */
+  onStop?: () => void;
 
   constructor(opts: RpcClientOptions) {
     this.spawnOpts = opts;
@@ -569,7 +601,9 @@ class FakeEngineClient implements EngineClientLike {
   }
 
   async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    this.onStop?.();
+  }
   onEvent(listener: (e: RpcClientEvent) => void): () => void {
     this.listeners.push(listener);
     return () => {
@@ -696,7 +730,11 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     syntheticEvents = [];
     unreadCalls = [];
     manager = new EngineProcessManager({
-      clientFactory: () => client,
+      // 每次启动把 pid 放回探针（重启场景模拟进程重新出现）
+      clientFactory: () => {
+        probe.pids.add(client.process.pid);
+        return client;
+      },
       probe,
       registryPath: join(proj, "registry.json"),
       readyProbeIntervalMs: 1,
@@ -856,6 +894,65 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     client.emit({ type: "message_end", sessionId: "routing-1", message: { role: "assistant" } });
     client.emit({ type: "agent_start", sessionId: "routing-1" });
     expect(unreadCalls).toHaveLength(2);
+  });
+
+  test("(restart) 重建项目引擎：会话态失效、引擎重回 ready、可继续建会话", async () => {
+    setup("durable-1");
+    const created = await registry.createSession(proj, {});
+    expect(registry.durableSessionIdFor(proj, "routing-1")).toBe("durable-1");
+    await registry.restartProject(proj);
+    // 会话态失效（handle→durable 映射清空；旧 handle 属于已死进程）
+    expect(registry.durableSessionIdFor(proj, "routing-1")).toBeUndefined();
+    // 引擎重回 ready 且空闲
+    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
+    // 后续建会话正常
+    const again = await registry.createSession(proj, {});
+    expect(again.id).toBe("durable-1");
+  });
+
+  test("(preset) meta_kv 权限预设 → spawn 参数：有值含 --permission-preset，无值不含", async () => {
+    const projWith = mkdtempSync(join(tmpdir(), "preset-with-"));
+    const projWithout = mkdtempSync(join(tmpdir(), "preset-without-"));
+    // 工厂内构造 fake（拿到管理器 buildSpawnOptions 的真实产物）
+    const mk = (project: string, extra?: (p: string) => string[]) => {
+      const pr = new StaticProbe();
+      let c!: FakeEngineClient;
+      const m = new EngineProcessManager({
+        clientFactory: (o) => {
+          c = new FakeEngineClient(o);
+          pr.pids.add(c.process.pid);
+          return c;
+        },
+        probe: pr,
+        registryPath: join(project, "registry.json"),
+        readyProbeIntervalMs: 1,
+        readyProbeMaxAttempts: 10,
+        crashPollMs: 60_000,
+        extraSpawnArgs: extra,
+      });
+      return { get client() { return c; }, pr, m };
+    };
+    const withPreset = mk(projWith, (p) => permissionPresetArgs((k) => (k === permissionPresetKey(p) ? "read-only" : null), p));
+    const withoutPreset = mk(projWithout);
+    try {
+      await withPreset.m.ensureRunning(projWith);
+      await withoutPreset.m.ensureRunning(projWithout);
+      expect(withPreset.client.spawnOpts.args).toContain("--permission-preset");
+      expect(withPreset.client.spawnOpts.args).toContain("read-only");
+      expect(withoutPreset.client.spawnOpts.args).not.toContain("--permission-preset");
+      // helper 直测：值去重空白、无值空数组
+      expect(
+        permissionPresetArgs((k) => (k === permissionPresetKey(projWith) ? "  read-only  " : null), projWith),
+      ).toEqual(["--permission-preset", "read-only"]);
+      expect(permissionPresetArgs(() => null, projWith)).toEqual([]);
+    } finally {
+      withPreset.pr.pids.clear();
+      withoutPreset.pr.pids.clear();
+      await withPreset.m.stopAll();
+      await withoutPreset.m.stopAll();
+      rmSync(projWith, { recursive: true, force: true });
+      rmSync(projWithout, { recursive: true, force: true });
+    }
   });
 });
 

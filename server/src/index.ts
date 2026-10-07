@@ -5,7 +5,7 @@ import { DATA_DIR, HOST, PORT, STATIC_DIR } from "./config";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { EngineProcessManager } from "./engine/process-manager";
-import { EngineRuntimeRegistry } from "./api/engine-runtime";
+import { EngineRuntimeRegistry, permissionPresetArgs } from "./api/engine-runtime";
 import { EventBus, attachEventBus } from "./engine/events";
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
@@ -21,6 +21,9 @@ const meta = openMetaDb();
 const manager = new EngineProcessManager({
   // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
   agentDir: process.env.SENPI_WEBUI_AGENT_DIR,
+  // 按项目权限预设（meta_kv 键 permission-preset:<projectPath>，值如 read-only）：
+  // spawn 参数级，变更后经 POST /api/projects/restart 让项目引擎重建生效
+  extraSpawnArgs: (projectPath) => permissionPresetArgs((key) => meta.getKv(key), projectPath),
 });
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),

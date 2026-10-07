@@ -76,6 +76,11 @@ export interface EngineGateway {
    * 前端 `active` 字段语义 = 回合进行中（todo 15 实证修复）。
    */
   peekActiveSessionPaths(project: string): Promise<string[] | null>;
+  /**
+   * 重建项目引擎进程（stop → ensureRunning）：spawn 参数级配置（权限预设等）
+   * 变更后的生效口。会话态随之失效（下次访问懒加载重建）。
+   */
+  restartProject(project: string): Promise<void>;
   stopAll(): Promise<void>;
 }
 
@@ -100,6 +105,24 @@ export interface EngineRuntimeOptions {
 
 function defaultAgentDir(): string {
   return join(homedir(), ".pi", "agent");
+}
+
+/** 权限预设 meta_kv 键名（值如 "read-only"；todo 18 权限卡片端到端 QA 依赖）。 */
+export function permissionPresetKey(projectPath: string): string {
+  return `permission-preset:${projectPath}`;
+}
+
+/**
+ * meta_kv 权限预设 → 引擎 spawn 附加参数（--permission-preset <值>）。
+ * 无预设返回空数组，spawn 行为与从前完全一致。
+ * 预设是 spawn 参数级：变更需让项目引擎重启（服务重启或 POST /api/projects/restart）。
+ */
+export function permissionPresetArgs(
+  getKv: (key: string) => string | null,
+  projectPath: string,
+): string[] {
+  const value = getKv(permissionPresetKey(projectPath))?.trim();
+  return value ? ["--permission-preset", value] : [];
 }
 
 /** models-store.json 直读降级（形态见 docs/verification/00-env.md；读取失败返回空列表） */
@@ -763,6 +786,13 @@ export class EngineRuntimeRegistry implements EngineGateway {
    * 不触发引擎 spawn；项目运行时不存在或映射不明返回 undefined（透传不猜）。 */
   durableSessionIdFor(projectPath: string, handle: string): string | undefined {
     return this.runtimes.get(projectPath)?.durableSessionIdFor(handle);
+  }
+
+  async restartProject(project: string): Promise<void> {
+    // 重建 = 停旧进程 + 立即重新 spawn（新 spawn 参数生效）+ 会话态失效
+    await this.manager.stop(project);
+    this.runtimeFor(project).invalidate();
+    await this.manager.ensureRunning(project);
   }
 
   async stopAll(): Promise<void> {
