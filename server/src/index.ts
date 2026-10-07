@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { relative } from "node:path";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
+import { loadEmbeddedStatic, type EmbeddedStaticAssets } from "./embedded-static";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { EngineProcessManager } from "./engine/process-manager";
@@ -91,19 +92,80 @@ app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
 // 页面路由的未授权跳转由前端依据 API 401 处理（todo 13）。
-// hono/bun 的 serveStatic root 参数相对 process.cwd()，这里换算成相对路径，
-// 从任意目录启动都能解析回同一绝对目录。
-const staticRoot = relative(process.cwd(), STATIC_DIR);
-app.use("*", serveStatic({ root: staticRoot }));
+// 双路径（W6 todo 29）：
+// - 内嵌资产（编译产物 / 构建脚本生成模块）：内存直出，不依赖磁盘；
+//   index.html no-cache（保 SPA 更新即时生效），带 hash 的 assets/ 长缓存
+// - 磁盘 web/dist（源码形态，hono/bun serveStatic）：root 参数相对 process.cwd()，
+//   换算成相对路径后从任意目录启动都能解析回同一绝对目录
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".map": "application/json",
+  ".txt": "text/plain; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".webmanifest": "application/manifest+json",
+};
 
-// SPA fallback：非 /api 的未命中路径全部回落 index.html；/api 未命中返回 404 JSON
-const serveIndex = serveStatic({ root: staticRoot, path: "index.html" });
-app.get("*", async (c) => {
-  if (c.req.path.startsWith("/api/")) {
-    return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
+function mimeTypeOf(path: string): string {
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 ? (MIME_TYPES[path.slice(dot).toLowerCase()] ?? "application/octet-stream") : "application/octet-stream";
+}
+
+const embeddedStatic = await loadEmbeddedStatic();
+
+function embeddedAssetResponse(relPath: string, asset: { data: string; binary: boolean }, cacheControl: string): Response {
+  const body = asset.binary ? Buffer.from(asset.data, "base64") : asset.data;
+  return new Response(body, {
+    headers: { "content-type": mimeTypeOf(relPath), "cache-control": cacheControl },
+  });
+}
+
+if (embeddedStatic) {
+  const indexHtml = embeddedStatic["index.html"];
+  if (!indexHtml) {
+    console.error("启动失败：内嵌静态资产缺少 index.html（构建产物不完整），请重跑 scripts/build-binary.ts");
+    process.exit(1);
   }
-  return (await serveIndex(c, async () => {})) ?? c.json({ error: { code: "not_found", message: "route not found" } }, 404);
-});
+  app.get("*", (c) => {
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
+    }
+    const relPath = decodeURIComponent(c.req.path).replace(/^\/+/, "");
+    const asset = embeddedStatic[relPath];
+    if (asset) {
+      // vite 产物 assets/ 文件名带内容 hash，可长缓存 immutable
+      const cache = relPath.startsWith("assets/") ? "public, max-age=31536000, immutable" : "public, max-age=300";
+      return embeddedAssetResponse(relPath, asset, cache);
+    }
+    // SPA fallback：非文件路径全部回落 index.html（登录页与前端路由依赖）
+    return embeddedAssetResponse("index.html", indexHtml, "no-cache");
+  });
+} else {
+  const staticRoot = relative(process.cwd(), STATIC_DIR);
+  app.use("*", serveStatic({ root: staticRoot }));
+
+  // SPA fallback：非 /api 的未命中路径全部回落 index.html；/api 未命中返回 404 JSON
+  const serveIndex = serveStatic({ root: staticRoot, path: "index.html" });
+  app.get("*", async (c) => {
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
+    }
+    return (await serveIndex(c, async () => {})) ?? c.json({ error: { code: "not_found", message: "route not found" } }, 404);
+  });
+}
 
 // 优雅关停：停全部引擎子进程（SIGTERM→兜底强杀）+ 关元数据库
 let shuttingDown = false;
