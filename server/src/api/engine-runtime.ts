@@ -155,6 +155,12 @@ class ProjectRuntime {
   private activeId: string | null = null;
   /** 当前处于 webui 驱动回合中的会话 id（单驱动 409 依据） */
   private streamingId: string | null = null;
+  /** wire sessionId（routing handle）→ durable id 映射（SSE 信封注入用）：
+   * 只记录 store 验证过的 durable id（open_session 响应 handle + activeSessions 行），
+   * 查不到的 handle 如实透传不猜。引擎重启 handle 全换，invalidate 时清空。 */
+  private readonly handleToDurable = new Map<string, string>();
+  /** 防抖：handle 查询 miss 时至多一个在途的 activeSessions 刷新 */
+  private refreshInFlight = false;
   /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化） */
   private readonly aliases = new Map<string, string>();
   /** 操作互斥链：串行化「切换活跃会话 + 作用于活跃会话」的关键区 */
@@ -186,6 +192,7 @@ class ProjectRuntime {
       this.activeId = null;
       this.streamingId = null;
       this.aliases.clear();
+      this.handleToDurable.clear();
       const adapter: SenpiAdapter = new SenpiAdapter({
         projectDir: this.projectPath,
         agentDir: this.opts.agentDir ?? defaultAgentDir(),
@@ -202,18 +209,48 @@ class ProjectRuntime {
     }
   }
 
-  /** 崩溃/重启时清空会话态（adapter 留给 ensure() 按 client 更换重建） */
+  /** 崩溃/重启时清空会话态（adapter 留给 ensure() 按 client 更换重建）。
+   * handle→durable 映射一并清空：旧 handle 属于已死进程，保留只会误映射。 */
   invalidate(): void {
     this.activeId = null;
     this.streamingId = null;
     this.aliases.clear();
+    this.handleToDurable.clear();
   }
 
   /** 引擎就绪时的活跃会话路径列表 */
   async activeSessionPaths(): Promise<string[]> {
     if (!this.adapter) return [];
     const rows = await this.adapter.activeSessions();
+    this.rememberHandleRows(rows);
     return rows.map((r) => r.sessionPath).filter((p): p is string => typeof p === "string");
+  }
+
+  /** 活跃会话行的 handle→durableSessionId 回填（list_sessions 行两个字段都有，权威来源） */
+  private rememberHandleRows(rows: Array<{ sessionId?: string; durableSessionId?: string }>): void {
+    for (const row of rows) {
+      if (row.sessionId && row.durableSessionId) {
+        this.handleToDurable.set(row.sessionId, row.durableSessionId);
+      }
+    }
+  }
+
+  /** wire sessionId（routing handle）→ durable id；查不到返回 undefined（SSE 透传不猜）。
+   * miss 时异步刷新一次活跃会话行（去重防事件风暴期间 RPC 刷屏），本次仍如实返回 undefined。 */
+  durableSessionIdFor(handle: string): string | undefined {
+    const hit = this.handleToDurable.get(handle);
+    if (hit !== undefined) return hit;
+    if (!this.refreshInFlight && this.adapter) {
+      this.refreshInFlight = true;
+      void this.adapter
+        .activeSessions()
+        .then((rows) => this.rememberHandleRows(rows))
+        .catch(() => undefined)
+        .finally(() => {
+          this.refreshInFlight = false;
+        });
+    }
+    return undefined;
   }
 
   /** SDK 直读会话库（不依赖引擎进程，sessionsList 不走 rpc） */
@@ -274,8 +311,16 @@ class ProjectRuntime {
     const adapter = this.requireAdapter();
     if (this.activeId === sessionId && adapter.getActiveSession()) return;
     const row = await this.resolveSession(sessionId);
-    await adapter.openSession({ sessionPath: row.path });
+    const opened = await adapter.openSession({ sessionPath: row.path });
     this.activeId = sessionId;
+    // wire 事件的 sessionId 就是这个 routing handle（open_session 响应顶层的
+    // sessionId）；store 行解析出的 id（非别名）即可作为 durable 映射记录
+    if (!this.aliases.has(sessionId)) this.rememberHandle(opened.routingId, sessionId);
+  }
+
+  private rememberHandle(handle: string | undefined, durableId: string | undefined): void {
+    if (!handle || !durableId) return;
+    this.handleToDurable.set(handle, durableId);
   }
 
   requireAdapter(): EngineAdapter {
@@ -303,6 +348,7 @@ class ProjectRuntime {
       let durable = false;
       try {
         const rows = await adapter.activeSessions();
+        this.rememberHandleRows(rows);
         const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
         if (row?.durableSessionId) {
           id = row.durableSessionId;
@@ -311,7 +357,12 @@ class ProjectRuntime {
       } catch {
         // 活跃行查询失败不影响建会话，退化为别名
       }
-      if (!durable) this.aliases.set(id, opened.sessionPath);
+      if (!durable) {
+        this.aliases.set(id, opened.sessionPath);
+      } else {
+        // open_session 响应顶层 sessionId 即 routing handle（wire 事件同源）
+        this.rememberHandle(opened.routingId, id);
+      }
       this.activeId = id;
       return { id, sessionPath: opened.sessionPath, durable };
     });
@@ -538,6 +589,12 @@ export class EngineRuntimeRegistry implements EngineGateway {
     const rt = this.runtimes.get(project);
     if (!rt || !rt.isReady()) return null;
     return rt.activeSessionPaths();
+  }
+
+  /** wire sessionId（routing handle）→ durable id（SSE 信封注入用）。
+   * 不触发引擎 spawn；项目运行时不存在或映射不明返回 undefined（透传不猜）。 */
+  durableSessionIdFor(projectPath: string, handle: string): string | undefined {
+    return this.runtimes.get(projectPath)?.durableSessionIdFor(handle);
   }
 
   stopAll(): Promise<void> {

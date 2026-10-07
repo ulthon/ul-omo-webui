@@ -12,6 +12,8 @@ import {
   EngineRuntimeRegistry,
   type EngineGateway,
 } from "../src/api/engine-runtime";
+import { EventBus } from "../src/engine/events";
+import { setEventBus, sseRoutes } from "../src/api/sse";
 import { createSessionRoutes } from "../src/api/routes-session";
 import { createMetaRoutes } from "../src/api/routes-meta";
 import { createProjectRoutes } from "../src/api/routes-project";
@@ -704,6 +706,10 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const created = await registry.createSession(proj, {});
     // createSession 走 open_session 新会话路径，sessionFile 为 fake 的缺省新路径
     expect(created.sessionPath).toContain("2026_new.jsonl");
+    expect(created.durable).toBe(true);
+    // handle→durable 映射：wire 事件 sessionId（routing-1）可解析为磁盘 header id
+    expect(registry.durableSessionIdFor(proj, "routing-1")).toBe("durable-1");
+    expect(registry.durableSessionIdFor(proj, "unknown-handle")).toBeUndefined();
 
     const r1 = await registry.prompt(created.id, { text: "第一问" });
     expect(r1.disposition).toBe("started");
@@ -754,8 +760,77 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const created = await registry.createSession(proj, {});
     expect(created.durable).toBe(false);
     expect(created.id).toBe("holder-1");
+    // 别名不是 durable 身份：handle 映射不记录（SSE 如实透传不猜）
+    expect(registry.durableSessionIdFor(proj, "routing-1")).toBeUndefined();
     const r = await registry.prompt(created.id, { text: "别名追问" });
     expect(r.disposition).toBe("started");
     expect(client.prompts).toEqual(["别名追问"]);
+  });
+});
+
+// ---------------------------------------------------------------- SSE 信封 durableSessionId 注入
+
+describe("SSE data 帧 durableSessionId 注入", () => {
+  test("映射可得时注入，映射不明缺席；?session= 过滤兼容 durable id", async () => {
+    const bus = new EventBus({ capacity: 10 });
+    setEventBus(bus, {
+      heartbeatMs: 50,
+      durableLookup: (projectPath, handle) =>
+        projectPath === "/proj" && handle === "routing-1" ? "durable-1" : undefined,
+    });
+    const res = await sseRoutes.request("/events");
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    // 已映射 / 未映射各一条
+    bus.publish("/proj", { type: "message_update", sessionId: "routing-1" } as never);
+    bus.publish("/other", { type: "message_update", sessionId: "routing-9" } as never);
+    let text = "";
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && !(text.includes("routing-1") && text.includes("routing-9"))) {
+      const chunk = await Promise.race([reader.read(), Bun.sleep(50).then(() => null)]);
+      if (!chunk) continue;
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    await reader.cancel();
+    const frames = text.split("\n").filter((l) => l.startsWith("data:"));
+    const mapped = frames.find((l) => l.includes("routing-1"));
+    const unmapped = frames.find((l) => l.includes("routing-9"));
+    expect(mapped).toBeDefined();
+    expect(unmapped).toBeDefined();
+    // 映射命中：注入 durableSessionId，wire 原样字段不受影响
+    const mappedPayload = JSON.parse(mapped!.slice(5));
+    expect(mappedPayload.durableSessionId).toBe("durable-1");
+    expect((mappedPayload.event as { sessionId: string }).sessionId).toBe("routing-1");
+    // 映射不明：如实透传（无该字段）
+    const unmappedPayload = JSON.parse(unmapped!.slice(5));
+    expect(unmappedPayload.durableSessionId).toBeUndefined();
+  });
+
+  test("?session= 传 durable id 也能过滤命中", async () => {
+    const bus = new EventBus({ capacity: 10 });
+    setEventBus(bus, {
+      heartbeatMs: 50,
+      durableLookup: (_projectPath, handle) => (handle === "routing-1" ? "durable-1" : undefined),
+    });
+    const res = await sseRoutes.request("/events?session=durable-1");
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    bus.publish("/proj", { type: "agent_start", sessionId: "routing-1" } as never);
+    bus.publish("/proj", { type: "agent_start", sessionId: "routing-2" } as never);
+    let text = "";
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && !text.includes("routing-2")) {
+      const chunk = await Promise.race([reader.read(), Bun.sleep(50).then(() => null)]);
+      if (!chunk) continue;
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    await reader.cancel();
+    // durable-1 命中 routing-1 帧放行；routing-2 映射不到被过滤
+    expect(text).toContain("routing-1");
+    expect(text).not.toContain("routing-2");
   });
 });

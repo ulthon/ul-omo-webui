@@ -26,12 +26,19 @@ const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
 });
 
-// SSE 事件桥装配（todo 10 收口）：manager 的 engine_event 透传进桥 → 注入
-// sseRoutes（进程启动期一次）；完整路径 GET /api/events，自动处于上方
+// SSE 事件桥装配（todo 10 收口 + todo 9 后续修复）：manager 的 engine_event 透传进桥
+// → 注入 sseRoutes（进程启动期一次）；完整路径 GET /api/events，自动处于上方
 // /api/* 鉴权中间件保护内。关停时退订（attachEventBus 返回值）。
+// - heartbeatMs=8000：Bun 空闲连接超时实测 ~12s，心跳周期必须小于它，
+//   否则空闲 SSE 连接被服务端周期性掐断（客户端虽自愈但有无谓重连）。
+// - durableLookup：wire sessionId 是 routing handle，REST/前端会话身份是
+//   durable id（磁盘 header id）；data 帧注入 durableSessionId 供前端按 durable 键路由。
 const eventBus = new EventBus({ capacity: 1000 });
 const detachEventBus = attachEventBus(manager, eventBus);
-setEventBus(eventBus, { heartbeatMs: 15000 });
+setEventBus(eventBus, {
+  heartbeatMs: 8000,
+  durableLookup: (projectPath, handle) => engines.durableSessionIdFor(projectPath, handle),
+});
 
 // 启动孤儿清扫：清理上次遗留的引擎子进程（todo 8 语义，registry+cwd+argv 三因子判定）
 void manager

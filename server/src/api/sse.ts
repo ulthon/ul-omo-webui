@@ -7,15 +7,21 @@
  *
  * SSE 契约（W3 todo 14 前端按此解析）：
  *   - event 行 = 引擎 wire 事件 type（如 message_update / agent_end / gap）；
- *   - data 行 = JSON `{projectPath, event}`，event 为 wire 原样对象（sessionId
- *     是会话路由依据，见 engine/events.ts 注释）；
+ *   - data 行 = JSON `{projectPath, event, durableSessionId?}`，event 为 wire 原样
+ *     对象（sessionId 是 routing handle，见 engine/events.ts 注释）；
+ *     `durableSessionId` 为可选加法字段（todo 9 后续修复）：能映射到磁盘 header id
+ *     时由 durableLookup 注入，映射不明时缺席——前端 messages store 以 durable id
+ *     为键，路由流式更新时优先取该字段，缺席回退 wire sessionId；
  *   - id 行 = 事件桥全局游标（自增，不侵入 wire 事件体）；
  *   - 断点续传：客户端（原生 EventSource）重连自动带 Last-Event-ID 头，服务端
  *     从游标之后续发，不丢不重；
  *   - 游标越界（早于服务端环形缓冲起点，或服务端重启后客户端游标超前）：
  *     先发一条 `event: gap`（data `{from, to}`，id = 当前续发基点）再从最旧
  *     可用事件续发——客户端收到 gap 必须对活动会话做全量重取（todo 14）；
- *   - 心跳：每 heartbeatMs（默认 15s）写一行注释 `: ping` 保活。
+ *   - `?session=` 过滤：wire sessionId（routing handle）或 durableSessionId
+ *     任一匹配即放行（durable 匹配是加法兼容：REST 侧只发 durable id）；
+ *   - 心跳：每 heartbeatMs（默认 15s，生产装配 8s——Bun 空闲超时实测 ~12s，
+ *     心跳周期必须小于它，防空闲 SSE 连接被服务端掐断）写一行注释 `: ping` 保活。
  *
  * 挂载与装配（集成收口者参考，本文件不改 index.ts）：
  *
@@ -43,18 +49,26 @@ import { EventBus, type BridgeEvent } from "../engine/events"
 export const sseRoutes = new Hono()
 
 interface SseOptions {
-  /** 心跳间隔毫秒（默认 15s）。 */
+  /** 心跳间隔毫秒（默认 15s；生产装配 8s，见头注释）。 */
   heartbeatMs?: number
+  /** wire sessionId（routing handle）→ durable id 查询（组合根注入 engine-runtime 的映射）。
+   * 返回 undefined 表示映射不明，data 帧不注入 durableSessionId（如实透传）。 */
+  durableLookup?: (projectPath: string, handle: string) => string | undefined
 }
 
 interface SseRuntime {
   bus: EventBus
   heartbeatMs: number
+  durableLookup: SseOptions["durableLookup"]
 }
 
 /** EventBus 装配口：集成收口时在进程启动期调用一次（构造参数注入实例）。 */
 export function setEventBus(bus: EventBus, options?: SseOptions): void {
-  runtime = { bus, heartbeatMs: options?.heartbeatMs ?? 15000 }
+  runtime = {
+    bus,
+    heartbeatMs: options?.heartbeatMs ?? 15000,
+    durableLookup: options?.durableLookup,
+  }
 }
 
 let runtime: SseRuntime | null = null
@@ -79,16 +93,30 @@ function wireSessionId(e: BridgeEvent): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined
 }
 
+/** data 帧载荷：映射可得时注入 durableSessionId（可选加法字段），否则保持原两字段。 */
+function dataPayload(e: BridgeEvent, durableLookup: SseRuntime["durableLookup"]): string {
+  const handle = wireSessionId(e)
+  const durable = handle !== undefined ? durableLookup?.(e.projectPath, handle) : undefined
+  if (durable === undefined) {
+    return JSON.stringify({ projectPath: e.projectPath, event: e.event })
+  }
+  return JSON.stringify({ projectPath: e.projectPath, event: e.event, durableSessionId: durable })
+}
+
 /** wire 事件 type 作为 SSE event 行（客户端按类型路由或收 gap 标记）。 */
 function wireType(e: BridgeEvent): string {
   const type = (e.event as { type?: unknown }).type
   return typeof type === "string" && type.length > 0 ? type : "engine_event"
 }
 
-async function writeBridgeEvent(stream: SSEStreamingApi, e: BridgeEvent): Promise<void> {
+async function writeBridgeEvent(
+  stream: SSEStreamingApi,
+  e: BridgeEvent,
+  durableLookup: SseRuntime["durableLookup"],
+): Promise<void> {
   await stream.writeSSE({
     event: wireType(e),
-    data: JSON.stringify({ projectPath: e.projectPath, event: e.event }),
+    data: dataPayload(e, durableLookup),
     id: String(e.id),
   })
 }
@@ -97,7 +125,7 @@ sseRoutes.get("/events", (c) => {
   if (!runtime) {
     return c.json({ error: "event bus not configured: call setEventBus() first" }, 500)
   }
-  const { bus, heartbeatMs } = runtime
+  const { bus, heartbeatMs, durableLookup } = runtime
 
   // Last-Event-ID：原生 EventSource 重连自动携带；非法值按 0 处理
   //（0 = 从头/从缓冲最旧开始，越界时自然走 gap 路径）
@@ -105,8 +133,13 @@ sseRoutes.get("/events", (c) => {
   const parsed = raw === undefined ? 0 : Number.parseInt(raw, 10)
   const afterId = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
   const sessionFilter = c.req.query("session")
-  const matchesFilter = (e: BridgeEvent): boolean =>
-    sessionFilter === undefined || wireSessionId(e) === sessionFilter
+  const matchesFilter = (e: BridgeEvent): boolean => {
+    if (sessionFilter === undefined) return true
+    if (wireSessionId(e) === sessionFilter) return true
+    // durable id 匹配（加法兼容）：REST 侧只发 durable id，前端用它过滤
+    const handle = wireSessionId(e)
+    return handle !== undefined && durableLookup?.(e.projectPath, handle) === sessionFilter
+  }
 
   return streamSSE(c, async (stream) => {
     const conn: Connection = { queue: [], lastSentId: afterId, flushing: false, closed: false }
@@ -146,7 +179,7 @@ sseRoutes.get("/events", (c) => {
               id: String(frame.id),
             })
           } else {
-            await writeBridgeEvent(stream, frame.event)
+            await writeBridgeEvent(stream, frame.event, durableLookup)
           }
           conn.lastSentId = frame.kind === "gap" ? frame.id : frame.event.id
         }
