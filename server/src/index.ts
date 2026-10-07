@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { relative } from "node:path";
-import { DATA_DIR, HOST, PORT, STATIC_DIR } from "./config";
+import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { EngineProcessManager } from "./engine/process-manager";
@@ -17,16 +17,23 @@ import { createFsRoutes } from "./api/routes-fs";
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 
 // 组合根装配（todo 9）：元数据库 → 引擎子进程管理器单例 → 按项目懒加载运行时 → 注入各路由
-const meta = openMetaDb();
+// meta 库默认 <DATA_DIR>/meta.db（显式 SENPI_WEBUI_META_DB 仍最高优先）；
+// PID 登记表同属运行数据目录——隔离部署（覆盖 DATA_DIR）三者随行，互不共享。
+const meta = openMetaDb({ path: metaDbPath() });
 const manager = new EngineProcessManager({
   // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
-  agentDir: process.env.SENPI_WEBUI_AGENT_DIR,
+  agentDir: agentDir(),
+  // PID 登记表（孤儿清扫记录）随运行数据目录
+  registryPath: engineRegistryPath(),
   // 按项目权限预设（meta_kv 键 permission-preset:<projectPath>，值如 read-only）：
   // spawn 参数级，变更后经 POST /api/projects/restart 让项目引擎重建生效
   extraSpawnArgs: (projectPath) => permissionPresetArgs((key) => meta.getKv(key), projectPath),
 });
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
+  // agentDir 必须与 spawn 同源：SDK 侧路径推导（models-store 直读降级、
+  // SessionManager.list 的 sessionDir）全部依赖它（todo 22 QA 移交修复）
+  agentDir: agentDir(),
   // 收尾监视的合成 agent_settled 进同一事件桥（todo 16 实证：个别回合收尾
   // wire 事件全部缺席；get_state 复核空闲 + 宽限后合成，带 synthetic 标记）
   publishSyntheticEvent: (projectPath, event) => {

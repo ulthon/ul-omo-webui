@@ -6,7 +6,9 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { DATA_DIR } from "../src/config";
 import { Hono } from "hono";
 import {
   EngineRuntimeRegistry,
@@ -34,6 +36,7 @@ import type {
   EngineUsageStats,
 } from "../src/adapter/engine-adapter";
 import { ApiError } from "../src/api/http";
+import { agentDir as configAgentDir, engineRegistryPath, metaDbPath } from "../src/config";
 
 // ---------------------------------------------------------------- fake gateway
 
@@ -952,6 +955,69 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
       await withoutPreset.m.stopAll();
       rmSync(projWith, { recursive: true, force: true });
       rmSync(projWithout, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------- 装配隔离：meta 库路径与 agentDir
+
+describe("config 路径装配", () => {
+  const saved = {
+    metaDb: process.env.SENPI_WEBUI_META_DB,
+    agentDirEnv: process.env.SENPI_WEBUI_AGENT_DIR,
+  };
+  afterEach(() => {
+    if (saved.metaDb !== undefined) process.env.SENPI_WEBUI_META_DB = saved.metaDb;
+    else delete process.env.SENPI_WEBUI_META_DB;
+    if (saved.agentDirEnv !== undefined) process.env.SENPI_WEBUI_AGENT_DIR = saved.agentDirEnv;
+    else delete process.env.SENPI_WEBUI_AGENT_DIR;
+  });
+
+  test("(b) meta 库默认随 DATA_DIR，显式 META_DB 仍最高优先", () => {
+    delete process.env.SENPI_WEBUI_META_DB;
+    expect(metaDbPath()).toBe(resolve(DATA_DIR, "meta.db"));
+    process.env.SENPI_WEBUI_META_DB = "/tmp/explicit-meta.db";
+    expect(metaDbPath()).toBe("/tmp/explicit-meta.db");
+    // PID 登记表同属运行数据目录
+    expect(engineRegistryPath()).toBe(resolve(DATA_DIR, "engine-processes.json"));
+  });
+
+  test("(a) agentDir 缺省 ~/.pi/agent，env 覆盖生效", () => {
+    delete process.env.SENPI_WEBUI_AGENT_DIR;
+    expect(configAgentDir()).toBe(join(homedir(), ".pi", "agent"));
+    process.env.SENPI_WEBUI_AGENT_DIR = "/tmp/fake-agent";
+    expect(configAgentDir()).toBe("/tmp/fake-agent");
+  });
+});
+
+describe("EngineRuntimeRegistry agentDir 传递（models 降级读同源目录）", () => {
+  test("registry 的 agentDir 决定 modelsList 降级直读的 models-store.json", async () => {
+    const fakeAgent = mkdtempSync(join(tmpdir(), "fake-agent-"));
+    const proj = mkdtempSync(join(tmpdir(), "agentdir-proj-"));
+    writeFileSync(
+      join(fakeAgent, "models-store.json"),
+      JSON.stringify({ "fake-provider": { models: [{ id: "fake-model-a", reasoning: false, contextWindow: 1000 }] } }),
+    );
+    const manager = new EngineProcessManager({
+      registryPath: join(proj, "registry.json"),
+      readyProbeIntervalMs: 1,
+      readyProbeMaxAttempts: 10,
+      crashPollMs: 60_000,
+    });
+    const registry = new EngineRuntimeRegistry(manager, {
+      listProjects: () => [proj],
+      agentDir: fakeAgent,
+    });
+    try {
+      // 冷路径（引擎未 spawn）：modelsList 降级直读 agentDir 下的 models-store.json
+      const models = await registry.modelsList(proj);
+      expect(models).toHaveLength(1);
+      expect(models[0].provider).toBe("fake-provider");
+      expect(models[0].id).toBe("fake-model-a");
+    } finally {
+      await manager.stopAll();
+      rmSync(fakeAgent, { recursive: true, force: true });
+      rmSync(proj, { recursive: true, force: true });
     }
   });
 });
