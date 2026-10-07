@@ -4,5 +4,8 @@
   "workspaces": [
     "server",
     "web"
-  ]
+  ],
+  "scripts": {
+    "build:binary": "bun scripts/build-binary.ts"
+  }
 }
