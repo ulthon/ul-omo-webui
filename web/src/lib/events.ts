@@ -244,6 +244,7 @@ export class EventsClient {
       })
       .catch(() => {
         if (controller.signal.aborted || this.stopped) return; // 主动关闭不重连
+        controller.abort(); // 幂等：异常退出（idle timeout / stream ended）时中止半死的响应流，防连接累积
         this.abortController = null; // 连接已结束，允许下次 open 重建
         this.online = false;
         useUiStore.getState().setConnection("reconnecting");

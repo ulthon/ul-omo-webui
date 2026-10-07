@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { relative } from "node:path";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
-import { loadEmbeddedStatic, type EmbeddedStaticAssets } from "./embedded-static";
+import { loadEmbeddedStatic, embeddedRelPath, type EmbeddedStaticAssets } from "./embedded-static";
+import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { EngineProcessManager } from "./engine/process-manager";
@@ -143,7 +144,14 @@ if (embeddedStatic) {
     if (c.req.path.startsWith("/api/")) {
       return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
     }
-    const relPath = decodeURIComponent(c.req.path).replace(/^\/+/, "");
+    // 裸 handler 不在 route() 包装内：畸形百分号编码（如 /%zz）须就地转 400 JSON，
+    // 否则 URIError 落 Hono 默认 onError 返回纯文本 500
+    let relPath: string;
+    try {
+      relPath = embeddedRelPath(c.req.path);
+    } catch (err) {
+      return toErrorResponse(c, err);
+    }
     const asset = embeddedStatic[relPath];
     if (asset) {
       // vite 产物 assets/ 文件名带内容 hash，可长缓存 immutable

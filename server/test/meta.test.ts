@@ -91,6 +91,30 @@ describe("meta_session CRUD", () => {
     expect(db.getDraft("s5")).toBeNull();
     db.close();
   });
+
+  test("deleteSessionMeta 原子性：draft 删除中途失败时整体回滚（不留孤儿 draft）", () => {
+    const db = openMetaDb({ path: dbFile("session-delete-atomic") });
+    db.updateSessionMeta("s-del", { pinned: true });
+    db.setDraft("s-del", "草稿");
+
+    // 第二连接建触发器令 meta_draft 的 DELETE 中途失败（事务包裹前第一条 DELETE 已生效，
+    // 会留下孤儿 draft；包裹后应整体回滚）
+    const raw = new Database(db.path);
+    raw.exec(
+      "CREATE TRIGGER block_draft_delete BEFORE DELETE ON meta_draft BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+    );
+    expect(() => db.deleteSessionMeta("s-del")).toThrow(SQLiteError);
+    expect(db.getSessionMeta("s-del")).not.toBeNull();
+    expect(db.getDraft("s-del")).not.toBeNull();
+
+    raw.exec("DROP TRIGGER block_draft_delete");
+    raw.close();
+
+    db.deleteSessionMeta("s-del");
+    expect(db.getSessionMeta("s-del")).toBeNull();
+    expect(db.getDraft("s-del")).toBeNull();
+    db.close();
+  });
 });
 
 describe("meta_draft CRUD", () => {

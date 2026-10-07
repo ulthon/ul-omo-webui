@@ -265,8 +265,11 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
     },
 
     deleteSessionMeta(sessionId) {
-      run("DELETE FROM meta_session WHERE session_id = ?", sessionId);
-      run("DELETE FROM meta_draft WHERE session_id = ?", sessionId);
+      // 单事务保证原子：中途失败整体回滚，不留孤儿 draft 行
+      immediate(() => {
+        run("DELETE FROM meta_session WHERE session_id = ?", sessionId);
+        run("DELETE FROM meta_draft WHERE session_id = ?", sessionId);
+      });
     },
 
     getDraft(sessionId) {

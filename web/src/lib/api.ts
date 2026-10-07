@@ -62,7 +62,7 @@ export interface MessagesPage {
 export interface SessionCreated {
   id: string;
   sessionPath: string;
-  durable: string;
+  durable: boolean;
   project: string;
   provider: string | null;
   modelId: string | null;
