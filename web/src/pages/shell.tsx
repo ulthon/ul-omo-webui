@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
+import { connectEvents, disconnectEvents } from "@/lib/events";
 import { useUiStore } from "@/stores/ui";
 import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -31,6 +32,12 @@ export function AppShell() {
       cancelled = true;
     };
   }, [retrying]);
+
+  // SSE 实时流：整页全程单条连接，随主布局挂载/卸载（todo 14）
+  useEffect(() => {
+    connectEvents();
+    return () => disconnectEvents();
+  }, []);
 
   const retry = () => {
     setBootFailed(false);
