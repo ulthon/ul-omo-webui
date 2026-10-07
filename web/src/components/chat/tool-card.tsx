@@ -4,11 +4,14 @@
 // entries 中 role=toolResult 的配对消息（content[].text + isError，message_start/end 定格）提供结果——
 // 历史会话（GET messages 载入、无 toolRuns）与流式会话同一数据通路。
 // omo todo 工具的 details.phases 结构化渲染归 todo 23，本组件只按通用卡片展示文本摘要；
+// diff 视图（todo 19）：编辑类工具结果文本含 unified diff（```diff 围栏 / git diff 头 /
+// @@ hunk 头启发式识别）时默认切 diff 渲染，可切回纯文本；解析不出结构的误判自动回退文本。
 // 未知工具类型（未登记的 toolName / 异形 args / 无结果）一律走通用兜底，不崩。
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
-import { RESULT_PREVIEW_CHARS, prettyJson, resultTextOf, summarizeArgs } from "./tool-card-data";
+import { RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeArgs } from "./tool-card-data";
+import { DiffView } from "@/components/diff/diff-view";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
 
 /** entries 中按 toolCallId 反向找配对的 toolResult 消息（引用稳定：命中返回消息对象本身）。
@@ -39,6 +42,7 @@ export function ToolCard({
 }) {
   const [open, setOpen] = useState(false);
   const [showFull, setShowFull] = useState(false);
+  const [resultMode, setResultMode] = useState<"diff" | "text">("diff");
   const run = useMessagesStore((s) => s.bySession[sessionId]?.toolRuns[toolCallId]);
   const resultMessage = useMessagesStore((s) => {
     const entries = s.bySession[sessionId]?.entries;
@@ -54,6 +58,11 @@ export function ToolCard({
   const argsSummary = summarizeArgs(args);
   const argsPretty = args == null ? "" : prettyJson(args);
   const clipped = !showFull && resultText.length > RESULT_PREVIEW_CHARS;
+  // 结果含可解析的 unified diff 时默认切 diff 渲染（todo 19）：
+  // details.patch（引擎 edit 类工具结构化字段）优先，结果文本 diff 形态启发式兜底；
+  // 误判（解析为空）自动回退纯文本。判定逻辑在 tool-card-data.diffTextOf（单测覆盖）。
+  const diffText = useMemo(() => diffTextOf(resultMessage, resultText), [resultMessage, resultText]);
+  const showDiff = diffText != null && resultMode === "diff";
 
   return (
     <div
@@ -104,23 +113,53 @@ export function ToolCard({
             </section>
           ) : null}
           <section>
-            <div className="mb-1 text-[11px] font-medium text-muted-foreground/80">结果</div>
+            <div className="mb-1 flex items-center gap-2">
+              <div className="text-[11px] font-medium text-muted-foreground/80">结果</div>
+              {diffText != null && (
+                <div role="group" aria-label="结果视图切换" className="flex items-center rounded-md border p-0.5">
+                  {(["diff", "text"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={resultMode === mode}
+                      onClick={() => setResultMode(mode)}
+                      className={`min-h-6 rounded px-1.5 text-[11px] transition-colors ${
+                        resultMode === mode
+                          ? "bg-muted font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      {mode === "diff" ? "Diff" : "文本"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {hasResult ? (
-              <>
-                <pre className="max-h-64 overflow-y-auto rounded-md bg-muted/40 px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-                  {showFull ? resultText : `${resultText.slice(0, RESULT_PREVIEW_CHARS)}${clipped ? "…" : ""}`}
-                </pre>
-                {resultText.length > RESULT_PREVIEW_CHARS ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowFull((v) => !v)}
-                    aria-expanded={showFull}
-                    className="mt-0.5 inline-flex min-h-11 items-center gap-1 text-xs text-primary transition-colors hover:underline"
-                  >
-                    {showFull ? "收起结果" : "展开全部"}
-                  </button>
-                ) : null}
-              </>
+              showDiff ? (
+                <div
+                  data-testid="tool-diff-view"
+                  className="max-h-64 overflow-y-auto rounded-md bg-muted/20 p-1.5"
+                >
+                  <DiffView diffText={diffText} />
+                </div>
+              ) : (
+                <>
+                  <pre className="max-h-64 overflow-y-auto rounded-md bg-muted/40 px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
+                    {showFull ? resultText : `${resultText.slice(0, RESULT_PREVIEW_CHARS)}${clipped ? "…" : ""}`}
+                  </pre>
+                  {resultText.length > RESULT_PREVIEW_CHARS ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowFull((v) => !v)}
+                      aria-expanded={showFull}
+                      className="mt-0.5 inline-flex min-h-11 items-center gap-1 text-xs text-primary transition-colors hover:underline"
+                    >
+                      {showFull ? "收起结果" : "展开全部"}
+                    </button>
+                  ) : null}
+                </>
+              )
             ) : (
               <div className="text-xs text-muted-foreground/70">
                 {running ? "等待工具返回…" : isError ? "（无结果文本）" : "（无文本结果）"}

@@ -11,7 +11,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { ToolCard } = await import("../tool-card");
-const { summarizeArgs, prettyJson, resultTextOf, RESULT_PREVIEW_CHARS, ARGS_SUMMARY_CHARS } = await import(
+const { summarizeArgs, prettyJson, resultTextOf, diffTextOf, RESULT_PREVIEW_CHARS, ARGS_SUMMARY_CHARS } = await import(
   "../tool-card-data"
 );
 const { useMessagesStore } = await import("@/stores/messages");
@@ -51,6 +51,28 @@ describe("tool-card 纯助手函数", () => {
     const out = summarizeArgs(long);
     expect(out.length).toBe(ARGS_SUMMARY_CHARS + 1); // 截断 + 尾部省略号
     expect(out.endsWith("…")).toBe(true);
+  });
+
+  test("diffTextOf：details.patch 优先（引擎 edit 实证形态），文本启发式兜底，无 diff 返回 null", () => {
+    // 引擎 edit 工具真实形态：content 是纯文本结果，details.patch 是 unified diff
+    const editLike = {
+      role: "toolResult",
+      toolCallId: "call_edit",
+      toolName: "edit",
+      content: [{ type: "text", text: "Successfully replaced 1 block(s) in README.md." }],
+      details: {
+        patch: "--- README.md\n+++ README.md\n@@ -1,3 +1,3 @@\n-# W4-19 测试项目\n+# W4-19 已由 agent 修改\n \n 已修改的说明文本。\n",
+      },
+      isError: false,
+    } as never;
+    expect(diffTextOf(editLike, "Successfully replaced 1 block(s) in README.md.")).toStartWith("--- README.md");
+    // ```diff 围栏文本兜底（无 details.patch）
+    expect(diffTextOf(null, "改动如下\n```diff\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-a\n+b\n```")).toContain(
+      "--- a/f.ts",
+    );
+    // 无 diff 形态：普通结果文本与 todo 结构化 details 都返回 null
+    expect(diffTextOf(null, "Successfully replaced 1 block(s).")).toBeNull();
+    expect(diffTextOf(TODO_RESULT_MESSAGE, resultTextOf(TODO_RESULT_MESSAGE, undefined))).toBeNull();
   });
 
   test(

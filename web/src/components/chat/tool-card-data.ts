@@ -1,6 +1,8 @@
 // 工具卡片数据助手（todo 17）：参数/结果的摘要与文本提取，tool-card.tsx 与单测共用。
 // 独立成文件是为了 react-refresh 约束（组件文件只导出组件）。
+// todo 19 增补：diff 视图数据源判定 diffTextOf（details.patch 优先，文本启发式兜底）。
 import type { WireMessage, WirePart } from "@/lib/api";
+import { extractParseableDiff } from "@/components/diff/diff-utils";
 
 /** 结果折叠预览长度（字符）；超出截断，"展开全部"后完整显示 */
 export const RESULT_PREVIEW_CHARS = 400;
@@ -119,4 +121,18 @@ export function resultTextOf(message: WireMessage | null, runResult: unknown): s
     return text || prettyJson(runResult);
   }
   return "";
+}
+
+/** diff 视图数据源（todo 19）：返回可渲染的 unified diff 文本，无 diff 形态返回 null。
+ *  优先级：1) toolResult.details.patch——引擎 edit 类工具的结构化 unified diff 字段（QA 实证）；
+ *  2) 结果文本中的 diff 形态（```diff 围栏 / git diff 头 / 数字形态 @@ hunk 头启发式）。
+ *  两路都经 extractParseableDiff 解析校验，误判自动回退 null（纯文本渲染）。 */
+export function diffTextOf(message: WireMessage | null, resultText: string): string | null {
+  if (!resultText) return null;
+  const details = message?.details as { patch?: unknown } | undefined;
+  if (typeof details?.patch === "string" && details.patch.trim()) {
+    const fromPatch = extractParseableDiff(details.patch);
+    if (fromPatch) return fromPatch;
+  }
+  return extractParseableDiff(resultText);
 }

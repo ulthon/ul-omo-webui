@@ -1,5 +1,7 @@
 // 主布局 /：桌面（≥1024px）常驻左侧栏 + 主区；≤768px（lg 断点以下）侧栏抽屉化 + 汉堡按钮。
 // 初始引导：落到 last_opened_at 最新的项目（lib/bootstrap）。
+// 主区页签（todo 19）：「对话 / 未提交变更」切换；对话为默认页签，未提交变更页签挂
+// components/diff/changes-view 的 ChangesView。页签状态为 shell 本地 state（无跨组件消费）。
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
@@ -8,7 +10,15 @@ import { useUiStore } from "@/stores/ui";
 import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
+import { ChangesView } from "@/components/diff/changes-view";
 import { Button } from "@/components/ui/button";
+
+type MainTab = "chat" | "changes";
+
+const TAB_CLASS = (active: boolean) =>
+  `min-h-9 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+    active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+  }`;
 
 export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
@@ -17,6 +27,7 @@ export function AppShell() {
   const [booted, setBooted] = useState(false);
   const [bootFailed, setBootFailed] = useState(false);
   const [retrying, setRetrying] = useState(0);
+  const [mainTab, setMainTab] = useState<MainTab>("chat");
 
   useEffect(() => {
     let cancelled = false;
@@ -65,22 +76,48 @@ export function AppShell() {
           <Sidebar />
         </aside>
 
-        {/* 主区：todo 16 对话流实体 */}
-        <main className="min-w-0 flex-1 overflow-hidden">
-          {!booted ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              加载中…
-            </div>
-          ) : bootFailed ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3">
-              <p className="text-sm text-muted-foreground">加载失败，请检查服务是否可用</p>
-              <Button variant="outline" size="sm" onClick={retry}>
-                重试
-              </Button>
-            </div>
-          ) : (
-            <ChatPlaceholder />
-          )}
+        {/* 主区：todo 16 对话流实体 + todo 19 未提交变更页签 */}
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div role="tablist" aria-label="主区视图" className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mainTab === "chat"}
+              data-testid="main-tab-chat"
+              onClick={() => setMainTab("chat")}
+              className={TAB_CLASS(mainTab === "chat")}
+            >
+              对话
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mainTab === "changes"}
+              data-testid="main-tab-changes"
+              onClick={() => setMainTab("changes")}
+              className={TAB_CLASS(mainTab === "changes")}
+            >
+              未提交变更
+            </button>
+          </div>
+          <div className="min-h-0 flex-1">
+            {!booted ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                加载中…
+              </div>
+            ) : bootFailed ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3">
+                <p className="text-sm text-muted-foreground">加载失败，请检查服务是否可用</p>
+                <Button variant="outline" size="sm" onClick={retry}>
+                  重试
+                </Button>
+              </div>
+            ) : mainTab === "chat" ? (
+              <ChatPlaceholder />
+            ) : (
+              <ChangesView />
+            )}
+          </div>
         </main>
       </div>
 

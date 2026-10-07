@@ -1,0 +1,41 @@
+/* diff 渲染主题（todo 19）：react-diff-view 官方样式类的变量化主题。
+   官方 style/index.css 在 :root 声明 --diff-* 浅色硬编码值；这里在 .diff-surface
+   容器上覆写为项目主题（token 变量来自 index.css 的 :root/.dark），暗色随 .dark 切换。 */
+.diff-surface {
+  --diff-font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --diff-gutter-insert-background-color: rgba(16, 185, 129, 0.14);
+  --diff-gutter-delete-background-color: rgba(239, 68, 68, 0.14);
+  --diff-code-insert-background-color: rgba(16, 185, 129, 0.1);
+  --diff-code-delete-background-color: rgba(239, 68, 68, 0.1);
+  font-size: 12px;
+}
+
+.dark .diff-surface {
+  --diff-gutter-insert-background-color: rgba(52, 211, 153, 0.18);
+  --diff-gutter-delete-background-color: rgba(248, 113, 113, 0.18);
+  --diff-code-insert-background-color: rgba(52, 211, 153, 0.12);
+  --diff-code-delete-background-color: rgba(248, 113, 113, 0.12);
+}
+
+/* 官方默认 gutter 列宽 7ch 对手机偏挤，压到 5ch 依旧放得下四位数行号 */
+.diff-surface .diff-gutter-col {
+  width: 5ch;
+}
+
+/* hunk 头（@@ 段）行：Decoration 渲染出的 tr，弱化底色便于扫读 */
+.diff-surface .diff-hunk-header td {
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  padding: 1px 0.5ch;
+}
+
+/* 无内容 hunk / 解析失败的兜底说明块 */
+.diff-empty {
+  border-radius: var(--radius-md, 0.375rem);
+  border: 1px dashed var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  padding: 0.75rem;
+  text-align: center;
+}
