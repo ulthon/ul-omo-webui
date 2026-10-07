@@ -1,0 +1,4 @@
+# bun test 配置：preload 见 tests/helpers/zustand-server-snapshot.ts（服务端渲染快照对齐，
+# 供组件单测在 react-dom/server 下断言实时 store 状态）
+[test]
+preload = ["./tests/helpers/zustand-server-snapshot.ts"]
