@@ -53,13 +53,29 @@ describe("tool-card 纯助手函数", () => {
     expect(out.endsWith("…")).toBe(true);
   });
 
-  test("prettyJson：对象 pretty / 字符串原样 / 循环引用不崩", () => {
-    expect(prettyJson({ a: 1 })).toBe('{\n  "a": 1\n}');
-    expect(prettyJson("already")).toBe("already");
-    const circular = {};
-    circular.self = circular;
-    expect(prettyJson(circular)).toContain("[object Object]");
-  });
+  test(
+    "prettyJson：对象 pretty / 字符串原样 / 循环引用不崩",
+    () => {
+      expect(prettyJson({ a: 1 })).toBe('{\n  "a": 1\n}');
+      expect(prettyJson("already")).toBe("already");
+      const circular = {};
+      circular.self = circular;
+      expect(prettyJson(circular)).toContain("[object Object]");
+      // 有界性：深嵌套不炸栈不失控（超 MAX_DEPTH 占位 "…"）
+      let deep = 1;
+      for (let i = 0; i < 100; i++) deep = { child: deep };
+      const bounded = prettyJson(deep);
+      expect(bounded).toContain('"…"');
+      expect(bounded.length).toBeLessThan(1000);
+      // 共享非循环引用：不得被 Seen 误报为循环
+      const shared = { x: 1 };
+      const twice = { a: shared, b: shared };
+      const out = prettyJson(twice);
+      expect((out.match(/"x": 1/g) ?? []).length).toBe(2);
+      expect(out).not.toContain("[object Object]");
+    },
+    200, // 首跑曾因 stringify 循环路径病态耗时超默认 5s 偶发失败；显式收紧为 200ms 防回归
+  );
 
   test("resultTextOf：toolResult content 文本优先，run.result 兜底，长 todo 文本完整提取", () => {
     expect(resultTextOf(TODO_RESULT_MESSAGE, undefined)).toContain("Overall: 0/2 done");

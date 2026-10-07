@@ -20,11 +20,77 @@ export function summarizeArgs(args: unknown): string {
   return json.length > ARGS_SUMMARY_CHARS ? `${json.slice(0, ARGS_SUMMARY_CHARS)}…` : json;
 }
 
-/** 参数/结果对象 → 展开态 pretty JSON（字符串原样；异常兜底 String） */
+/**
+ * 展开态深度上限：超过以 "\"…\"" 占位，保证输出有界（工具参数/结果的 wire JSON 实测深度 ≤5）。
+ * 不能用原生 JSON.stringify 兜循环引用：本运行时（bun 1.4.2 / JSC）对循环结构 stringify
+ * 抛 TypeError 前有病态耗时（{self} 一层循环实测 ~16s），try/catch 捕获发生在代价之后。
+ */
+const MAX_DEPTH = 8;
+
+/**
+ * 与 JSON.stringify(value, null, 2) 同构的确定性序列化：
+ *   WeakSet 做祖先链记忆化（DFS 回溯删除，共享非循环引用不误报），循环节点占位 "[object Object]"
+ *   （与旧实现 catch 后 String(root) 的输出语义一致）；超深占位 "…"；toJSON 与原生一致展开。
+ * 不可序列化节点语义与原生对齐：数组元素位/根位为 null/undefined，对象属性位剔除。
+ */
+function serializeNode(value: unknown, depth: number, seen: WeakSet<object>): string | undefined {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value);
+    case "number":
+      return Number.isFinite(value) ? String(value) : "null";
+    case "boolean":
+      return String(value);
+    case "bigint":
+      return undefined; // 根位走 String(value) 兜底（与旧实现 catch 路径一致）；wire JSON 不会出现
+    case "undefined":
+    case "function":
+    case "symbol":
+      return undefined; // 数组元素位由调用方回落 null；属性位剔除；根位回落 String(value)
+    default:
+      break;
+  }
+  const obj = value as object;
+  if (depth > MAX_DEPTH) return "\"…\"";
+  if (seen.has(obj)) return "\"[object Object]\"";
+  seen.add(obj);
+  try {
+    const toJson = (obj as { toJSON?: unknown }).toJSON;
+    if (typeof toJson === "function") {
+      const json = (toJson as (this: object, key: string) => unknown).call(obj, "");
+      return serializeNode(json, depth, seen);
+    }
+    if (Array.isArray(obj)) {
+      const items = (obj as unknown[]).map((item) => serializeNode(item, depth + 1, seen) ?? "null");
+      return items.length === 0 ? "[]" : `[\n${items.map((t) => indentBlock(t, 2)).join(",\n")}\n]`;
+    }
+    const parts: string[] = [];
+    for (const key of Object.keys(obj)) {
+      const raw = (obj as Record<string, unknown>)[key];
+      if (raw === undefined || typeof raw === "function" || typeof raw === "symbol") continue;
+      parts.push(`${JSON.stringify(key)}: ${serializeNode(raw, depth + 1, seen) ?? "null"}`);
+    }
+    return parts.length === 0 ? "{}" : `{\n${parts.map((t) => indentBlock(t, 2)).join(",\n")}\n}`;
+  } finally {
+    seen.delete(obj);
+  }
+}
+
+/** 每行前缀 2 空格（子结构相对缩进，父层嵌入时再统一前缀） */
+function indentBlock(text: string, spaces: number): string {
+  const pad = " ".repeat(spaces);
+  return text
+    .split("\n")
+    .map((line) => pad + line)
+    .join("\n");
+}
+
+/** 参数/结果对象 → 展开态 pretty JSON（字符串原样；循环引用/超深/异常均有界兜底，不崩不病态耗时） */
 export function prettyJson(value: unknown): string {
   if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value, null, 2) ?? String(value);
+    return serializeNode(value, 0, new WeakSet()) ?? String(value);
   } catch {
     return String(value);
   }
