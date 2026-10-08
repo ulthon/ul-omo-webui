@@ -298,6 +298,72 @@ describe("事件分发", () => {
     expect(getDispatchCursor()).toBe(6);
     client.stop();
   });
+
+  test("synthetic agent_settled（事件断流兜底）触发该会话补拉；真实 settle 不触发", async () => {
+    // 形态复现：引擎事件断流（assistant 流式事件未送达），server watchdog 合成
+    // agent_settled{synthetic:true}——前端须补拉 GET messages 兜底显示已落盘回复
+    useSessionsStore.setState({ byProject: { "/p": [makeSession("s1")] } });
+    useMessagesStore.setState({
+      bySession: { s1: loadedMessages([{ type: "message", id: "u1", message: { role: "user", content: [{ type: "text", text: "你好" }] } } as unknown as WireEntry]) },
+    });
+    const page = {
+      sessionId: "s1",
+      entries: [
+        { type: "message", id: "u1", message: { role: "user", content: [{ type: "text", text: "你好" }] } },
+        { type: "message", id: "a1", message: { role: "assistant", content: [{ type: "text", text: "你好！我是编排代理。" }] } },
+      ],
+      leafId: "a1",
+      cursor: "a1",
+    };
+    const fetchLog = stubFetch((url) =>
+      url.includes("/api/sessions/s1/messages") ? { status: 200, body: page } : { status: 404, body: { error: "unknown" } },
+    );
+    try {
+      const scheduler = new MockScheduler();
+      const client = freshClient(scheduler);
+      client.start();
+      const es = MockEventSource.instances[0];
+      es.emitOpen();
+
+      // 对照：真实 agent_settled（引擎事件，无 synthetic 标记）不补拉
+      es.emit("agent_settled", { projectPath: "/p", event: { type: "agent_settled", sessionId: "rpc-1" }, durableSessionId: "s1" }, 1);
+      await tick();
+      expect(fetchLog.calls).toHaveLength(0);
+
+      // synthetic settle（settle_watchdog / engine_crash 合成）→ 补拉该会话
+      es.emit(
+        "agent_settled",
+        { projectPath: "/p", event: { type: "agent_settled", synthetic: true, sessionId: "s1", reason: "settle_watchdog" }, durableSessionId: "s1" },
+        2,
+      );
+      await tick();
+
+      expect(fetchLog.calls.some((c) => c.includes("/api/sessions/s1/messages"))).toBe(true);
+      const session = useMessagesStore.getState().bySession["s1"]!;
+      expect(session.entries).toHaveLength(2); // user + 补拉回来的 assistant 回复
+      expect((session.entries[1].message as { role?: string }).role).toBe("assistant");
+      expect(session.cursor).toBe("a1");
+      client.stop();
+    } finally {
+      fetchLog.restore();
+    }
+  });
+
+  test("synthetic settle 到达时 store 外会话不触发补拉", async () => {
+    const fetchLog = stubFetch(() => ({ status: 200, body: { sessionId: "s-x", entries: [], leafId: null, cursor: null } }));
+    try {
+      dispatchSseEvent(
+        "agent_settled",
+        JSON.stringify({ projectPath: "/p", event: { type: "agent_settled", synthetic: true, sessionId: "s-other", reason: "engine_crash" } }),
+        1,
+      );
+      await tick();
+      await tick();
+      expect(fetchLog.calls).toHaveLength(0); // 未加载会话不在补拉范围
+    } finally {
+      fetchLog.restore();
+    }
+  });
 });
 
 describe("gap 与游标回退", () => {

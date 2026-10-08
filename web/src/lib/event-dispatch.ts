@@ -37,29 +37,37 @@ export function resetDispatchState(): void {
   refetching.clear();
 }
 
-/** 已加载 / 有过活动的会话全量重取：GET messages 后 setEntries 整替（先取后换）。
- * store 中存在的会话 = 客户端关心过的会话（打开过或流式过），gap/游标回退时全部
- * 校准；refetch 的 setEntries 会置 loaded=true，语义诚实（确实做了全量加载）。
+/** 单会话全量重取（gap/游标回退校准与 synthetic settle 补拉共用）：
+ * GET messages 后 setEntries 整替（先取后换，重取期间界面不清空）。
+ * store 外会话不拉（客户端未关心过）；进行中的重取按会话去重。
  * 失败静默——下一次 gap / 游标回退 / 重连重放再兜底，不打断实时流。 */
+function refetchSession(sessionId: string): void {
+  if (refetching.has(sessionId)) return;
+  if (!useMessagesStore.getState().bySession[sessionId]) return;
+  refetching.add(sessionId);
+  api
+    .listMessages(sessionId)
+    .then((page) => {
+      // 重取完成时会话可能已被 clearSession（删除/切换清理），仅在仍存在时替换
+      if (useMessagesStore.getState().bySession[sessionId]) {
+        useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId);
+      }
+    })
+    .catch(() => {
+      // 网络瞬断等；401 已由 api 层跳登录。留待下次兜底。
+    })
+    .finally(() => {
+      refetching.delete(sessionId);
+    });
+}
+
+/** 已加载 / 有过活动的会话全量重取。
+ * store 中存在的会话 = 客户端关心过的会话（打开过或流式过），gap/游标回退时全部
+ * 校准；refetch 的 setEntries 会置 loaded=true，语义诚实（确实做了全量加载）。 */
 export function refetchLoadedSessions(): void {
   const { bySession } = useMessagesStore.getState();
   for (const [sessionId] of Object.entries(bySession)) {
-    if (refetching.has(sessionId)) continue;
-    refetching.add(sessionId);
-    api
-      .listMessages(sessionId)
-      .then((page) => {
-        // 重取完成时会话可能已被 clearSession（删除/切换清理），仅在仍存在时替换
-        if (useMessagesStore.getState().bySession[sessionId]) {
-          useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId);
-        }
-      })
-      .catch(() => {
-        // 网络瞬断等；401 已由 api 层跳登录。留待下次兜底。
-      })
-      .finally(() => {
-        refetching.delete(sessionId);
-      });
+    refetchSession(sessionId);
   }
 }
 
@@ -109,6 +117,12 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     sessions.setRunState(sessionId, "idle");
     // 回合落定即权限队列全落定（含应答后 UI 未及时移除的残留），整队清空
     usePermissionsStore.getState().clearSession(sessionId);
+    // synthetic settle（server settle_watchdog / engine_crash 合成）：真实回合事件
+    // 未送达（引擎事件断流），applyWireEvent 定格不到 assistant 内容——按 server
+    // 设计约定补拉 GET messages，兜底显示已落盘的回复（真实事件流零此开销）
+    if (wire.type === "agent_settled" && wire.synthetic === true) {
+      refetchSession(sessionId);
+    }
   } else if (wire.type === "extension_ui_request") {
     const method = typeof wire.method === "string" ? wire.method : null;
     if (method !== null && DIALOG_UI_METHODS.has(method)) {
