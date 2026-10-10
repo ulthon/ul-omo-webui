@@ -119,8 +119,141 @@ function AddProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">{open && <SettingsForm onDone={() => onOpenChange(false)} />}</DialogContent>
+      <DialogContent className="sm:max-w-md">
+        {open && <SettingsForm onDone={() => onOpenChange(false)} />}
+      </DialogContent>
     </Dialog>
+  );
+}
+
+/** 项目权限预设合法档位（镜像引擎包 @code-yeongyu/senpi 的 PERMISSION_PRESET_NAMES，
+ * 2026.10.10 版 bundle 实证；各档描述按引擎 PERMISSION_PRESET_RULES 如实转述）。
+ * 空值 = 无预设 = 引擎默认行为（full-access 全部自动放行）。 */
+const PERMISSION_PRESET_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "full-access", label: "full-access（全部自动放行）" },
+  { value: "workspace", label: "workspace（项目内读写与命令放行，项目外访问询问）" },
+  { value: "accept-edits", label: "accept-edits（编辑放行，命令与项目外访问询问）" },
+  { value: "auto", label: "auto（安全操作自动放行，其余询问）" },
+  { value: "read-only", label: "read-only（只读放行，编辑与命令询问）" },
+  { value: "ask", label: "ask（全部询问）" },
+];
+
+/** 设置面板项目区：权限预设下拉（选中即 PATCH 落服务端 kv）+ 重启引擎按钮。
+ * 预设是引擎 spawn 参数级配置，变更后需重启项目引擎生效（按钮即生效口）。
+ * 重启期间浏览器与服务端的 SSE 不受影响（事件流由服务端发出，引擎重建会推
+ * engine_reclaimed 等事件，断线自动重连/心跳为既有通道，无需额外兜底）。 */
+function ProjectPermissionSection() {
+  const currentProject = useUiStore((s) => s.currentProject);
+  const preset = useUiStore((s) => s.projects.find((p) => p.projectPath === s.currentProject)?.permissionPreset ?? null);
+  const [saving, setSaving] = useState(false);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
+  const showError = (err: unknown, fallback: string) => {
+    if (err instanceof ApiError && err.status === 401) return;
+    useUiStore.getState().showToast(err instanceof ApiError ? err.message : fallback, "error");
+  };
+
+  const changePreset = async (value: string) => {
+    if (!currentProject || saving) return;
+    const next = value === "" ? null : value;
+    if (next === preset) return;
+    setSaving(true);
+    try {
+      await api.patchProjectMeta({ path: currentProject, permissionPreset: next });
+      const ui = useUiStore.getState();
+      ui.setProjects(ui.projects.map((p) => (p.projectPath === currentProject ? { ...p, permissionPreset: next } : p)));
+      ui.showToast("权限预设已保存，重启项目引擎后生效", "info");
+    } catch (err) {
+      showError(err, "保存权限预设失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restart = async () => {
+    if (!currentProject || restarting) return;
+    setRestarting(true);
+    try {
+      await api.restartProject(currentProject);
+      setRestartOpen(false);
+      useUiStore.getState().showToast("项目引擎已重启", "info");
+    } catch (err) {
+      showError(err, "重启失败，请重试");
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <label htmlFor="settings-permission-preset" className="text-sm font-medium">
+          权限预设{currentProject && <span className="ml-1.5 font-normal text-muted-foreground" title={currentProject}>{basename(currentProject)}</span>}
+        </label>
+        {currentProject ? (
+          <select
+            id="settings-permission-preset"
+            data-testid="permission-preset-select"
+            value={preset ?? ""}
+            disabled={saving}
+            onChange={(e) => void changePreset(e.target.value)}
+            className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">默认（自动放行）</option>
+            {PERMISSION_PRESET_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-sm text-muted-foreground">尚未选择项目，先在顶栏选择或添加一个项目。</p>
+        )}
+        <p className="text-xs text-muted-foreground">预设随引擎启动参数生效，变更后需重启项目引擎。</p>
+      </div>
+      <div className="mt-3 flex justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="restart-engine-button"
+          disabled={!currentProject || restarting}
+          onClick={() => setRestartOpen(true)}
+        >
+          {restarting ? "重启中…" : "重启引擎"}
+        </Button>
+      </div>
+
+      <Dialog
+        open={restartOpen}
+        onOpenChange={(open) => {
+          if (!restarting) setRestartOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>重启项目引擎</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1.5 text-left">
+                <p>
+                  将停止并重建「{currentProject ? basename(currentProject) : ""}」的引擎进程：
+                  进行中的回合会中断，会话状态在下次访问时自动重建。
+                </p>
+                <p>引擎无响应或卡死时可用此操作恢复。</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" disabled={restarting} onClick={() => setRestartOpen(false)}>
+              取消
+            </Button>
+            <Button type="button" disabled={restarting} data-testid="restart-engine-confirm" onClick={() => void restart()}>
+              {restarting ? "重启中…" : "确认重启"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
@@ -150,49 +283,52 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <form onSubmit={submit}>
-      <DialogHeader>
-        <DialogTitle>设置</DialogTitle>
-        <DialogDescription>
-          外链指向反代挂载的自托管工具（如 cgit、filebrowser），留空则隐藏对应入口。
-        </DialogDescription>
-      </DialogHeader>
-      <div className="mt-4 space-y-3">
-        <div className="space-y-1.5">
-          <label htmlFor="settings-git-url" className="text-sm font-medium">
-            Git 外链地址
-          </label>
-          <Input
-            id="settings-git-url"
-            value={git}
-            onChange={(e) => setGit(e.target.value)}
-            placeholder="https://git.example.com 或 /git"
-            inputMode="url"
-          />
+    <>
+      <form onSubmit={submit}>
+        <DialogHeader>
+          <DialogTitle>设置</DialogTitle>
+          <DialogDescription>
+            外链指向反代挂载的自托管工具（如 cgit、filebrowser），留空则隐藏对应入口；项目区管理当前项目的权限预设与引擎进程。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-4 space-y-3">
+          <div className="space-y-1.5">
+            <label htmlFor="settings-git-url" className="text-sm font-medium">
+              Git 外链地址
+            </label>
+            <Input
+              id="settings-git-url"
+              value={git}
+              onChange={(e) => setGit(e.target.value)}
+              placeholder="https://git.example.com 或 /git"
+              inputMode="url"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="settings-files-url" className="text-sm font-medium">
+              文件管理外链地址
+            </label>
+            <Input
+              id="settings-files-url"
+              value={files}
+              onChange={(e) => setFiles(e.target.value)}
+              placeholder="https://files.example.com 或 /files"
+              inputMode="url"
+            />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
-        <div className="space-y-1.5">
-          <label htmlFor="settings-files-url" className="text-sm font-medium">
-            文件管理外链地址
-          </label>
-          <Input
-            id="settings-files-url"
-            value={files}
-            onChange={(e) => setFiles(e.target.value)}
-            placeholder="https://files.example.com 或 /files"
-            inputMode="url"
-          />
-        </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-      </div>
-      <DialogFooter className="mt-4">
-        <Button type="button" variant="outline" onClick={onDone}>
-          取消
-        </Button>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "保存中…" : "保存"}
-        </Button>
-      </DialogFooter>
-    </form>
+        <DialogFooter className="mt-4">
+          <Button type="button" variant="outline" onClick={onDone}>
+            取消
+          </Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? "保存中…" : "保存"}
+          </Button>
+        </DialogFooter>
+      </form>
+      <ProjectPermissionSection />
+    </>
   );
 }
 

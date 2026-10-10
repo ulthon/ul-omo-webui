@@ -519,6 +519,47 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("permissionPreset 预设：PATCH 校验合法档位、null 清除、列表与 meta 回显", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-preset-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      meta.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+
+      // 合法档位写入 kv 并在 meta 与列表回显
+      const set = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, permissionPreset: "read-only" }),
+      });
+      expect(set.status).toBe(200);
+      expect((await set.json()).project.permissionPreset).toBe("read-only");
+      expect(meta.getKv(permissionPresetKey(proj))).toBe("read-only");
+      const list = await (await req(app, "/api/projects")).json();
+      expect(list.projects[0].permissionPreset).toBe("read-only");
+
+      // null 清除 = 默认行为（spawn 不加 --permission-preset）
+      const clear = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, permissionPreset: null }),
+      });
+      expect((await clear.json()).project.permissionPreset).toBeNull();
+      expect(meta.getKv(permissionPresetKey(proj))).toBeNull();
+
+      // 非法档位 400 且不落 kv
+      const bad = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, permissionPreset: "yolo" }),
+      });
+      expect(bad.status).toBe(400);
+      expect((await bad.json()).error.code).toBe("invalid_permission_preset");
+      expect(meta.getKv(permissionPresetKey(proj))).toBeNull();
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
   test("agents 降级响应；models 需已知项目；input-history 去重上限；settings 校验", async () => {
     const engines = new FakeGateway();
     engines.models = [{ provider: "zai-coding-cn", id: "glm-5.3-flash", reasoning: true }];

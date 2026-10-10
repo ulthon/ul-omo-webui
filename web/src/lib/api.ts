@@ -10,6 +10,9 @@ export interface ProjectMeta {
   preferredAgent: string | null;
   preferredModel: string | null;
   lastOpenedAt: string | null;
+  /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
+   * 变更需项目引擎重启（restartProject）后生效。 */
+  permissionPreset?: string | null;
 }
 
 export interface SessionListItem {
@@ -393,8 +396,14 @@ export const api = {
     preferredAgent?: string | null;
     preferredModel?: string | null;
     lastOpenedAt?: string | null;
+    permissionPreset?: string | null;
   }): Promise<{ ok: boolean; project: ProjectMeta | null }> {
     return request("/api/projects/meta", jsonInit("PATCH", patch));
+  },
+  /** 重建项目引擎进程：spawn 参数级配置（权限预设等）变更后的生效口。
+   * 进行中的回合中断、会话态失效（下次访问懒加载重建）；SSE 为服务端事件流不受影响。 */
+  async restartProject(project: string): Promise<{ ok: boolean; project: string }> {
+    return request("/api/projects/restart", jsonInit("POST", { project }));
   },
 
   // ---- 输入历史 / 设置 ----

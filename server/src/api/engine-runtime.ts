@@ -129,6 +129,25 @@ export function permissionPresetKey(projectPath: string): string {
 }
 
 /**
+ * 引擎合法权限预设档位（以引擎包 @code-yeongyu/senpi 的 PERMISSION_PRESET_NAMES
+ * 为准，2026.10.10 版 bundle 实证；校验即镜像，不猜不造）：
+ * - full-access：全部自动放行（无预设时引擎缺省回落档）
+ * - workspace：项目内读/写/命令自动放行，项目外目录访问询问
+ * - accept-edits：文件编辑自动放行，执行命令与项目外访问询问
+ * - auto：引擎逐次判定，安全操作自动放行，其余询问
+ * - read-only：只读放行，编辑、命令、项目外访问均询问
+ * - ask：全部询问
+ */
+export const PERMISSION_PRESET_NAMES: readonly string[] = [
+  "full-access",
+  "workspace",
+  "accept-edits",
+  "auto",
+  "read-only",
+  "ask",
+];
+
+/**
  * meta_kv 权限预设 → 引擎 spawn 附加参数（--permission-preset <值>）。
  * 无预设返回空数组，spawn 行为与从前完全一致。
  * 预设是 spawn 参数级：变更需让项目引擎重启（服务重启或 POST /api/projects/restart）。
