@@ -37,6 +37,10 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
   const [failures, setFailures] = useState<Array<{ title: string; message: string }>>([]);
 
   useEffect(() => {
+    // 组件是列表级常驻单例（关闭只是不渲染，不卸载）：每次打开对话框必须复位提交态，
+    // 否则上一次提交遗留的 busy 会让下一次对话框卡在"保存中…"且提交被守卫吞掉
+    //（走查实锤：单个删除成功后，第二次重命名卡死）。
+    setBusy(false);
     if (state?.kind === "rename") {
       setTitle(state.session.renamedTitle ?? "");
       setError(null);
@@ -86,6 +90,8 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "删除失败");
+    } finally {
+      // 常驻单例不因关闭卸载，成功路径也必须复位 busy（与 submitRename 对齐）
       setBusy(false);
     }
   };

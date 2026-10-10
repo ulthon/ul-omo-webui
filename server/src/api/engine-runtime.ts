@@ -809,6 +809,12 @@ class ProjectRuntime {
         if (!id) throw new ApiError(500, "fork_failed", "fork 后未取得新会话 id");
         this.aliases.set(id, sessionPath);
       }
+      // fork 已把引擎侧活跃切到新会话，但 adapter.active 仍指 fork 前的旧会话
+      // （只有 openSession 会更新它）。resolveSession/switchTo 的活跃快捷路径信任
+      // adapter.active——不对齐时按 fork id 的 messages/prompt/delete 会全部落到
+      // 旧会话文件（走查实锤：删 fork 行实删了源会话）。显式按新 sessionPath 重开对齐。
+      const realigned = await this.requireAdapter().openSession({ sessionPath });
+      if (durable) this.rememberHandle(realigned.routingId, id);
       // 引擎活跃已是新会话，API 活跃跟随切换（后续 prompt 直达 fork 会话）
       this.activeId = id;
       return { id, sessionPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
