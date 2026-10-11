@@ -381,6 +381,10 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+  /** 手动生成标题（W3 todo 12）：同步生成，成功 {title}；失败 502 带原因（ApiError.message） */
+  async generateTitle(sessionId: string): Promise<{ title: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/generate-title`, jsonInit("POST", {}));
+  },
   async getUsage(session: string): Promise<{ sessionId: string; usage: UsageInfo }> {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
   },

@@ -5,7 +5,7 @@
 // + 子会话钻取（knownChildren 已带则免请求，否则懒加载 view=all 按血缘过滤）
 // + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
-import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -112,6 +112,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [generatingTitle, setGeneratingTitle] = useState(false);
   // 展示用子会话：懒加载结果优先，否则用 all 视图已带的 knownChildren（视图切换后 props 会变，
   // 不能在 useState 初始值里固化——那会让 all 视图拿不到 human 期之后才出现的数据）
   const childRows = children ?? knownChildren ?? [];
@@ -172,6 +173,25 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
       showToast(err instanceof ApiError ? err.message : "导出失败", "error");
     } finally {
       setExporting(false);
+    }
+  };
+
+  /** 手动生成标题（W3 todo 12）：成功写 renamedTitle 并同步 patch 行 title（title 是服务端
+   * 合并值 renamedTitle ?? name ?? firstMessage，只 patch renamedTitle 行显示会滞留旧值）；
+   * 失败 toast 原因（502 message）。菜单项 onSelect preventDefault 保持打开以显示请求中
+   * Loader 态，完成后 toast 反馈、点外关闭。 */
+  const generateTitle = async () => {
+    if (generatingTitle) return;
+    setGeneratingTitle(true);
+    try {
+      const { title } = await api.generateTitle(session.id);
+      useSessionsStore.getState().patchSession(session.id, { title, renamedTitle: title });
+      showToast("标题已生成");
+      onChanged();
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : "标题生成失败", "error");
+    } finally {
+      setGeneratingTitle(false);
     }
   };
 
@@ -267,6 +287,17 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
             <DropdownMenuItem disabled={busy} onSelect={() => onDialog("rename", session)}>
               <SquarePen className="mr-2 size-4" />
               重命名
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={generatingTitle}
+              data-testid="item-generate-title"
+              onSelect={(e) => {
+                e.preventDefault();
+                void generateTitle();
+              }}
+            >
+              {generatingTitle ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Sparkles className="mr-2 size-4" />}
+              {generatingTitle ? "生成中…" : "生成标题"}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={busy} onSelect={() => void patch({ archived: !session.archivedAt })}>
               {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
