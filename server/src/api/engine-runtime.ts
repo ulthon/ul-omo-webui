@@ -112,6 +112,18 @@ export interface EngineRuntimeOptions {
   publishSyntheticEvent?(projectPath: string, event: Record<string, unknown>): void;
   /** 新 assistant 消息落地回调（组合根接 meta.incrementUnread；未读计数服务端接线） */
   recordUnread?(projectPath: string, durableSessionId: string): void;
+  /**
+   * 回合落定回调（W2 todo 8，组合根接 title-gen）：正常事件路径（agent_end/
+   * settled/idle）与 watchdog 合成路径触发，**crashSettle 排除**（崩溃回合内容
+   * 可能不完整）。settleInfo 在清位前捕获——sessionId 可能是未落盘 holder 别名
+   * （新会话首回合），消费方以 sessionPath 反查解析 durable id 后再读写 meta。
+   * 组合根接线必须 .catch 包裹（Bun 未处理 rejection 默认退出进程）。
+   */
+  onRoundSettled?(
+    projectPath: string,
+    settleInfo: { sessionId: string; sessionPath: string },
+    reason: string,
+  ): void;
   /** 收尾监视轮询间隔毫秒（默认 2000，仅回合进行中运行）。 */
   settlePollMs?: number;
   /** 引擎空闲观察到真实收尾事件缺席时，合成前的宽限毫秒（默认 5000）。 */
@@ -298,7 +310,16 @@ class ProjectRuntime {
         };
         const type = wire.type;
         if (type === "agent_end" || type === "agent_settled" || type === "agent_idle") {
+          // 事件归属校验（决策 9a）：wire sessionId（routing handle）解析出的 durable
+          // id 必须等于 streamingId 才算本回合收尾；不一致（同项目并发另一回合的
+          // 收尾事件）只清位不触发。解析不出（holder 别名回合的 handle 无 durable
+          // 映射）同样视为归属未证明只清位——别名回合由 settle watchdog 合成路径兜底。
+          const settleInfo =
+            typeof wire.sessionId === "string"
+              ? this.captureSettleInfo(this.durableSessionIdFor(wire.sessionId))
+              : null;
           this.settleRound();
+          if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, type);
           return;
         }
         // 未读计数接线（todo 15 发现刷新归零）：assistant 消息条目落地即 unread+1。
@@ -384,12 +405,28 @@ class ProjectRuntime {
     this.graceTimer.unref?.();
   }
 
+  /** 清位前捕获回合收尾信息（streamingId/streamingPath 仍在时才有效）。
+   * resolvedDurable 为 wire sessionId 的 durable 解析结果：非 undefined 时必须
+   * 等于 streamingId（归属证明），不一致返回 null（并发错触防护，决策 9a）。 */
+  private captureSettleInfo(
+    resolvedDurable: string | undefined,
+  ): { sessionId: string; sessionPath: string } | null {
+    if (this.streamingId === null || this.streamingPath === null) return null;
+    if (resolvedDurable !== undefined && resolvedDurable !== this.streamingId) return null;
+    return { sessionId: this.streamingId, sessionPath: this.streamingPath };
+  }
+
   /** 合成 agent_settled：带 synthetic 标记；sessionId 直接用 durable id
    *（流式中的会话必已 open，identity 已知），前端信封回退路径可直接路由。 */
   private synthesizeSettled(seq: number): void {
     if (this.streamingId === null || seq !== this.roundSeq) return;
     const sessionId = this.streamingId;
+    // 合成路径 sessionId 即 streamingId（knownDurable 令信封 durableLookup 直认
+    // durable 形态）；settleInfo 清位前捕获，onRoundSettled reason="settle_watchdog"
+    const settleInfo =
+      this.streamingPath !== null ? { sessionId, sessionPath: this.streamingPath } : null;
     this.settleRound();
+    if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, "settle_watchdog");
     this.opts.publishSyntheticEvent?.(this.projectPath, {
       type: "agent_settled",
       synthetic: true,
@@ -948,6 +985,21 @@ export class EngineRuntimeRegistry implements EngineGateway {
    * 不触发引擎 spawn；项目运行时不存在或映射不明返回 undefined（透传不猜）。 */
   durableSessionIdFor(projectPath: string, handle: string): string | undefined {
     return this.runtimes.get(projectPath)?.durableSessionIdFor(handle);
+  }
+
+  /** sessionId → 会话 store 行（title-gen 取数：path 供 jsonl 直读、name 供触发
+   * 条件判定）。不触发引擎 spawn（resolveSession 走活跃态/store 直查/别名三级）；
+   * 查不到返回 null。 */
+  async resolveSessionRow(sessionId: string): Promise<EngineSessionSummary | null> {
+    for (const project of this.opts.listProjects()) {
+      const rt = this.runtimeFor(project);
+      try {
+        return await rt.resolveSession(sessionId);
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   async restartProject(project: string): Promise<void> {

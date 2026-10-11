@@ -6,6 +6,7 @@ import type {
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
 import type { SessionMeta, SessionTagRef } from "../db/meta";
+import type { TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway } from "./engine-runtime";
@@ -43,15 +44,48 @@ function parseImages(raw: unknown): Array<{ type: "image"; data: string; mimeTyp
   });
 }
 
-/** 引擎行 + 元数据行合并为 API 会话对象（title 优先级：renamedTitle > name > firstMessage）。
- * tags 为该会话的挂载关系 [{scope,name}]（createdAt 出参裁掉；孤儿挂载如实透传）。 */
-export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | null, tags: SessionTagRef[] = []) {
+/** 标题回退链（决策 9f，列表与 export 文件名两处共用）：
+ * `renamedTitle > name > generatedTitle > firstMessage 截断 80 字 > emptyFallback`。
+ * name 非恒空（终端 `omo -p --name` 建的会话带 name）；emptyFallback 列表用
+ * "(空会话)"、export 用 ""（后续 `title || id` 回退会话 id）。 */
+export function resolveSessionTitle(
+  parts: {
+    renamedTitle: string | null;
+    name: string | null;
+    generatedTitle: string | null;
+    firstMessage: string;
+  },
+  emptyFallback = "(空会话)",
+): string {
+  return (
+    parts.renamedTitle ??
+    parts.name ??
+    parts.generatedTitle ??
+    (parts.firstMessage ? parts.firstMessage.slice(0, 80) : emptyFallback)
+  );
+}
+
+/** 引擎行 + 元数据行合并为 API 会话对象（title 走 resolveSessionTitle 链）。
+ * tags 为该会话的挂载关系 [{scope,name}]（createdAt 出参裁掉；孤儿挂载如实透传）。
+ * generatedTitle 为 meta_session.generated_title（标题生成写入，与 renamed_title 独立）。 */
+export function mergeSessionRow(
+  row: EngineSessionSummary,
+  meta: SessionMeta | null,
+  tags: SessionTagRef[] = [],
+  generatedTitle: string | null = null,
+) {
   const firstMessage = row.firstMessage ?? "";
+  const title = resolveSessionTitle({
+    renamedTitle: meta?.renamedTitle ?? null,
+    name: row.name ?? null,
+    generatedTitle,
+    firstMessage,
+  });
   return {
     id: row.id,
     path: row.path,
     project: row.cwd,
-    title: meta?.renamedTitle ?? row.name ?? (firstMessage ? firstMessage.slice(0, 80) : "(空会话)"),
+    title,
     name: row.name ?? null,
     renamedTitle: meta?.renamedTitle ?? null,
     // 仅 fork 场景写入（docs/verification/05 P1-1）；人工会话 = 无此字段
@@ -113,7 +147,12 @@ async function listProjectSessions(
 ): Promise<SessionListRow[]> {
   let sessions = (await deps.engines.sessionsList(project)).map((row) => {
     const tags = deps.meta.listSessionTags(row.id).map(({ scope, name }) => ({ scope, name }));
-    return mergeSessionRow(row, deps.meta.getSessionMeta(row.id), tags);
+    return mergeSessionRow(
+      row,
+      deps.meta.getSessionMeta(row.id),
+      tags,
+      deps.meta.getSessionGeneratedTitle(row.id),
+    );
   });
   if (tagNames.length > 0) {
     const wanted = new Set(tagNames);
@@ -142,7 +181,7 @@ async function listProjectSessions(
   }));
 }
 
-export function createSessionRoutes(deps: ApiDeps): Hono {
+export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService }): Hono {
   const app = new Hono();
   // 新建会话：模型优先级 body.model > 项目偏好（todo 6：项目文件合并读取，过渡态
   // 库值回退 + 损坏降级 null = 引擎默认）> 引擎默认
@@ -289,6 +328,19 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
     return c.json({ ok: true, sessionId: id, meta: deps.meta.getSessionMeta(id) });
   }));
 
+  // 手动生成标题（W2 todo 8）：同步生成（超时 ≤10s，Bun.serve 空闲 ~12s 掐断内），
+  // 成功写 renamedTitle（任何链形态下立即生效，不被引擎 name 压住），失败 502 带原因。
+  app.post("/api/sessions/:id/generate-title", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    if (!deps.titleGen) throw new ApiError(502, "title_gen_unavailable", "标题生成服务未接线");
+    try {
+      const title = await deps.titleGen.generateForSession(id);
+      return c.json({ title });
+    } catch (err) {
+      throw new ApiError(502, "title_gen_failed", err instanceof Error ? err.message : String(err));
+    }
+  }));
+
   // 会话元数据：置顶/归档/重命名（部分更新；renamedTitle=null 恢复自动名）
   app.patch("/api/sessions/:id/meta", route(async (c: Context) => {
     const id = requireParam(c, "id");
@@ -329,10 +381,19 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
 
   // 单会话导出 HTML（verification/05 P1-7：omo --export 实证可用）。
   // 空会话未落盘 → gateway 409 session_not_persisted，前端无感（按钮点了才报）。
+  // 文件名标题链与列表共用 resolveSessionTitle（决策 9f，含 generatedTitle 层）。
   app.get("/api/sessions/:id/export", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const { html, row } = await deps.engines.exportSessionHtml(id);
-    const title = deps.meta.getSessionMeta(id)?.renamedTitle ?? row.name ?? (row.firstMessage ? row.firstMessage.slice(0, 80) : "");
+    const title = resolveSessionTitle(
+      {
+        renamedTitle: deps.meta.getSessionMeta(id)?.renamedTitle ?? null,
+        name: row.name ?? null,
+        generatedTitle: deps.meta.getSessionGeneratedTitle(id),
+        firstMessage: row.firstMessage ?? "",
+      },
+      "",
+    );
     const name = exportFilename(title || id, id);
     return c.body(html, 200, {
       "Content-Type": "text/html; charset=utf-8",

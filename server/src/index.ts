@@ -14,6 +14,7 @@ import {
   permissionPresetSpawnArgs,
 } from "./api/config-migration";
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
+import { TitleGenService } from "./title-gen";
 import { EventBus, attachEventBus } from "./engine/events";
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
@@ -46,6 +47,15 @@ const manager = new EngineProcessManager({
   // 让项目引擎重建生效
   extraSpawnArgs: (projectPath) => permissionPresetSpawnArgs(projectConfigs, meta, projectPath),
 });
+// 标题生成服务（W2 todo 8）：jsonl 直读取数 + 独立 HTTP 调模型，零引擎会话污染。
+// resolveSessionRow 不触发引擎 spawn（活跃态/store 直查/别名三级，纯读）。
+const titleGen = new TitleGenService({
+  meta,
+  // agentDir 与 spawn 同源（凭证读 auth.json，缺 key 时自动路径 warn 不崩）
+  agentDir: agentDir(),
+  resolveSessionRow: (id) => engines.resolveSessionRow(id),
+});
+
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
   // agentDir 必须与 spawn 同源：SDK 侧路径推导（models-store 直读降级、
@@ -60,6 +70,15 @@ const engines = new EngineRuntimeRegistry(manager, {
   //（主动查看中的会话同样递增；前端回合落定时对选中会话补发 read 清零）
   recordUnread: (_projectPath, durableSessionId) => {
     meta.incrementUnread(durableSessionId);
+  },
+  // 回合落定 → 自动生成标题（正常事件路径 + watchdog 合成路径，crashSettle 排除）。
+  // 强制 .catch：Bun 未处理 rejection 默认退出进程（凭证缺失/超时/断网皆常见）
+  onRoundSettled: (projectPath, settleInfo, reason) => {
+    void titleGen.handleRoundSettled(projectPath, settleInfo, reason).catch((err: unknown) => {
+      console.warn(
+        `[title-gen] 自动标题生成异常（${settleInfo.sessionPath}）：${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   },
 });
 
@@ -100,7 +119,7 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
 // configs（todo 4）：全局目录取 SENPI_WEBUI_CONFIG_DIR / ~/.config/senpi-webui/；
 // 项目 scope 配置经 projectConfigs 按注册项目派生（todo 6 合并读取与迁移共用）。
-const deps = { meta, engines, configs, projectConfigs };
+const deps = { meta, engines, configs, projectConfigs, titleGen };
 app.route("/", createSessionRoutes(deps));
 app.route("/", createMetaRoutes(deps));
 app.route("/", createProjectRoutes(deps));
