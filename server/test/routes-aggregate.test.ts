@@ -210,18 +210,23 @@ describe("GET /api/sessions 带 project（基线特征化）", () => {
     rmSync(proj, { recursive: true, force: true });
   });
 
-  test("tag 参数透传：接受不报错、当前不产生过滤（todo 3 落地前语义）", async () => {
+  test("tag 过滤：单标签命中已挂载会话，未挂载会话滤掉（todo 3 落地语义）", async () => {
     const proj = mkdtempSync(join(tmpdir(), "agg-base-"));
     const engines = new FakeProjectGateway();
     engines.sessionsByProject[proj] = [
       summary({ id: "s1", path: `${proj}/s1.jsonl`, cwd: proj }),
       summary({ id: "s2", path: `${proj}/s2.jsonl`, cwd: proj }),
     ];
-    const { app } = buildApp(engines);
-    const body = await (
+    const { app, meta } = buildApp(engines);
+    meta.setSessionTags("s1", [{ scope: "global", name: "work" }]);
+    let body = await (
       await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&tag=work`)
     ).json();
-    expect(body.sessions).toHaveLength(2);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s1"]);
+    body = await (
+      await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&tag=other`)
+    ).json();
+    expect(body.sessions).toEqual([]);
     rmSync(proj, { recursive: true, force: true });
   });
 });
@@ -324,11 +329,12 @@ describe("GET /api/sessions 聚合模式（project 缺省）", () => {
     rmSync(p2, { recursive: true, force: true });
   });
 
-  test("tag 参数透传同样生效于聚合模式（当前不过滤）", async () => {
+  test("tag 过滤同样生效于聚合模式（跨项目命中挂载会话）", async () => {
     const { p1, p2, engines } = setupTwoProjects();
-    const { app } = buildApp(engines);
+    const { app, meta } = buildApp(engines);
+    meta.setSessionTags("b1", [{ scope: "project", name: "work" }]);
     const body = await (await req(app, "/api/sessions?tag=work")).json();
-    expect(body.sessions).toHaveLength(3);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["b1"]);
     rmSync(p1, { recursive: true, force: true });
     rmSync(p2, { recursive: true, force: true });
   });

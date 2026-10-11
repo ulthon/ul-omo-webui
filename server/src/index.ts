@@ -17,6 +17,7 @@ import { createProjectRoutes } from "./api/routes-project";
 import { createGitRoutes } from "./api/routes-git";
 import { createFsRoutes } from "./api/routes-fs";
 import { createSnippetsRoutes } from "./api/routes-snippets";
+import { createTagsRoutes } from "./api/routes-tags";
 import { createNotesRoutes } from "./api/routes-notes";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
@@ -95,6 +96,7 @@ app.route("/", createProjectRoutes(deps));
 app.route("/", createGitRoutes(deps));
 app.route("/", createFsRoutes(deps));
 app.route("/", createSnippetsRoutes(deps));
+app.route("/", createTagsRoutes(deps));
 app.route("/", createNotesRoutes(deps));
 app.route("/api", sseRoutes);
 

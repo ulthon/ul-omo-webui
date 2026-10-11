@@ -5,7 +5,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
-import type { SessionMeta } from "../db/meta";
+import type { SessionMeta, SessionTagRef } from "../db/meta";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway } from "./engine-runtime";
 import { ApiError, parseJsonBody, requireParam, route } from "./http";
@@ -42,8 +42,9 @@ function parseImages(raw: unknown): Array<{ type: "image"; data: string; mimeTyp
   });
 }
 
-/** 引擎行 + 元数据行合并为 API 会话对象（title 优先级：renamedTitle > name > firstMessage） */
-export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | null) {
+/** 引擎行 + 元数据行合并为 API 会话对象（title 优先级：renamedTitle > name > firstMessage）。
+ * tags 为该会话的挂载关系 [{scope,name}]（createdAt 出参裁掉；孤儿挂载如实透传）。 */
+export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | null, tags: SessionTagRef[] = []) {
   const firstMessage = row.firstMessage ?? "";
   return {
     id: row.id,
@@ -62,6 +63,7 @@ export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | n
     archivedAt: meta?.archivedAt ?? null,
     unreadCount: meta?.unreadCount ?? 0,
     lastRead: meta?.lastRead ?? null,
+    tags,
   };
 }
 
@@ -96,18 +98,26 @@ function byPinnedThenModified(a: { pinned: boolean; modified: string }, b: { pin
   return Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified);
 }
 
-/** 单项目会话列表：store 直查 + 元数据合并 + 视图/归档/搜索过滤 + active 探询。
- * 不定序（单项目与聚合两种调用方各自定序）。 */
+/** 单项目会话列表：store 直查 + 元数据合并 + 视图/归档/搜索/标签过滤 + active 探询。
+ * 不定序（单项目与聚合两种调用方各自定序）。tagNames 为 OR 语义的标签名集合
+ *（空数组 = 不过滤）；命中判定按 name 无关 scope（挂载与定义解耦，跨 scope
+ * 同名命中属合理语义，routes-tags.test.ts 锁定该决策）。 */
 async function listProjectSessions(
   deps: ApiDeps,
   project: string,
   view: "human" | "all",
   archived: "true" | "false" | "all",
   q: string,
+  tagNames: string[],
 ): Promise<SessionListRow[]> {
-  let sessions = (await deps.engines.sessionsList(project)).map((row) =>
-    mergeSessionRow(row, deps.meta.getSessionMeta(row.id)),
-  );
+  let sessions = (await deps.engines.sessionsList(project)).map((row) => {
+    const tags = deps.meta.listSessionTags(row.id).map(({ scope, name }) => ({ scope, name }));
+    return mergeSessionRow(row, deps.meta.getSessionMeta(row.id), tags);
+  });
+  if (tagNames.length > 0) {
+    const wanted = new Set(tagNames);
+    sessions = sessions.filter((s) => s.tags.some((t) => wanted.has(t.name)));
+  }
   if (view === "human") {
     sessions = sessions.filter((s) => s.parentSessionPath === null);
   }
@@ -153,7 +163,8 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
   // 会话列表：project 必填时单项目（现状行为）；缺省时聚合全部注册项目——
   // 逐项目 catch（allSettled 语义）失败跳过不炸整体（注册项目目录已删/库损坏时
   // 侧栏仍可用），合并后全局排序（置顶优先 + modified 降序，跨项目比较）。
-  // view/q/archived 语义不变、跨项目生效；tag 参数本 todo 只透传不过滤（todo 3 落地后实现）。
+  // view/q/archived/tag 语义不变、跨项目生效；tag 可多个（OR：任一命中，
+  // 服务端按 meta_session_tag 过滤，listProjectSessions 内实现故两模式一致）。
   // q = 标题/会话名子串匹配（消息内容搜索明确出范围，docs/02 只承诺标题级搜索）
   app.get("/api/sessions", route(async (c: Context) => {
     const view = c.req.query("view") ?? "human";
@@ -165,13 +176,15 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
       throw new ApiError(400, "invalid_archived", "archived 仅支持 true|false|all");
     }
     const q = (c.req.query("q") ?? "").trim().toLowerCase();
+    // Hono queries() 在 key 缺席时返回 undefined（类型标注不符），兜底空数组
+    const tagNames = c.req.queries("tag") ?? [];
     const rawProject = c.req.query("project");
 
     if (rawProject === undefined || rawProject === "") {
       const lister = deps.engines as ProjectListerGateway;
       const projects = lister.listProjectPaths?.() ?? [];
       const settled = await Promise.allSettled(
-        projects.map((project) => listProjectSessions(deps, project, view, archived, q)),
+        projects.map((project) => listProjectSessions(deps, project, view, archived, q, tagNames)),
       );
       const sessions: SessionListRow[] = [];
       settled.forEach((result, i) => {
@@ -186,7 +199,7 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
     }
 
     const project = validateProjectInput(rawProject);
-    const sessions = await listProjectSessions(deps, project, view, archived, q);
+    const sessions = await listProjectSessions(deps, project, view, archived, q, tagNames);
     sessions.sort(byPinnedThenModified);
     return c.json({ project, view, archived, sessions });
   }));
