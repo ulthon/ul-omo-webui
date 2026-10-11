@@ -7,6 +7,7 @@ import type {
 } from "../adapter/engine-adapter";
 import type { SessionMeta } from "../db/meta";
 import type { ApiDeps } from "./deps";
+import type { EngineGateway } from "./engine-runtime";
 import { ApiError, parseJsonBody, requireParam, route } from "./http";
 import { validateProjectInput } from "./paths";
 
@@ -71,6 +72,7 @@ export function mergeSessionRow(row: EngineSessionSummary, meta: SessionMeta | n
  */
 export function exportFilename(title: string, sessionId: string): { ascii: string; utf8: string } {
   const cleaned = title
+    // oxlint-disable-next-line no-control-regex -- 有意匹配控制字符：清洗文件名非法字符
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
     .replace(/^[. ]+|[. ]+$/g, "")
@@ -81,9 +83,56 @@ export function exportFilename(title: string, sessionId: string): { ascii: strin
   return { ascii: `${asciiSafe}.html`, utf8 };
 }
 
+/** 聚合模式（project 缺省）需要网关的项目清单能力。EngineGateway 接口未含
+ * listProjectPaths（engine-runtime.ts 属并行任务领地禁改），按结构能力探测：
+ * 真实 EngineRuntimeRegistry 具备该方法；缺失时聚合退化为空列表。 */
+type ProjectListerGateway = EngineGateway & { listProjectPaths?: () => string[] };
+
+/** 会话列表行（合并元数据 + active 探询后的形态） */
+type SessionListRow = ReturnType<typeof mergeSessionRow> & { active: boolean | null };
+
+/** 置顶优先，其余按最后活动时间倒序（todo 15 排序语义；聚合模式跨项目全局比较） */
+function byPinnedThenModified(a: { pinned: boolean; modified: string }, b: { pinned: boolean; modified: string }): number {
+  return Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified);
+}
+
+/** 单项目会话列表：store 直查 + 元数据合并 + 视图/归档/搜索过滤 + active 探询。
+ * 不定序（单项目与聚合两种调用方各自定序）。 */
+async function listProjectSessions(
+  deps: ApiDeps,
+  project: string,
+  view: "human" | "all",
+  archived: "true" | "false" | "all",
+  q: string,
+): Promise<SessionListRow[]> {
+  let sessions = (await deps.engines.sessionsList(project)).map((row) =>
+    mergeSessionRow(row, deps.meta.getSessionMeta(row.id)),
+  );
+  if (view === "human") {
+    sessions = sessions.filter((s) => s.parentSessionPath === null);
+  }
+  if (archived !== "all") {
+    const wantArchived = archived === "true";
+    sessions = sessions.filter((s) => (s.archivedAt !== null) === wantArchived);
+  }
+  if (q) {
+    sessions = sessions.filter(
+      (s) => s.title.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q),
+    );
+  }
+  // active 语义 = 回合进行中（webui 驱动的流式回合）：true/false，引擎未就绪为
+  // null（不触发 spawn）。注意不是引擎 open 态——open 在回合结束后仍保留，
+  // 按 open 判定会导致 active 永远 true（todo 15 实证，已修复）。
+  // 状态点（运行中/等待权限/空闲/出错）仍以 SSE 状态事件为准（todo 15）。
+  const activePaths = await deps.engines.peekActiveSessionPaths(project);
+  return sessions.map((s) => ({
+    ...s,
+    active: activePaths ? activePaths.includes(s.path) : null,
+  }));
+}
+
 export function createSessionRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
-
   // 新建会话：模型优先级 body.model > 项目偏好 preferred_model > 引擎默认
   app.post("/api/sessions", route(async (c: Context) => {
     const body = await parseJsonBody(c);
@@ -101,10 +150,12 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
     return c.json({ session: { ...created, project, provider: provider ?? null, modelId: modelId ?? null } }, 201);
   }));
 
-  // 会话列表：引擎 store 直查 + 元数据合并；view=human 过滤出人工会话（无 fork 血缘）；
+  // 会话列表：project 必填时单项目（现状行为）；缺省时聚合全部注册项目——
+  // 逐项目 catch（allSettled 语义）失败跳过不炸整体（注册项目目录已删/库损坏时
+  // 侧栏仍可用），合并后全局排序（置顶优先 + modified 降序，跨项目比较）。
+  // view/q/archived 语义不变、跨项目生效；tag 参数本 todo 只透传不过滤（todo 3 落地后实现）。
   // q = 标题/会话名子串匹配（消息内容搜索明确出范围，docs/02 只承诺标题级搜索）
   app.get("/api/sessions", route(async (c: Context) => {
-    const project = validateProjectInput(c.req.query("project"));
     const view = c.req.query("view") ?? "human";
     if (view !== "human" && view !== "all") {
       throw new ApiError(400, "invalid_view", "view 仅支持 human|all");
@@ -114,36 +165,30 @@ export function createSessionRoutes(deps: ApiDeps): Hono {
       throw new ApiError(400, "invalid_archived", "archived 仅支持 true|false|all");
     }
     const q = (c.req.query("q") ?? "").trim().toLowerCase();
+    const rawProject = c.req.query("project");
 
-    let sessions = (await deps.engines.sessionsList(project)).map((row) =>
-      mergeSessionRow(row, deps.meta.getSessionMeta(row.id)),
-    );
-    if (view === "human") {
-      sessions = sessions.filter((s) => s.parentSessionPath === null);
-    }
-    if (archived !== "all") {
-      const wantArchived = archived === "true";
-      sessions = sessions.filter((s) => (s.archivedAt !== null) === wantArchived);
-    }
-    if (q) {
-      sessions = sessions.filter(
-        (s) => s.title.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q),
+    if (rawProject === undefined || rawProject === "") {
+      const lister = deps.engines as ProjectListerGateway;
+      const projects = lister.listProjectPaths?.() ?? [];
+      const settled = await Promise.allSettled(
+        projects.map((project) => listProjectSessions(deps, project, view, archived, q)),
       );
+      const sessions: SessionListRow[] = [];
+      settled.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          sessions.push(...result.value);
+        } else {
+          console.error(`[sessions] 聚合跳过失败项目 ${projects[i]}:`, result.reason);
+        }
+      });
+      sessions.sort(byPinnedThenModified);
+      return c.json({ project: null, view, archived, sessions });
     }
-    // active 语义 = 回合进行中（webui 驱动的流式回合）：true/false，引擎未就绪为
-    // null（不触发 spawn）。注意不是引擎 open 态——open 在回合结束后仍保留，
-    // 按 open 判定会导致 active 永远 true（todo 15 实证，已修复）。
-    // 状态点（运行中/等待权限/空闲/出错）仍以 SSE 状态事件为准（todo 15）。
-    const activePaths = await deps.engines.peekActiveSessionPaths(project);
-    const withActive = sessions.map((s) => ({
-      ...s,
-      active: activePaths ? activePaths.includes(s.path) : null,
-    }));
-    // 置顶优先，其余按最后活动时间倒序（todo 15 列表排序语义）
-    withActive.sort(
-      (a, b) => Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified),
-    );
-    return c.json({ project, view, archived, sessions: withActive });
+
+    const project = validateProjectInput(rawProject);
+    const sessions = await listProjectSessions(deps, project, view, archived, q);
+    sessions.sort(byPinnedThenModified);
+    return c.json({ project, view, archived, sessions });
   }));
 
   // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）

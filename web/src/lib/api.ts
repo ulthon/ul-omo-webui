@@ -34,6 +34,8 @@ export interface SessionListItem {
   lastRead: string | null;
   /** true|false=引擎活跃探询结果；null=引擎未就绪未知 */
   active: boolean | null;
+  /** 会话标签（server todo 3 落地前为 undefined，消费侧用 tags?.length 防御） */
+  tags?: Array<{ scope: string; name: string }>;
 }
 
 /** wire 原样条目（jsonl entry：{type:"message",id,parentId,timestamp,message} 等），渲染层自行甄别 */
@@ -239,11 +241,14 @@ export function setPromptGate(gate: PromptGate | null): void {
 // ---------- API ----------
 
 export interface ListSessionsParams {
-  project: string;
+  /** 缺省 = 聚合模式：server 并行拉取全部注册项目合并单响应（project 字段为 null） */
+  project?: string;
   view?: "human" | "all";
   /** "true"|"false"|"all"，默认 "false" */
   archived?: "true" | "false" | "all";
   q?: string;
+  /** 会话标签过滤参数（本 todo 只透传；server todo 3 落地后自然生效） */
+  tag?: string;
 }
 
 export const api = {
@@ -262,11 +267,13 @@ export const api = {
   async createSession(body: { project: string; model?: string; thinkingLevel?: string }): Promise<{ session: SessionCreated }> {
     return request("/api/sessions", jsonInit("POST", body));
   },
-  async listSessions(params: ListSessionsParams): Promise<{ project: string; view: string; archived: string; sessions: SessionListItem[] }> {
-    const q = new URLSearchParams({ project: params.project });
+  async listSessions(params: ListSessionsParams): Promise<{ project: string | null; view: string; archived: string; sessions: SessionListItem[] }> {
+    const q = new URLSearchParams();
+    if (params.project) q.set("project", params.project);
     if (params.view) q.set("view", params.view);
     if (params.archived) q.set("archived", params.archived);
     if (params.q) q.set("q", params.q);
+    if (params.tag) q.set("tag", params.tag);
     return request(`/api/sessions?${q.toString()}`);
   },
   async listMessages(sessionId: string, cursor?: string): Promise<MessagesPage> {
