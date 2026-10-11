@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
+import { locateProjectInSidebar } from "@/components/session-list/global-list-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -394,7 +395,10 @@ export function Topbar() {
             <DropdownMenuItem
               key={p.projectPath}
               onSelect={() => {
+                // "定位 + 切换"（todo 10）：仍走 openProject（当前项目 + 偏好 + lastOpenedAt +
+                // 聚合口径刷新），叠加侧栏动作展开该组并滚动置顶；侧栏保持全局平铺不切单项目视图
                 if (p.projectPath !== currentProject) void openProject(p.projectPath);
+                locateProjectInSidebar(p.projectPath);
               }}
             >
               <Check

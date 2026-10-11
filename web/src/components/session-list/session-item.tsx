@@ -86,6 +86,9 @@ export interface SessionItemProps {
   childrenOpen?: boolean;
   /** 打开重命名/删除弹窗（父级单例托管） */
   onDialog: (kind: "rename" | "delete", session: SessionListItem) => void;
+  /** 选中行为覆盖（todo 10 跨项目统一 handler）：缺省仅 select + 收抽屉；
+   * 全局视图下由 session-list 传入共享 handler（跨项目轻量切换 currentProject + 应用偏好） */
+  onSelect?: (session: SessionListItem) => void;
   /** 元数据/删除成功后回调（父级刷新列表与搜索结果） */
   onChanged: () => void;
   /** 批量模式（todo 25）：行首渲染选择框，勾选集合提升到 session-list 容器 */
@@ -94,7 +97,7 @@ export interface SessionItemProps {
   onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onChanged, selectable, checked, onToggleCheck }: SessionItemProps) {
+export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -143,7 +146,11 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
     }
   };
 
-  const onSelect = () => {
+  const handleSelect = () => {
+    if (onSelect) {
+      onSelect(session);
+      return;
+    }
     select(session.id);
     // todo 26 走查修复：抽屉态（lg 以下）选中会话后自动收起——390 宽下 w-72 抽屉遮住主区，
     // 不收起时用户看到的还是抽屉；桌面抽屉常驻此调用无视觉效果。
@@ -212,7 +219,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
         )}
         <StatusDot runState={runState} active={session.active} />
 
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={onSelect}>
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={handleSelect}>
           <span className={`truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
             {session.pinned && <Pin className="mr-1 inline size-3 shrink-0 align-[-1px] text-muted-foreground" />}
             {session.title}
@@ -287,6 +294,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
                 showSource
                 expandable={false}
                 onDialog={onDialog}
+                onSelect={onSelect}
                 onChanged={onChanged}
                 selectable={selectable}
                 checked={checked}

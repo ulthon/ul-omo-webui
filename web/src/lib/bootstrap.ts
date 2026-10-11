@@ -14,8 +14,13 @@ export function pickLatestProject(projects: ProjectMeta[]): ProjectMeta | null {
   return latest;
 }
 
-/** 拉取当前项目的会话列表（view/q/archived 取 store 当前值；todo 15 接搜索与视图切换） */
+/** 拉取会话列表（view/q/archived 取 store 当前值）：
+ * 全局视图（allMode，todo 10 侧栏默认）委托 store 聚合分支——项目切换后侧栏保持全局平铺；
+ * 否则保持单项目现状路径。 */
 export async function refreshSessions(): Promise<void> {
+  if (useSessionsStore.getState().allMode) {
+    return useSessionsStore.getState().refreshSessions();
+  }
   const { currentProject } = useUiStore.getState();
   if (!currentProject) return;
   const { view, archived, q, setLoading } = useSessionsStore.getState();
@@ -29,6 +34,24 @@ export async function refreshSessions(): Promise<void> {
     }
   } finally {
     useSessionsStore.getState().setLoading(false);
+  }
+}
+
+/** 拉取项目模型列表并应用展示回退（openProject 与轻量跨项目切换共用）：
+ * 无选中模型时回落列表首项仅作展示默认（不回写 meta，避免把默认值冒充用户选择） */
+export async function loadProjectModels(path: string): Promise<void> {
+  try {
+    const { models } = await api.listModels(path);
+    const cur = useUiStore.getState();
+    cur.setModels(models);
+    if (!cur.selectedModel && models.length > 0) {
+      cur.setSelectedModel(`${models[0].provider}/${models[0].id}`);
+    }
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) {
+      // 加载失败是"未知"而非"确认为空"：resetModels 不标记 modelsLoaded，发送防呆不误伤
+      useUiStore.getState().resetModels();
+    }
   }
 }
 
@@ -51,20 +74,7 @@ export async function openProject(path: string): Promise<void> {
   }
 
   await refreshSessions();
-
-  try {
-    const { models } = await api.listModels(path);
-    const cur = useUiStore.getState();
-    cur.setModels(models);
-    if (!cur.selectedModel && models.length > 0) {
-      cur.setSelectedModel(`${models[0].provider}/${models[0].id}`);
-    }
-  } catch (err) {
-    if (!(err instanceof ApiError && err.status === 401)) {
-      // 加载失败是"未知"而非"确认为空"：resetModels 不标记 modelsLoaded，发送防呆不误伤
-      useUiStore.getState().resetModels();
-    }
-  }
+  await loadProjectModels(path);
 }
 
 /** 登录后主布局初始引导：agent 降级能力 + 项目列表 + 落最近项目 */
