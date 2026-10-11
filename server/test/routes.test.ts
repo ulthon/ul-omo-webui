@@ -4,7 +4,7 @@
 // - 会话列表合并/过滤（view=human、archived、q、置顶排序、元数据合并）
 // - 单驱动约束：回合中再次 prompt 409（真实 EngineProcessManager + fake 引擎连接）
 import { describe, expect, test, afterEach } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -23,6 +23,8 @@ import { createMetaRoutes } from "../src/api/routes-meta";
 import { createProjectRoutes } from "../src/api/routes-project";
 import { createGitRoutes } from "../src/api/routes-git";
 import { createFsRoutes } from "../src/api/routes-fs";
+import { openConfigStore } from "../src/conf/config-store";
+import { createProjectConfigStores, permissionPresetSpawnArgs } from "../src/api/config-migration";
 import { openMetaDb } from "../src/db/meta";
 import { EngineProcessManager, type EngineClientLike, type RpcClientEvent, type RpcClientOptions } from "../src/engine/process-manager";
 import type { ProcProbe } from "../src/engine/orphan-reaper";
@@ -139,12 +141,15 @@ class FakeGateway implements EngineGateway {
 
 function buildApp(engines: EngineGateway, meta = openMetaDb({ path: join(mkdtempSync(join(tmpdir(), "routes-meta-")), "meta.db") })) {
   const app = new Hono();
-  app.route("/", createSessionRoutes({ meta, engines }));
+  // todo 6：项目偏好合并读取需项目文件层——每例独立临时全局目录 + 项目 store 解析器
+  const configs = openConfigStore({ globalDir: join(mkdtempSync(join(tmpdir(), "routes-cfg-")), "global") });
+  const projectConfigs = createProjectConfigStores(configs);
+  app.route("/", createSessionRoutes({ meta, engines, configs, projectConfigs }));
   app.route("/", createMetaRoutes({ meta, engines }));
-  app.route("/", createProjectRoutes({ meta, engines }));
+  app.route("/", createProjectRoutes({ meta, engines, projectConfigs }));
   app.route("/", createGitRoutes({ meta, engines }));
   app.route("/", createFsRoutes({ meta, engines }));
-  return { app, meta };
+  return { app, meta, projectConfigs };
 }
 
 const req = (app: Hono, path: string, init?: RequestInit) => app.request(path, init);
@@ -349,6 +354,25 @@ describe("会话操作路由", () => {
     });
     expect(badModel.status).toBe(400);
     expect((await badModel.json()).error.code).toBe("invalid_model");
+
+    // todo 6：偏好已迁至项目文件（库值清空仅文件有值）——建会话模型缺省从文件来
+    engines.createdResults.push({ id: "d-2", sessionPath: `${proj}/y.jsonl`, durable: true });
+    const patch = await req(app, "/api/projects/meta", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: proj, preferredModel: "zai-coding-cn/glm-5.3" }),
+    });
+    expect(patch.status).toBe(200);
+    meta.updateProjectMeta(proj, { preferredModel: null });
+    const fromFile = await req(app, "/api/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: proj }),
+    });
+    const fromFileBody = await fromFile.json();
+    expect(fromFileBody.session.id).toBe("d-2");
+    expect(fromFileBody.session.provider).toBe("zai-coding-cn");
+    expect(fromFileBody.session.modelId).toBe("glm-5.3");
   });
 
   test("prompt：409 单驱动冲突映射、agent 降级说明、非法 text 400", async () => {
@@ -519,13 +543,14 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
-  test("permissionPreset 预设：PATCH 校验合法档位、null 清除、列表与 meta 回显", async () => {
+  test("permissionPreset 预设：PATCH 校验合法档位、null 清除、列表与 meta 回显（todo 6 起写项目文件）", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-preset-"));
     const { app, meta } = buildApp(new FakeGateway());
+    const configFile = join(proj, ".senpi-webui.json");
     try {
       meta.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
 
-      // 合法档位写入 kv 并在 meta 与列表回显
+      // 合法档位写入项目文件并在 meta 与列表回显（kv 不再是写入目标）
       const set = await req(app, "/api/projects/meta", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -533,20 +558,21 @@ describe("项目与元数据杂项路由", () => {
       });
       expect(set.status).toBe(200);
       expect((await set.json()).project.permissionPreset).toBe("read-only");
-      expect(meta.getKv(permissionPresetKey(proj))).toBe("read-only");
+      expect(JSON.parse(readFileSync(configFile, "utf8")).permissionPreset).toBe("read-only");
+      expect(meta.getKv(permissionPresetKey(proj))).toBeNull();
       const list = await (await req(app, "/api/projects")).json();
       expect(list.projects[0].permissionPreset).toBe("read-only");
 
-      // null 清除 = 默认行为（spawn 不加 --permission-preset）
+      // null 清除 = 默认行为（文件字段显式 null，spawn 不加 --permission-preset）
       const clear = await req(app, "/api/projects/meta", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ path: proj, permissionPreset: null }),
       });
       expect((await clear.json()).project.permissionPreset).toBeNull();
-      expect(meta.getKv(permissionPresetKey(proj))).toBeNull();
+      expect(JSON.parse(readFileSync(configFile, "utf8")).permissionPreset).toBeNull();
 
-      // 非法档位 400 且不落 kv
+      // 非法档位 400 且不改文件（保持显式 null）
       const bad = await req(app, "/api/projects/meta", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -554,7 +580,120 @@ describe("项目与元数据杂项路由", () => {
       });
       expect(bad.status).toBe(400);
       expect((await bad.json()).error.code).toBe("invalid_permission_preset");
-      expect(meta.getKv(permissionPresetKey(proj))).toBeNull();
+      expect(JSON.parse(readFileSync(configFile, "utf8")).permissionPreset).toBeNull();
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("PATCH 拆分语义（todo 6）：偏好字段写文件、preferredAgent/lastOpenedAt 写库，一次 PATCH 都生效", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-patch-split-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      meta.updateProjectMeta(proj, { lastOpenedAt: "2026-01-01T00:00:00.000Z" });
+      const res = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          path: proj,
+          preferredModel: "zai-coding-cn/glm-5.3",
+          permissionPreset: "read-only",
+          preferredAgent: "terminal-agent",
+          lastOpenedAt: "2026-02-02T00:00:00.000Z",
+        }),
+      });
+      expect(res.status).toBe(200);
+      const project = (await res.json()).project;
+      expect(project.preferredModel).toBe("zai-coding-cn/glm-5.3");
+      expect(project.permissionPreset).toBe("read-only");
+      expect(project.preferredAgent).toBe("terminal-agent");
+      expect(project.lastOpenedAt).toBe("2026-02-02T00:00:00.000Z");
+      // 文件源与库源各自落位
+      const doc = JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8"));
+      expect(doc.preferredModel).toBe("zai-coding-cn/glm-5.3");
+      expect(doc.permissionPreset).toBe("read-only");
+      expect(meta.getProjectMeta(proj)?.preferredModel).toBeNull();
+      expect(meta.getProjectMeta(proj)?.preferredAgent).toBe("terminal-agent");
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("过渡态回退（todo 6）：文件缺字段 + 库值未迁清 → GET/建会话以库值为准", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-transition-"));
+    const engines = new FakeGateway();
+    engines.createdResults.push({ id: "d-t", sessionPath: `${proj}/x.jsonl`, durable: true });
+    const { app, meta } = buildApp(engines);
+    try {
+      meta.updateProjectMeta(proj, { preferredModel: "zai-coding-cn/glm-5.3" });
+      meta.setKv(permissionPresetKey(proj), "read-only");
+      // 文件存在但无偏好字段（如已被 tags/snippets 写过的旧文件）
+      writeFileSync(join(proj, ".senpi-webui.json"), JSON.stringify({ version: 1, tags: [] }));
+
+      const list = await (await req(app, "/api/projects")).json();
+      expect(list.projects[0].preferredModel).toBe("zai-coding-cn/glm-5.3");
+      expect(list.projects[0].permissionPreset).toBe("read-only");
+      expect(list.projects[0].configError).toBeUndefined();
+
+      // 建会话模型缺省同样走过渡态库值
+      const res = await req(app, "/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: proj }),
+      });
+      expect((await res.json()).session.provider).toBe("zai-coding-cn");
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("文件损坏降级（todo 6 决策 10b）：单项目损坏 GET 仍 200（字段 null + configError），仅 lastOpenedAt 的 PATCH 不误报", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-corrupt-"));
+    const engines = new FakeGateway();
+    engines.createdResults.push({ id: "d-c", sessionPath: `${proj}/x.jsonl`, durable: true });
+    const { app, meta } = buildApp(engines);
+    try {
+      meta.updateProjectMeta(proj, { preferredModel: "zai-coding-cn/glm-5.3" });
+      writeFileSync(join(proj, ".senpi-webui.json"), "{broken");
+
+      // 单项目损坏：列表整体 200，该项目字段降级 null + configError 标志
+      const list = await req(app, "/api/projects");
+      expect(list.status).toBe(200);
+      const row = (await list.json()).projects[0];
+      expect(row.preferredModel).toBeNull();
+      expect(row.permissionPreset).toBeNull();
+      expect(row.configError).toBe(true);
+
+      // 仅 lastOpenedAt：库写成功即 200，响应带 configError（不误报失败）
+      const patch = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, lastOpenedAt: "2026-03-03T00:00:00.000Z" }),
+      });
+      expect(patch.status).toBe(200);
+      const patched = (await patch.json()).project;
+      expect(patched.lastOpenedAt).toBe("2026-03-03T00:00:00.000Z");
+      expect(patched.configError).toBe(true);
+      expect(meta.getProjectMeta(proj)?.lastOpenedAt).toBe("2026-03-03T00:00:00.000Z");
+
+      // 显式写偏好字段：损坏 500 带文件路径（决策 10a），库值不动
+      const strict = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, preferredModel: "zai-coding-cn/glm-5.3-flash" }),
+      });
+      expect(strict.status).toBe(500);
+      expect((await strict.json()).error.message).toContain(".senpi-webui.json");
+      expect(meta.getProjectMeta(proj)?.preferredModel).toBe("zai-coding-cn/glm-5.3");
+
+      // 建会话模型缺省损坏降级 null = 引擎默认（不 500）
+      const created = await req(app, "/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: proj }),
+      });
+      expect(created.status).toBe(201);
+      expect((await created.json()).session.provider).toBeNull();
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }
@@ -1162,7 +1301,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     expect(again.id).toBe("durable-1");
   });
 
-  test("(preset) meta_kv 权限预设 → spawn 参数：有值含 --permission-preset，无值不含", async () => {
+  test("(preset) 项目文件权限预设 → spawn 参数：有值含 --permission-preset，无值/损坏不含（todo 6）", async () => {
     const projWith = mkdtempSync(join(tmpdir(), "preset-with-"));
     const projWithout = mkdtempSync(join(tmpdir(), "preset-without-"));
     // 工厂内构造 fake（拿到管理器 buildSpawnOptions 的真实产物）
@@ -1184,19 +1323,29 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
       });
       return { get client() { return c; }, pr, m };
     };
-    const withPreset = mk(projWith, (p) => permissionPresetArgs((k) => (k === permissionPresetKey(p) ? "read-only" : null), p));
-    const withoutPreset = mk(projWithout);
+    // 与组合根同构：extraSpawnArgs = 合并读取项目文件的权限预设（损坏降级空数组）
+    const spawnMeta = openMetaDb({ path: join(mkdtempSync(join(tmpdir(), "preset-meta-")), "meta.db") });
+    const cfg = openConfigStore({ globalDir: join(mkdtempSync(join(tmpdir(), "preset-cfg-")), "global") });
+    const stores = createProjectConfigStores(cfg);
+    const extra = (p: string) => permissionPresetSpawnArgs(stores, spawnMeta, p);
+    const withPreset = mk(projWith, extra);
+    const withoutPreset = mk(projWithout, extra);
     try {
+      writeFileSync(join(projWith, ".senpi-webui.json"), JSON.stringify({ version: 1, permissionPreset: "read-only" }));
       await withPreset.m.ensureRunning(projWith);
       await withoutPreset.m.ensureRunning(projWithout);
       expect(withPreset.client.spawnOpts.args).toContain("--permission-preset");
       expect(withPreset.client.spawnOpts.args).toContain("read-only");
       expect(withoutPreset.client.spawnOpts.args).not.toContain("--permission-preset");
-      // helper 直测：值去重空白、无值空数组
-      expect(
-        permissionPresetArgs((k) => (k === permissionPresetKey(projWith) ? "  read-only  " : null), projWith),
-      ).toEqual(["--permission-preset", "read-only"]);
-      expect(permissionPresetArgs(() => null, projWith)).toEqual([]);
+
+      // 文件损坏 → spawn 参数降级为空（不炸 spawn）；修复后恢复
+      writeFileSync(join(projWith, ".senpi-webui.json"), "{broken");
+      expect(extra(projWith)).toEqual([]);
+      writeFileSync(join(projWith, ".senpi-webui.json"), JSON.stringify({ version: 1, permissionPreset: "  read-only  " }));
+      expect(extra(projWith)).toEqual(["--permission-preset", "read-only"]);
+      // helper 直测：值去空白、无值空数组
+      expect(permissionPresetArgs("  read-only  ")).toEqual(["--permission-preset", "read-only"]);
+      expect(permissionPresetArgs(null)).toEqual([]);
     } finally {
       withPreset.pr.pids.clear();
       withoutPreset.pr.pids.clear();

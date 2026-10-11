@@ -90,6 +90,14 @@ export interface ConfigStore {
   readSnippets(): SnippetsFile;
   readProjectConfig(): ProjectConfig;
 
+  /**
+   * 项目文件原文直读（规范化前，todo 6 加法只读）：文件不存在返回 null；损坏或
+   * 非 JSON 对象抛错（与 readProjectConfig 同语义）。供迁移/合并读判定
+   * 「文件原文是否已有某字段」——规范化输出字段恒存在（缺失与显式 null 均为 null），
+   * 只有原文键集合能区分两者（迁移过渡态判定依赖）。
+   */
+  readProjectRaw(): Record<string, unknown> | null;
+
   // 写（整替列表；读-改-写保留文件内未知字段；进程内串行、原子落盘）
   writeTags(tags: TagEntry[]): Promise<void>;
   writeSnippets(snippets: SnippetEntry[]): Promise<void>;
@@ -278,6 +286,21 @@ function makeFileLayer<T>(
     return doc;
   }
 
+  /** 原文直读（不规范化、不走缓存——迁移/过渡态判定低频路径，同步小文件读可接受）。
+   * 文件不存在返回 null；解析失败抛与 parseDoc 同文案的带路径错误。 */
+  function readRaw(): unknown {
+    const st = statOrEnoent(filePath);
+    if (!st.exists) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(filePath, "utf8"));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`配置文件不是合法 JSON: ${filePath}（${reason}）`);
+    }
+    return parsed;
+  }
+
   function write(merge: (existing: T | null) => T): Promise<void> {
     const run = (): void => {
       // 写前必须解析成功：文件存在但损坏时在此抛错，不覆盖
@@ -293,7 +316,7 @@ function makeFileLayer<T>(
     return next;
   }
 
-  return { read, write };
+  return { read, readRaw, write };
 }
 
 // ---------- 工厂 ----------
@@ -312,8 +335,9 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
     emptySnippetsFile,
     normalizeSnippetsFile,
   );
+  const projectConfigPath = join(projectRoot, ".senpi-webui.json");
   const projectLayer = makeFileLayer(
-    join(projectRoot, ".senpi-webui.json"),
+    projectConfigPath,
     emptyProjectConfig,
     normalizeProjectConfig,
   );
@@ -325,6 +349,13 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
     readTags: () => tagsLayer.read(),
     readSnippets: () => snippetsLayer.read(),
     readProjectConfig: () => projectLayer.read(),
+
+    readProjectRaw: () => {
+      const raw = projectLayer.readRaw();
+      if (raw === null) return null;
+      if (!isRecord(raw)) throw new Error(`配置文件必须是 JSON 对象: ${projectConfigPath}`);
+      return raw;
+    },
 
     writeTags(entries) {
       return tagsLayer.write((existing) => ({

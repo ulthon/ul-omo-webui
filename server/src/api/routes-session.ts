@@ -6,6 +6,7 @@ import type {
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
 import type { SessionMeta, SessionTagRef } from "../db/meta";
+import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway } from "./engine-runtime";
 import { ApiError, parseJsonBody, requireParam, route } from "./http";
@@ -143,11 +144,13 @@ async function listProjectSessions(
 
 export function createSessionRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
-  // 新建会话：模型优先级 body.model > 项目偏好 preferred_model > 引擎默认
+  // 新建会话：模型优先级 body.model > 项目偏好（todo 6：项目文件合并读取，过渡态
+  // 库值回退 + 损坏降级 null = 引擎默认）> 引擎默认
   app.post("/api/sessions", route(async (c: Context) => {
     const body = await parseJsonBody(c);
     const project = validateProjectInput(body.project);
-    const preferred = deps.meta.getProjectMeta(project)?.preferredModel ?? undefined;
+    const preferred =
+      readProjectPreferences(deps.projectConfigs ?? null, deps.meta, project).preferredModel ?? undefined;
     const modelStr = typeof body.model === "string" && body.model ? body.model : preferred;
     let provider: string | undefined;
     let modelId: string | undefined;

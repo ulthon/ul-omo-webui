@@ -28,7 +28,6 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type EngineAdapter,
-  type EngineEntry,
   type EngineMessagesPage,
   type EngineModelInfo,
   type EngineOpenSessionResult,
@@ -148,15 +147,13 @@ export const PERMISSION_PRESET_NAMES: readonly string[] = [
 ];
 
 /**
- * meta_kv 权限预设 → 引擎 spawn 附加参数（--permission-preset <值>）。
+ * 项目权限预设 → 引擎 spawn 附加参数（--permission-preset <值>）。
  * 无预设返回空数组，spawn 行为与从前完全一致。
  * 预设是 spawn 参数级：变更需让项目引擎重启（服务重启或 POST /api/projects/restart）。
+ * todo 6 起取值来源 = 项目 .senpi-webui.json（合并读取与迁移过渡态见 config-migration.ts）。
  */
-export function permissionPresetArgs(
-  getKv: (key: string) => string | null,
-  projectPath: string,
-): string[] {
-  const value = getKv(permissionPresetKey(projectPath))?.trim();
+export function permissionPresetArgs(preset: string | null | undefined): string[] {
+  const value = preset?.trim();
   return value ? ["--permission-preset", value] : [];
 }
 

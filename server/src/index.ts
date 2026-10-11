@@ -8,7 +8,12 @@ import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { openConfigStore } from "./conf/config-store";
 import { EngineProcessManager } from "./engine/process-manager";
-import { EngineRuntimeRegistry, permissionPresetArgs } from "./api/engine-runtime";
+import {
+  createProjectConfigStores,
+  migrateProjectPreferences,
+  permissionPresetSpawnArgs,
+} from "./api/config-migration";
+import { EngineRuntimeRegistry } from "./api/engine-runtime";
 import { EventBus, attachEventBus } from "./engine/events";
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
@@ -26,14 +31,20 @@ const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 // meta 库默认 <DATA_DIR>/meta.db（显式 SENPI_WEBUI_META_DB 仍最高优先）；
 // PID 登记表同属运行数据目录——隔离部署（覆盖 DATA_DIR）三者随行，互不共享。
 const meta = openMetaDb({ path: metaDbPath() });
+// 配置存储（todo 4/6）：全局目录实例 + 按项目根派生解析器（组合根创建一次全链共用，
+// 同项目的合并读/迁移/PATCH 写共用同一条 config-store 写链）
+const configs = openConfigStore();
+const projectConfigs = createProjectConfigStores(configs);
 const manager = new EngineProcessManager({
   // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
   agentDir: agentDir(),
   // PID 登记表（孤儿清扫记录）随运行数据目录
   registryPath: engineRegistryPath(),
-  // 按项目权限预设（meta_kv 键 permission-preset:<projectPath>，值如 read-only）：
-  // spawn 参数级，变更后经 POST /api/projects/restart 让项目引擎重建生效
-  extraSpawnArgs: (projectPath) => permissionPresetArgs((key) => meta.getKv(key), projectPath),
+  // 按项目权限预设（todo 6：来源 = 项目 .senpi-webui.json 的 permissionPreset 合并读取，
+  // 迁移过渡期库值未迁清仍生效、文件损坏降级无参数；meta_kv permission-preset:<projectPath>
+  // 仅作存量过渡来源不再写入）：spawn 参数级，变更后经 POST /api/projects/restart
+  // 让项目引擎重建生效
+  extraSpawnArgs: (projectPath) => permissionPresetSpawnArgs(projectConfigs, meta, projectPath),
 });
 const engines = new EngineRuntimeRegistry(manager, {
   listProjects: () => meta.listProjectMeta().map((p) => p.projectPath),
@@ -87,9 +98,9 @@ app.use("/api/*", auth.middleware);
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
-// configs（todo 4）：无参 openConfigStore()，全局目录取 SENPI_WEBUI_CONFIG_DIR /
-// ~/.config/senpi-webui/；项目 scope 配置由 routes 层按注册项目派生存储。
-const deps = { meta, engines, configs: openConfigStore() };
+// configs（todo 4）：全局目录取 SENPI_WEBUI_CONFIG_DIR / ~/.config/senpi-webui/；
+// 项目 scope 配置经 projectConfigs 按注册项目派生（todo 6 合并读取与迁移共用）。
+const deps = { meta, engines, configs, projectConfigs };
 app.route("/", createSessionRoutes(deps));
 app.route("/", createMetaRoutes(deps));
 app.route("/", createProjectRoutes(deps));
@@ -204,6 +215,12 @@ process.on("SIGTERM", () => void shutdown());
 try {
   const server = Bun.serve({ fetch: app.fetch, hostname: HOST, port: PORT });
   console.log(`senpi-webui listening on http://${server.hostname}:${server.port}`);
+  // 存量项目偏好迁移（todo 6）：监听就绪后 fire-and-forget——per-project 失败仅
+  // console.warn 并保留库值（幂等下次补迁），allSettled 隔离单项目只读目录/挂死
+  // （网络盘语义）不拖累其余项目，更不阻塞监听与请求
+  void migrateProjectPreferences(projectConfigs, meta).catch((err: unknown) => {
+    console.warn(`项目偏好迁移异常中断（下次启动补迁）：${err instanceof Error ? err.message : String(err)}`);
+  });
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   if (
