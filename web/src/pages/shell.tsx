@@ -1,10 +1,12 @@
 // 主布局 /：桌面（≥1024px）常驻左侧栏 + 主区；≤768px（lg 断点以下）侧栏抽屉化 + 汉堡按钮。
 // 初始引导：落到 last_opened_at 最新的项目（lib/bootstrap）。
-// 主区页签（todo 19）：「对话 / 未提交变更」切换；对话为默认页签，未提交变更页签挂
-// components/diff/changes-view 的 ChangesView。页签状态为 shell 本地 state（无跨组件消费）。
+// 主区页签（todo 19）：「对话 / 未提交变更」切换；todo 15 增加「笔记」页签挂
+// components/notes/notes-view 的 NotesView。页签状态为 shell 本地 state（无跨组件消费）。
+// todo 15：笔记编辑态未保存时切页签弹确认——NotesView 经 dirtyRef 上报 dirty，
+// 页签切换 handler 读取（切换即卸载重挂，确认放弃才会丢内容）。
 // todo 26：页签栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；visualViewport 高度
 // 同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { FolderOpen, GitBranch } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
@@ -19,8 +21,12 @@ import { Button } from "@/components/ui/button";
 const ChangesView = lazy(() =>
   import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
 );
+// todo 15：笔记页签同样按需加载（Markdown 管线首屏已有，仅 notes 组件本体惰性）
+const NotesView = lazy(() =>
+  import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
+);
 
-type MainTab = "chat" | "changes";
+type MainTab = "chat" | "changes" | "notes";
 
 const TAB_CLASS = (active: boolean) =>
   `min-h-11 rounded-lg px-3 py-1.5 text-sm transition-colors lg:min-h-9 ${
@@ -63,6 +69,8 @@ export function AppShell() {
   const [bootFailed, setBootFailed] = useState(false);
   const [retrying, setRetrying] = useState(0);
   const [mainTab, setMainTab] = useState<MainTab>("chat");
+  // 笔记编辑未保存标记：NotesView 编辑态写入，切页签 handler 读取做确认（todo 15）
+  const notesDirtyRef = useRef(false);
   useAppHeight();
 
   useEffect(() => {
@@ -89,6 +97,13 @@ export function AppShell() {
   const retry = () => {
     setBootFailed(false);
     setRetrying((n) => n + 1);
+  };
+  // 页签切换：离开笔记编辑态且有未保存修改时弹确认（beforeunload 管不到站内切换）
+  const switchTab = (tab: MainTab) => {
+    if (mainTab === "notes" && tab !== "notes" && notesDirtyRef.current) {
+      if (!window.confirm("笔记有未保存的修改，离开将丢失。确定离开吗？")) return;
+    }
+    setMainTab(tab);
   };
   return (
     <div className="flex flex-col bg-background" style={{ height: "var(--app-height, 100svh)" }}>
@@ -121,7 +136,7 @@ export function AppShell() {
                 role="tab"
                 aria-selected={mainTab === "chat"}
                 data-testid="main-tab-chat"
-                onClick={() => setMainTab("chat")}
+                onClick={() => switchTab("chat")}
                 className={TAB_CLASS(mainTab === "chat")}
               >
                 对话
@@ -131,10 +146,20 @@ export function AppShell() {
                 role="tab"
                 aria-selected={mainTab === "changes"}
                 data-testid="main-tab-changes"
-                onClick={() => setMainTab("changes")}
+                onClick={() => switchTab("changes")}
                 className={TAB_CLASS(mainTab === "changes")}
               >
                 未提交变更
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mainTab === "notes"}
+                data-testid="main-tab-notes"
+                onClick={() => switchTab("notes")}
+                className={TAB_CLASS(mainTab === "notes")}
+              >
+                笔记
               </button>
             </div>
             <div className="ml-auto flex items-center gap-1">
@@ -178,6 +203,16 @@ export function AppShell() {
               </div>
             ) : mainTab === "chat" ? (
               <ChatPlaceholder />
+            ) : mainTab === "notes" ? (
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    加载笔记视图…
+                  </div>
+                }
+              >
+                <NotesView dirtyRef={notesDirtyRef} />
+              </Suspense>
             ) : (
               <Suspense
                 fallback={
