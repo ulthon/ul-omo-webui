@@ -2,10 +2,11 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { relative } from "node:path";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
-import { loadEmbeddedStatic, embeddedRelPath, type EmbeddedStaticAssets } from "./embedded-static";
+import { loadEmbeddedStatic, embeddedRelPath } from "./embedded-static";
 import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
+import { openConfigStore } from "./conf/config-store";
 import { EngineProcessManager } from "./engine/process-manager";
 import { EngineRuntimeRegistry, permissionPresetArgs } from "./api/engine-runtime";
 import { EventBus, attachEventBus } from "./engine/events";
@@ -15,6 +16,7 @@ import { createMetaRoutes } from "./api/routes-meta";
 import { createProjectRoutes } from "./api/routes-project";
 import { createGitRoutes } from "./api/routes-git";
 import { createFsRoutes } from "./api/routes-fs";
+import { createSnippetsRoutes } from "./api/routes-snippets";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 
@@ -83,12 +85,15 @@ app.use("/api/*", auth.middleware);
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
-const deps = { meta, engines };
+// configs（todo 4）：无参 openConfigStore()，全局目录取 SENPI_WEBUI_CONFIG_DIR /
+// ~/.config/senpi-webui/；项目 scope 配置由 routes 层按注册项目派生存储。
+const deps = { meta, engines, configs: openConfigStore() };
 app.route("/", createSessionRoutes(deps));
 app.route("/", createMetaRoutes(deps));
 app.route("/", createProjectRoutes(deps));
 app.route("/", createGitRoutes(deps));
 app.route("/", createFsRoutes(deps));
+app.route("/", createSnippetsRoutes(deps));
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
