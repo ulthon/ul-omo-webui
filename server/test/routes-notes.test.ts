@@ -318,7 +318,7 @@ describe("输入校验", () => {
 
 describe("项目注册校验（POST）", () => {
   test("目录存在但未注册 400 project_not_found；目录不存在 400；非绝对路径 400", async () => {
-    const { app, projectDir, createNote } = setup();
+    const { app, projectDir } = setup();
     // projectDir 存在但未注册
     const unregistered = await app.request("/api/notes", json({ project: projectDir, title: "t", content: "c" }));
     expect(unregistered.status).toBe(400);

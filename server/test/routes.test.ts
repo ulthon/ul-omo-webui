@@ -936,10 +936,14 @@ class FakeEngineClient implements EngineClientLike {
   getStderr(): string {
     return "";
   }
-  async send(message: unknown): Promise<{ success: boolean; data: unknown }> {
+  async send(
+    // oxlint-disable-next-line no-unused-vars -- fake 实现按 EngineClientLike 签名收参：fake 不消费 payload
+    message: unknown,
+  ): Promise<{ success: boolean; data: unknown }> {
     return { success: true, data: { engineVersion: "fake" } };
   }
   emit(event: Record<string, unknown>): void {
+    // oxlint-disable-next-line unicorn/no-useless-spread -- 迭代期快照：监听器在回调内增删不得影响本次遍历
     for (const l of [...this.listeners]) l(event as RpcClientEvent);
   }
   async setClientInfo(): Promise<void> {}
@@ -1289,6 +1293,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
 
   test("(restart) 重建项目引擎：会话态失效、引擎重回 ready、可继续建会话", async () => {
     setup("durable-1");
+    // oxlint-disable-next-line no-unused-vars -- 存量：仅需触发建会话副作用，会话身份经 durableSessionIdFor 断言
     const created = await registry.createSession(proj, {});
     expect(registry.durableSessionIdFor(proj, "routing-1")).toBe("durable-1");
     await registry.restartProject(proj);
