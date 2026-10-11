@@ -1,9 +1,11 @@
-// 输入框（todo 21）：多行自增高文本域、图片粘贴/选择上传、草稿（use-draft）、
+// 输入框（todo 21，todo 13 重设计）：多行自增高文本域、图片粘贴/选择上传、草稿（use-draft）、
 // 输入历史（上箭头翻阅 / 按钮入口）、409 锁提示与中断按钮（16 语义原样保留）。
-// todo 20：@ 按钮（输入框旁）或键入 @ 弹出文件选择器，选中后经 update() 插入 `@path `
+// todo 20：@ 按钮或键入 @ 弹出文件选择器，选中后经 update() 插入 `@path `
 // 引用（光标落插入点之后），路径随 prompt 文本自然发送。
+// todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语占位；
+// 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
@@ -315,7 +317,7 @@ export function Composer({
 
   if (busy) {
     return (
-      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 pb-[max(env(safe-area-inset-bottom),8px)] text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
           会话处理中，暂不能发送
@@ -336,7 +338,7 @@ export function Composer({
   const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
       {history && (
         <div
           data-testid="history-bar"
@@ -389,73 +391,92 @@ export function Composer({
           ))}
         </div>
       )}
-      <div className="flex items-end gap-2">
-        <button
-          type="button"
-          data-testid="history-btn"
-          aria-label="输入历史"
-          title="输入历史（↑ 翻阅）"
-          aria-pressed={history !== null}
-          onClick={() => (history ? closeHistory() : void openHistory())}
-          className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
-            history ? "bg-muted text-foreground" : "text-muted-foreground"
-          }`}
-        >
-          <History className="size-5" />
-        </button>
-        <button
-          type="button"
-          data-testid="at-btn"
-          aria-label="引用文件"
-          title="引用文件（插入 @路径）"
-          disabled={!project}
-          onClick={() => openPicker(null)}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-        >
-          <AtSign className="size-5" />
-        </button>
-        <button
-          type="button"
-          data-testid="image-btn"
-          aria-label="添加图片"
-          title="添加图片（可粘贴截图）"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
-        >
-          <ImagePlus className="size-5" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          data-testid="composer-file-input"
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            void addImageFiles(files);
-          }}
-        />
-        <textarea
-          ref={textareaRef}
-          data-testid="composer-input"
-          value={text}
-          rows={1}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          disabled={sending}
-          onChange={(e) => update(e.target.value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          className="max-h-48 min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-        />
+      {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
+      <textarea
+        ref={textareaRef}
+        data-testid="composer-input"
+        value={text}
+        rows={1}
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+        disabled={sending}
+        onChange={(e) => update(e.target.value)}
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
+        className="max-h-48 min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        data-testid="composer-file-input"
+        className="hidden"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          void addImageFiles(files);
+        }}
+      />
+      <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="history-btn"
+            aria-label="输入历史"
+            title="输入历史（↑ 翻阅）"
+            aria-pressed={history !== null}
+            onClick={() => (history ? closeHistory() : void openHistory())}
+            className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
+              history ? "bg-muted text-foreground" : "text-muted-foreground"
+            }`}
+          >
+            <History className="size-5" />
+          </button>
+          <button
+            type="button"
+            data-testid="at-btn"
+            aria-label="引用文件"
+            title="引用文件（插入 @路径）"
+            disabled={!project}
+            onClick={() => openPicker(null)}
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          >
+            <AtSign className="size-5" />
+          </button>
+          <button
+            type="button"
+            data-testid="image-btn"
+            aria-label="添加图片"
+            title="添加图片（可粘贴截图）"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <ImagePlus className="size-5" />
+          </button>
+          {/* todo 14 接管：常用语面板。本 todo 仅占位（todo 13） */}
+          <button
+            type="button"
+            data-testid="snippet-btn"
+            aria-label="常用语（即将上线）"
+            title="常用语即将上线"
+            disabled
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          >
+            <MessageSquareText className="size-5" />
+          </button>
+        </div>
+        {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
         <button
           type="button"
           data-testid="send-btn"
           aria-label="发送"
           disabled={!canSend}
           onClick={() => void send()}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
+          className={`ml-auto flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+            canSend
+              ? "border-border bg-accent text-accent-foreground hover:bg-muted dark:border-input"
+              : "border-border bg-background text-muted-foreground hover:bg-muted dark:border-input dark:bg-input/30"
+          }`}
         >
           <ArrowUp className="size-5" />
         </button>
