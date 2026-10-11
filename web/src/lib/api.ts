@@ -469,6 +469,21 @@ export const api = {
   async setSessionTags(sessionId: string, tags: TagRef[]): Promise<{ tags: TagRef[] }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", { tags }));
   },
+
+  // ---- 常用语（todo 14）----
+  /** 两源常用语：global 恒返回；project 仅传项目路径时返回（读不要求已注册） */
+  async listSnippets(project?: string): Promise<{ global: SnippetEntry[]; project: SnippetEntry[] }> {
+    const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+    return request(`/api/snippets${qs}`);
+  },
+  /** 按 scope 整替条目列表（增删改/排序/导入共用；返回整替后该 scope 列表，免二次 GET） */
+  async putSnippets(body: {
+    scope: "global" | "project";
+    project?: string;
+    snippets: SnippetEntry[];
+  }): Promise<{ snippets: SnippetEntry[] }> {
+    return request("/api/snippets", jsonInit("PUT", body));
+  },
 };
 
 export interface FsBrowseEntry {
@@ -494,4 +509,10 @@ export interface TagDefinition {
 export interface TagRef {
   scope: string;
   name: string;
+}
+
+/** 常用语条目（GET/PUT /api/snippets；content 非空且 ≤4KB UTF-8 字节，sort 升序回显） */
+export interface SnippetEntry {
+  content: string;
+  sort: number;
 }

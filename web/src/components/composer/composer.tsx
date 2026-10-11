@@ -2,13 +2,17 @@
 // 输入历史（上箭头翻阅 / 按钮入口）、409 锁提示与中断按钮（16 语义原样保留）。
 // todo 20：@ 按钮或键入 @ 弹出文件选择器，选中后经 update() 插入 `@path `
 // 引用（光标落插入点之后），路径随 prompt 文本自然发送。
-// todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语占位；
+// todo 14：常用语面板（SnippetPanelDialog）——条目插入走草稿链路，条目直发经
+// sendText(clearInputs:false) 只发送条目文本，不动输入框既有草稿/图片/历史。
+// todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语；
 // 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
+import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
+import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import {
   MAX_IMAGES,
@@ -82,6 +86,9 @@ export function Composer({
   // 在当前光标处插入）。选中后经 update() 走草稿链路插入 `@path `，光标落插入点之后。
   const [picker, setPicker] = useState<{ open: boolean; trigger: number | null } | null>(null);
 
+  // 常用语面板（todo 14）：工具条按钮入口
+  const [snippetOpen, setSnippetOpen] = useState(false);
+
   const openPicker = useCallback((trigger: number | null) => {
     setPicker({ open: true, trigger });
   }, []);
@@ -110,6 +117,24 @@ export function Composer({
     [insertRef, picker],
   );
 
+  // 常用语插入（todo 14）：在光标处插入条目文本，走 update() 草稿链路（防抖 PUT），
+  // 光标落插入内容之后；不动图片与历史态。焦点由面板 onCloseAutoFocus 归还输入框
+  // （focus() 保留 selection），这里只负责 caret 落位
+  const insertSnippetText = useCallback(
+    (snippet: string) => {
+      const el = textareaRef.current;
+      const caret = el?.selectionStart ?? textRef.current.length;
+      const { content, caret: nextCaret } = insertSnippet(textRef.current, caret, snippet);
+      update(content);
+      requestAnimationFrame(() => {
+        const node = textareaRef.current;
+        if (!node) return;
+        node.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [update, textRef],
+  );
+
   // 多行自增高：每次渲染后按内容校正高度；超过 max-h-48 由 CSS 截断并内部滚动
   useEffect(() => {
     const el = textareaRef.current;
@@ -120,34 +145,59 @@ export function Composer({
 
   // ---------- 发送 ----------
 
-  const send = useCallback(async () => {
-    const trimmed = textRef.current.trim();
-    const imgs = imagesRef.current;
-    if ((!trimmed && imgs.length === 0) || busy || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      await api.prompt(sessionId, {
-        text: trimmed,
-        images: imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined,
-      });
-      setImagesBoth([]);
-      clearDraft();
-      setHistory(null);
-      draftBeforeHistoryRef.current = "";
-      // 输入历史追加（服务端去重、上限 200）；空文本不追加
-      if (project && trimmed) void api.appendInputHistory(project, trimmed).catch(() => {});
-      onSent();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError("该会话正在被另一个窗口处理中，请等待其完成后再发送");
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
+  /**
+   * 发送文本两态入口（todo 14）：
+   * - clearInputs:true = 普通发送（键盘/按钮），携带输入框图片，成功后清图片/草稿/历史
+   *   态（todo 21 原 send() 行为逐项保留）；
+   * - clearInputs:false = 常用语直发：只发送该文本，不掺输入框现有内容，也不清空现有
+   *   草稿/图片/历史条。两态共用 prompt 调用、appendInputHistory 与 onSent。
+   */
+  const sendText = useCallback(
+    async (rawText: string, opts: { clearInputs: boolean }) => {
+      const trimmed = rawText.trim();
+      const imgs = opts.clearInputs ? imagesRef.current : undefined;
+      if (busy || sending) return;
+      // 普通发送：文本与图片皆空早退（原校验，有图无文本仍可发）；直发必须有文本
+      if (!trimmed && imgs && imgs.length === 0) return;
+      if (!trimmed && !opts.clearInputs) return;
+      setSending(true);
+      setError(null);
+      try {
+        await api.prompt(sessionId, {
+          text: trimmed,
+          images: imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined,
+        });
+        if (opts.clearInputs) {
+          setImagesBoth([]);
+          clearDraft();
+          setHistory(null);
+          draftBeforeHistoryRef.current = "";
+        }
+        // 输入历史追加（服务端去重、上限 200）；空文本不追加（直发也属一次输入）
+        if (project && trimmed) void api.appendInputHistory(project, trimmed).catch(() => {});
+        onSent();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          setError("该会话正在被另一个窗口处理中，请等待其完成后再发送");
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        setSending(false);
       }
-    } finally {
-      setSending(false);
-    }
-  }, [busy, sending, sessionId, project, clearDraft, setImagesBoth, onSent, textRef]);
+    },
+    [busy, sending, sessionId, project, clearDraft, setImagesBoth, onSent],
+  );
+
+  const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
+
+  // 常用语直发（todo 14）：只发送条目文本（clearInputs:false），不动输入框既有内容
+  const sendSnippetNow = useCallback(
+    (snippet: string) => {
+      void sendText(snippet, { clearInputs: false });
+    },
+    [sendText],
+  );
 
   const abort = useCallback(async () => {
     try {
@@ -453,14 +503,14 @@ export function Composer({
           >
             <ImagePlus className="size-5" />
           </button>
-          {/* todo 14 接管：常用语面板。本 todo 仅占位（todo 13） */}
+          {/* 常用语面板入口（todo 14） */}
           <button
             type="button"
             data-testid="snippet-btn"
-            aria-label="常用语（即将上线）"
-            title="常用语即将上线"
-            disabled
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+            aria-label="常用语"
+            title="常用语"
+            onClick={() => setSnippetOpen(true)}
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
           >
             <MessageSquareText className="size-5" />
           </button>
@@ -494,6 +544,30 @@ export function Composer({
           }}
           project={project}
           onPick={onPickFile}
+        />
+      )}
+      {snippetOpen && (
+        <SnippetPanelDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setSnippetOpen(false);
+          }}
+          project={project}
+          actionDisabled={snippetActionDisabled(busy, sending)}
+          onInsert={(content) => {
+            insertSnippetText(content);
+            setSnippetOpen(false);
+          }}
+          onSendNow={(content) => {
+            setSnippetOpen(false);
+            sendSnippetNow(content);
+          }}
+          // 关闭后焦点回输入框（radix 默认回触发钮）；插入光标已在 insertSnippetText
+          // 的 rAF 中落位，focus() 保留现有 selection
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            textareaRef.current?.focus();
+          }}
         />
       )}
     </div>
