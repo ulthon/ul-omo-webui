@@ -53,6 +53,56 @@ export interface ProjectMetaPatch {
   lastOpenedAt?: string | null;
 }
 
+export interface NoteMeta {
+  id: string;
+  projectPath: string;
+  title: string;
+  content: string;
+  /** 标签名数组；tags 列损坏（非法 JSON / 非字符串数组）时容错为空数组 */
+  tags: string[];
+  sort: number | null;
+  /** 软删除时间戳；null = 未删除 */
+  deletedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface NoteInput {
+  id: string;
+  projectPath: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  sort?: number | null;
+}
+
+export interface NotePatch {
+  title?: string;
+  content?: string;
+  tags?: string[];
+  sort?: number | null;
+}
+
+export interface NoteVersion {
+  id: string;
+  noteId: string;
+  content: string;
+  savedAt: string;
+}
+
+export type TagScope = "global" | "project";
+
+export interface SessionTag {
+  scope: TagScope;
+  name: string;
+  createdAt: string;
+}
+
+export interface SessionTagRef {
+  scope: TagScope;
+  name: string;
+}
+
 export interface OpenMetaDbOptions {
   /** 库文件路径；缺省依次取 SENPI_WEBUI_META_DB 环境变量、server/data/meta.db */
   path?: string;
@@ -90,6 +140,43 @@ function toSessionMeta(row: SessionMetaRow): SessionMeta {
     renamedTitle: row.renamed_title,
     unreadCount: row.unread_count,
     lastRead: row.last_read,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface NoteRow {
+  id: string;
+  project_path: string;
+  title: string;
+  content: string;
+  tags: string;
+  sort: number | null;
+  deleted_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** tags 列容错解析：非法 JSON 或非字符串数组一律返回空数组，不崩（手工塞坏数据可恢复） */
+function parseNoteTags(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((t): t is string => typeof t === "string");
+  } catch {
+    return [];
+  }
+}
+
+function toNoteMeta(row: NoteRow): NoteMeta {
+  return {
+    id: row.id,
+    projectPath: row.project_path,
+    title: row.title,
+    content: row.content,
+    tags: parseNoteTags(row.tags),
+    sort: row.sort,
+    deletedAt: row.deleted_at,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
@@ -138,6 +225,40 @@ export interface MetaDb {
   setKv(key: string, value: string): void;
   listKv(): Record<string, string>;
   deleteKv(key: string): void;
+
+  // meta_note
+  createNote(input: NoteInput): NoteMeta;
+  getNote(id: string): NoteMeta | null;
+  /** 未删除笔记（updated_at 新在前） */
+  listNotes(projectPath: string): NoteMeta[];
+  /** 软删除笔记即回收站（deleted_at 新在前） */
+  listTrashedNotes(projectPath: string): NoteMeta[];
+  /** 部分更新；笔记不存在时抛错 */
+  updateNote(id: string, patch: NotePatch): NoteMeta;
+  softDeleteNote(id: string): void;
+  restoreNote(id: string): void;
+  /** 硬删除：同事务级联删除全部版本 */
+  hardDeleteNote(id: string): void;
+
+  // meta_note_version
+  /** 追加版本（savedAt 缺省取当前时间）；"content 与最新版本不同才追加"的判断在 REST 层 */
+  appendNoteVersion(noteId: string, content: string, savedAt?: string): NoteVersion;
+  /** 版本列表（saved_at 新在前） */
+  listNoteVersions(noteId: string): NoteVersion[];
+  getNoteVersion(versionId: string): NoteVersion | null;
+  /** 最新版本（无版本时 null），供 REST 层做追加去重判断 */
+  latestNoteVersion(noteId: string): NoteVersion | null;
+
+  // meta_session_tag
+  listSessionTags(sessionId: string): SessionTag[];
+  /** 整替挂载：单事务先清后插 */
+  setSessionTags(sessionId: string, tags: SessionTagRef[]): void;
+  listSessionsByTag(scope: TagScope, name: string): string[];
+  countSessionsByTag(scope: TagScope, name: string): number;
+
+  // meta_session.generated_title（标题生成写入，独立于 renamed_title）
+  setSessionGeneratedTitle(sessionId: string, title: string | null): void;
+  getSessionGeneratedTitle(sessionId: string): string | null;
 
   /** 完整性自检（测试与运维用），返回 "ok" 或错误描述 */
   integrityCheck(): string;
@@ -417,6 +538,214 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
 
     deleteKv(key) {
       run("DELETE FROM meta_kv WHERE key = ?", key);
+    },
+
+    createNote(input) {
+      const now = nowIso();
+      immediate(() => {
+        run(
+          `INSERT INTO meta_note (id, project_path, title, content, tags, sort, deleted_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+          input.id,
+          input.projectPath,
+          input.title,
+          input.content,
+          JSON.stringify(input.tags ?? []),
+          input.sort ?? null,
+          now,
+          now,
+        );
+      });
+      const row = get<NoteRow>("SELECT * FROM meta_note WHERE id = ?", input.id);
+      if (!row) throw new Error(`meta_note insert failed for ${input.id}`);
+      return toNoteMeta(row);
+    },
+
+    getNote(id) {
+      const row = get<NoteRow>("SELECT * FROM meta_note WHERE id = ?", id);
+      return row ? toNoteMeta(row) : null;
+    },
+
+    listNotes(projectPath) {
+      return all<NoteRow>(
+        `SELECT * FROM meta_note
+         WHERE project_path = ? AND deleted_at IS NULL
+         ORDER BY updated_at DESC, rowid DESC`,
+        projectPath,
+      ).map(toNoteMeta);
+    },
+
+    listTrashedNotes(projectPath) {
+      return all<NoteRow>(
+        `SELECT * FROM meta_note
+         WHERE project_path = ? AND deleted_at IS NOT NULL
+         ORDER BY deleted_at DESC, rowid DESC`,
+        projectPath,
+      ).map(toNoteMeta);
+    },
+
+    updateNote(id, patch) {
+      return immediate(() => {
+        const existing = get<NoteRow>("SELECT * FROM meta_note WHERE id = ?", id);
+        if (!existing) throw new Error(`meta_note not found: ${id}`);
+        run(
+          `UPDATE meta_note SET title = ?, content = ?, tags = ?, sort = ?, updated_at = ?
+           WHERE id = ?`,
+          patch.title === undefined ? existing.title : patch.title,
+          patch.content === undefined ? existing.content : patch.content,
+          patch.tags === undefined ? existing.tags : JSON.stringify(patch.tags),
+          patch.sort === undefined ? existing.sort : (patch.sort ?? null),
+          nowIso(),
+          id,
+        );
+        const row = get<NoteRow>("SELECT * FROM meta_note WHERE id = ?", id);
+        if (!row) throw new Error(`meta_note update failed for ${id}`);
+        return toNoteMeta(row);
+      });
+    },
+
+    softDeleteNote(id) {
+      immediate(() => {
+        run(
+          "UPDATE meta_note SET deleted_at = ?, updated_at = ? WHERE id = ?",
+          nowIso(),
+          nowIso(),
+          id,
+        );
+      });
+    },
+
+    restoreNote(id) {
+      immediate(() => {
+        run(
+          "UPDATE meta_note SET deleted_at = NULL, updated_at = ? WHERE id = ?",
+          nowIso(),
+          id,
+        );
+      });
+    },
+
+    hardDeleteNote(id) {
+      // 单事务保证原子：版本随笔记一起消失，不留孤儿版本行
+      immediate(() => {
+        run("DELETE FROM meta_note_version WHERE note_id = ?", id);
+        run("DELETE FROM meta_note WHERE id = ?", id);
+      });
+    },
+
+    appendNoteVersion(noteId, content, savedAt) {
+      const version: NoteVersion = {
+        id: crypto.randomUUID(),
+        noteId,
+        content,
+        savedAt: savedAt ?? nowIso(),
+      };
+      immediate(() => {
+        run(
+          "INSERT INTO meta_note_version (id, note_id, content, saved_at) VALUES (?, ?, ?, ?)",
+          version.id,
+          version.noteId,
+          version.content,
+          version.savedAt,
+        );
+      });
+      return version;
+    },
+
+    listNoteVersions(noteId) {
+      return all<NoteVersion>(
+        `SELECT id, note_id AS noteId, content, saved_at AS savedAt
+         FROM meta_note_version
+         WHERE note_id = ?
+         ORDER BY saved_at DESC, rowid DESC`,
+        noteId,
+      );
+    },
+
+    getNoteVersion(versionId) {
+      return get<NoteVersion>(
+        `SELECT id, note_id AS noteId, content, saved_at AS savedAt
+         FROM meta_note_version WHERE id = ?`,
+        versionId,
+      );
+    },
+
+    latestNoteVersion(noteId) {
+      return get<NoteVersion>(
+        `SELECT id, note_id AS noteId, content, saved_at AS savedAt
+         FROM meta_note_version
+         WHERE note_id = ?
+         ORDER BY saved_at DESC, rowid DESC
+         LIMIT 1`,
+        noteId,
+      );
+    },
+
+    listSessionTags(sessionId) {
+      return all<SessionTag>(
+        `SELECT tag_scope AS scope, tag_name AS name, created_at AS createdAt
+         FROM meta_session_tag
+         WHERE session_id = ?
+         ORDER BY tag_scope, tag_name`,
+        sessionId,
+      );
+    },
+
+    setSessionTags(sessionId, tags) {
+      immediate(() => {
+        run("DELETE FROM meta_session_tag WHERE session_id = ?", sessionId);
+        for (const tag of tags) {
+          run(
+            "INSERT INTO meta_session_tag (session_id, tag_scope, tag_name, created_at) VALUES (?, ?, ?, ?)",
+            sessionId,
+            tag.scope,
+            tag.name,
+            nowIso(),
+          );
+        }
+      });
+    },
+
+    listSessionsByTag(scope, name) {
+      return all<{ session_id: string }>(
+        `SELECT session_id FROM meta_session_tag
+         WHERE tag_scope = ? AND tag_name = ?
+         ORDER BY session_id`,
+        scope,
+        name,
+      ).map((row) => row.session_id);
+    },
+
+    countSessionsByTag(scope, name) {
+      const row = get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM meta_session_tag WHERE tag_scope = ? AND tag_name = ?",
+        scope,
+        name,
+      );
+      return row ? row.n : 0;
+    },
+
+    setSessionGeneratedTitle(sessionId, title) {
+      immediate(() => {
+        run(
+          `INSERT INTO meta_session (session_id, generated_title, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET
+             generated_title = excluded.generated_title,
+             updated_at = excluded.updated_at`,
+          sessionId,
+          title,
+          nowIso(),
+        );
+      });
+    },
+
+    getSessionGeneratedTitle(sessionId) {
+      const row = get<{ generated_title: string | null }>(
+        "SELECT generated_title FROM meta_session WHERE session_id = ?",
+        sessionId,
+      );
+      return row ? row.generated_title : null;
     },
 
     integrityCheck() {
