@@ -27,6 +27,8 @@
 
 **已实现。** 31 个实现任务全部完成，通过稳定性验收（引擎崩溃自动恢复、断网重连不丢消息、30 分钟浸泡三源一致）与单二进制冷启动冒烟。这是一个可自用的 senpi/omo 引擎 web 工作台：手机浏览器连上局域网即可与终端 TUI 共用同一份会话——对话、流式输出、工具调用卡片、权限确认、todo、diff 总览、模型切换、会话管理（置顶/归档/搜索/批量/fork/导出）、token 用量统计都在；Git 历史与文件管理按 phpMyAdmin 模式外链 cgit / filebrowser。
 
+2026-10-11 又落成七项功能升级：侧栏平铺全部项目的会话（项目分组折叠、折叠记忆）+ 跨项目最近会话 8 条直达；会话标签（全局与项目两级，一会话可挂多个，按标签任一命中过滤）；项目笔记页签（markdown 渲染、标签分类、回收站软删除 + 版本恢复）；常用语（全局与项目两级，一键插入或直接发送，可从输入历史导入）；新会话首回合后自动生成短标题 + 手动"生成标题"菜单；添加项目支持目录树浏览与路径补全（限定 home 内）；输入区重设计（手机上输入框整行占宽 93.8%，底部安全区与键盘遮挡修复）。
+
 ### 快速开始
 
 构建（需要 bun；产出 `dist/senpi-webui` 单二进制 + `dist/engine/` 引擎闭包目录）：
@@ -50,7 +52,18 @@ curl -X POST http://127.0.0.1:7788/api/auth/login \
   -d '{"password":"<你的密码>"}'
 ```
 
-环境变量一览（详见 `server/src/config.ts` 与 `deploy/备份.md`）：`SENPI_WEBUI_HOST`/`PORT`/`DATA_DIR`/`META_DB`/`AGENT_DIR`/`STATIC_DIR`/`PASSWORD`。
+环境变量一览（详见 `server/src/config.ts` 与 `deploy/备份.md`）：`SENPI_WEBUI_HOST`/`PORT`/`DATA_DIR`/`META_DB`/`AGENT_DIR`/`STATIC_DIR`/`PASSWORD`；另有 `SENPI_WEBUI_CONFIG_DIR`（全局配置目录，见下节）与标题生成的 `SENPI_WEBUI_TITLE_BASEURL`/`SENPI_WEBUI_TITLE_MODEL`（见 `server/src/title-gen.ts`）。
+
+### 配置文件与多机同步
+
+标签与常用语的定义以文本文件形态存在，git 管理即备份与多机同步：
+
+- 全局：`~/.config/senpi-webui/`（`tags.json` 全局标签集、`snippets.json` 全局常用语集）。把它放进你的 dotfiles git 仓库，新机器 clone 后配置即就位；目录位置可用 `SENPI_WEBUI_CONFIG_DIR` 覆盖。文件是外部改动（如 git pull）后下一次读取自动生效，无需重启。
+- 项目级：项目根下 `.senpi-webui.json`（项目级标签、常用语、preferredModel、permissionPreset），随项目仓库走。存量 meta 库里的项目偏好与权限预设会在服务启动时自动迁入该文件（写成功才清库，失败保留库值下次补迁）。
+
+标题生成是服务端对模型 API 的独立调用（与引擎同源凭证，读引擎 agent 目录的 auth.json），缺省走 zai coding 端点 + glm-5.3-flash，可用 `SENPI_WEBUI_TITLE_BASEURL` 与 `SENPI_WEBUI_TITLE_MODEL` 换端点或模型。
+
+注意：迁移后 `.senpi-webui.json` 在提交之前会以未跟踪文件出现在各项目的 `git status` 与本产品"未提交变更"页签里，属预期行为。提交它才能获得多机同步；把它加进 `.gitignore` 会静默破坏同步（项目级标签与常用语的改动不再随仓库走）。
 
 ### 部署参考件
 
