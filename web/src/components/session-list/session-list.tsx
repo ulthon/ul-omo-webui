@@ -8,9 +8,9 @@
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import type { SessionListItem } from "@/lib/api";
+import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
 import { useSessionsStore, type ArchivedFilter, type SessionView } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -18,8 +18,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -33,6 +35,9 @@ import {
 } from "./global-list-data";
 import { SessionItem } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
+import { TagSelector } from "./tag-selector";
+import { TagManageDialog } from "./tag-manage-dialog";
+import { definedTagKeys, mergeTagOptions, type TagDefs } from "./tag-data";
 
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -96,6 +101,10 @@ export function SessionList() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ label: string; done: number; total: number } | null>(null);
+  // 标签（todo 11）：两源定义集（涉及项目合并）、选择器会话集合、管理弹层
+  const [tagDefs, setTagDefs] = useState<TagDefs | null>(null);
+  const [tagSelector, setTagSelector] = useState<SessionListItem[] | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const listBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -243,6 +252,50 @@ export function SessionList() {
   // 最近会话：跨项目按 modified 取最新 8 条（置顶自然参与）
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
 
+  // ---- 标签（todo 11）----
+
+  const tagFilter = useSessionsStore((s) => s.tagFilter);
+
+  /** 两源定义集加载：全局 + 全部注册项目的项目级标签合并。
+   * 用注册全集而非"列表涉及项目"——标签过滤会收缩 byProject（服务端过滤只返回命中行），
+   * 若按列表键集拉取，过滤生效中项目级选项会从下拉里消失（stale state 对抗类）。 */
+  const reloadTagDefs = useCallback(async () => {
+    const { projects: registered } = useUiStore.getState();
+    try {
+      const global = await api.listTags();
+      const projectLists = await Promise.all(
+        registered.map((p) => api.listTags(p.projectPath).then((r) => r.project).catch(() => [] as TagDefinition[])),
+      );
+      setTagDefs({ global: global.global, project: projectLists.flat() });
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        setTagDefs({ global: [], project: [] });
+      }
+    }
+  }, []);
+
+  const projectKeysSig = useMemo(
+    () => projects.map((p) => p.projectPath).sort().join("\u0000"),
+    [projects],
+  );
+  useEffect(() => {
+    // 经微任务启动加载：reloadTagDefs 内的 setTagDefs 全在 await 之后的异步段，
+    // 但 oxlint set-state-in-effect 对 effect 同步调用图直接可达的 setState 一律告警——
+    // queueMicrotask 把启动切出同步图（等价改写，非 disable）；async 函数体本就异步调度，
+    // 加载语义与"末次签名获胜"的竞态行为不变。
+    queueMicrotask(() => void reloadTagDefs());
+  }, [projectKeysSig, reloadTagDefs]);
+
+  const definedKeys = useMemo(() => (tagDefs ? definedTagKeys(tagDefs) : null), [tagDefs]);
+  const tagOptions = useMemo(() => (tagDefs ? mergeTagOptions(tagDefs) : []), [tagDefs]);
+
+  /** 过滤 chips 勾选切换（多选 OR 语义）：写 store 后整体重取（refreshSessions 透传 tags） */
+  const toggleTagFilter = (name: string) => {
+    const s = useSessionsStore.getState();
+    s.setTagFilter(s.tagFilter.includes(name) ? s.tagFilter.filter((t) => t !== name) : [...s.tagFilter, name]);
+    void useSessionsStore.getState().refreshSessions();
+  };
+
   // ---- 批量操作（todo 25）----
 
   const exitBatch = () => {
@@ -323,6 +376,15 @@ export function SessionList() {
     });
   };
 
+  /** 行内菜单分流（todo 11）：rename/delete 走既有弹窗单例；tags 打开选择器 */
+  const handleItemDialog = useCallback((kind: "rename" | "delete" | "tags", session: SessionListItem) => {
+    if (kind === "tags") {
+      setTagSelector([session]);
+      return;
+    }
+    setDialog({ kind, session });
+  }, []);
+
   const archivedLabel = archived === "false" ? "未归档" : archived === "true" ? "已归档" : "含归档";
 
   /** 批量模式行 props（todo 25：勾选集合提升到本容器） */
@@ -337,7 +399,9 @@ export function SessionList() {
           触控目标（todo 26 走查修复）：手机 ≥44px（lg 保持桌面紧凑尺寸）。
           "新建会话"固定在 currentProject 创建（全局视图下分组头 "+" 才是跨项目落点）。 */}
       <div className="shrink-0 space-y-2 border-b px-2 py-2">
-        <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession(currentProject)}>
+        {/* 点击时刻实时读 currentProject：跨项目点击后 300ms 内 React 提交可能未完成，
+            render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
+        <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession(useUiStore.getState().currentProject)}>
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
           新建会话
         </Button>
@@ -401,6 +465,62 @@ export function SessionList() {
                 <DropdownMenuItem onSelect={() => switchFilter({ archived: "all" })}>全部</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            {/* 标签过滤下拉（todo 11）：多选 chips OR 语义（任一命中）；CheckboxItem preventDefault
+                保持菜单打开支持连续勾选；底部"管理标签"入口。 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-11 gap-1 px-1.5 text-xs lg:h-6 ${tagFilter.length > 0 ? "text-foreground" : "text-muted-foreground"}`}
+                  data-testid="tag-filter-btn"
+                >
+                  <Tag className="size-3" />
+                  {tagFilter.length > 0 ? `标签 ×${tagFilter.length}` : "标签"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-72 w-44 overflow-y-auto" data-testid="tag-filter-menu">
+                {tagOptions.length === 0 ? (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">暂无标签</div>
+                ) : (
+                  tagOptions.map((name) => (
+                    <DropdownMenuCheckboxItem
+                      key={name}
+                      checked={tagFilter.includes(name)}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        toggleTagFilter(name);
+                      }}
+                      data-testid={`tag-filter-option-${name}`}
+                    >
+                      {name}
+                    </DropdownMenuCheckboxItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setManageOpen(true)} data-testid="manage-tags-item">
+                  管理标签
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+        {/* 已选标签 chips（todo 11）：点击移除（OR 语义下缩小命中集） */}
+        {tagFilter.length > 0 && (
+          <div className="flex flex-wrap gap-1" data-testid="tag-filter-chips">
+            {tagFilter.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="inline-flex min-h-7 items-center gap-0.5 rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                title="移除该过滤标签"
+                data-tag-chip={name}
+                onClick={() => toggleTagFilter(name)}
+              >
+                {name}
+                <X className="size-2.5" />
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -422,6 +542,18 @@ export function SessionList() {
           >
             {archived === "true" ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
             {archived === "true" ? "取消归档" : "归档"}
+          </Button>
+          {/* 批量打标签（todo 11）：选择器内对选中集合循环 PUT，进度反馈在选择器内 */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-11 gap-1 px-1.5 text-xs lg:h-6"
+            disabled={batchBusy || selectedIds.size === 0 || !tagDefs}
+            onClick={() => setTagSelector(findSessions(selectedIds))}
+            data-testid="batch-tag-btn"
+          >
+            <Tag className="size-3" />
+            打标签
           </Button>
           <Button
             variant="ghost"
@@ -460,7 +592,8 @@ export function SessionList() {
                 projectLabel={basename(s.project)}
                 expandable={s.parentSessionPath === null}
                 onSelect={selectSession}
-                onDialog={(kind, session) => setDialog({ kind, session })}
+                            onDialog={handleItemDialog}
+                            definedKeys={definedKeys}
                 onChanged={onChanged}
                 {...itemBatchProps(s)}
               />
@@ -491,7 +624,8 @@ export function SessionList() {
                       projectLabel={basename(s.project)}
                       expandable={s.parentSessionPath === null}
                       onSelect={selectSession}
-                      onDialog={(kind, session) => setDialog({ kind, session })}
+                      onDialog={handleItemDialog}
+                      definedKeys={definedKeys}
                       onChanged={onChanged}
                       {...itemBatchProps(s)}
                     />
@@ -572,7 +706,8 @@ export function SessionList() {
                             expandable={isTop(s)}
                             childrenOpen={view === "all"}
                             onSelect={selectSession}
-                            onDialog={(kind, session) => setDialog({ kind, session })}
+                onDialog={handleItemDialog}
+                definedKeys={definedKeys}
                             onChanged={onChanged}
                             {...itemBatchProps(s)}
                           />
@@ -588,6 +723,28 @@ export function SessionList() {
       </div>
 
       <SessionDialogs state={dialog} onClose={() => setDialog(null)} onChanged={onChanged} />
+      {tagSelector && tagDefs && (
+        <TagSelector
+          sessions={tagSelector}
+          defs={tagDefs}
+          /* 新建项目标签的落点 = 所选会话的项目（currentProject 与会话项目可能不一致——
+           * 全局视图下跨项目点击轻量切换有竞态窗口，以会话归属为准） */
+          project={tagSelector[0].project}
+          onDefsChanged={() => void reloadTagDefs()}
+          onClose={() => {
+            setTagSelector(null);
+            onChanged();
+          }}
+        />
+      )}
+      {manageOpen && tagDefs && (
+        <TagManageDialog
+          project={currentProject ?? ""}
+          defs={tagDefs}
+          onChanged={() => void reloadTagDefs()}
+          onClose={() => setManageOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -249,6 +249,8 @@ export interface ListSessionsParams {
   q?: string;
   /** 会话标签过滤参数（本 todo 只透传；server todo 3 落地后自然生效） */
   tag?: string;
+  /** 多标签过滤（todo 11）：多个 tag 参数 OR 语义（任一命中），server 逐个 append */
+  tags?: string[];
 }
 
 export const api = {
@@ -274,6 +276,7 @@ export const api = {
     if (params.archived) q.set("archived", params.archived);
     if (params.q) q.set("q", params.q);
     if (params.tag) q.set("tag", params.tag);
+    if (params.tags) for (const t of params.tags) q.append("tag", t);
     return request(`/api/sessions?${q.toString()}`);
   },
   async listMessages(sessionId: string, cursor?: string): Promise<MessagesPage> {
@@ -451,6 +454,21 @@ export const api = {
     const qs = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/fs/browse${qs}`);
   },
+
+  // ---- 标签（todo 11）----
+  /** 两源标签定义：global 恒返回；project 仅传项目路径时返回（读不要求已注册） */
+  async listTags(project?: string): Promise<{ global: TagDefinition[]; project: TagDefinition[] }> {
+    const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+    return request(`/api/tags${qs}`);
+  },
+  /** 按 scope 整替定义列表（新增/重命名/删除/排序共用；重名 400 invalid_tags） */
+  async putTags(body: { scope: "global" | "project"; project?: string; tags: TagDefinition[] }): Promise<{ tags: TagDefinition[] }> {
+    return request("/api/tags", jsonInit("PUT", body));
+  },
+  /** 会话标签挂载整替（挂载与定义解耦：不校验定义存在；重复项服务端按 (scope,name) 去重） */
+  async setSessionTags(sessionId: string, tags: TagRef[]): Promise<{ tags: TagRef[] }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", { tags }));
+  },
 };
 
 export interface FsBrowseEntry {
@@ -464,4 +482,16 @@ export interface FsBrowseResponse {
   entries: FsBrowseEntry[];
   /** "eacces" = 目录不可读（200 而非 500 的降级标注） */
   error?: string;
+}
+
+/** 标签定义条目（GET /api/tags；name 必填，sort 升序同 sort 按 name 码元序） */
+export interface TagDefinition {
+  name: string;
+  sort: number;
+}
+
+/** 标签挂载引用（scope 取 "global"|"project"；挂载与定义解耦，孤儿如实返回） */
+export interface TagRef {
+  scope: string;
+  name: string;
 }

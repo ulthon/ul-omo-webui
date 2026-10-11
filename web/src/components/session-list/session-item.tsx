@@ -1,10 +1,11 @@
 // 会话列表行（计划 todo 15）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
 // 引擎探询 active 兜底）+ 标题 + 来源标识（人工/agent 创建——引擎无 agent 协议面，
-// agent 名徽标以通用 "agent" 标记呈现，字段就绪后在此接入）+ 未读徽标 + 相对时间
+// agent 名徽标以通用 "agent" 标记呈现，字段就绪后在此接入）+ 标签徽标（todo 11，最多 3 + N、
+// 孤儿灰显可清理）+ 未读徽标 + 相对时间
 // + 子会话钻取（knownChildren 已带则免请求，否则懒加载 view=all 按血缘过滤）
-// + 元数据操作菜单（置顶/重命名/归档/删除——重命名与删除弹窗由父级单例托管）。
+// + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
-import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, SquarePen, SquareCheckBig, Square, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -17,6 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TagBadges } from "./tag-badge";
 
 function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -84,8 +86,10 @@ export interface SessionItemProps {
   expandable: boolean;
   /** "全部活动"视图：子会话随血缘直接平铺显示（免点击展开） */
   childrenOpen?: boolean;
-  /** 打开重命名/删除弹窗（父级单例托管） */
-  onDialog: (kind: "rename" | "delete", session: SessionListItem) => void;
+  /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开选择器（父级接线，todo 11） */
+  onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem) => void;
+  /** 两源定义键集（todo 11 徽标孤儿判定；null = 定义未就绪不渲染徽标） */
+  definedKeys?: Set<string> | null;
   /** 选中行为覆盖（todo 10 跨项目统一 handler）：缺省仅 select + 收抽屉；
    * 全局视图下由 session-list 传入共享 handler（跨项目轻量切换 currentProject + 应用偏好） */
   onSelect?: (session: SessionListItem) => void;
@@ -97,7 +101,7 @@ export interface SessionItemProps {
   onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck }: SessionItemProps) {
+export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -225,6 +229,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
             {session.title}
           </span>
           {showSource && <SourceBadge session={session} />}
+          <TagBadges session={session} definedKeys={definedKeys ?? null} />
           {session.archivedAt && (
             <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">已归档</span>
           )}
@@ -271,6 +276,10 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
               {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
               导出 HTML
             </DropdownMenuItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => onDialog("tags", session)} data-testid="item-tags">
+              <Tag className="mr-2 size-4" />
+              标签
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => onDialog("delete", session)}>
               <Trash2 className="mr-2 size-4" />
@@ -299,6 +308,7 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
                 selectable={selectable}
                 checked={checked}
                 onToggleCheck={onToggleCheck}
+                definedKeys={definedKeys}
               />
             ))
           )}

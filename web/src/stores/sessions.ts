@@ -26,6 +26,8 @@ interface SessionsState {
   archived: ArchivedFilter;
   /** 跨项目聚合视图（todo 9）：true 时 refreshSessions 调聚合端点（不传 project） */
   allMode: boolean;
+  /** 标签过滤（todo 11）：多选 OR 语义，refreshSessions 透传 tags 参数（任一命中） */
+  tagFilter: string[];
   /** 当前选中会话 id */
   selectedId: string | null;
   loading: boolean;
@@ -35,6 +37,8 @@ interface SessionsState {
   setArchived(archived: ArchivedFilter): void;
   /** 聚合视图切换（todo 10 侧栏接线；切换后调用方负责 refreshSessions） */
   setAllMode(allMode: boolean): void;
+  /** 标签过滤写入（todo 11；调用方负责随后 refreshSessions） */
+  setTagFilter(tags: string[]): void;
   select(id: string | null): void;
   setLoading(loading: boolean): void;
   /** 整体替换某项目的列表（refetch 结果） */
@@ -74,6 +78,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   q: "",
   archived: "false",
   allMode: false,
+  tagFilter: [],
   selectedId: null,
   loading: false,
 
@@ -81,6 +86,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   setQ: (q) => set({ q }),
   setArchived: (archived) => set({ archived }),
   setAllMode: (allMode) => set({ allMode }),
+  setTagFilter: (tagFilter) => set({ tagFilter }),
   select: (id) => set({ selectedId: id }),
   setLoading: (loading) => set({ loading }),
 
@@ -97,17 +103,19 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     }),
 
   refreshSessions: async () => {
-    const { allMode, view, archived, q, setLoading } = useSessionsStore.getState();
+    const { allMode, view, archived, q, tagFilter, setLoading } = useSessionsStore.getState();
+    // 标签过滤（todo 11）：非空时透传 tags（多参数 OR 语义）
+    const tags = tagFilter.length > 0 ? tagFilter : undefined;
     setLoading(true);
     try {
       if (allMode) {
-        const res = await api.listSessions({ view, archived, q: q || undefined });
+        const res = await api.listSessions({ view, archived, q: q || undefined, tags });
         useSessionsStore.getState().setAllSessions(res.sessions);
         return;
       }
       const { currentProject } = useUiStore.getState();
       if (!currentProject) return;
-      const res = await api.listSessions({ project: currentProject, view, archived, q: q || undefined });
+      const res = await api.listSessions({ project: currentProject, view, archived, q: q || undefined, tags });
       useSessionsStore.getState().setSessions(currentProject, res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
