@@ -444,4 +444,24 @@ export const api = {
   async fsFile(project: string, path: string): Promise<FsFileResponse> {
     return request(`/api/fs/file?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`);
   },
+
+  /** 受限目录浏览（/api/fs/browse）：仅列子目录、base=realpath(home)；path 缺省 = home。
+   * 越界 403 由调用方静默处理（路径补全不建议）；EACCES → 200 + entries:[] + error 字段。 */
+  async fsBrowse(path?: string): Promise<FsBrowseResponse> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+    return request(`/api/fs/browse${qs}`);
+  },
 };
+
+export interface FsBrowseEntry {
+  name: string;
+  /** 绝对路径（服务端按 realpath 拼接），补全回填与树逐级下钻直接回传 */
+  path: string;
+  hidden: boolean;
+}
+
+export interface FsBrowseResponse {
+  entries: FsBrowseEntry[];
+  /** "eacces" = 目录不可读（200 而非 500 的降级标注） */
+  error?: string;
+}

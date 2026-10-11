@@ -10,6 +10,7 @@ import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
 import { locateProjectInSidebar } from "@/components/session-list/global-list-data";
+import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -57,61 +58,6 @@ function schedulePersistPreference(): void {
       }
     }
   }, PREFERENCE_DEBOUNCE_MS);
-}
-
-function AddProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [path, setPath] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!path.trim() || submitting) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.addProject(path.trim());
-      const { projects } = await api.listProjects();
-      useUiStore.getState().setProjects(projects);
-      setPath("");
-      onOpenChange(false);
-      await openProject(path.trim());
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "添加失败，请重试");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <form onSubmit={submit}>
-          <DialogHeader>
-            <DialogTitle>添加项目</DialogTitle>
-            <DialogDescription>输入服务器上的项目目录绝对路径，服务端校验存在性与合法性。</DialogDescription>
-          </DialogHeader>
-          <div className="mt-4 space-y-2">
-            <Input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="/home/user/my-project"
-              autoFocus
-            />
-            {error && <p className="text-sm text-destructive">{error}</p>}
-          </div>
-          <DialogFooter className="mt-4">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              取消
-            </Button>
-            <Button type="submit" disabled={submitting || !path.trim()}>
-              {submitting ? "添加中…" : "添加"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 /** 外链地址设置（todo 26）：kv 键 external-git-url / external-files-url，留空即隐藏对应入口。
