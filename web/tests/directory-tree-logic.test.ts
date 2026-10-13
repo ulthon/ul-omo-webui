@@ -35,11 +35,11 @@ describe("suggestDirOf（目录部分提取与合法性）", () => {
     expect(logic.suggestDirOf("/home")).toBe("/");
   });
 
-  test("非绝对路径 / 空串 / 含 .. → null（静默不建议）", () => {
+  test("非绝对路径 / 空串 → null（静默不建议）；含 .. 不再拒绝（服务端 resolve 归一兜底）", () => {
     expect(logic.suggestDirOf("home/user")).toBeNull();
     expect(logic.suggestDirOf("")).toBeNull();
-    expect(logic.suggestDirOf("/home/../etc")).toBeNull();
-    expect(logic.suggestDirOf("/etc/../")).toBeNull();
+    expect(logic.suggestDirOf("/home/../etc")).toBe("/home/../");
+    expect(logic.suggestDirOf("/etc/../")).toBe("/etc/../");
   });
 });
 
@@ -57,15 +57,15 @@ describe("nextSuggestDir（防抖触发判定：目录部分变化才取）", ()
     expect(logic.nextSuggestDir("/home/user/", "/home/")).toBe("/home/user/");
   });
 
-  test("非法路径恒不触发（含上次有效）", () => {
+  test("非法路径恒不触发；含 .. 的输入按新语义正常触发", () => {
     expect(logic.nextSuggestDir("relative", "/home/")).toBeNull();
-    expect(logic.nextSuggestDir("/a/../b", "/home/")).toBeNull();
+    expect(logic.nextSuggestDir("/a/../b", "/home/")).toBe("/a/../");
   });
 });
 
 describe("browsePathOf / suggestionBackfill", () => {
-  test("根目录映射为缺省参数（服务端取 home），其余原样", () => {
-    expect(logic.browsePathOf("/")).toBeUndefined();
+  test("根即文件系统根，原样传回（W5 todo 14：不再映射缺省参数）", () => {
+    expect(logic.browsePathOf("/")).toBe("/");
     expect(logic.browsePathOf("/root/docs/")).toBe("/root/docs/");
   });
 
@@ -103,9 +103,16 @@ describe("pickSuggestions（建议列表生成）", () => {
       .toEqual(["b", ".a"]);
   });
 
-  test("非法输入或目录不匹配 → 空建议", () => {
+  test("非法输入 → 空建议；含 .. 的目录部分有效（新语义）", () => {
     expect(logic.pickSuggestions("relative", ALL)).toEqual([]);
-    expect(logic.pickSuggestions("/root/../etc/", ALL)).toEqual([]);
+    // 目录部分 "/root/../etc/" 有效且段为空 → 全量建议
+    expect(logic.pickSuggestions("/root/../etc/", ALL)).toHaveLength(ALL.length);
+  });
+
+  test("服务端合成的 .. 行不作为补全候选（回填会产生 //）", () => {
+    const withParent = [entry("..", "/"), entry("b", "/root/b"), entry(".cache", "/root/.cache", true)];
+    expect(logic.pickSuggestions("/root/", withParent).map((e) => e.name)).toEqual(["b", ".cache"]);
+    expect(logic.pickSuggestions("/", withParent).map((e) => e.name)).toEqual(["b", ".cache"]);
   });
 
   test("条数截断到 SUGGEST_LIMIT", () => {
@@ -244,6 +251,131 @@ describe("DirectoryTree 懒加载", () => {
     // 重试：再点重新发起请求
     await clickAct(row("/root/dead"));
     expect(calls).toEqual(["(root)", "/root/dead", "/root/dead"]);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("服务端合成的 .. 行置顶渲染且使用 folder-up 图标", async () => {
+    // 契约：根列表（缺省参数与 path=/）不含 ..；仅非根列表头部有 ..——保证上行导航终止
+    const fetcher: DirTreeFetcher = (path) =>
+      Promise.resolve({
+        entries:
+          path === undefined
+            ? [entry("..", "/"), entry("data", "/data")]
+            : path === "/"
+              ? [entry("data", "/data")]
+              : [],
+      });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(DirectoryTree, { selectedPath: null, onSelect: () => {}, fetchDir: fetcher }));
+    });
+    await act(async () => {});
+    // ".." 行存在且排首（服务端合成顺序即渲染顺序），图标为 lucide folder-up
+    const parentRow = container.querySelector('[data-testid="dir-name-/"]');
+    expect(parentRow).toBeTruthy();
+    expect(parentRow?.textContent).toBe("..");
+    const rows = [...container.querySelectorAll("[role='treeitem']")];
+    expect(rows[0]?.getAttribute("data-testid")).toBe("dir-row-/");
+    expect(parentRow?.querySelector("svg")?.classList.contains("lucide-folder-up")).toBe(true);
+    // ".." 行不可展开：无 chevron 按钮、无 aria-expanded（防与同键父目录互相嵌套递归）
+    expect(container.querySelector('[data-testid="dir-toggle-/"]')).toBeNull();
+    expect(rows[0]?.getAttribute("aria-expanded")).toBeNull();
+    // 普通目录行仍是 folder 图标
+    const dataRow = container.querySelector('[data-testid="dir-name-/data"]');
+    expect(dataRow?.querySelector("svg")?.classList.contains("lucide-folder")).toBe(true);
+    // 点 ".." 行 = 选中父路径
+    await clickAct(parentRow);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("已注册项目行：置灰 + 已添加徽标 + 禁选但仍可下钻", async () => {
+    const calls: string[] = [];
+    const selected: string[] = [];
+    const fetcher: DirTreeFetcher = (path) => {
+      calls.push(path ?? "(root)");
+      return Promise.resolve({
+        entries:
+          path === undefined || path === "/"
+            ? [entry("a", "/root/a"), entry("b", "/root/b")]
+            : path === "/root/a"
+              ? [entry("c", "/root/a/c")]
+              : [],
+      });
+    };
+    const registered = new Set(["/root/a"]);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(DirectoryTree, {
+          selectedPath: null,
+          onSelect: (p: string) => selected.push(p),
+          fetchDir: fetcher,
+          registeredPaths: registered,
+        }),
+      );
+    });
+    await act(async () => {});
+    // 徽标存在 + aria-disabled 标注
+    expect(container.querySelector('[data-testid="dir-added-/root/a"]')?.textContent).toBe("已添加");
+    expect(container.querySelector('[data-testid="dir-name-/root/a"]')?.getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    // 未注册行无徽标
+    expect(container.querySelector('[data-testid="dir-added-/root/b"]')).toBeNull();
+
+    // 点已注册行：不选中，但仍下钻（navigable）
+    await clickAct(row("/root/a"));
+    expect(selected).toEqual([]);
+    expect(calls).toEqual(["(root)", "/root/a"]);
+    expect(row("/root/a/c")).toBeTruthy();
+
+    // 未注册行点击照常选中
+    await clickAct(row("/root/b"));
+    expect(selected).toEqual(["/root/b"]);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("回归：下钻链上的 .. 行（与已展开父目录同键）不触发递归渲染", async () => {
+    const calls: string[] = [];
+    const fetcher: DirTreeFetcher = (path) => {
+      calls.push(path ?? "(root)");
+      expect(calls.length).toBeLessThanOrEqual(3); // 超过 3 层取数即递归失控
+      return Promise.resolve({
+        entries:
+          path === undefined
+            ? [entry("data", "/data")]
+            : path === "/data"
+              ? [entry("..", "/"), entry("projects", "/data/projects")]
+              : path === "/data/projects"
+                ? [entry("..", "/data"), entry("senpi-webui", "/data/projects/senpi-webui")]
+                : [],
+      });
+    };
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(DirectoryTree, {
+          selectedPath: null,
+          onSelect: () => {},
+          fetchDir: fetcher,
+          registeredPaths: new Set(["/data/projects/senpi-webui"]),
+        }),
+      );
+    });
+    await act(async () => {});
+    await clickAct(row("/data"));
+    await clickAct(row("/data/projects"));
+    // /data/projects 下的 ".."（path=/data，与已展开的 data 行同键）必须保持折叠
+    const parentAliasRow = container.querySelectorAll('[data-testid="dir-row-/data"]')[1];
+    expect(parentAliasRow?.getAttribute("aria-expanded")).toBeNull();
+    expect(row("/data/projects/senpi-webui")).toBeTruthy();
+    expect(calls).toEqual(["(root)", "/data", "/data/projects"]);
     await act(async () => {
       root.unmount();
     });

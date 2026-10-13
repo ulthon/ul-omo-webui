@@ -1,10 +1,10 @@
 // 文件浏览只读路由（todo 9）：列目录/读文件。
 // 路径逃逸校验（计划 184 行硬条件）：resolve 后必须仍在项目目录内；
 // 符号链接目标经 realpath 复核（paths.ts resolveInsideProject）。
-// todo 7 追加受限目录浏览（/api/fs/browse）：同一两步校验模式，
-// base 从项目根换成 realpath(home)（目录树与路径补全共用）。
+// todo 7 追加目录浏览（/api/fs/browse）：同一两步校验模式。
+// W5 todo 14：base 从 realpath(home) 放开到文件系统根 /（可注入替换 base 供测试），
+// 非根目录列表头部合成 ".." 父目录项供树上行导航。
 import { readdirSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { ApiError, route } from "./http";
@@ -92,21 +92,25 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
     });
   }));
 
-  // 受限目录浏览（todo 7）：目录树与路径补全共用。单层列出子目录（仅目录，不递归）。
-  // path 缺省 = home；base = realpath(home)（home 本身是符号链接时以 realpath 为 base，
+  // 目录浏览（todo 7，W5 todo 14 放开）：目录树与路径补全共用。单层列出子目录（仅目录，不递归）。
+  // path 缺省 = "/"（文件系统根）；base = realpath(注入值 ?? "/")（base 本身是符号链接时以 realpath 为 base，
   // 测试经工厂第二参注入替换 base）。安全边界照抄 paths.ts resolveInsideProject 两步模式：
-  // 1. resolve 后必须 base 前缀包含（../ 逃逸 → 403；与 fs/tree 的项目内语义不同，
+  // 1. resolve 后必须 base 前缀包含（出界 → 403；与 fs/tree 的项目内语义不同，
   //    此处 path 接受绝对路径——补全回填的 entry.path 直接传回，不注入 "./" 中和前导 /）；
+  //    base="/" 时前缀即 "/" 本身：直接写 base + "/" 会得到 "//" 使 startsWith 恒假（除根外全 403），
+  //    故根特例 prefix = "/"。
   // 2. 单次 realpathSync 复核（一次调用解析全部符号链接，出界 → 403）。
   // 目录不可读（EACCES）→ 200 {entries:[], error:"eacces"} 而非 500；
-  // 单 entry 失败跳过：仅按 dirent 类型收录目录，悬空/不可 stat 条目天然不入选。
+  // 单 entry 失败跳过：仅按 dirent 类型收录目录，悬空/不可 stat 条目天然不入选；
+  // 非根目录列表头部合成 ".."（path = 父目录），根目录列表不含。
   app.get("/api/fs/browse", route(async (c: Context) => {
     const raw = c.req.query("path") ?? "";
     if (raw.includes("\0")) throw new ApiError(400, "invalid_path", "path 不能包含 NUL 字节");
     if (raw.length > 4096) throw new ApiError(400, "invalid_path", "path 过长");
-    const base = realpathSync(browseHome ?? homedir());
+    const base = realpathSync(browseHome ?? "/");
+    const prefix = base === "/" ? "/" : base + "/";
     const target = resolve(base, raw);
-    if (target !== base && !target.startsWith(base + "/")) {
+    if (target !== base && !target.startsWith(prefix)) {
       throw new ApiError(403, "path_escape", `路径逃逸被拒绝：${raw}`);
     }
     let real: string;
@@ -116,7 +120,7 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
       if (fsErrorCode(err)) return c.json({ entries: [], error: "eacces" });
       throw new ApiError(404, "not_found", `路径不存在：${target}`);
     }
-    if (real !== base && !real.startsWith(base + "/")) {
+    if (real !== base && !real.startsWith(prefix)) {
       throw new ApiError(403, "path_escape", `符号链接逃逸被拒绝：${raw}`);
     }
     try {
@@ -142,6 +146,10 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
         return { name, path: join(real, name), hidden: name.startsWith(".") };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+    // 非根目录：头部合成 ".." 父目录项（join 规范化，real="/data" → path="/"），根目录无
+    if (real !== base) {
+      entries.unshift({ name: "..", path: join(real, ".."), hidden: false });
+    }
     return c.json({ entries });
   }));
 

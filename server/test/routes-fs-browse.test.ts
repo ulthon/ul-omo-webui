@@ -1,7 +1,8 @@
-// 受限目录浏览端点单测（todo 7）：GET /api/fs/browse
-// 覆盖：正常列出（仅目录）、默认 home（工厂注入 base，不 mock os.homedir）、
-// ../ 越界 403、符号链接出界 403、隐藏目录标注、目录级 EACCES 空+标注、
-// entry 级失败跳过（悬空 symlink）、malformed 输入（NUL/不存在/非目录/空串）。
+// 目录浏览端点单测（todo 7，W5 todo 14 放开到文件系统根）：GET /api/fs/browse
+// 覆盖：正常列出（仅目录）、默认根（工厂注入 base，不依赖环境）、注入 base 缺省、
+// 出界 403、符号链接出界 403、隐藏目录标注、目录级 EACCES 空+标注、
+// entry 级失败跳过（悬空 symlink）、malformed 输入（NUL/不存在/非目录/空串）、
+// 根特例前缀（/data 直达）、非根列表头部合成 ".."（根列表不含）、symlink realpath 归一。
 import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -102,7 +103,7 @@ describe("GET /api/fs/browse", () => {
     }
   });
 
-  test("相对路径相对 base 解析（补全场景）", async () => {
+  test("相对路径相对 base 解析（补全场景；非根列表头部合成 ..）", async () => {
     const root = makeTempRoot("fs-browse-rel-");
     try {
       mkdirSync(join(root, "parent"));
@@ -110,8 +111,9 @@ describe("GET /api/fs/browse", () => {
       const res = await buildApp(root).request("/api/fs/browse?path=parent");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { entries: BrowseEntry[] };
-      expect(body.entries.map((e) => e.name)).toEqual(["child"]);
-      expect(body.entries[0]?.path).toBe(join(root, "parent", "child"));
+      expect(body.entries.map((e) => e.name)).toEqual(["..", "child"]);
+      expect(body.entries[0]).toEqual({ name: "..", path: root, hidden: false });
+      expect(body.entries[1]?.path).toBe(join(root, "parent", "child"));
     } finally {
       cleanup(root);
     }
@@ -250,6 +252,57 @@ describe("GET /api/fs/browse", () => {
       expect(body.error.code).toBe("not_a_directory");
     } finally {
       cleanup(root);
+    }
+  });
+
+  // ---------- W5 todo 14：base 放开到文件系统根 ----------
+
+  test("根 base：缺省列出文件系统根且列表无 ..", async () => {
+    // 不注入 browseHome → base = realpath("/") = "/"（本 todo 的新缺省）
+    const res = await buildApp().request("/api/fs/browse");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: BrowseEntry[] };
+    expect(body.entries.some((e) => e.name === "..")).toBe(false);
+    // /tmp 是 Linux 必有目录：根列表按 realpath 拼接绝对路径
+    const tmp = body.entries.find((e) => e.name === "tmp");
+    expect(tmp?.path).toBe("/tmp");
+  });
+
+  test("回归锚点：根 base 下绝对路径 /data 直达（前缀特例，不得写成 //）", async () => {
+    // base="/" 时 prefix 必须取 "/" 本身；若误用 base + "/" = "//"，/data 会被误判逃逸 403
+    const res = await buildApp().request("/api/fs/browse?path=/data");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: BrowseEntry[] };
+    // /data 非根：头部合成 ..（父 = 根 /）
+    expect(body.entries[0]).toEqual({ name: "..", path: "/", hidden: false });
+    // 工作区所在目录必然存在
+    const projects = body.entries.find((e) => e.name === "projects");
+    expect(projects?.path).toBe("/data/projects");
+  });
+
+  test("根 base 下显式 path=/ 等价缺省（根列表同样无 ..）", async () => {
+    const res = await buildApp().request("/api/fs/browse?path=%2F");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: BrowseEntry[] };
+    expect(body.entries.some((e) => e.name === "..")).toBe(false);
+  });
+
+  test("symlink 目标经 realpath 归一后正常列出（根 base；.. 指向 realpath 父目录）", async () => {
+    const target = makeTempRoot("fs-browse-link-target-");
+    const link = join(tmpdir(), `fs-browse-link-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    try {
+      mkdirSync(join(target, "sub"));
+      symlinkSync(target, link);
+      const res = await buildApp().request(`/api/fs/browse?path=${encodeURIComponent(link)}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { entries: BrowseEntry[] };
+      // 列表按 realpath 拼接（非 symlink 路径）：.. = realpath 的父目录
+      expect(body.entries[0]).toEqual({ name: "..", path: join(target, ".."), hidden: false });
+      const sub = body.entries.find((e) => e.name === "sub");
+      expect(sub?.path).toBe(join(target, "sub"));
+    } finally {
+      rmSync(link, { force: true });
+      cleanup(target);
     }
   });
 });

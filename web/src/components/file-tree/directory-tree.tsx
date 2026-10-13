@@ -1,11 +1,14 @@
-// 目录树（todo 16）：不受 project 约束的独立组件，消费 /api/fs/browse（base=realpath(home)，
-// 仅目录），与 fs/tree（项目内相对路径）不同源，故不复用 FileTree 本体。
+// 目录树（todo 16；W5 todo 14 放开到文件系统根）：不受 project 约束的独立组件，
+// 消费 /api/fs/browse（仅目录；服务端为非根目录列表头部合成 ".." 父目录项，根目录不含），
+// 与 fs/tree（项目内相对路径）不同源，故不复用 FileTree 本体。
 // 懒加载与状态三件套（children/expanded/loading 同一对象整体替换）沿用 todo 20 FileTree 模式；
 // 请求函数可注入（单测）。行点击 = 选中 + 未展开时下钻；chevron 单独承担展开/收起。
+// ".." 行以 folder-up 图标区分（置顶由服务端合成顺序保证）。
+// 已注册项目行置灰 + "已添加"徽标：禁止选中（onSelect 不触发）但保留下钻导航。
 // DirectoryPickerDialog：添加项目用的目录选择弹窗，390 移动端全屏（h-dvh 覆盖类同 FilePickerDialog），
 // 当前选中路径高亮 + "选择此目录"确认；重开弹窗条件挂载即全新初始态。
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Folder, FolderOpen, LoaderCircle } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FolderUp, LoaderCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/api";
 import {
@@ -20,6 +23,8 @@ import {
 
 export type DirTreeFetcher = (path?: string) => Promise<FsBrowseResponse>;
 
+const NO_REGISTERED: ReadonlySet<string> = new Set<string>();
+
 interface DirRowProps {
   path: DirTreeKey;
   entry: FsBrowseEntry;
@@ -28,13 +33,20 @@ interface DirRowProps {
   selectedPath: string | null;
   onSelect: (path: string) => void;
   toggle: (path: DirTreeKey) => void;
+  /** 已注册项目 realpath 集合：命中行置灰禁选（仍可展开下钻） */
+  registeredPaths: ReadonlySet<string>;
 }
 
-function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle }: DirRowProps) {
+function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle, registeredPaths }: DirRowProps) {
   const expanded = data.expanded.has(path);
   const loading = data.loading.has(path);
   const children = data.children.get(path);
   const selected = selectedPath === path;
+  // ".." 行 = 纯上行导航：path 与父目录真实行共享键，若可展开会与父目录的展开态互相嵌套
+  // （父展开 → 孙列表里的 ".." 同键已展开 → 又渲染父的 children → 无限递归），故禁展开、仅选中。
+  const isParent = entry.name === "..";
+  const rowExpanded = isParent ? false : expanded;
+  const registered = registeredPaths.has(path);
 
   return (
     <div>
@@ -42,43 +54,60 @@ function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle }: Di
         data-testid={`dir-row-${path}`}
         role="treeitem"
         aria-selected={selected || undefined}
-        aria-expanded={expanded}
+        aria-expanded={isParent ? undefined : rowExpanded}
         className={`flex h-11 items-center gap-0.5 rounded-lg pr-1.5 transition-colors hover:bg-muted ${
           selected ? "bg-muted text-foreground" : ""
         }`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
-        <button
-          type="button"
-          data-testid={`dir-toggle-${path}`}
-          aria-label={`${expanded ? "收起" : "展开"} ${entry.name}`}
-          onClick={() => toggle(path)}
-          className="flex w-8 shrink-0 items-center justify-center self-stretch text-muted-foreground transition-colors hover:bg-muted"
-        >
-          {loading ? (
-            <LoaderCircle className="size-3.5 animate-spin" />
-          ) : (
-            <ChevronRight className={`size-4 transition-transform ${expanded ? "rotate-90" : ""}`} />
-          )}
-        </button>
+        {isParent ? (
+          <span className="w-8 shrink-0 self-stretch" aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            data-testid={`dir-toggle-${path}`}
+            aria-label={`${expanded ? "收起" : "展开"} ${entry.name}`}
+            onClick={() => toggle(path)}
+            className="flex w-8 shrink-0 items-center justify-center self-stretch text-muted-foreground transition-colors hover:bg-muted"
+          >
+            {loading ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <ChevronRight className={`size-4 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            )}
+          </button>
+        )}
         <button
           type="button"
           data-testid={`dir-name-${path}`}
+          aria-disabled={registered || undefined}
           onClick={() => {
-            onSelect(path);
-            if (!expanded) toggle(path);
+            if (!registered) onSelect(path);
+            if (!isParent && !expanded) toggle(path);
           }}
           className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch rounded-md text-left text-sm transition-colors"
         >
-          {expanded ? (
+          {isParent ? (
+            <FolderUp className="size-4 shrink-0 text-muted-foreground" />
+          ) : expanded ? (
             <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
           ) : (
             <Folder className="size-4 shrink-0 text-muted-foreground" />
           )}
-          <span className="min-w-0 truncate">{entry.name}</span>
+          <span className={`min-w-0 truncate ${registered ? "text-muted-foreground/60" : ""}`}>
+            {entry.name}
+          </span>
+          {registered && (
+            <span
+              data-testid={`dir-added-${path}`}
+              className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+            >
+              已添加
+            </span>
+          )}
         </button>
       </div>
-      {expanded &&
+      {rowExpanded &&
         (children ?? []).map((child) => (
           <DirRow
             key={child.path}
@@ -89,6 +118,7 @@ function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle }: Di
             selectedPath={selectedPath}
             onSelect={onSelect}
             toggle={toggle}
+            registeredPaths={registeredPaths}
           />
         ))}
     </div>
@@ -99,11 +129,14 @@ export function DirectoryTree({
   selectedPath,
   onSelect,
   fetchDir = api.fsBrowse,
+  registeredPaths = NO_REGISTERED,
 }: {
   selectedPath: string | null;
   onSelect: (path: string) => void;
   /** 可注入（单测）；缺省走 /api/fs/browse */
   fetchDir?: DirTreeFetcher;
+  /** 已注册项目 realpath 集合：命中行置灰 + "已添加"徽标 + 禁选可进入 */
+  registeredPaths?: ReadonlySet<string>;
 }) {
   // 三件套装同一对象整体替换（todo 20 模式）；根键 "" 初始即在加载中，挂载后由 effect 发起请求
   const [data, setData] = useState<DirTreeData>(initialDirTree);
@@ -169,6 +202,7 @@ export function DirectoryTree({
             selectedPath={selectedPath}
             onSelect={onSelect}
             toggle={toggle}
+            registeredPaths={registeredPaths}
           />
         ))
       )}
@@ -182,11 +216,14 @@ export function DirectoryPickerDialog({
   onOpenChange,
   onConfirm,
   fetchDir,
+  registeredPaths,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (path: string) => void;
   fetchDir?: DirTreeFetcher;
+  /** 已注册项目 realpath 集合：命中行置灰禁选（透传 DirectoryTree） */
+  registeredPaths?: ReadonlySet<string>;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,6 +239,7 @@ export function DirectoryPickerDialog({
             }}
             onClose={() => onOpenChange(false)}
             fetchDir={fetchDir}
+            registeredPaths={registeredPaths}
           />
         </DialogContent>
       )}
@@ -213,10 +251,12 @@ function PickerBody({
   onConfirm,
   onClose,
   fetchDir,
+  registeredPaths = NO_REGISTERED,
 }: {
   onConfirm: (path: string) => void;
   onClose: () => void;
   fetchDir?: DirTreeFetcher;
+  registeredPaths?: ReadonlySet<string>;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -225,12 +265,17 @@ function PickerBody({
       <DialogHeader className="shrink-0 gap-1.5">
         <DialogTitle>浏览目录</DialogTitle>
         <DialogDescription className="text-xs">
-          从主目录（home）逐级展开选择项目所在目录
+          从文件系统根逐级展开选择项目所在目录；已添加的项目置灰标记，仍可进入查看
         </DialogDescription>
       </DialogHeader>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-1" data-testid="dir-tree-scroll">
-        <DirectoryTree selectedPath={selected} onSelect={setSelected} fetchDir={fetchDir} />
+        <DirectoryTree
+          selectedPath={selected}
+          onSelect={setSelected}
+          fetchDir={fetchDir}
+          registeredPaths={registeredPaths}
+        />
       </div>
 
       <div className="flex shrink-0 flex-col gap-2">

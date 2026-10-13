@@ -1,7 +1,9 @@
 // 添加项目弹窗（todo 16 增强）：手动输入优先可见 + 路径自动补全 + "浏览…"目录树选择。
 // 补全：输入停顿 300ms 且目录部分（最后一个 / 及之前）相对上次已取目录有新增时，
-// 调 GET /api/fs/browse 拉子目录建议；非法路径（非 / 开头、含 ..）与越界 403 一律静默不建议。
-// 回填只改输入框值，提交仍走 POST /api/projects 服务端校验（存在性/合法性唯一裁决方）。
+// 调 GET /api/fs/browse 拉子目录建议；非绝对路径与越界 403 一律静默不建议。
+// W5 todo 14：浏览放开到文件系统根；目录树中已注册项目置灰 + "已添加"徽标 + 禁选（可进入），
+// 已注册集合取自 ui store（bootstrap 经 GET /api/projects 预载，projectPath 为服务端 realpath）。
+// 回填只改输入框值，提交仍走 POST /api/projects 服务端校验（存在性/合法性唯一裁决方，重复注册幂等）。
 // 从 topbar.tsx 移出独立成文件：弹窗体条件挂载（每次打开全新初始态，同 FilePickerDialog 模式）。
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
@@ -53,6 +55,9 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
   const [pickerOpen, setPickerOpen] = useState(false);
   /** 浏览器选目录回填后抑制补全（不弹同级建议，直至用户再键入） */
   const [suppress, setSuppress] = useState(false);
+  // 已注册项目 realpath 集合（store 由 bootstrap 预载）：树内命中行置灰禁选
+  const projects = useUiStore((s) => s.projects);
+  const registeredPaths = useMemo(() => new Set(projects.map((p) => p.projectPath)), [projects]);
   const lastDirRef = useRef<string | null>(null);
   /** 建议下拉开合镜像（供 radix onEscapeKeyDown 判定：下拉开着时 Escape 只收下拉不关弹窗） */
   const suggestOpenRef = useRef(false);
@@ -220,6 +225,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
       <DirectoryPickerDialog
         open={pickerOpen}
         onOpenChange={setPickerOpen}
+        registeredPaths={registeredPaths}
         onConfirm={(picked) => {
           setPath(picked);
           setSuppress(true);

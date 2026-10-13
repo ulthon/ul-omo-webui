@@ -1,22 +1,22 @@
 // 添加项目目录浏览纯逻辑（todo 16）：路径补全触发判定、建议列表生成、目录树状态转移。
 // 组件层（directory-tree / add-project-dialog）只做渲染与请求编排，可测逻辑全部收敛在此。
-// 数据源是 /api/fs/browse（todo 7）：仅目录、base=realpath(home)、entry.path 为绝对路径——
-// 与 fs/tree（项目内相对路径）不同源，故 DirectoryTree 独立实现不复用 FileTree。
+// 数据源是 /api/fs/browse（todo 7；W5 todo 14 base 放开到文件系统根）：仅目录、
+// entry.path 为绝对路径——与 fs/tree（项目内相对路径）不同源，故 DirectoryTree 独立实现不复用 FileTree。
 import type { FsBrowseEntry } from "@/lib/api";
 
 /** 补全防抖窗口：输入停顿该毫秒数后才发起目录请求 */
 export const SUGGEST_DEBOUNCE_MS = 300;
 
-/** 下拉建议条数上限（home 根目录几十条以内，深目录防刷屏） */
+/** 下拉建议条数上限（目录几十条以内，深目录防刷屏） */
 export const SUGGEST_LIMIT = 30;
 
 /**
  * 输入框文本中"已输入目录部分"（最后一个 / 及其之前）。
- * 非绝对路径（缺省 / 前缀）、含 ..（逃逸语义）、空串 → null（静默不建议）。
+ * 非绝对路径（缺省 / 前缀）、空串 → null（静默不建议）。
+ * W5 todo 14：不再拒绝含 .. 的输入（服务端 resolve 归一后仍在 base 内即放行）。
  */
 export function suggestDirOf(raw: string): string | null {
   if (!raw.startsWith("/")) return null;
-  if (raw.includes("..")) return null;
   const i = raw.lastIndexOf("/");
   return i <= 0 ? "/" : raw.slice(0, i + 1);
 }
@@ -32,14 +32,15 @@ export function nextSuggestDir(raw: string, lastDir: string | null): string | nu
   return dir;
 }
 
-/** 目录部分 → browse path 参数：根目录 "/" 越界（base=home），映射为缺省参数（服务端取 home） */
-export function browsePathOf(dir: string): string | undefined {
-  return dir === "/" ? undefined : dir;
+/** 目录部分 → browse path 参数。W5 todo 14：根即文件系统根 "/"，原样传回（服务端缺省同为 /） */
+export function browsePathOf(dir: string): string {
+  return dir;
 }
 
 /**
  * 建议列表：按尾部未完成段过滤（大小写不敏感子串），排序为
  * 非隐藏优先 > 段首前缀命中优先 > 名称字典序；截断到 SUGGEST_LIMIT。
+ * 服务端合成的 ".." 行是树的上行导航入口，不作为补全候选（回填 path+"/" 对根会产生 "//"）。
  */
 export function pickSuggestions(raw: string, entries: FsBrowseEntry[]): FsBrowseEntry[] {
   const dir = suggestDirOf(raw);
@@ -47,7 +48,7 @@ export function pickSuggestions(raw: string, entries: FsBrowseEntry[]): FsBrowse
   const seg = raw.slice(dir.length).toLowerCase();
   const prefixOf = (e: FsBrowseEntry): 0 | 1 => (e.name.toLowerCase().startsWith(seg) ? 0 : 1);
   return entries
-    .filter((e) => seg === "" || e.name.toLowerCase().includes(seg))
+    .filter((e) => e.name !== ".." && (seg === "" || e.name.toLowerCase().includes(seg)))
     .sort(
       (a, b) =>
         Number(a.hidden) - Number(b.hidden) || prefixOf(a) - prefixOf(b) || a.name.localeCompare(b.name),
@@ -62,7 +63,7 @@ export function suggestionBackfill(entry: FsBrowseEntry): string {
 
 // ---------- DirectoryTree 状态转移（纯函数，状态三件套整体替换触发渲染） ----------
 
-/** 树键："" = home 根（browse 缺省参数），其余为 entry 绝对路径 */
+/** 树键："" = 文件系统根（browse 缺省参数），其余为 entry 绝对路径 */
 export type DirTreeKey = string;
 
 export interface DirTreeData {
