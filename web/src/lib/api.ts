@@ -7,7 +7,6 @@ import { useUiStore } from "@/stores/ui";
 
 export interface ProjectMeta {
   projectPath: string;
-  preferredAgent: string | null;
   preferredModel: string | null;
   lastOpenedAt: string | null;
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
@@ -107,13 +106,6 @@ export interface UsageInfo {
   cost?: Record<string, unknown>;
   contextUsage?: { tokens: number; contextWindow: number; percent: number };
   [key: string]: unknown;
-}
-
-export interface AgentsResponse {
-  capabilities: { agentsList: boolean };
-  agents: string[];
-  degraded: boolean;
-  reason: string;
 }
 
 export interface ModelInfo {
@@ -395,10 +387,7 @@ export const api = {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
   },
 
-  // ---- agents / models ----
-  async listAgents(): Promise<AgentsResponse> {
-    return request("/api/agents");
-  },
+  // ---- models ----
   async listModels(project?: string): Promise<ModelsResponse> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/models${qs}`);
@@ -419,7 +408,6 @@ export const api = {
   },
   async patchProjectMeta(patch: {
     path: string;
-    preferredAgent?: string | null;
     preferredModel?: string | null;
     lastOpenedAt?: string | null;
     permissionPreset?: string | null;

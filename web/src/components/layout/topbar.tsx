@@ -402,7 +402,6 @@ export function Topbar() {
   const connection = useUiStore((s) => s.connection);
   const projects = useUiStore((s) => s.projects);
   const currentProject = useUiStore((s) => s.currentProject);
-  const agentsDegraded = useUiStore((s) => s.agentsDegraded);
   const models = useUiStore((s) => s.models);
   const modelsLoaded = useUiStore((s) => s.modelsLoaded);
   const selectedModel = useUiStore((s) => s.selectedModel);
@@ -483,15 +482,6 @@ export function Topbar() {
       </DropdownMenu>
 
       <div className="ml-auto flex items-center gap-1">
-        {/* agent 语义：引擎无 agent 枚举协议面（verification/05 P1-5），如实降级展示，不做假下拉 */}
-        {agentsDegraded && (
-          <span
-            className="hidden text-xs text-muted-foreground sm:block"
-            title="引擎无 agent 枚举协议面，agent 随 provider/model 默认"
-          >
-            无 agent 枚举
-          </span>
-        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

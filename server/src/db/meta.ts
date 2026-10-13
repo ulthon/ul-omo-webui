@@ -42,13 +42,11 @@ export interface InputHistoryItem {
 
 export interface ProjectMeta {
   projectPath: string;
-  preferredAgent: string | null;
   preferredModel: string | null;
   lastOpenedAt: string | null;
 }
 
 export interface ProjectMetaPatch {
-  preferredAgent?: string | null;
   preferredModel?: string | null;
   lastOpenedAt?: string | null;
 }
@@ -466,8 +464,8 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
 
     getProjectMeta(projectPath) {
       return get<ProjectMeta>(
-        `SELECT project_path AS projectPath, preferred_agent AS preferredAgent,
-                preferred_model AS preferredModel, last_opened_at AS lastOpenedAt
+        `SELECT project_path AS projectPath, preferred_model AS preferredModel,
+                last_opened_at AS lastOpenedAt
          FROM meta_project WHERE project_path = ?`,
         projectPath,
       );
@@ -475,8 +473,8 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
 
     listProjectMeta() {
       return all<ProjectMeta>(
-        `SELECT project_path AS projectPath, preferred_agent AS preferredAgent,
-                preferred_model AS preferredModel, last_opened_at AS lastOpenedAt
+        `SELECT project_path AS projectPath, preferred_model AS preferredModel,
+                last_opened_at AS lastOpenedAt
          FROM meta_project ORDER BY last_opened_at DESC`,
       );
     },
@@ -486,19 +484,17 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
         const existing = meta.getProjectMeta(projectPath);
         if (existing) {
           run(
-            `UPDATE meta_project SET preferred_agent = ?, preferred_model = ?, last_opened_at = ?
+            `UPDATE meta_project SET preferred_model = ?, last_opened_at = ?
              WHERE project_path = ?`,
-            patch.preferredAgent === undefined ? existing.preferredAgent : patch.preferredAgent,
             patch.preferredModel === undefined ? existing.preferredModel : patch.preferredModel,
             patch.lastOpenedAt === undefined ? existing.lastOpenedAt : patch.lastOpenedAt,
             projectPath,
           );
         } else {
           run(
-            `INSERT INTO meta_project (project_path, preferred_agent, preferred_model, last_opened_at)
-             VALUES (?, ?, ?, ?)`,
+            `INSERT INTO meta_project (project_path, preferred_model, last_opened_at)
+             VALUES (?, ?, ?)`,
             projectPath,
-            patch.preferredAgent ?? null,
             patch.preferredModel ?? null,
             patch.lastOpenedAt ?? null,
           );

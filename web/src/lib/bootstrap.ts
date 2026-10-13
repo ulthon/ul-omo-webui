@@ -77,21 +77,11 @@ export async function openProject(path: string): Promise<void> {
   await loadProjectModels(path);
 }
 
-/** 登录后主布局初始引导：agent 降级能力 + 项目列表 + 落最近项目 */
+/** 登录后主布局初始引导：项目列表 + 落最近项目 */
 export async function bootstrap(): Promise<void> {
   const ui = useUiStore.getState();
   const projectsRes = await api.listProjects();
   ui.setProjects(projectsRes.projects);
-
-  try {
-    const agentsRes = await api.listAgents();
-    ui.setAgentsDegraded(agentsRes.capabilities.agentsList === false);
-  } catch (err) {
-    if (!(err instanceof ApiError && err.status === 401)) {
-      // agent 枚举本就降级，拉取失败不阻塞主流程
-      ui.setAgentsDegraded(true);
-    }
-  }
 
   // 外链入口配置（todo 26）：kv 键 external-git-url / external-files-url，空值视为未配置（入口隐藏）。
   // 拉取失败不阻塞主流程（入口缺失无害，设置弹层保存后会更新 store）。

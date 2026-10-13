@@ -4,7 +4,7 @@
 // .senpi-webui.json 无 preferredModel 字段而 meta_project.preferred_model 有值 → 写文件
 // 成功后 UPDATE 置 NULL；meta_kv permission-preset:<path> 同理迁为文件 permissionPreset
 // 后删 kv。两步（写文件成功后才清库）保证中断安全：任一步失败/中断，下次启动按同一
-// 判定补迁。文件已有字段（含显式 null）= 文件为准，库值丢弃。preferredAgent 留库不迁移。
+// 判定补迁。文件已有字段（含显式 null）= 文件为准，库值丢弃。
 // per-project 失败仅 warn + 保留库值（偏好不静默丢失），allSettled 隔离单项目挂死/只读
 // 目录，不阻塞其余项目，更不阻塞监听。
 //

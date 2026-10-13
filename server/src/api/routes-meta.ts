@@ -1,4 +1,4 @@
-// 元数据与能力面 REST 路由（todo 9）：agent 枚举降级 / 模型枚举 / 输入历史 / 设置 kv。
+// 元数据与能力面 REST 路由（todo 9）：模型枚举 / 输入历史 / 设置 kv。
 import { Hono, type Context } from "hono";
 import { ApiError, parseJsonBody, route } from "./http";
 import type { ApiDeps } from "./deps";
@@ -15,16 +15,6 @@ function normalizeProjectKey(raw: unknown): string {
 
 export function createMetaRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
-
-  // agent 枚举：实证无协议面（docs/verification/05 P1-5），明确降级响应供前端隐藏下拉
-  app.get("/api/agents", route(async (c: Context) => {
-    return c.json({
-      capabilities: { agentsList: false },
-      agents: [],
-      degraded: true,
-      reason: "引擎 agent 枚举无 RPC 协议面（docs/verification/05 P1-5），UI 应隐藏 agent 下拉并仅展示会话当前 provider/model",
-    });
-  }));
 
   // 模型枚举：需引擎进程（get_available_models）。project 缺省取最近打开的项目。
   app.get("/api/models", route(async (c: Context) => {

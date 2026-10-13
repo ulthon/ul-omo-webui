@@ -38,12 +38,11 @@ function okJson(payload: unknown): Response {
 const ALIVE = "/tmp/senpi-bootstrap-alive";
 const DEAD = "/tmp/senpi-bootstrap-dead";
 
-/** 标准三读路由：projects / agents / settings（bootstrap 主流程固定拉取） */
+/** 标准两读路由：projects / settings（bootstrap 主流程固定拉取） */
 function baseRoutes(projects: unknown[]): (url: string, method: string) => Response | undefined {
   return (url, method) => {
     if (method !== "GET") return undefined;
     if (url === "/api/projects") return okJson({ projects });
-    if (url === "/api/agents") return okJson({ capabilities: { agentsList: true }, agents: [], degraded: false, reason: "" });
     if (url === "/api/settings") return okJson({ settings: {} });
     return undefined;
   };
@@ -58,7 +57,6 @@ beforeEach(() => {
     projects: [],
     models: [],
     modelsLoaded: false,
-    agentsDegraded: false,
     selectedModel: null,
     externalLinks: { gitUrl: null, filesUrl: null },
     toast: null,
@@ -79,13 +77,13 @@ describe("bootstrap 死项目守卫", () => {
       infos.push(args);
     };
     mockFetch(log, baseRoutes([
-      { projectPath: DEAD, preferredAgent: null, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
+      { projectPath: DEAD, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
     ]));
 
     await bootstrap();
 
-    // 只剩 bootstrap 固定三读；PATCH（openProject 的 lastOpenedAt 更新）、sessions、models 全无
-    expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/agents", "GET /api/settings"]);
+    // 只剩 bootstrap 固定两读；PATCH（openProject 的 lastOpenedAt 更新）、sessions、models 全无
+    expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
     expect(log.some((r) => r.method === "PATCH")).toBe(false);
     // UI 态无副作用：当前项目未设、无 toast
     expect(useUiStore.getState().currentProject).toBeNull();
@@ -105,7 +103,7 @@ describe("bootstrap 死项目守卫", () => {
     };
     mockFetch(log, (url, method) => {
       const base = baseRoutes([
-        { projectPath: ALIVE, preferredAgent: null, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+        { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
       ])(url, method);
       if (base) return base;
       if (method === "PATCH" && url === "/api/projects/meta") {
@@ -122,10 +120,9 @@ describe("bootstrap 死项目守卫", () => {
 
     await bootstrap();
 
-    // 请求序列与改动前自动恢复逐项一致：三读 → PATCH → sessions → models
+    // 请求序列与改动前自动恢复逐项一致：两读 → PATCH → sessions → models
     expect(log.map((r) => `${r.method} ${r.url.split("?")[0]}`)).toEqual([
       "GET /api/projects",
-      "GET /api/agents",
       "GET /api/settings",
       "PATCH /api/projects/meta",
       "GET /api/sessions",
@@ -142,8 +139,8 @@ describe("bootstrap 死项目守卫", () => {
     const log: RecordedRequest[] = [];
     mockFetch(log, (url, method) => {
       const base = baseRoutes([
-        { projectPath: DEAD, preferredAgent: null, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
-        { projectPath: ALIVE, preferredAgent: null, preferredModel: null, lastOpenedAt: "2026-02-01T00:00:00.000Z" },
+        { projectPath: DEAD, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
+        { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-02-01T00:00:00.000Z" },
       ])(url, method);
       if (base) return base;
       if (method === "PATCH" && url === "/api/projects/meta") return okJson({ ok: true, project: null });

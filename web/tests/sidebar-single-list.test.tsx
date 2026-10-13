@@ -271,7 +271,7 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
     });
     useUiStore.setState({
       currentProject: "/p1",
-      projects: [{ projectPath: "/p1", preferredAgent: null, preferredModel: null, lastOpenedAt: "2026-01-05T00:00:00.000Z" }],
+      projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-05T00:00:00.000Z" }],
     });
     return mount(createElement(SessionList));
   }

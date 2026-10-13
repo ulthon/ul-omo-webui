@@ -45,7 +45,6 @@ const ORIGINAL_FETCH = globalThis.fetch;
 function project(path: string, extra?: Partial<ProjectMeta>): ProjectMeta {
   return {
     projectPath: path,
-    preferredAgent: null,
     preferredModel: null,
     lastOpenedAt: "2026-01-01T00:00:00.000Z",
     ...extra,

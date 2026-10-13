@@ -202,27 +202,72 @@ describe("meta_project CRUD", () => {
     const db = openMetaDb({ path: dbFile("project") });
     expect(db.getProjectMeta("/w/x")).toBeNull();
 
-    db.updateProjectMeta("/w/x", { preferredAgent: "omo", lastOpenedAt: "2026-10-01T00:00:00.000Z" });
+    db.updateProjectMeta("/w/x", { preferredModel: "glm-5.3-flash", lastOpenedAt: "2026-10-01T00:00:00.000Z" });
     db.updateProjectMeta("/w/y", { preferredModel: "glm-5.3-flash", lastOpenedAt: "2026-10-06T00:00:00.000Z" });
     expect(db.getProjectMeta("/w/x")).toEqual({
       projectPath: "/w/x",
-      preferredAgent: "omo",
-      preferredModel: null,
+      preferredModel: "glm-5.3-flash",
       lastOpenedAt: "2026-10-01T00:00:00.000Z",
     });
 
-    db.updateProjectMeta("/w/x", { preferredModel: "glm-5.3-flash" }); // 只动一个字段
+    db.updateProjectMeta("/w/x", { lastOpenedAt: "2026-10-07T00:00:00.000Z" }); // 只动一个字段
     const x = db.getProjectMeta("/w/x")!;
-    expect(x.preferredAgent).toBe("omo");
     expect(x.preferredModel).toBe("glm-5.3-flash");
-    expect(x.lastOpenedAt).toBe("2026-10-01T00:00:00.000Z");
+    expect(x.lastOpenedAt).toBe("2026-10-07T00:00:00.000Z");
 
     const list = db.listProjectMeta();
-    expect(list.map((p) => p.projectPath)).toEqual(["/w/y", "/w/x"]); // last_opened_at 新在前
+    expect(list.map((p) => p.projectPath)).toEqual(["/w/x", "/w/y"]); // last_opened_at 新在前
 
     db.deleteProjectMeta("/w/x");
     expect(db.getProjectMeta("/w/x")).toBeNull();
     db.close();
+  });
+});
+
+describe("meta_project.preferred_agent 删列迁移（W1 todo 6）", () => {
+  test("老库带列 → openMetaDb 后列消失、其余列数据完好；二次启动幂等", () => {
+    const path = dbFile("legacy-project-column");
+    // 以旧版 DDL 造一个含 preferred_agent 列且带数据的库文件（模拟升级前的存量库）
+    {
+      const old = new Database(path, { create: true });
+      old.exec(`
+        CREATE TABLE meta_project (
+          project_path     TEXT PRIMARY KEY,
+          preferred_agent  TEXT,
+          preferred_model  TEXT,
+          last_opened_at   TEXT
+        );
+      `);
+      old.run(
+        "INSERT INTO meta_project (project_path, preferred_agent, preferred_model, last_opened_at) VALUES (?, ?, ?, ?)",
+        ["/legacy/a", "terminal-agent", "glm-5.3-flash", "2026-01-01T00:00:00.000Z"],
+      );
+      old.close();
+    }
+
+    // 第一次打开（真实文件路径，走 openMetaDb → ensureSchema 的 PRAGMA 检测路径）：
+    // 迁移删列，其余列数据原样保留
+    const db = openMetaDb({ path });
+    expect(db.getProjectMeta("/legacy/a")).toEqual({
+      projectPath: "/legacy/a",
+      preferredModel: "glm-5.3-flash",
+      lastOpenedAt: "2026-01-01T00:00:00.000Z",
+    });
+    db.close();
+
+    // 列确已消失（独立连接读 PRAGMA，避免依赖存储层 SELECT 形状）
+    {
+      const raw = new Database(path);
+      const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "preferred_agent")).toBe(false);
+      expect(cols.map((c) => c.name)).toEqual(["project_path", "preferred_model", "last_opened_at"]);
+      raw.close();
+    }
+
+    // 第二次启动：列已不存在，PRAGMA 检测跳过 DROP，无错且数据不变（幂等）
+    const again = openMetaDb({ path });
+    expect(again.getProjectMeta("/legacy/a")?.preferredModel).toBe("glm-5.3-flash");
+    again.close();
   });
 });
 

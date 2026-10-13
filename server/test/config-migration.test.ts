@@ -3,7 +3,7 @@
 // - effectivePreference 过渡态判定：文件缺字段且库值未迁清 → 库值（迁移未完成语义）
 // - readProjectPreferences 合并读取 + 损坏降级（configError）
 // - migrateProjectPreferences：两步中断安全（写文件成功后才清库）、幂等、失败保留库值、
-//   preferredAgent 留库、逐项目隔离（单项目失败不影响其余项目、整体 promise 不 reject）
+//   逐项目隔离（单项目失败不影响其余项目、整体 promise 不 reject）
 // - permissionPresetSpawnArgs：文件来源 + 损坏降级
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -57,7 +57,6 @@ const cleanup = (c: Case): void => rmSync(c.root, { recursive: true, force: true
 
 function registerLegacy(c: Case, projectPath: string, model: string | null, preset: string | null): void {
   c.meta.updateProjectMeta(projectPath, {
-    preferredAgent: "terminal-agent",
     ...(model !== null ? { preferredModel: model } : {}),
     lastOpenedAt: "2026-01-01T00:00:00.000Z",
   });
@@ -218,7 +217,7 @@ describe("permissionPresetArgs 纯函数与 spawn 参数适配", () => {
 // ---------------------------------------------------------------- migrateProjectPreferences
 
 describe("migrateProjectPreferences 迁移", () => {
-  test("legacy 库 → 文件生成两字段、库置 NULL、kv 删除、preferredAgent 留库", async () => {
+  test("legacy 库 → 文件生成两字段、库置 NULL、kv 删除", async () => {
     const c = setup();
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
@@ -230,7 +229,6 @@ describe("migrateProjectPreferences 迁移", () => {
       expect(doc.permissionPreset).toBe("read-only");
 
       expect(c.meta.getProjectMeta(c.project)?.preferredModel).toBeNull();
-      expect(c.meta.getProjectMeta(c.project)?.preferredAgent).toBe("terminal-agent");
       expect(c.meta.getKv(permissionPresetKey(c.project))).toBeNull();
 
       // 迁移后合并读以文件为准

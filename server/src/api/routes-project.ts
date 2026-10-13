@@ -63,7 +63,7 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(project)) : null });
   }));
 
-  // 项目偏好（部分更新）：preferredAgent/lastOpenedAt 写库；preferredModel/permissionPreset
+  // 项目偏好（部分更新）：lastOpenedAt 写库；preferredModel/permissionPreset
   // 写项目文件（todo 6）。预设 null = 清除 = 默认行为；合法档位以引擎 PERMISSION_PRESET_NAMES
   // 为准。文件写 await（损坏在此抛 500 带路径，库未被触碰）、库写同步；响应合并两源——
   // 仅写库字段的 PATCH 在文件损坏时仍 200（响应带 configError，库写已成功不误报失败）。
@@ -71,16 +71,9 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     const body = await parseJsonBody(c);
     const project = validateProjectInput(body.path);
     const dbPatch: {
-      preferredAgent?: string | null;
       lastOpenedAt?: string | null;
     } = {};
     let preferredModel: string | null | undefined;
-    if (body.preferredAgent !== undefined) {
-      if (body.preferredAgent !== null && typeof body.preferredAgent !== "string") {
-        throw new ApiError(400, "invalid_preferred_agent", "preferredAgent 必须是字符串或 null");
-      }
-      dbPatch.preferredAgent = body.preferredAgent as string | null;
-    }
     if (body.preferredModel !== undefined) {
       if (body.preferredModel !== null && typeof body.preferredModel !== "string") {
         throw new ApiError(400, "invalid_preferred_model", "preferredModel 必须是字符串或 null");
@@ -108,7 +101,7 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
       preset = body.permissionPreset as string | null;
     }
     if (Object.keys(dbPatch).length === 0 && preferredModel === undefined && preset === undefined) {
-      throw new ApiError(400, "invalid_request", "需要 preferredAgent/preferredModel/lastOpenedAt/permissionPreset 至少一项");
+      throw new ApiError(400, "invalid_request", "需要 preferredModel/lastOpenedAt/permissionPreset 至少一项");
     }
     if (preferredModel !== undefined || preset !== undefined) {
       await deps.projectConfigs(project).updateProjectConfig({

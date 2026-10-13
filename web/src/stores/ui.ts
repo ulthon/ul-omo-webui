@@ -1,4 +1,4 @@
-// UI 全局域：连接状态、抽屉开关、当前项目、agent/模型选择、轻提示。
+// UI 全局域：连接状态、抽屉开关、当前项目、模型选择、轻提示。
 import { create } from "zustand";
 import type { ModelInfo, ProjectMeta } from "@/lib/api";
 
@@ -30,8 +30,6 @@ interface UiState {
   /** 列表是否已完成过一次加载（空列表也是有效的"确认为空"结果；初始/加载失败为 false）。
    * 发送防呆只在 true 且列表为空时拦截——加载失败是"未知"而非"确认为空"，不误伤发送。 */
   modelsLoaded: boolean;
-  /** 引擎 agent 枚举无协议面（capabilities.agentsList=false）时为 true，UI 显示"无 agent 枚举"语义 */
-  agentsDegraded: boolean;
   /** 当前选中模型 "provider/model"（项目切换时应用该项目 preferred_model 偏好） */
   selectedModel: string | null;
   /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
@@ -46,7 +44,6 @@ interface UiState {
   setModels(models: ModelInfo[]): void;
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
   resetModels(): void;
-  setAgentsDegraded(degraded: boolean): void;
   setSelectedModel(model: string | null): void;
   setExternalLinks(links: ExternalLinks): void;
   showToast(text: string, kind?: "info" | "error"): void;
@@ -63,7 +60,6 @@ export const useUiStore = create<UiState>()((set) => ({
   projects: [],
   models: [],
   modelsLoaded: false,
-  agentsDegraded: false,
   selectedModel: null,
   externalLinks: { gitUrl: null, filesUrl: null },
   toast: null,
@@ -75,7 +71,6 @@ export const useUiStore = create<UiState>()((set) => ({
   setCurrentProject: (path) => set({ currentProject: path }),
   setModels: (models) => set({ models, modelsLoaded: true }),
   resetModels: () => set({ models: [], modelsLoaded: false }),
-  setAgentsDegraded: (degraded) => set({ agentsDegraded: degraded }),
   setSelectedModel: (model) => set({ selectedModel: model }),
   setExternalLinks: (links) => set({ externalLinks: links }),
   showToast: (text, kind = "info") => {

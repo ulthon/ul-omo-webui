@@ -34,7 +34,6 @@ CREATE INDEX IF NOT EXISTS idx_meta_input_history_project
 
 CREATE TABLE IF NOT EXISTS meta_project (
   project_path     TEXT PRIMARY KEY,
-  preferred_agent  TEXT,
   preferred_model  TEXT,
   last_opened_at   TEXT
 );
@@ -89,5 +88,12 @@ export function ensureSchema(db: Database): void {
   const cols = db.query("PRAGMA table_info(meta_session)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "generated_title")) {
     db.exec("ALTER TABLE meta_session ADD COLUMN generated_title TEXT");
+  }
+  // 老库平滑降级（W1 todo 6）：agent 枚举特性退役，meta_project.preferred_agent 为
+  // write-once-read-never 死列，启动时删除（SQLite ≥ 3.35 支持 DROP COLUMN，幂等：
+  // 列已不存在时跳过；写操作永不读它，删列无数据语义损失）。
+  const projectCols = db.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
+  if (projectCols.some((c) => c.name === "preferred_agent")) {
+    db.exec("ALTER TABLE meta_project DROP COLUMN preferred_agent");
   }
 }

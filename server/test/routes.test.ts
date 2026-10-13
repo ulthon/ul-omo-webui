@@ -722,7 +722,7 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
-  test("PATCH 拆分语义（todo 6）：偏好字段写文件、preferredAgent/lastOpenedAt 写库，一次 PATCH 都生效", async () => {
+  test("PATCH 拆分语义（todo 6）：偏好字段写文件、lastOpenedAt 写库，一次 PATCH 都生效", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-patch-split-"));
     const { app, meta } = buildApp(new FakeGateway());
     try {
@@ -734,7 +734,6 @@ describe("项目与元数据杂项路由", () => {
           path: proj,
           preferredModel: "zai-coding-cn/glm-5.3",
           permissionPreset: "read-only",
-          preferredAgent: "terminal-agent",
           lastOpenedAt: "2026-02-02T00:00:00.000Z",
         }),
       });
@@ -742,14 +741,13 @@ describe("项目与元数据杂项路由", () => {
       const project = (await res.json()).project;
       expect(project.preferredModel).toBe("zai-coding-cn/glm-5.3");
       expect(project.permissionPreset).toBe("read-only");
-      expect(project.preferredAgent).toBe("terminal-agent");
       expect(project.lastOpenedAt).toBe("2026-02-02T00:00:00.000Z");
       // 文件源与库源各自落位
       const doc = JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8"));
       expect(doc.preferredModel).toBe("zai-coding-cn/glm-5.3");
       expect(doc.permissionPreset).toBe("read-only");
       expect(meta.getProjectMeta(proj)?.preferredModel).toBeNull();
-      expect(meta.getProjectMeta(proj)?.preferredAgent).toBe("terminal-agent");
+      expect(meta.getProjectMeta(proj)?.lastOpenedAt).toBe("2026-02-02T00:00:00.000Z");
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }
@@ -835,16 +833,12 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
-  test("agents 降级响应；models 需已知项目；input-history 去重上限；settings 校验", async () => {
+  test("models 需已知项目；input-history 去重上限；settings 校验", async () => {
     const engines = new FakeGateway();
     engines.models = [{ provider: "zai-coding-cn", id: "glm-5.3-flash", reasoning: true }];
     const proj = mkdtempSync(join(tmpdir(), "routes-misc-"));
     const { app, meta } = buildApp(engines);
     try {
-      const agents = await (await req(app, "/api/agents")).json();
-      expect(agents.capabilities.agentsList).toBe(false);
-      expect(agents.degraded).toBe(true);
-
       const noProject = await req(app, "/api/models");
       expect(noProject.status).toBe(400);
       expect((await noProject.json()).error.code).toBe("no_project");
