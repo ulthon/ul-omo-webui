@@ -18,6 +18,11 @@
  *   - 游标越界（早于服务端环形缓冲起点，或服务端重启后客户端游标超前）：
  *     先发一条 `event: gap`（data `{from, to}`，id = 当前续发基点）再从最旧
  *     可用事件续发——客户端收到 gap 必须对活动会话做全量重取（todo 14）；
+ *   - 重放过滤（W1 #4）：断线重连的续发序列里，陈旧的 extension_ui_request
+ *     权限请求帧被丢弃（三条件：其后无同项目收尾帧 / 无同项目
+ *     engine_permissions_invalidated 墓碑 / 项目引擎进程运行中；会话身份经
+ *     durableLookup 归一后比对）——旧进程的挂起请求永不会被应答，重放会让
+ *     前端输入区永久锁死。实时扇出路径不受影响；
  *   - `?session=` 过滤：wire sessionId（routing handle）或 durableSessionId
  *     任一匹配即放行（durable 匹配是加法兼容：REST 侧只发 durable id）；
  *   - 心跳：每 heartbeatMs（默认 15s，生产装配 8s——Bun 空闲超时实测 ~12s，
@@ -44,7 +49,7 @@
 
 import { Hono } from "hono"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
-import { EventBus, type BridgeEvent } from "../engine/events"
+import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, type BridgeEvent } from "../engine/events"
 
 export const sseRoutes = new Hono()
 
@@ -54,12 +59,17 @@ interface SseOptions {
   /** wire sessionId（routing handle）→ durable id 查询（组合根注入 engine-runtime 的映射）。
    * 返回 undefined 表示映射不明，data 帧不注入 durableSessionId（如实透传）。 */
   durableLookup?: (projectPath: string, handle: string) => string | undefined
+  /** 项目引擎进程是否运行中（组合根注入 process-manager 状态，state === "ready"）。
+   * 重放过滤条件 (c) 用：不在运行的引擎的挂起权限请求永无法被应答。
+   * 缺省视为恒运行（不过滤，保守不误杀）。 */
+  isEngineRunning?: (projectPath: string) => boolean
 }
 
 interface SseRuntime {
   bus: EventBus
   heartbeatMs: number
   durableLookup: SseOptions["durableLookup"]
+  isEngineRunning: SseOptions["isEngineRunning"]
 }
 
 /** EventBus 装配口：集成收口时在进程启动期调用一次（构造参数注入实例）。 */
@@ -68,6 +78,7 @@ export function setEventBus(bus: EventBus, options?: SseOptions): void {
     bus,
     heartbeatMs: options?.heartbeatMs ?? 15000,
     durableLookup: options?.durableLookup,
+    isEngineRunning: options?.isEngineRunning,
   }
 }
 
@@ -109,6 +120,92 @@ function wireType(e: BridgeEvent): string {
   return typeof type === "string" && type.length > 0 ? type : "engine_event"
 }
 
+// ---- 重放过滤（W1 #4：陈旧权限请求复活导致输入区锁死）----
+
+/** 收尾型 wire 事件：回合/会话结束语义（agent_settled 含 watchdog/crashSettle 合成帧）。 */
+function isSettleFrame(e: BridgeEvent): boolean {
+  const type = (e.event as { type?: unknown }).type
+  return type === "agent_end" || type === "agent_settled" || type === "session_closed"
+}
+
+function isUiRequestFrame(e: BridgeEvent): boolean {
+  return (e.event as { type?: unknown }).type === "extension_ui_request"
+}
+
+/** 会话身份归一化键（原样比对回退口径用；\n 不出现在路径与 id 里，作分隔安全）。 */
+function rawKey(projectPath: string, sessionId: string): string {
+  return `${projectPath}\n${sessionId}`
+}
+
+/**
+ * 重放路径专用过滤：丢弃陈旧的 extension_ui_request 权限请求帧。请求帧保留当且
+ * 仅当三条全过（任一不过即陈旧——旧进程的挂起请求永不会被应答，重放它们会让
+ * 前端输入区永久锁死）：
+ *   (a) 其后（id 更大）缓冲内没有同项目收尾帧落定其会话（agent_end /
+ *       agent_settled 含 synthetic / session_closed）；
+ *   (b) 其后没有同项目的权限失效墓碑（engine_permissions_invalidated，
+ *       崩溃 / 空闲回收 / 显式停止时由组合根发布）；
+ *   (c) 重放时刻该项目引擎进程在运行（不在运行的引擎应答不了任何请求）。
+ *
+ * 会话身份归一化（Scope 决策 1）：请求帧 sessionId 是 routing handle，合成收尾
+ * 帧 sessionId 是 durable id，原样比对在 watchdog 场景永远错配。两侧各自经
+ * durableLookup 归一到 durable 空间后比对；任一侧映射不明（lookup 返回
+ * undefined）时该对回退原样比对——宁可漏杀（陈旧帧还有 (b)(c) 兜底）不可误杀
+ * 在途请求。归一化聚合口径与逐对比对等价：handle === sid 时两侧 lookup 输入
+ * 相同、结果必然一致，不会出现「仅原样比对命中而 durable 比对不命中」的帧。
+ *
+ * 只作用于重放序列（入参 events 升序）：实时扇出路径零改动。断线期间发布的
+ * 事件在重连瞬间同样处于缓冲内、经过本过滤；在线客户端的实时帧不存在重放
+ * 陈旧帧问题（在线即意味着没断线）。
+ */
+function filterStaleUiRequests(
+  events: BridgeEvent[],
+  durableLookup: SseRuntime["durableLookup"],
+  engineRunning: (projectPath: string) => boolean,
+): BridgeEvent[] {
+  // 从尾向前扫：到达请求帧时集合恰为其后缀帧（id 更大）的墓碑项目与收尾会话，
+  // 方向性天然成立（收尾/墓碑先于请求 = 已发生的事，不杀请求，见分支 d/e）
+  const tombstonedProjects = new Set<string>()
+  /** 归一化后的收尾会话 durable id 集合（项目内比对；lookup 命中的帧才入集）。 */
+  const settledDurables = new Set<string>()
+  /** 原样比对回退口径的收尾会话集合（每帧必入，含 lookup 未命中的）。 */
+  const settledRaw = new Set<string>()
+  const kept: BridgeEvent[] = []
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    const type = (e.event as { type?: unknown }).type
+    if (type === ENGINE_PERMISSIONS_INVALIDATED) {
+      tombstonedProjects.add(e.projectPath)
+      kept.push(e)
+      continue
+    }
+    if (isSettleFrame(e)) {
+      const sid = wireSessionId(e)
+      if (sid !== undefined) {
+        const durable = durableLookup?.(e.projectPath, sid)
+        if (durable !== undefined) settledDurables.add(rawKey(e.projectPath, durable))
+        settledRaw.add(rawKey(e.projectPath, sid))
+      }
+      kept.push(e)
+      continue
+    }
+    if (isUiRequestFrame(e)) {
+      const handle = wireSessionId(e)
+      const reqDurable = handle !== undefined ? durableLookup?.(e.projectPath, handle) : undefined
+      const settled =
+        handle !== undefined &&
+        ((reqDurable !== undefined && settledDurables.has(rawKey(e.projectPath, reqDurable))) ||
+          settledRaw.has(rawKey(e.projectPath, handle)))
+      const stale = !engineRunning(e.projectPath) || tombstonedProjects.has(e.projectPath) || settled
+      if (!stale) kept.push(e)
+      continue
+    }
+    kept.push(e)
+  }
+  kept.reverse()
+  return kept
+}
+
 async function writeBridgeEvent(
   stream: SSEStreamingApi,
   e: BridgeEvent,
@@ -125,7 +222,7 @@ sseRoutes.get("/events", (c) => {
   if (!runtime) {
     return c.json({ error: "event bus not configured: call setEventBus() first" }, 500)
   }
-  const { bus, heartbeatMs, durableLookup } = runtime
+  const { bus, heartbeatMs, durableLookup, isEngineRunning } = runtime
 
   // Last-Event-ID：原生 EventSource 重连自动携带；非法值按 0 处理
   //（0 = 从头/从缓冲最旧开始，越界时自然走 gap 路径）
@@ -208,7 +305,14 @@ sseRoutes.get("/events", (c) => {
         const gapBaseId = replay.events.length > 0 ? replay.events[replay.events.length - 1].id : bus.latestId
         conn.queue.push({ kind: "gap", from: replay.gapFrom, to: replay.gapTo, id: gapBaseId })
       }
-      for (const e of replay.events) {
+      // W1 #4：重放序列先滤掉陈旧权限请求帧（三条件 + 会话身份归一化，
+      // 见 filterStaleUiRequests）；实时扇出路径不经过此过滤。
+      const replayEvents = filterStaleUiRequests(
+        replay.events,
+        durableLookup,
+        isEngineRunning ?? (() => true),
+      )
+      for (const e of replayEvents) {
         if (!matchesFilter(e)) continue
         conn.queue.push({ kind: "event", event: e })
       }

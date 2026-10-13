@@ -1027,8 +1027,12 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   async restartProject(project: string): Promise<void> {
     // 重建 = 停旧进程 + 立即重新 spawn（新 spawn 参数生效）+ 会话态失效
+    // W1 #4：用 crashSettle 而非裸 invalidate——停进程时回合若在流式中，
+    // 先合成 agent_settled（reason:"engine_crash"）解锁前端流式态，再清态；
+    // 裸 invalidate 不发合成收尾，前端流式标记挂死（与崩溃路径同一缺陷形态）。
+    // 重放侧陈旧权限请求由 state_changed(to=stopped) 墓碑 + 本合成收尾双保险滤除。
     await this.manager.stop(project);
-    this.runtimeFor(project).invalidate();
+    this.runtimeFor(project).crashSettle();
     await this.manager.ensureRunning(project);
   }
 

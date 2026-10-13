@@ -15,7 +15,7 @@ import {
 } from "./api/config-migration";
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
 import { TitleGenService } from "./title-gen";
-import { EventBus, attachEventBus } from "./engine/events";
+import { EventBus, attachEventBus, publishPermissionsInvalidated } from "./engine/events";
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
 import { createMetaRoutes } from "./api/routes-meta";
@@ -94,6 +94,26 @@ const detachEventBus = attachEventBus(manager, eventBus);
 setEventBus(eventBus, {
   heartbeatMs: 8000,
   durableLookup: (projectPath, handle) => engines.durableSessionIdFor(projectPath, handle),
+  // 重放过滤条件 (c)（W1 #4）：项目引擎进程 ready 才视为可应答权限请求
+  isEngineRunning: (projectPath) => manager.getStatus(projectPath)?.state === "ready",
+});
+
+// 权限失效墓碑（W1 #4）：引擎进程死亡/回收/显式停止后向事件桥发一条
+// engine_permissions_invalidated 帧，重连重放据此丢弃旧进程的挂起权限请求
+// （不重放 = 前端输入区不再被永无人应答的请求锁死）。三个信号都要订阅：
+// - process_crashed：崩溃监督轮询路径；
+// - engine_reclaimed：空闲回收路径；
+// - state_changed(to=stopped)：干净停止路径（restartProject / 手动 stop 不发
+//   前两者，漏订阅这条 = POST /api/projects/restart 依旧复现 #4）。
+// 重复发布无害：重放过滤按「请求之后存在墓碑」判定，幂等。
+const detachTombstones = manager.onEvent((e) => {
+  if (
+    e.type === "process_crashed" ||
+    e.type === "engine_reclaimed" ||
+    (e.type === "state_changed" && e.to === "stopped")
+  ) {
+    publishPermissionsInvalidated(eventBus, e.projectPath);
+  }
 });
 
 // 启动孤儿清扫：清理上次遗留的引擎子进程（todo 8 语义，registry+cwd+argv 三因子判定）
@@ -220,6 +240,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   detachEventBus();
+  detachTombstones();
   try {
     await engines.stopAll();
   } catch {

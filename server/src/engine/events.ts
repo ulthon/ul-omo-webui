@@ -134,6 +134,20 @@ export class EventBus {
 }
 
 /**
+ * 权限失效墓碑（W1 #4）：项目引擎进程崩溃 / 空闲回收 / 显式停止后发布一次。
+ * 重放过滤（api/sse.ts）据此丢弃「早于本墓碑的 extension_ui_request」——旧进程
+ * 的挂起权限请求永不会被任何进程应答，重放它们会导致前端输入区永久锁死。
+ * wire 形态稳定为 `{ type, projectPath }`（todo 13 前端 applyWireEvent 对未知
+ * 类型默认忽略，实时流多出该帧无副作用）。
+ */
+export const ENGINE_PERMISSIONS_INVALIDATED = "engine_permissions_invalidated"
+
+/** 发布一条项目引擎权限失效墓碑（幂等：重放过滤按「其后存在墓碑」判定，重复发布无害）。 */
+export function publishPermissionsInvalidated(bus: EventBus, projectPath: string): BridgeEvent {
+  return bus.publish(projectPath, { type: ENGINE_PERMISSIONS_INVALIDATED, projectPath } as never)
+}
+
+/**
  * 把进程管理器的 engine_event 透传接进事件桥（装配口）。
  * 返回退订函数（server 关停时调用）。
  */
