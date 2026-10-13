@@ -36,30 +36,9 @@ function basename(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
-// 偏好持久化防抖（todo 22 连续切换不炸）：连续选择只落最后一次；触发时再读 store 当前值，
-// 项目已切换时写入的是新项目自己的当前选择（与 openProject 应用的偏好一致，幂等无害）。
-const PREFERENCE_DEBOUNCE_MS = 600;
-let prefTimer: ReturnType<typeof setTimeout> | null = null;
-
-function schedulePersistPreference(): void {
-  if (prefTimer) clearTimeout(prefTimer);
-  prefTimer = setTimeout(async () => {
-    prefTimer = null;
-    const ui = useUiStore.getState();
-    const project = ui.currentProject;
-    const model = ui.selectedModel;
-    if (!project || !model) return;
-    try {
-      await api.patchProjectMeta({ path: project, preferredModel: model });
-      // 本地 projects 同步偏好：切走再切回时 openProject 直接读到最新值，不等服务端 refetch
-      ui.setProjects(ui.projects.map((p) => (p.projectPath === project ? { ...p, preferredModel: model } : p)));
-    } catch (err) {
-      if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast("保存模型偏好失败", "error");
-      }
-    }
-  }, PREFERENCE_DEBOUNCE_MS);
-}
+// 偏好持久化防抖（todo 22 连续切换不炸）：已迁移 lib/preferences 共用（W2 todo 8 起输入区
+// 模型 chip 与思考档 chip 走同一条 latest-wins PATCH 路径），此处仅保留选择动作。
+import { scheduleModelPreferencePersist } from "@/lib/preferences";
 
 /** 外链地址设置（todo 26）：kv 键 external-git-url / external-files-url，留空即隐藏对应入口。
  * 反代按路径挂载的自托管工具（cgit/filebrowser），web 只做入口不做页面。
@@ -431,7 +410,7 @@ export function Topbar() {
   const selectModel = (value: string) => {
     if (useUiStore.getState().selectedModel === value) return;
     useUiStore.getState().setSelectedModel(value);
-    schedulePersistPreference();
+    scheduleModelPreferencePersist();
   };
 
   return (

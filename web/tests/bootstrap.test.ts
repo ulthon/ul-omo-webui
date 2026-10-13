@@ -2,6 +2,7 @@
 // missing:true）时自动恢复静默跳过——零 PATCH、零 openProject 副作用（无 sessions/models
 // 请求、currentProject 不变、无 toast），仅 console.info 记录；可解析项目照常恢复
 // （请求序列与既有行为一致）。
+// W2 todo 8 追加：openProject 应用项目 preferredThinkingLevel 偏好（无偏好项目重置为 null）。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bootstrap } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
@@ -58,6 +59,8 @@ beforeEach(() => {
     models: [],
     modelsLoaded: false,
     selectedModel: null,
+    selectedThinkingLevel: null,
+    modelPickerOpen: false,
     externalLinks: { gitUrl: null, filesUrl: null },
     toast: null,
   });
@@ -154,5 +157,33 @@ describe("bootstrap 死项目守卫", () => {
     // latest（ALIVE，lastOpenedAt 更新）未受 DEAD 的 missing 影响，照常恢复
     expect(log.some((r) => r.method === "PATCH")).toBe(true);
     expect(useUiStore.getState().currentProject).toBe(ALIVE);
+  });
+});
+
+describe("openProject 思考档偏好应用（W2 todo 8）", () => {
+  test("项目带 preferredThinkingLevel → 应用；无偏好项目 → 重置为 null", async () => {
+    const { openProject } = await import("@/lib/bootstrap");
+    useUiStore.setState({
+      projects: [
+        { projectPath: "/p-max", preferredModel: null, lastOpenedAt: null, preferredThinkingLevel: "max" },
+        { projectPath: "/p-plain", preferredModel: null, lastOpenedAt: null },
+      ],
+      selectedThinkingLevel: "low", // 模拟上一项目遗留档
+    });
+    const log: RecordedRequest[] = [];
+    mockFetch(log, (url, method) => {
+      const base = baseRoutes([])(url, method);
+      if (base) return base;
+      if (method === "PATCH" && url === "/api/projects/meta") return okJson({ ok: true, project: null });
+      if (method === "GET" && url.startsWith("/api/sessions?")) return okJson({ project: "", archived: "false", sessions: [] });
+      if (method === "GET" && url.startsWith("/api/models")) return okJson({ project: "", models: [] });
+      return undefined;
+    });
+
+    await openProject("/p-max");
+    expect(useUiStore.getState().selectedThinkingLevel).toBe("max");
+
+    await openProject("/p-plain");
+    expect(useUiStore.getState().selectedThinkingLevel).toBeNull();
   });
 });

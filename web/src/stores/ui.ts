@@ -32,6 +32,13 @@ interface UiState {
   modelsLoaded: boolean;
   /** 当前选中模型 "provider/model"（项目切换时应用该项目 preferred_model 偏好） */
   selectedModel: string | null;
+  /** 当前选中思考档（W2 todo 8）：项目切换时应用该项目 preferredThinkingLevel 偏好；
+   * 引擎 thinking_level_changed 同会话回显同步（显示层，不落偏好）。null = 未选
+   * （chip 显示"默认"，prompt 不注入 thinkingLevel）。 */
+  selectedThinkingLevel: string | null;
+  /** 输入区模型选择弹层开关（W2 todo 8）：chip 点击与 shell 的 Ctrl+P 快捷键共用——
+   * 键盘监听在 shell、弹层在 composer，跨组件状态落 store。 */
+  modelPickerOpen: boolean;
   /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
   externalLinks: ExternalLinks;
   toast: Toast | null;
@@ -45,6 +52,8 @@ interface UiState {
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
   resetModels(): void;
   setSelectedModel(model: string | null): void;
+  setSelectedThinkingLevel(level: string | null): void;
+  setModelPickerOpen(open: boolean): void;
   setExternalLinks(links: ExternalLinks): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
@@ -61,6 +70,8 @@ export const useUiStore = create<UiState>()((set) => ({
   models: [],
   modelsLoaded: false,
   selectedModel: null,
+  selectedThinkingLevel: null,
+  modelPickerOpen: false,
   externalLinks: { gitUrl: null, filesUrl: null },
   toast: null,
 
@@ -72,6 +83,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setModels: (models) => set({ models, modelsLoaded: true }),
   resetModels: () => set({ models: [], modelsLoaded: false }),
   setSelectedModel: (model) => set({ selectedModel: model }),
+  setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
+  setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setExternalLinks: (links) => set({ externalLinks: links }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);

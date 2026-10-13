@@ -11,6 +11,10 @@
 // 双抽屉互斥（开其一时自动关另一，经 ui store subscribe 实现左→右方向）；z 序：右抽屉
 // z-[45]（高于左抽屉 z-40，低于 toast z-50），共用遮罩 z-30；折叠初值 lg 展开 / <lg 关闭，
 // 一经用户交互以 localStorage 记忆为准。
+// W2 todo 8：useCtrlPModelPicker 导出供单测挂最小探针验证（避免 mock.module 进程级
+// 粘滞污染同进程后跑的测试文件）。
+// oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的
+// 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { ApiError } from "@/lib/api";
@@ -63,6 +67,26 @@ function useAppHeight(): void {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
     };
+  }, []);
+}
+
+/** Ctrl/Cmd+P 快捷键挂载（W2 todo 8）：打开输入区模型选择弹层（打开态在 ui store，chip 消费）。
+ * 对话框内不接管——radix 弹层经 Portal 盖住输入区 chip，快捷键在遮罩下打开等于失效
+ * （Oracle 低-7）；无可用模型时同样不开。preventDefault 压掉浏览器默认打印面板。
+ * 独立导出成 hook：shell 挂载用，单测可挂最小探针组件验证（不牵起整个 shell 的引导链）。 */
+export function useCtrlPModelPicker(): void {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "p") return;
+      const target = e.target;
+      if (target instanceof Element && target.closest('[role="dialog"]')) return;
+      e.preventDefault();
+      const ui = useUiStore.getState();
+      if (ui.modelsLoaded && ui.models.length === 0) return;
+      ui.setModelPickerOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 }
 
@@ -132,6 +156,8 @@ export function AppShell() {
     connectEvents();
     return () => disconnectEvents();
   }, []);
+
+  useCtrlPModelPicker();
 
   const retry = () => {
     setBootFailed(false);

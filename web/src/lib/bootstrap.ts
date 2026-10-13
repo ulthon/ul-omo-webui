@@ -60,10 +60,12 @@ export async function openProject(path: string): Promise<void> {
   const ui = useUiStore.getState();
   ui.setCurrentProject(path);
   ui.setDrawerOpen(false);
-  // 偏好先行（todo 22）：项目切换即应用该项目 preferred_model；无偏好项目先置空，
-  // 模型列表到达后回落列表首项仅作展示默认（不回写 meta，避免把默认值冒充用户选择）
-  const preferred = ui.projects.find((p) => p.projectPath === path)?.preferredModel ?? null;
-  ui.setSelectedModel(preferred);
+  // 偏好先行（todo 22 + W2 todo 8）：项目切换即应用该项目 preferred_model 与
+  // preferredThinkingLevel；无偏好项目先置空，模型列表到达后模型回落列表首项仅作展示
+  // 默认（不回写 meta，避免把默认值冒充用户选择）
+  const meta = ui.projects.find((p) => p.projectPath === path);
+  ui.setSelectedModel(meta?.preferredModel ?? null);
+  ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
 
   try {
     await api.patchProjectMeta({ path, lastOpenedAt: new Date().toISOString() });

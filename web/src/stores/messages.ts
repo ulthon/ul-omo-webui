@@ -5,6 +5,8 @@
 // 流式 assistant 消息独立存放（streamingMessage），delta 只更新单个对象；定格时并入 entries。
 import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
+import { useSessionsStore } from "@/stores/sessions";
+import { useUiStore } from "@/stores/ui";
 
 export interface ToolRun {
   toolCallId: string;
@@ -332,8 +334,21 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           get().setStreaming(sessionId, false);
           break;
 
+        case "thinking_level_changed": {
+          // W2 todo 8：引擎会话实际落定的思考档回显（wire 形态 {level, thinkingSelection:{...}}）。
+          // SSE 全局多路复用：仅前台选中会话的事件允许同步 chip——后台会话不得篡改前台
+          // 选择、也不得污染下一条 prompt 的档位注入。applyWireEvent 的 sessionId 已由
+          // 分发层解析为信封 durableSessionId（缺席回退 wire 句柄）；句柄与 durable 选中
+          // id 不等时按"非本会话"静默忽略（宁漏勿错）。显示层同步：不落偏好、不触发防抖 PATCH。
+          const level = typeof event.level === "string" ? event.level : null;
+          if (level === null) break;
+          if (useSessionsStore.getState().selectedId !== sessionId) break;
+          useUiStore.getState().setSelectedThinkingLevel(level);
+          break;
+        }
+
         // 未知 / 噪音事件（tool_hook_status、extension_ui_request、entry_appended、
-        // settings_source_selected、loaded_surfaces_changed、thinking_level_changed、session_closed...）：
+        // settings_source_selected、loaded_surfaces_changed、session_closed...）：
         // 容错忽略，不崩。
         default:
           break;

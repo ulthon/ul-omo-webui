@@ -2,6 +2,7 @@
 // 统一错误形状 {error:{code,message}} 解析；401（未登录/过期）统一跳登录页。
 // prompt 的模型防呆/偏好注入读 ui store（ui.ts 对 api.ts 仅类型引用，无运行时环）。
 import { useUiStore } from "@/stores/ui";
+import { effectiveThinkingLevel } from "@/lib/thinking-level";
 
 // ---------- 领域类型 ----------
 
@@ -12,6 +13,8 @@ export interface ProjectMeta {
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
    * 变更需项目引擎重启（restartProject）后生效。 */
   permissionPreset?: string | null;
+  /** 思考档偏好（W2 todo 8，写项目 .senpi-webui.json；服务端仅接受 low/high/max/null） */
+  preferredThinkingLevel?: string | null;
   /** 死项目守卫（W1 #2）：仅路径已不存在/不再是目录的条目携带 missing:true，
    * 可解析条目省略该字段；bootstrap 自动恢复据此静默跳过。 */
   missing?: boolean;
@@ -296,9 +299,14 @@ export const api = {
     // 顶栏选中的当前偏好随下一条 prompt 生效：服务端对活跃会话执行 setModel（会话 jsonl
     // 追加 model_change 条目，verification/01 有该条目形态）；调用方显式传 model 时以其为准。
     const model = body.model ?? ui.selectedModel ?? undefined;
+    // 思考档随下一条 prompt 注入（W2 todo 8，todo 7 已实证引擎按 per-prompt 档位执行）：
+    // 所选模型未下发 supportedThinkingLevels 时视为未选（与 chip 隐藏规则同一判定，
+    // lib/thinking-level 共用）；调用方显式传值以其为准。
+    const selectedModelInfo = model ? ui.models.find((m) => `${m.provider}/${m.id}` === model) : undefined;
+    const thinkingLevel = body.thinkingLevel ?? effectiveThinkingLevel(selectedModelInfo, ui.selectedThinkingLevel);
     return request(
       `/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
-      jsonInit("POST", { ...body, model }),
+      jsonInit("POST", { ...body, model, thinkingLevel }),
     );
   },
   async abort(sessionId: string): Promise<{ ok: boolean; sessionId: string }> {
@@ -409,6 +417,7 @@ export const api = {
   async patchProjectMeta(patch: {
     path: string;
     preferredModel?: string | null;
+    preferredThinkingLevel?: string | null;
     lastOpenedAt?: string | null;
     permissionPreset?: string | null;
   }): Promise<{ ok: boolean; project: ProjectMeta | null }> {

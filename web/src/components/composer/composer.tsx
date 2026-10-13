@@ -6,6 +6,8 @@
 // sendText(clearInputs:false) 只发送条目文本，不动输入框既有草稿/图片/历史。
 // todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语；
 // 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
+// W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+P 快捷打开）与思考档 chip
+// （模型未下发 supportedThinkingLevels 时整体隐藏），选择随下一条 prompt 注入。
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
@@ -14,6 +16,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
+import { ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import {
@@ -479,7 +482,7 @@ export function Composer({
         }}
       />
       <div className="flex items-center gap-1">
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             data-testid="history-btn"
@@ -526,21 +529,26 @@ export function Composer({
             <MessageSquareText className="size-5" />
           </button>
         </div>
-        {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
-        <button
-          type="button"
-          data-testid="send-btn"
-          aria-label="发送"
-          disabled={!canSend}
-          onClick={() => void send()}
-          className={`ml-auto flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${
-            canSend
-              ? "border-border bg-accent text-accent-foreground hover:bg-muted dark:border-input"
-              : "border-border bg-background text-muted-foreground hover:bg-muted dark:border-input dark:bg-input/30"
-          }`}
-        >
-          <ArrowUp className="size-5" />
-        </button>
+        {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐 */}
+        <div className="ml-auto flex min-w-0 items-center gap-1">
+          <ThinkingChip />
+          <ModelChip />
+          {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
+          <button
+            type="button"
+            data-testid="send-btn"
+            aria-label="发送"
+            disabled={!canSend}
+            onClick={() => void send()}
+            className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+              canSend
+                ? "border-border bg-accent text-accent-foreground hover:bg-muted dark:border-input"
+                : "border-border bg-background text-muted-foreground hover:bg-muted dark:border-input dark:bg-input/30"
+            }`}
+          >
+            <ArrowUp className="size-5" />
+          </button>
+        </div>
       </div>
       {error && (
         <p className="text-xs text-destructive" data-testid="composer-error">
