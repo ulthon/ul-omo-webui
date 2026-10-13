@@ -108,5 +108,12 @@ export async function bootstrap(): Promise<void> {
   }
 
   const latest = pickLatestProject(projectsRes.projects);
-  if (latest) await openProject(latest.projectPath);
+  if (!latest) return;
+  // 死项目守卫（W1 缺陷 #2）：上次项目目录已不存在时静默跳过——不 PATCH lastOpenedAt、
+  // 不 openProject、不弹 toast，避免启动即报错；下次打开其他项目自然刷新 last_opened_at。
+  if (latest.missing) {
+    console.info("[senpi-webui] 上次项目路径已不存在，跳过自动打开:", latest.projectPath);
+    return;
+  }
+  await openProject(latest.projectPath);
 }

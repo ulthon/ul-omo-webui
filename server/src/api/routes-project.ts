@@ -6,6 +6,7 @@
 // 存量来源，仅读（过渡态回退），不再写入；变更后需 POST /api/projects/restart 让引擎
 // 按新 spawn 参数重建。
 import { Hono, type Context } from "hono";
+import { lstatSync, realpathSync } from "node:fs";
 import { PERMISSION_PRESET_NAMES } from "./engine-runtime";
 import { readProjectPreferences, type ProjectConfigStores, type ProjectPreferenceView } from "./config-migration";
 import { ApiError, parseJsonBody, route } from "./http";
@@ -23,14 +24,34 @@ function projectResponse(meta: ProjectMeta, view: ProjectPreferenceView) {
   };
 }
 
+/**
+ * 死项目守卫（W1 缺陷 #2）：realpathSync 解析失败（目录被删/悬空符号链接）或解析结果
+ * 不是目录（被同名文件顶替）→ 标记 missing:true，web 端自动恢复静默跳过。
+ * shape：仅缺失条目携带 missing:true，可解析条目省略该字段（与 configError 同惯例）。
+ * 注册时即存 realpath（todo 14 惯例），此处 realpath 复核沿用同一身份约定。
+ */
+function pathMissing(projectPath: string): boolean {
+  try {
+    return !lstatSync(realpathSync(projectPath)).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
 export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectConfigStores }): Hono {
   const app = new Hono();
   const viewOf = (projectPath: string) => readProjectPreferences(deps.projectConfigs, deps.meta, projectPath);
 
   // 项目列表：元数据库为准（webui 的项目 universe = 显式注册的项目）；
-  // 偏好字段合并项目文件源，单项目文件损坏降级 null + configError（不炸整页）
+  // 偏好字段合并项目文件源，单项目文件损坏降级 null + configError（不炸整页）；
+  // 每条路径做一次 cheap 探测（realpathSync+lstat），已不存在/不再是目录标 missing:true
   app.get("/api/projects", route(async (c: Context) => {
-    return c.json({ projects: deps.meta.listProjectMeta().map((p) => projectResponse(p, viewOf(p.projectPath))) });
+    return c.json({
+      projects: deps.meta.listProjectMeta().map((p) => {
+        const item = projectResponse(p, viewOf(p.projectPath));
+        return pathMissing(p.projectPath) ? { ...item, missing: true } : item;
+      }),
+    });
   }));
 
   // 注册项目：路径校验（存在 + 目录 + realpath 规范化），幂等（重复注册刷新 last_opened_at）

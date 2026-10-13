@@ -13,6 +13,9 @@ export interface ProjectMeta {
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
    * 变更需项目引擎重启（restartProject）后生效。 */
   permissionPreset?: string | null;
+  /** 死项目守卫（W1 #2）：仅路径已不存在/不再是目录的条目携带 missing:true，
+   * 可解析条目省略该字段；bootstrap 自动恢复据此静默跳过。 */
+  missing?: boolean;
 }
 
 export interface SessionListItem {

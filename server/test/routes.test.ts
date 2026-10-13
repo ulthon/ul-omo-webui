@@ -517,6 +517,44 @@ describe("会话操作路由", () => {
 // ---------------------------------------------------------------- 项目/元数据杂项路由
 
 describe("项目与元数据杂项路由", () => {
+  test("GET /api/projects 死项目守卫：目录被删/被文件顶替标 missing:true，其余条目不受影响", async () => {
+    const alive = mkdtempSync(join(tmpdir(), "routes-missing-alive-"));
+    const dead = mkdtempSync(join(tmpdir(), "routes-missing-dead-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      // 直接写库模拟「注册过但目录随后消失」：绕过注册路径校验
+      meta.updateProjectMeta(alive, { lastOpenedAt: "2026-01-02T00:00:00.000Z" });
+      meta.updateProjectMeta(dead, { lastOpenedAt: "2026-01-01T00:00:00.000Z" });
+
+      // shape 约定（only-on-missing）：目录可解析的条目不含 missing 字段
+      const find = (rows: Array<Record<string, unknown>>, p: string): Record<string, unknown> => {
+        const row = rows.find((r) => r.projectPath === p);
+        if (!row) throw new Error(`project row not found: ${p}`);
+        return row;
+      };
+      let list = await (await req(app, "/api/projects")).json();
+      expect("missing" in find(list.projects, alive)).toBe(false);
+      expect("missing" in find(list.projects, dead)).toBe(false);
+
+      // 删除 dead 目录：该项 missing:true，其余字段原样（meta 仍在列表中，不静默剔除）
+      rmSync(dead, { recursive: true, force: true });
+      list = await (await req(app, "/api/projects")).json();
+      const deadRow = find(list.projects, dead);
+      expect(deadRow.missing).toBe(true);
+      expect(deadRow.lastOpenedAt).toBe("2026-01-01T00:00:00.000Z");
+      const aliveRow = find(list.projects, alive);
+      expect("missing" in aliveRow).toBe(false);
+
+      // 注册路径被同名文件顶替（realpath 可解析但 lstat 非目录）同样 missing
+      writeFileSync(dead, "not a directory");
+      list = await (await req(app, "/api/projects")).json();
+      expect(find(list.projects, dead).missing).toBe(true);
+    } finally {
+      rmSync(alive, { recursive: true, force: true });
+      rmSync(dead, { recursive: true, force: true });
+    }
+  });
+
   test("projects 注册/列表/偏好；非法路径 400", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-proj-"));
     const { app } = buildApp(new FakeGateway());
