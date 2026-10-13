@@ -123,6 +123,26 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(project)) : null });
   }));
 
+  // 项目注销（W1 缺陷 #1）：删 meta_project 注册行，meta_session 原样保留——重新注册
+  // 同一路径即恢复置顶/改名/标签（设置面板确认文案的产品承诺）。引擎进程不杀：自托管
+  // 单用户语义下，注销的注册关系只影响列表 universe 与自动恢复，残留的项目引擎进程
+  // 闲置无害，引擎重建由既有 restart 通道按需发生。
+  // path 仅做形状校验（非空绝对路径），不做存在性校验——移除死项目（GET 列表 missing 项）
+  // 是本能力主场景之一；已注册路径即注册时落库的 realpath 规范形态（web 一律从 GET 列表
+  // 取 projectPath 回传），按注册键精确匹配。幂等语义：重复注销按未注册处理（404
+  // not_registered），不做静默 200——第二次调用给出与首次不同的确定性结果。
+  app.delete("/api/projects", route(async (c: Context) => {
+    const body = await parseJsonBody(c);
+    if (typeof body.path !== "string" || body.path.length === 0 || !body.path.startsWith("/")) {
+      throw new ApiError(400, "invalid_project", "path 必须是绝对路径");
+    }
+    if (!deps.meta.getProjectMeta(body.path)) {
+      throw new ApiError(404, "not_registered", "项目未注册");
+    }
+    deps.meta.deleteProjectMeta(body.path);
+    return c.json({ path: body.path, removed: true });
+  }));
+
   // 重建项目引擎进程：spawn 参数级配置（权限预设 permissionPreset 等）
   // 变更后的生效口。会话态失效属预期（下次访问懒加载重建）。
   app.post("/api/projects/restart", route(async (c: Context) => {

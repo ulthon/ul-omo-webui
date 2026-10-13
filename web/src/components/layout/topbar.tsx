@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
+import { useSessionsStore } from "@/stores/sessions";
 import { locateProjectInSidebar } from "@/components/session-list/global-list-data";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
@@ -204,6 +205,123 @@ function ProjectPermissionSection() {
   );
 }
 
+/** 项目管理区（W1 缺陷 #1）：列出全部已注册项目（ui store projects，bootstrap 预载 +
+ * 注销后 refetch 刷新），死项目（GET /api/projects missing 字段）带「已丢失」徽标。
+ * 每行「移除」按钮（44px 触控）弹确认对话框；确认后 DELETE /api/projects（只删注册行，
+ * 会话数据与会话 meta 原样保留）→ refetch projects；移除的是当前项目时清 currentProject
+ * 与选中会话（回到空会话状态），非当前项目不动选中。项目切换下拉保持纯切换语义，
+ * 管理动作只在本区提供（设置 = 管理心智）。 */
+export function ProjectManagementSection() {
+  const projects = useUiStore((s) => s.projects);
+  const currentProject = useUiStore((s) => s.currentProject);
+  const [pending, setPending] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const remove = async () => {
+    const target = pending;
+    if (!target || removing) return;
+    setRemoving(true);
+    try {
+      await api.removeProject(target);
+      setPending(null);
+      // refetch 权威口径刷新列表（顺带吸收并发变化），再按需清理选中态
+      const res = await api.listProjects();
+      const ui = useUiStore.getState();
+      ui.setProjects(res.projects);
+      if (ui.currentProject === target) {
+        ui.setCurrentProject(null);
+        useSessionsStore.getState().select(null);
+      }
+      ui.showToast("已移除项目注册", "info");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "移除失败，请重试", "error");
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">项目管理</p>
+        {projects.length === 0 ? (
+          <p className="text-sm text-muted-foreground">尚无已注册项目。</p>
+        ) : (
+          <ul className="space-y-1">
+            {projects.map((p) => (
+              <li
+                key={p.projectPath}
+                className="flex items-center justify-between gap-2"
+                data-testid="project-management-row"
+              >
+                <span className="flex min-w-0 items-center gap-1.5" title={p.projectPath}>
+                  <span className="truncate text-sm">{basename(p.projectPath)}</span>
+                  {p.missing && (
+                    <span
+                      className="inline-flex shrink-0 items-center rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
+                      title="项目目录已不存在"
+                    >
+                      已丢失
+                    </span>
+                  )}
+                  {p.projectPath === currentProject && (
+                    <span className="shrink-0 text-[10px] leading-none text-muted-foreground">当前</span>
+                  )}
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="min-h-11 shrink-0 px-3"
+                  data-testid="project-remove-button"
+                  onClick={() => setPending(p.projectPath)}
+                >
+                  移除
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!removing) setPending(open ? pending : null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>移除项目</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1.5 text-left">
+                <p>将移除「{pending ? basename(pending) : ""}」的项目注册。</p>
+                <p>
+                  若移除的是当前项目，将回到空会话状态；项目内会话数据不受影响，重新添加可恢复置顶/改名/标签。
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" disabled={removing} onClick={() => setPending(null)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={removing}
+              data-testid="project-remove-confirm"
+              onClick={() => void remove()}
+            >
+              {removing ? "移除中…" : "确认移除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function SettingsForm({ onDone }: { onDone: () => void }) {
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
@@ -275,6 +393,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
         </DialogFooter>
       </form>
       <ProjectPermissionSection />
+      <ProjectManagementSection />
     </>
   );
 }

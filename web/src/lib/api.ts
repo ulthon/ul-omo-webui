@@ -411,6 +411,12 @@ export const api = {
   async addProject(path: string): Promise<{ ok: boolean; project: ProjectMeta | null }> {
     return request("/api/projects", jsonInit("POST", { path }));
   },
+  /** 项目注销（W1 #1）：删 meta_project 注册行，项目内会话数据与会话 meta（置顶/改名/
+   * 标签）原样保留，重新添加即恢复；未注册（含重复注销）404 not_registered。不涉及
+   * 引擎进程生命周期。 */
+  async removeProject(path: string): Promise<{ path: string; removed: boolean }> {
+    return request("/api/projects", jsonInit("DELETE", { path }));
+  },
   async patchProjectMeta(patch: {
     path: string;
     preferredAgent?: string | null;

@@ -590,6 +590,71 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("DELETE /api/projects 注销：删注册行保留 meta_session，未注册 404，重复注销 404", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-remove-"));
+    const dead = mkdtempSync(join(tmpdir(), "routes-remove-dead-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      meta.updateProjectMeta(proj, { lastOpenedAt: "2026-01-01T00:00:00.000Z" });
+      meta.updateProjectMeta(dead, { lastOpenedAt: "2026-01-02T00:00:00.000Z" });
+      meta.updateSessionMeta("s-keep", { pinned: true, renamedTitle: "保留名" });
+
+      // 未注册路径 → 404 not_registered
+      const unregistered = await req(app, "/api/projects", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "/definitely/not-registered" }),
+      });
+      expect(unregistered.status).toBe(404);
+      expect((await unregistered.json()).error.code).toBe("not_registered");
+
+      // 形状校验：非绝对路径 → 400
+      const bad = await req(app, "/api/projects", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "not-absolute" }),
+      });
+      expect(bad.status).toBe(400);
+
+      // 死项目（目录已删，missing 主场景）：无存在性校验，照常可注销
+      rmSync(dead, { recursive: true, force: true });
+      const deadRes = await req(app, "/api/projects", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: dead }),
+      });
+      expect(deadRes.status).toBe(200);
+      expect(await deadRes.json()).toEqual({ path: dead, removed: true });
+
+      // 活项目注销：注册行删除，meta_session 原样保留（置顶/改名不丢）
+      const res = await req(app, "/api/projects", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ path: proj, removed: true });
+      expect(meta.getProjectMeta(proj)).toBeNull();
+      const kept = meta.getSessionMeta("s-keep");
+      expect(kept?.pinned).toBe(true);
+      expect(kept?.renamedTitle).toBe("保留名");
+      const list = await (await req(app, "/api/projects")).json();
+      expect(list.projects.find((p: { projectPath: string }) => p.projectPath === proj)).toBeUndefined();
+
+      // 幂等语义（文档化决策）：重复注销按未注册处理，不做静默 200
+      const again = await req(app, "/api/projects", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj }),
+      });
+      expect(again.status).toBe(404);
+      expect((await again.json()).error.code).toBe("not_registered");
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+      rmSync(dead, { recursive: true, force: true });
+    }
+  });
+
   test("POST /api/projects/restart 调用网关重建并校验路径", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-restart-"));
     const engines = new FakeGateway();
