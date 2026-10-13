@@ -2,7 +2,7 @@
 // 引擎探询 active 兜底）+ 标题 + 来源标识（人工/agent 创建——引擎无 agent 协议面，
 // agent 名徽标以通用 "agent" 标记呈现，字段就绪后在此接入）+ 标签徽标（todo 11，最多 3 + N、
 // 孤儿灰显可清理）+ 未读徽标 + 相对时间
-// + 子会话钻取（knownChildren 已带则免请求，否则懒加载 view=all 按血缘过滤）
+// + 子会话钻取（knownChildren 已带则免请求，否则懒加载后按血缘过滤）
 // + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
 import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
@@ -80,7 +80,7 @@ export interface SessionItemProps {
   showSource: boolean;
   /** 搜索模式下显示来源项目名（basename） */
   projectLabel?: string;
-  /** all 视图下已随列表带出的子会话（省一次懒加载请求）；human 视图缺省走懒加载 */
+  /** 列表已随响应带出的子会话（省一次懒加载请求）；缺省走懒加载 */
   knownChildren?: SessionListItem[];
   /** 是否可钻取子会话（顶层会话 true，子会话行 false） */
   expandable: boolean;
@@ -113,15 +113,15 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [generatingTitle, setGeneratingTitle] = useState(false);
-  // 展示用子会话：懒加载结果优先，否则用 all 视图已带的 knownChildren（视图切换后 props 会变，
-  // 不能在 useState 初始值里固化——那会让 all 视图拿不到 human 期之后才出现的数据）
+  // 展示用子会话：懒加载结果优先，否则用列表已带出的 knownChildren（props 会变，
+  // 不能在 useState 初始值里固化——那会拿不到首屏之后才出现的数据）
   const childRows = children ?? knownChildren ?? [];
 
   const toggle = async () => {
     if (!expanded && children === null) {
       setLoadingChildren(true);
       try {
-        const res = await api.listSessions({ project: session.project, view: "all", archived: "all" });
+        const res = await api.listSessions({ project: session.project, archived: "all" });
         setChildren(res.sessions.filter((s) => s.parentSessionPath === session.path));
       } catch (err) {
         if (!(err instanceof ApiError && err.status === 401)) {

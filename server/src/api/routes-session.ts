@@ -133,14 +133,15 @@ function byPinnedThenModified(a: { pinned: boolean; modified: string }, b: { pin
   return Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified);
 }
 
-/** 单项目会话列表：store 直查 + 元数据合并 + 视图/归档/搜索/标签过滤 + active 探询。
+/** 单项目会话列表：store 直查 + 元数据合并 + 归档/搜索/标签过滤 + active 探询。
  * 不定序（单项目与聚合两种调用方各自定序）。tagNames 为 OR 语义的标签名集合
  *（空数组 = 不过滤）；命中判定按 name 无关 scope（挂载与定义解耦，跨 scope
- * 同名命中属合理语义，routes-tags.test.ts 锁定该决策）。 */
+ * 同名命中属合理语义，routes-tags.test.ts 锁定该决策）。
+ * 旧 view 参数已移除（W3 todo 9）：列表固定含 fork 会话（原 view=all 口径）；
+ * 存量客户端携带 view=human/all 时被忽略（accept-and-ignore，不做 400 拒绝）。 */
 async function listProjectSessions(
   deps: ApiDeps,
   project: string,
-  view: "human" | "all",
   archived: "true" | "false" | "all",
   q: string,
   tagNames: string[],
@@ -157,9 +158,6 @@ async function listProjectSessions(
   if (tagNames.length > 0) {
     const wanted = new Set(tagNames);
     sessions = sessions.filter((s) => s.tags.some((t) => wanted.has(t.name)));
-  }
-  if (view === "human") {
-    sessions = sessions.filter((s) => s.parentSessionPath === null);
   }
   if (archived !== "all") {
     const wantArchived = archived === "true";
@@ -205,14 +203,12 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   // 会话列表：project 必填时单项目（现状行为）；缺省时聚合全部注册项目——
   // 逐项目 catch（allSettled 语义）失败跳过不炸整体（注册项目目录已删/库损坏时
   // 侧栏仍可用），合并后全局排序（置顶优先 + modified 降序，跨项目比较）。
-  // view/q/archived/tag 语义不变、跨项目生效；tag 可多个（OR：任一命中，
+  // q/archived/tag 语义不变、跨项目生效；tag 可多个（OR：任一命中，
   // 服务端按 meta_session_tag 过滤，listProjectSessions 内实现故两模式一致）。
-  // q = 标题/会话名子串匹配（消息内容搜索明确出范围，docs/02 只承诺标题级搜索）
+  // q = 标题/会话名子串匹配（消息内容搜索明确出范围，docs/02 只承诺标题级搜索）。
+  // 旧 view 参数不再解析（W3 todo 9）：固定返回含 fork 的全量列表，存量客户端
+  // 带 view=human/all 时不报错（accept-and-ignore），响应也不再回显 view 字段。
   app.get("/api/sessions", route(async (c: Context) => {
-    const view = c.req.query("view") ?? "human";
-    if (view !== "human" && view !== "all") {
-      throw new ApiError(400, "invalid_view", "view 仅支持 human|all");
-    }
     const archived = c.req.query("archived") ?? "false";
     if (archived !== "true" && archived !== "false" && archived !== "all") {
       throw new ApiError(400, "invalid_archived", "archived 仅支持 true|false|all");
@@ -226,7 +222,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       const lister = deps.engines as ProjectListerGateway;
       const projects = lister.listProjectPaths?.() ?? [];
       const settled = await Promise.allSettled(
-        projects.map((project) => listProjectSessions(deps, project, view, archived, q, tagNames)),
+        projects.map((project) => listProjectSessions(deps, project, archived, q, tagNames)),
       );
       const sessions: SessionListRow[] = [];
       settled.forEach((result, i) => {
@@ -237,13 +233,13 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
         }
       });
       sessions.sort(byPinnedThenModified);
-      return c.json({ project: null, view, archived, sessions });
+      return c.json({ project: null, archived, sessions });
     }
 
     const project = validateProjectInput(rawProject);
-    const sessions = await listProjectSessions(deps, project, view, archived, q, tagNames);
+    const sessions = await listProjectSessions(deps, project, archived, q, tagNames);
     sessions.sort(byPinnedThenModified);
-    return c.json({ project, view, archived, sessions });
+    return c.json({ project, archived, sessions });
   }));
 
   // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）

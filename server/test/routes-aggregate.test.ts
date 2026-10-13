@@ -1,5 +1,5 @@
 // 会话列表路由测试（todo 9 聚合扩展）：
-// - 基线特征化（带 project 参数，锁定现有行为做回归锚）：响应形状、排序、view/q/archived、非法参数
+// - 基线特征化（带 project 参数，锁定现有行为做回归锚）：响应形状、排序、q/archived、非法参数
 // - 聚合模式（project 缺省）：全部注册项目并行合并、全局排序、单项目失败隔离（allSettled 语义）
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -117,7 +117,7 @@ function captureConsoleError(): { records: unknown[][]; restore: () => void } {
 // ---------------------------------------------------------------- 基线特征化（带 project，行为不变锚）
 
 describe("GET /api/sessions 带 project（基线特征化）", () => {
-  test("响应形状：{project:<路径>,view,archived,sessions}，行含合并字段与 active", async () => {
+  test("响应形状：{project:<路径>,archived,sessions}，行含合并字段与 active", async () => {
     const proj = mkdtempSync(join(tmpdir(), "agg-base-"));
     const engines = new FakeProjectGateway();
     engines.sessionsByProject[proj] = [
@@ -128,7 +128,7 @@ describe("GET /api/sessions 带 project（基线特征化）", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.project).toBe(proj);
-    expect(body.view).toBe("human");
+    expect(body.view).toBeUndefined(); // W3 todo 9：view 字段随参数一并移除
     expect(body.archived).toBe("false");
     expect(body.sessions).toHaveLength(1);
     const row = body.sessions[0];
@@ -157,7 +157,7 @@ describe("GET /api/sessions 带 project（基线特征化）", () => {
     rmSync(proj, { recursive: true, force: true });
   });
 
-  test("view=human 过滤 fork、q 标题搜索、archived 三态", async () => {
+  test("列表含 fork、q 标题搜索、archived 三态", async () => {
     const proj = mkdtempSync(join(tmpdir(), "agg-base-"));
     const engines = new FakeProjectGateway();
     engines.sessionsByProject[proj] = [
@@ -165,20 +165,20 @@ describe("GET /api/sessions 带 project（基线特征化）", () => {
       summary({ id: "fork", path: `${proj}/fork.jsonl`, cwd: proj, parentSessionPath: `${proj}/top.jsonl` }),
     ];
     const { app, meta } = buildApp(engines);
+    // 默认口径 = 原 view=all：fork 行在列（modified 同值保持插入序）
     let body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}`)).json();
-    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["top"]);
-
-    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=all`)).json();
-    expect(body.sessions).toHaveLength(2);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["top", "fork"]);
 
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&q=login`)).json();
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["top"]);
 
     meta.updateSessionMeta("top", { archivedAt: "2026-02-01T00:00:00.000Z" });
-    // 默认 view=human：归档的 top（非 fork）在 archived=true 可见；fork 行仍被 human 过滤
+    // 默认 archived=false：归档的 top 隐藏，未归档的 fork 仍在列
+    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}`)).json();
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["fork"]);
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&archived=true`)).json();
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["top"]);
-    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=all&archived=all`)).json();
+    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&archived=all`)).json();
     expect(body.sessions).toHaveLength(2);
     rmSync(proj, { recursive: true, force: true });
   });
@@ -198,14 +198,16 @@ describe("GET /api/sessions 带 project（基线特征化）", () => {
     rmSync(proj, { recursive: true, force: true });
   });
 
-  test("非法参数：project 不存在 → 400 project_not_found；view/archived 非法 → 400（现状保持）", async () => {
+  test("非法参数：project 不存在 → 400 project_not_found；archived 非法 → 400；view 已废弃被忽略（200）", async () => {
     const proj = mkdtempSync(join(tmpdir(), "agg-base-"));
     const engines = new FakeProjectGateway();
     const { app } = buildApp(engines);
     const missing = await req(app, `/api/sessions?project=${encodeURIComponent("/not/exist-agg")}`);
     expect(missing.status).toBe(400);
     expect((await missing.json()).error.code).toBe("project_not_found");
-    expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=bogus`)).status).toBe(400);
+    // accept-and-ignore：view=human/all/bogus 一律 200（存量客户端容忍）
+    expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=human`)).status).toBe(200);
+    expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=bogus`)).status).toBe(200);
     expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&archived=bogus`)).status).toBe(400);
     rmSync(proj, { recursive: true, force: true });
   });
@@ -258,7 +260,6 @@ describe("GET /api/sessions 聚合模式（project 缺省）", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.project).toBeNull();
-    expect(body.view).toBe("human");
     expect(body.archived).toBe("false");
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a2", "a1", "b1"]);
     expect(body.sessions.every((s: { project: string }) => s.project === p1 || s.project === p2)).toBe(true);
@@ -266,21 +267,23 @@ describe("GET /api/sessions 聚合模式（project 缺省）", () => {
     rmSync(p2, { recursive: true, force: true });
   });
 
-  test("view/q/archived 跨项目生效（view=human 默认滤掉 p2 的 fork）", async () => {
+  test("q/archived 跨项目生效（列表含 p2 的 fork）", async () => {
     const { p1, p2, engines } = setupTwoProjects();
     engines.sessionsByProject[p2] = [
       summary({ id: "b1", path: `${p2}/b1.jsonl`, cwd: p2, modified: "2026-01-02T00:00:00.000Z" }),
       summary({ id: "bfork", path: `${p2}/bfork.jsonl`, cwd: p2, parentSessionPath: `${p2}/b1.jsonl`, modified: "2026-01-03T00:00:00.000Z" }),
     ];
     const { app } = buildApp(engines);
+    // 默认口径 = 原 view=all：bfork 全局排序入列
     let body = await (await req(app, "/api/sessions")).json();
-    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a1", "b1", "a2"]);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a1", "bfork", "b1", "a2"]);
 
-    body = await (await req(app, "/api/sessions?view=all")).json();
+    // 存量客户端带 view=human：accept-and-ignore，聚合口径不变
+    body = await (await req(app, "/api/sessions?view=human")).json();
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a1", "bfork", "b1", "a2"]);
 
     body = await (await req(app, `/api/sessions?q=${encodeURIComponent("hello")}`)).json();
-    expect(body.sessions).toHaveLength(3); // 全部 firstMessage=hello
+    expect(body.sessions).toHaveLength(4); // 全部（含 bfork）firstMessage=hello
 
     body = await (await req(app, `/api/sessions?q=${encodeURIComponent("world")}`)).json();
     expect(body.sessions).toHaveLength(0);
@@ -318,11 +321,11 @@ describe("GET /api/sessions 聚合模式（project 缺省）", () => {
     expect(body.sessions).toEqual([]);
   });
 
-  test("聚合模式 tag/view/archived/q 之外同样支持 active 探询（就绪项目标 true）", async () => {
+  test("聚合模式 tag/archived/q 之外同样支持 active 探询（就绪项目标 true）", async () => {
     const { p1, p2, engines } = setupTwoProjects();
     engines.activePathsByProject = { [p2]: [`${p2}/b1.jsonl`] };
     const { app } = buildApp(engines);
-    const body = await (await req(app, "/api/sessions?view=all")).json();
+    const body = await (await req(app, "/api/sessions")).json();
     expect(body.sessions.find((s: { id: string }) => s.id === "b1").active).toBe(true);
     expect(body.sessions.find((s: { id: string }) => s.id === "a1").active).toBe(false);
     rmSync(p1, { recursive: true, force: true });

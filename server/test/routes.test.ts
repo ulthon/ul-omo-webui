@@ -1,7 +1,7 @@
 // REST API 路由单测（todo 9）：
 // - 路径逃逸（../ 、绝对路径注入、符号链接逃逸）
 // - 错误统一形状 {error:{code,message}}
-// - 会话列表合并/过滤（view=human、archived、q、置顶排序、元数据合并）
+// - 会话列表合并/过滤（fork 会话、archived、q、置顶排序、元数据合并）
 // - 单驱动约束：回合中再次 prompt 409（真实 EngineProcessManager + fake 引擎连接）
 import { describe, expect, test, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -243,7 +243,7 @@ describe("fs 路径逃逸校验", () => {
 describe("GET /api/sessions 合并与过滤", () => {
   let proj: string;
 
-  test("view=human 过滤 fork、q 标题搜索、archived 过滤、置顶排序、元数据合并", async () => {
+  test("列表含 fork、q 标题搜索、archived 过滤、置顶排序、元数据合并", async () => {
     proj = mkdtempSync(join(tmpdir(), "routes-list-"));
     const engines = new FakeGateway();
     engines.sessions = [
@@ -260,22 +260,24 @@ describe("GET /api/sessions 合并与过滤", () => {
     meta.updateSessionMeta("s1", { renamedTitle: "重命名的标题", pinned: true });
     meta.updateSessionMeta("s3", { unreadCount: 5 });
 
-    // 默认 view=human：s2（fork）被过滤；置顶 s1 排最前
+    // 默认口径（W3 todo 9 起）= 原 view=all：fork 会话 s2 在列；置顶 s1 排最前
     const res = await req(app, `/api/sessions?project=${encodeURIComponent(proj)}`);
     expect(res.status).toBe(200);
     let body = await res.json();
-    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s1", "s3"]);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s1", "s2", "s3"]);
     const s1 = body.sessions[0];
     expect(s1.title).toBe("重命名的标题");
     expect(s1.pinned).toBe(true);
-    expect(body.sessions[1].unreadCount).toBe(5);
-    expect(body.sessions[1].title).toBe("Fix the login bug");
-
-    // view=all：fork 会话出现且带 parentSessionPath
-    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=all`)).json();
-    expect(body.sessions).toHaveLength(3);
-    const s2 = body.sessions.find((s: { id: string }) => s.id === "s2");
+    const s2 = body.sessions[1];
     expect(s2.parentSessionPath).toBe("/p/s1.jsonl");
+    expect(body.sessions[2].unreadCount).toBe(5);
+    expect(body.sessions[2].title).toBe("Fix the login bug");
+
+    // 存量客户端带 view=human/view=all：accept-and-ignore，返回同一全量列表
+    for (const stale of ["human", "all"]) {
+      const legacy = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=${stale}`)).json();
+      expect(legacy.sessions.map((s: { id: string }) => s.id)).toEqual(["s1", "s2", "s3"]);
+    }
 
     // q 搜索命中 renamed_title 与 firstMessage（标题级，消息内容搜索出范围）
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&q=` + encodeURIComponent("重命名"))).json();
@@ -283,16 +285,16 @@ describe("GET /api/sessions 合并与过滤", () => {
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&q=login`)).json();
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s3"]);
 
-    // archived 过滤：默认不含归档；归档后 archived=true 可见
+    // archived 过滤：默认不含归档；归档后 archived=true 可见（语义与移除前逐字节一致）
     meta.updateSessionMeta("s3", { archivedAt: "2026-02-01T00:00:00.000Z" });
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}`)).json();
-    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s1"]);
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s1", "s2"]);
     body = await (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&archived=true`)).json();
     expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["s3"]);
 
-    // 非法参数
-    expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=bogus`)).status).toBe(400);
+    // 非法参数：archived 仍 400；view 已废弃被忽略（200）
     expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&archived=bogus`)).status).toBe(400);
+    expect((await req(app, `/api/sessions?project=${encodeURIComponent(proj)}&view=bogus`)).status).toBe(200);
     rmSync(proj, { recursive: true, force: true });
   });
 

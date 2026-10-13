@@ -14,7 +14,7 @@ export function pickLatestProject(projects: ProjectMeta[]): ProjectMeta | null {
   return latest;
 }
 
-/** 拉取会话列表（view/q/archived 取 store 当前值）：
+/** 拉取会话列表（q/archived 取 store 当前值；列表固定含 fork，服务端已无 view 参数）：
  * 全局视图（allMode，todo 10 侧栏默认）委托 store 聚合分支——项目切换后侧栏保持全局平铺；
  * 否则保持单项目现状路径。 */
 export async function refreshSessions(): Promise<void> {
@@ -23,10 +23,10 @@ export async function refreshSessions(): Promise<void> {
   }
   const { currentProject } = useUiStore.getState();
   if (!currentProject) return;
-  const { view, archived, q, setLoading } = useSessionsStore.getState();
+  const { archived, q, setLoading } = useSessionsStore.getState();
   setLoading(true);
   try {
-    const res = await api.listSessions({ project: currentProject, view, archived, q: q || undefined });
+    const res = await api.listSessions({ project: currentProject, archived, q: q || undefined });
     useSessionsStore.getState().setSessions(currentProject, res.sessions);
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {

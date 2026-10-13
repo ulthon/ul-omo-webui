@@ -46,7 +46,7 @@ afterEach(() => {
     allMode: false,
     selectedId: null,
     loading: false,
-    view: "human",
+    view: "all",
     q: "",
     archived: "false",
   });
@@ -95,7 +95,6 @@ describe("allMode 与 refreshSessions 分支", () => {
       requestedUrl = String(input);
       return okJson({
         project: null,
-        view: "human",
         archived: "false",
         sessions: [makeSession("a1", "/p1"), makeSession("b1", "/p2")],
       });
@@ -116,7 +115,7 @@ describe("allMode 与 refreshSessions 分支", () => {
     let requestedUrl = "";
     mockFetch(async (input) => {
       requestedUrl = String(input);
-      return okJson({ project: "/cur", view: "human", archived: "false", sessions: [makeSession("c1", "/cur")] });
+      return okJson({ project: "/cur", archived: "false", sessions: [makeSession("c1", "/cur")] });
     });
     useUiStore.setState({ currentProject: "/cur" });
     await useSessionsStore.getState().refreshSessions();
@@ -124,15 +123,16 @@ describe("allMode 与 refreshSessions 分支", () => {
     expect(useSessionsStore.getState().byProject["/cur"].map((s) => s.id)).toEqual(["c1"]);
   });
 
-  test("view/q/archived 作为查询参数随请求携带（两种模式一致）", async () => {
+  test("archived/q 随请求携带、view 不再序列化（W3 todo 9，两种模式一致）", async () => {
     const urls: string[] = [];
     mockFetch(async (input) => {
       urls.push(String(input));
-      return okJson({ project: null, view: "all", archived: "all", sessions: [] });
+      return okJson({ project: null, archived: "all", sessions: [] });
     });
-    useSessionsStore.setState({ allMode: true, view: "all", archived: "all", q: "fix" });
+    // 故意留 view="human"：残留 UI 态不得再进请求串
+    useSessionsStore.setState({ allMode: true, view: "human", archived: "all", q: "fix" });
     await useSessionsStore.getState().refreshSessions();
-    expect(urls[0]).toContain("view=all");
+    expect(urls[0]).not.toContain("view=");
     expect(urls[0]).toContain("archived=all");
     expect(urls[0]).toContain("q=fix");
   });
@@ -141,7 +141,7 @@ describe("allMode 与 refreshSessions 分支", () => {
     let called = false;
     mockFetch(async () => {
       called = true;
-      return okJson({ project: null, view: "human", archived: "false", sessions: [] });
+      return okJson({ project: null, archived: "false", sessions: [] });
     });
     useUiStore.setState({ currentProject: null });
     await useSessionsStore.getState().refreshSessions();
@@ -158,14 +158,16 @@ describe("allMode 与 refreshSessions 分支", () => {
 });
 
 describe("api.listSessions 参数形态", () => {
-  test("project 可选：不传时 URL 无 project 参数（聚合端点）", async () => {
+  test("project 可选：不传时 URL 无 project 参数（聚合端点），view 不再序列化", async () => {
     let requestedUrl = "";
     mockFetch(async (input) => {
       requestedUrl = String(input);
-      return okJson({ project: null, view: "human", archived: "false", sessions: [] });
+      return okJson({ project: null, archived: "false", sessions: [] });
     });
+    // view 参数类型暂留（session-list 过渡），但不再写入查询串；响应无 view 字段亦可用
     const res = await api.listSessions({ view: "human" });
-    expect(requestedUrl).toBe("/api/sessions?view=human");
+    expect(requestedUrl).toBe("/api/sessions?");
+    expect(requestedUrl).not.toContain("view=");
     expect(res.project).toBeNull();
   });
 
@@ -173,7 +175,7 @@ describe("api.listSessions 参数形态", () => {
     let requestedUrl = "";
     mockFetch(async (input) => {
       requestedUrl = String(input);
-      return okJson({ project: null, view: "human", archived: "false", sessions: [] });
+      return okJson({ project: null, archived: "false", sessions: [] });
     });
     await api.listSessions({ tag: "work" });
     expect(requestedUrl).toContain("tag=work");
