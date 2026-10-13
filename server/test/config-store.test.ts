@@ -133,6 +133,33 @@ describe("config-store 读写回环", () => {
     expect(cfg2.tags).toEqual([{ name: "研究阶段", sort: 1 }]);
   });
 
+  test("preferredThinkingLevel 写读回环 + 部分更新不动未提及字段（W2 todo 7）", async () => {
+    const { globalDir, projectRoot } = freshDirs();
+    const store = openConfigStore({ globalDir, projectRoot });
+    await store.updateProjectConfig({ preferredThinkingLevel: "max", preferredModel: "m1" });
+    const cfg = store.readProjectConfig();
+    expect(cfg.preferredThinkingLevel).toBe("max");
+    expect(cfg.preferredModel).toBe("m1");
+
+    // 清除（显式 null）不动其他字段
+    await store.updateProjectConfig({ preferredThinkingLevel: null });
+    const cleared = store.readProjectConfig();
+    expect(cleared.preferredThinkingLevel).toBeNull();
+    expect(cleared.preferredModel).toBe("m1");
+
+    // 无字段文件读为 null；非法档位抛含路径错误（绝不静默吞）
+    const { globalDir: g2, projectRoot: p2 } = freshDirs();
+    const store2 = openConfigStore({ globalDir: g2, projectRoot: p2 });
+    expect(store2.readProjectConfig().preferredThinkingLevel).toBeNull();
+
+    mkdirSync(p2, { recursive: true });
+    const projectFile = join(p2, ".senpi-webui.json");
+    writeFileSync(projectFile, JSON.stringify({ version: 1, preferredThinkingLevel: "off" }));
+    const msg = await readErrorMessage(() => store2.readProjectConfig());
+    expect(msg).toContain(projectFile);
+    expect(msg).toContain("preferredThinkingLevel");
+  });
+
   test("字段缺失视为空、顶层未知字段透传保留", async () => {
     const { globalDir, projectRoot } = freshDirs();
     mkdirSync(globalDir, { recursive: true });

@@ -6,7 +6,7 @@
 //   逐项目隔离（单项目失败不影响其余项目、整体 promise 不 reject）
 // - permissionPresetSpawnArgs：文件来源 + 损坏降级
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openConfigStore, type ConfigStore } from "../src/conf/config-store";
@@ -136,6 +136,7 @@ describe("readProjectPreferences 合并读取", () => {
       expect(view).toEqual({
         preferredModel: "zai-coding-cn/glm-5.3",
         permissionPreset: "read-only",
+        preferredThinkingLevel: null,
         configError: false,
       });
     } finally {
@@ -166,7 +167,28 @@ describe("readProjectPreferences 合并读取", () => {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
       writeFileSync(join(c.project, ".senpi-webui.json"), "{broken");
       const view = readProjectPreferences(c.stores, c.meta, c.project);
-      expect(view).toEqual({ preferredModel: null, permissionPreset: null, configError: true });
+      expect(view).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true });
+    } finally {
+      cleanup(c);
+    }
+  });
+
+  test("preferredThinkingLevel 文件值直读；非法档位同损坏降级（W2 todo 7，无库源）", () => {
+    const c = setup();
+    try {
+      const file = join(c.project, ".senpi-webui.json");
+      writeFileSync(file, JSON.stringify({ version: 1, preferredThinkingLevel: "max" }));
+      utimesSync(file, new Date(2000), new Date(2000));
+      const ok = readProjectPreferences(c.stores, c.meta, c.project);
+      expect(ok.preferredThinkingLevel).toBe("max");
+      expect(ok.configError).toBe(false);
+
+      // 非法档位在规范化层抛错 → 合并读按项目降级 null + configError
+      // （同尺寸改写必须显式换 mtime，否则 mtime+size 缓存命中旧文档）
+      writeFileSync(file, JSON.stringify({ version: 1, preferredThinkingLevel: "off" }));
+      utimesSync(file, new Date(3000), new Date(3000));
+      const degraded = readProjectPreferences(c.stores, c.meta, c.project);
+      expect(degraded).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true });
     } finally {
       cleanup(c);
     }

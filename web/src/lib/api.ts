@@ -283,7 +283,7 @@ export const api = {
   },
   async prompt(
     sessionId: string,
-    body: { text: string; images?: Array<{ data: string; mimeType: string }>; model?: string; agent?: string },
+    body: { text: string; images?: Array<{ data: string; mimeType: string }>; model?: string; thinkingLevel?: string; agent?: string },
   ): Promise<PromptReceipt> {
     // 防呆（todo 22）：模型列表已确认为空时引擎无可用模型，发送必然失败——客户端直接拦截，
     // 不发请求；输入区捕获 ApiError 后行内展示。

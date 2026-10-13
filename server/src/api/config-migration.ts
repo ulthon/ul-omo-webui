@@ -15,7 +15,7 @@
 // 响应）文件损坏 → 按项目降级 null + configError 标志，单项目损坏不炸整页；显式写偏好
 // （PATCH preferredModel/permissionPreset）损坏 → 500 带文件路径（route 包装透传
 // config-store 错误消息，绝不静默吞）。
-import { openConfigStore, type ConfigStore, type ProjectConfig } from "../conf/config-store";
+import { openConfigStore, type ConfigStore, type PreferredThinkingLevel, type ProjectConfig } from "../conf/config-store";
 import type { MetaDb } from "../db/meta";
 import { permissionPresetArgs, permissionPresetKey } from "./engine-runtime";
 
@@ -58,6 +58,8 @@ function hasField(raw: Record<string, unknown> | null, field: string): boolean {
 export interface ProjectPreferenceView {
   preferredModel: string | null;
   permissionPreset: string | null;
+  /** W2 todo 7 新增偏好：无迁移前库源，恒取文件值（缺字段/损坏降级为 null） */
+  preferredThinkingLevel: PreferredThinkingLevel | null;
   /** 项目配置文件损坏时的降级标志（决策 10b：字段置 null，不炸整页、不误报写失败） */
   configError: boolean;
 }
@@ -75,6 +77,7 @@ export function readProjectPreferences(
     return {
       preferredModel: meta.getProjectMeta(projectPath)?.preferredModel ?? null,
       permissionPreset: meta.getKv(permissionPresetKey(projectPath)),
+      preferredThinkingLevel: null,
       configError: false,
     };
   }
@@ -86,7 +89,7 @@ export function readProjectPreferences(
     raw = store.readProjectRaw();
   } catch {
     // 文件损坏（解析失败/字段形状非法）→ 按项目降级，单项目不炸整页（决策 10b）
-    return { preferredModel: null, permissionPreset: null, configError: true };
+    return { preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true };
   }
   return {
     preferredModel: effectivePreference(
@@ -99,6 +102,7 @@ export function readProjectPreferences(
       doc.permissionPreset,
       meta.getKv(permissionPresetKey(projectPath)),
     ),
+    preferredThinkingLevel: doc.preferredThinkingLevel,
     configError: false,
   };
 }

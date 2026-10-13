@@ -34,6 +34,11 @@ export interface SnippetEntry {
   sort: number;
 }
 
+/** 思考档（引擎实测 glm 系为 low/high/max，无 off；W2 todo 7 起为项目偏好字段） */
+export type PreferredThinkingLevel = "low" | "high" | "max";
+
+export const THINKING_LEVEL_VALUES: readonly PreferredThinkingLevel[] = ["low", "high", "max"];
+
 export interface TagsFile {
   version: number;
   tags: TagEntry[];
@@ -53,6 +58,7 @@ export interface ProjectConfig {
   snippets: SnippetEntry[];
   preferredModel: string | null;
   permissionPreset: string | null;
+  preferredThinkingLevel: PreferredThinkingLevel | null;
   [key: string]: unknown;
 }
 
@@ -61,6 +67,7 @@ export interface ProjectConfigPatch {
   snippets?: SnippetEntry[];
   preferredModel?: string | null;
   permissionPreset?: string | null;
+  preferredThinkingLevel?: PreferredThinkingLevel | null;
 }
 
 export interface OpenConfigStoreOptions {
@@ -132,6 +139,7 @@ function emptyProjectConfig(): ProjectConfig {
     snippets: [],
     preferredModel: null,
     permissionPreset: null,
+    preferredThinkingLevel: null,
   };
 }
 
@@ -182,6 +190,15 @@ function stringOrNull(value: unknown, filePath: string, field: string): string |
   return value;
 }
 
+/** 档位字段（closed set）：非法值抛错（绝不静默吞），由合并读层降级 configError */
+function thinkingLevelOrNull(value: unknown, filePath: string, field: string): PreferredThinkingLevel | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !THINKING_LEVEL_VALUES.includes(value as PreferredThinkingLevel)) {
+    throw new Error(`配置文件字段 ${field} 必须是 ${THINKING_LEVEL_VALUES.join("/")} 或 null: ${filePath}`);
+  }
+  return value as PreferredThinkingLevel;
+}
+
 function normalizeTagsFile(parsed: unknown, filePath: string): TagsFile {
   const doc = parseObject(parsed, filePath);
   return {
@@ -209,6 +226,7 @@ function normalizeProjectConfig(parsed: unknown, filePath: string): ProjectConfi
     snippets: sortSnippets(entriesOf(doc.snippets, filePath, "snippets", snippetEntry)),
     preferredModel: stringOrNull(doc.preferredModel, filePath, "preferredModel"),
     permissionPreset: stringOrNull(doc.permissionPreset, filePath, "permissionPreset"),
+    preferredThinkingLevel: thinkingLevelOrNull(doc.preferredThinkingLevel, filePath, "preferredThinkingLevel"),
   };
 }
 
@@ -381,6 +399,8 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
           preferredModel: patch.preferredModel === undefined ? base.preferredModel : patch.preferredModel,
           permissionPreset:
             patch.permissionPreset === undefined ? base.permissionPreset : patch.permissionPreset,
+          preferredThinkingLevel:
+            patch.preferredThinkingLevel === undefined ? base.preferredThinkingLevel : patch.preferredThinkingLevel,
         };
       });
     },

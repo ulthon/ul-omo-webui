@@ -1,6 +1,7 @@
-// 项目 REST 路由（todo 9 + todo 6）：注册/列表/偏好更新。
-// todo 6 起项目偏好（preferredModel/permissionPreset）以项目根 .senpi-webui.json 为权威源：
-// PATCH 落文件（损坏 500 带路径，决策 10a）；GET/POST/PATCH 响应合并两源——过渡态
+// 项目 REST 路由（todo 9 + todo 6 + W2 todo 7）：注册/列表/偏好更新。
+// todo 6 起项目偏好（preferredModel/permissionPreset；todo 7 增 preferredThinkingLevel）
+// 以项目根 .senpi-webui.json 为权威源：PATCH 落文件（损坏 500 带路径，决策 10a）；
+// GET/POST/PATCH 响应合并两源——过渡态
 // （文件缺字段且库值未迁清）以库值为准；文件损坏时合并读按项目降级 null + configError
 // 标志（决策 10b，单项目损坏不炸整页）。meta_kv permission-preset:<project> 为迁移前
 // 存量来源，仅读（过渡态回退），不再写入；变更后需 POST /api/projects/restart 让引擎
@@ -10,16 +11,18 @@ import { lstatSync, realpathSync } from "node:fs";
 import { PERMISSION_PRESET_NAMES } from "./engine-runtime";
 import { readProjectPreferences, type ProjectConfigStores, type ProjectPreferenceView } from "./config-migration";
 import { ApiError, parseJsonBody, route } from "./http";
+import { THINKING_LEVEL_VALUES, type PreferredThinkingLevel } from "../conf/config-store";
 import type { ApiDeps } from "./deps";
 import type { ProjectMeta } from "../db/meta";
 import { validateProjectInput } from "./paths";
 
-/** meta 行 + 合并偏好响应（preferredModel/permissionPreset 为合并值；损坏降级时附 configError） */
+/** meta 行 + 合并偏好响应（preferredModel/permissionPreset/preferredThinkingLevel 为合并值；损坏降级时附 configError） */
 function projectResponse(meta: ProjectMeta, view: ProjectPreferenceView) {
   return {
     ...meta,
     preferredModel: view.preferredModel,
     permissionPreset: view.permissionPreset,
+    preferredThinkingLevel: view.preferredThinkingLevel,
     ...(view.configError ? { configError: true } : {}),
   };
 }
@@ -63,9 +66,10 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(project)) : null });
   }));
 
-  // 项目偏好（部分更新）：lastOpenedAt 写库；preferredModel/permissionPreset
-  // 写项目文件（todo 6）。预设 null = 清除 = 默认行为；合法档位以引擎 PERMISSION_PRESET_NAMES
-  // 为准。文件写 await（损坏在此抛 500 带路径，库未被触碰）、库写同步；响应合并两源——
+  // 项目偏好（部分更新）：lastOpenedAt 写库；preferredModel/permissionPreset/
+  // preferredThinkingLevel 写项目文件（todo 6/7）。预设 null = 清除 = 默认行为；
+  // 合法档位以引擎 PERMISSION_PRESET_NAMES 与 THINKING_LEVEL_VALUES 为准。文件写 await
+  // （损坏在此抛 500 带路径，库未被触碰）、库写同步；响应合并两源——
   // 仅写库字段的 PATCH 在文件损坏时仍 200（响应带 configError，库写已成功不误报失败）。
   app.patch("/api/projects/meta", route(async (c: Context) => {
     const body = await parseJsonBody(c);
@@ -79,6 +83,20 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
         throw new ApiError(400, "invalid_preferred_model", "preferredModel 必须是字符串或 null");
       }
       preferredModel = body.preferredModel as string | null;
+    }
+    let preferredThinkingLevel: PreferredThinkingLevel | null | undefined;
+    if (body.preferredThinkingLevel !== undefined) {
+      if (
+        body.preferredThinkingLevel !== null &&
+        !THINKING_LEVEL_VALUES.includes(body.preferredThinkingLevel as PreferredThinkingLevel)
+      ) {
+        throw new ApiError(
+          400,
+          "invalid_preferred_thinking_level",
+          `preferredThinkingLevel 仅支持：${THINKING_LEVEL_VALUES.join("、")}（null 为清除）`,
+        );
+      }
+      preferredThinkingLevel = body.preferredThinkingLevel as PreferredThinkingLevel | null;
     }
     if (body.lastOpenedAt !== undefined) {
       if (body.lastOpenedAt !== null && typeof body.lastOpenedAt !== "string") {
@@ -100,13 +118,14 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
       }
       preset = body.permissionPreset as string | null;
     }
-    if (Object.keys(dbPatch).length === 0 && preferredModel === undefined && preset === undefined) {
-      throw new ApiError(400, "invalid_request", "需要 preferredModel/lastOpenedAt/permissionPreset 至少一项");
+    if (Object.keys(dbPatch).length === 0 && preferredModel === undefined && preset === undefined && preferredThinkingLevel === undefined) {
+      throw new ApiError(400, "invalid_request", "需要 preferredModel/lastOpenedAt/permissionPreset/preferredThinkingLevel 至少一项");
     }
-    if (preferredModel !== undefined || preset !== undefined) {
+    if (preferredModel !== undefined || preset !== undefined || preferredThinkingLevel !== undefined) {
       await deps.projectConfigs(project).updateProjectConfig({
         ...(preferredModel !== undefined ? { preferredModel } : {}),
         ...(preset !== undefined ? { permissionPreset: preset } : {}),
+        ...(preferredThinkingLevel !== undefined ? { preferredThinkingLevel } : {}),
       });
     }
     if (Object.keys(dbPatch).length > 0) {

@@ -250,7 +250,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     return c.json({ sessionId: id, entries: page.entries, leafId: page.leafId, cursor: page.cursor });
   }));
 
-  // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、agent 接受但降级）
+  // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、
+  // thinkingLevel 可选 low/high/max（W2 todo 7，与 POST /api/sessions 同一解析惯例）、agent 接受但降级）
   app.post("/api/sessions/:id/prompt", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const body = await parseJsonBody(c);
@@ -258,6 +259,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       throw new ApiError(400, "invalid_text", "text 必填且不能为空");
     }
     const images = parseImages(body.images);
+    const thinkingLevel = parseThinkingLevel(body.thinkingLevel);
     let model: string | undefined;
     if (typeof body.model === "string" && body.model) {
       splitModelId(body.model);
@@ -268,7 +270,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       // 引擎无 agent 选择协议面（docs/verification/05 P1-5）；显式降级不静默丢弃
       degradations.push("agent: 引擎无 agent 选择协议面，参数未生效（capabilities.agentsList=false）");
     }
-    const receipt = await deps.engines.prompt(id, { text: body.text, images, model });
+    const receipt = await deps.engines.prompt(id, { text: body.text, images, model, thinkingLevel });
     return c.json({
       sessionId: id,
       disposition: receipt.disposition,

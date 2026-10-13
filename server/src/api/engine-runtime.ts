@@ -55,12 +55,13 @@ export interface EngineGateway {
   /**
    * 发送 prompt。单驱动约束：目标会话回合进行中抛 ApiError(409, "already_processing")。
    * model 为 "provider/model" 形态（可选，切换当前会话模型）。
+   * thinkingLevel 为 low/high/max（可选，W2 todo 7 起逐回合下传引擎）。
    * durableSessionId：未落盘别名会话（新会话）首条消息落盘后回传的真实 id
    * （缺陷修复：新会话首条用户消息不显示——前端以此即时换 key）；已落盘会话不回传。
    */
   prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string },
+    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
   ): Promise<{ disposition: string; durableSessionId?: string }>;
   abort(sessionId: string): Promise<void>;
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
@@ -646,7 +647,7 @@ class ProjectRuntime {
 
   async prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string },
+    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
   ): Promise<{ disposition: string; durableSessionId?: string }> {
     await this.ensure();
     return this.runExclusive(async () => {
@@ -660,7 +661,11 @@ class ProjectRuntime {
       }
       const adapter = this.requireAdapter();
       try {
-        const receipt = await adapter.prompt({ text: input.text, images: input.images });
+        const receipt = await adapter.prompt({
+          text: input.text,
+          images: input.images,
+          thinkingLevel: input.thinkingLevel,
+        });
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
         if (receipt.disposition !== "handled") {
           this.streamingId = sessionId;
@@ -950,7 +955,7 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   async prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string },
+    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
   ): Promise<{ disposition: string; durableSessionId?: string }> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.prompt(sessionId, input);

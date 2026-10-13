@@ -71,7 +71,7 @@ class FakeGateway implements EngineGateway {
   sessions: EngineSessionSummary[] = [];
   promptError: unknown = null;
   promptDurableId: string | null = null;
-  promptCalls: Array<{ id: string; input: { text: string; model?: string } }> = [];
+  promptCalls: Array<{ id: string; input: { text: string; model?: string; thinkingLevel?: EngineThinkingLevel } }> = [];
   createdResults: Array<{ id: string; sessionPath: string; durable: boolean }> = [];
   deleted: string[] = [];
   activePaths: string[] | null = null;
@@ -91,9 +91,9 @@ class FakeGateway implements EngineGateway {
   async messages(_id: string, _cursor?: string): Promise<EngineMessagesPage> {
     return { entries: [], leafId: "leaf-1", cursor: "leaf-1" };
   }
-  async prompt(id: string, input: { text: string; images?: EnginePromptInput["images"]; model?: string }) {
+  async prompt(id: string, input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel }) {
     if (this.promptError) throw this.promptError;
-    this.promptCalls.push({ id, input: { text: input.text, model: input.model } });
+    this.promptCalls.push({ id, input: { text: input.text, model: input.model, thinkingLevel: input.thinkingLevel } });
     return this.promptDurableId
       ? { disposition: "started", durableSessionId: this.promptDurableId }
       : { disposition: "started" };
@@ -411,6 +411,44 @@ describe("会话操作路由", () => {
     });
     expect(empty.status).toBe(400);
     expect((await empty.json()).error.code).toBe("invalid_text");
+  });
+
+  test("prompt thinkingLevel 透传（W2 todo 7）：合法下传网关、缺省 undefined、非法 400", async () => {
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+
+    const res = await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "深度思考", thinkingLevel: "max" }),
+    });
+    expect(res.status).toBe(200);
+    expect(engines.promptCalls[0].input.thinkingLevel).toBe("max");
+
+    // 缺省 → undefined（不猜档位，引擎用会话缺省）
+    await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "普通" }),
+    });
+    expect(engines.promptCalls[1].input.thinkingLevel).toBeUndefined();
+
+    // null/空串同缺省；档位外取值 400（与 POST /api/sessions 同一惯例）
+    await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "清空", thinkingLevel: null }),
+    });
+    expect(engines.promptCalls[2].input.thinkingLevel).toBeUndefined();
+
+    const bad = await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hi", thinkingLevel: "off" }),
+    });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error.code).toBe("invalid_thinking_level");
+    expect(engines.promptCalls.length).toBe(3);
   });
 
   test("prompt：别名会话落盘回执透传 durableSessionId（缺陷修复：新会话首条消息不显示）", async () => {
@@ -748,6 +786,61 @@ describe("项目与元数据杂项路由", () => {
       expect(doc.permissionPreset).toBe("read-only");
       expect(meta.getProjectMeta(proj)?.preferredModel).toBeNull();
       expect(meta.getProjectMeta(proj)?.lastOpenedAt).toBe("2026-02-02T00:00:00.000Z");
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("preferredThinkingLevel 写读回环（W2 todo 7）：PATCH 落文件、GET/PATCH 响应合并读、null 清除", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-thinking-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      // 先注册项目（合并读响应需 meta 行）
+      meta.updateProjectMeta(proj, { lastOpenedAt: "2026-01-01T00:00:00.000Z" });
+      // 写档位 → 文件落位 + 响应合并读
+      const patch = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, preferredThinkingLevel: "high" }),
+      });
+      expect(patch.status).toBe(200);
+      const project = (await patch.json()).project;
+      expect(project.preferredThinkingLevel).toBe("high");
+      const doc = JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8"));
+      expect(doc.preferredThinkingLevel).toBe("high");
+
+      // GET 列表合并读同值
+      const list = await (await req(app, "/api/projects")).json();
+      expect(list.projects[0].preferredThinkingLevel).toBe("high");
+
+      // null 清除 → 文件显式 null（合法），响应 null
+      const clear = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, preferredThinkingLevel: null }),
+      });
+      expect(clear.status).toBe(200);
+      expect((await clear.json()).project.preferredThinkingLevel).toBeNull();
+      expect(JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8")).preferredThinkingLevel).toBeNull();
+
+      // 档位外取值 400；与 preferredModel 同时 PATCH 各自落位
+      const bad = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, preferredThinkingLevel: "off" }),
+      });
+      expect(bad.status).toBe(400);
+      expect((await bad.json()).error.code).toBe("invalid_preferred_thinking_level");
+
+      const both = await req(app, "/api/projects/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, preferredModel: "zai-coding-cn/glm-5.3-flash", preferredThinkingLevel: "low" }),
+      });
+      expect(both.status).toBe(200);
+      const bothBody = (await both.json()).project;
+      expect(bothBody.preferredModel).toBe("zai-coding-cn/glm-5.3-flash");
+      expect(bothBody.preferredThinkingLevel).toBe("low");
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }
