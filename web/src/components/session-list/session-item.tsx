@@ -1,11 +1,13 @@
-// 会话列表行（计划 todo 15）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
-// 引擎探询 active 兜底）+ 标题 + 来源标识（人工/agent 创建——引擎无 agent 协议面，
-// agent 名徽标以通用 "agent" 标记呈现，字段就绪后在此接入）+ 标签徽标（todo 11，最多 3 + N、
-// 孤儿灰显可清理）+ 未读徽标 + 相对时间
-// + 子会话钻取（knownChildren 已带则免请求，否则懒加载后按血缘过滤）
+// oxlint-disable react/only-export-components -- buildForkIndexes 纯函数随组件同文件导出（W3 todo 10 单列表契约，todo-panel 先例）
+// 会话列表行（W3 todo 10 单列表重构）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
+// 引擎探询 active 兜底）+ 标题（fork 行带「(fork #N)」后缀，编号 = 同父兄弟按 sessionPath 序，
+// 列表加载时由 session-list 经 buildForkIndexes 一次算好传入）+ 来源标识（fork 子会话 GitFork
+// 徽标 / 人工创建徽标）+ 标签徽标（todo 11，最多 3 + N、孤儿灰显可清理）+ 未读徽标 + 相对时间
+// + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
+// 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
 // + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
-import { Bot, ChevronRight, Download, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { ChevronRight, Download, GitFork, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -50,16 +52,17 @@ function StatusDot({ runState, active }: { runState: SessionRunState | null; act
   return <span className={`size-1.5 shrink-0 rounded-full ${cls}`} title={title} />;
 }
 
-/** 来源标识：人工/agent 创建（docs/01 会话来源标识）。仅钻取展开与"全部活动"/搜索视图显示。 */
+/** 来源标识（W3 todo 10 改名）：fork 子会话（parentSessionPath 非空）用 GitFork + "fork"，
+ * 人工创建保持 User + "人工"。单列表下恒显示（旧 human/all 视图差分随分段控件删除）。 */
 function SourceBadge({ session }: { session: SessionListItem }) {
   if (session.parentSessionPath) {
     return (
       <span
         className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-        title={`agent 创建的子会话（fork 自 ${session.parentSessionPath}）`}
+        title={`fork 自 ${session.parentSessionPath}`}
       >
-        <Bot className="size-2.5" />
-        agent
+        <GitFork className="size-2.5" />
+        fork
       </span>
     );
   }
@@ -74,18 +77,41 @@ function SourceBadge({ session }: { session: SessionListItem }) {
   );
 }
 
+/**
+ * fork 编号（W3 todo 10）：fork 会话标题后缀「(fork #N)」的 N = 同父兄弟中按 sessionPath
+ * 升序的位次（sessionPath 文件名以 ISO 时间戳开头，≈ 创建顺序）。列表加载时对整份数据
+ * 算一次并缓存（session-list useMemo），避免每次渲染重排导致编号抖动。
+ * 键取会话 path（血缘身份，id 在占位换名场景会变）。非 fork 会话不进表。
+ */
+export function buildForkIndexes(sessions: SessionListItem[]): Map<string, number> {
+  const byParent = new Map<string, SessionListItem[]>();
+  for (const s of sessions) {
+    if (!s.parentSessionPath) continue;
+    const list = byParent.get(s.parentSessionPath);
+    if (list) list.push(s);
+    else byParent.set(s.parentSessionPath, [s]);
+  }
+  const out = new Map<string, number>();
+  for (const siblings of byParent.values()) {
+    siblings
+      .slice()
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .forEach((s, i) => out.set(s.path, i + 1));
+  }
+  return out;
+}
+
 export interface SessionItemProps {
   session: SessionListItem;
-  /** 来源标识可见性：human 视图顶层不显示（全是人工，冗余） */
-  showSource: boolean;
+  /** fork 编号表（W3 todo 10）：列表加载时由 session-list 经 buildForkIndexes 一次算好传入；
+   * fork 行查到编号即渲染标题后缀「(fork #N)」，缺表/未命中（如搜索结果不在主列表数据集）不显示后缀 */
+  forkIndexes?: Map<string, number>;
   /** 搜索模式下显示来源项目名（basename） */
   projectLabel?: string;
   /** 列表已随响应带出的子会话（省一次懒加载请求）；缺省走懒加载 */
   knownChildren?: SessionListItem[];
-  /** 是否可钻取子会话（顶层会话 true，子会话行 false） */
+  /** 是否可展开子会话（顶层会话 true，子会话行 false） */
   expandable: boolean;
-  /** "全部活动"视图：子会话随血缘直接平铺显示（免点击展开） */
-  childrenOpen?: boolean;
   /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开选择器（父级接线，todo 11） */
   onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem) => void;
   /** 两源定义键集（todo 11 徽标孤儿判定；null = 定义未就绪不渲染徽标） */
@@ -101,7 +127,7 @@ export interface SessionItemProps {
   onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, showSource, projectLabel, knownChildren, expandable, childrenOpen, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys }: SessionItemProps) {
+export function SessionItem({ session, forkIndexes, projectLabel, knownChildren, expandable, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -116,9 +142,13 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
   // 展示用子会话：懒加载结果优先，否则用列表已带出的 knownChildren（props 会变，
   // 不能在 useState 初始值里固化——那会拿不到首屏之后才出现的数据）
   const childRows = children ?? knownChildren ?? [];
+  const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
 
+  /** 行内展开/收起（W3 todo 10：唯一视图的子会话展开入口，展开态为本次会话内的瞬态）。
+   * 首次展开且子会话未随列表带出时才走懒加载（archived=all，按血缘过滤）；
+   * knownChildren 已带则免请求——旧 childrenOpen 平铺路径删除后由此保证契约。 */
   const toggle = async () => {
-    if (!expanded && children === null) {
+    if (!expanded && children === null && !hasKnownChildren) {
       setLoadingChildren(true);
       try {
         const res = await api.listSessions({ project: session.project, archived: "all" });
@@ -195,7 +225,8 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
     }
   };
 
-  const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
+  // fork 标题后缀（W3 todo 10）：编号表命中才显示（搜索结果不在主列表数据集时自然缺省）
+  const forkIndex = session.parentSessionPath ? forkIndexes?.get(session.path) : undefined;
 
   return (
     <div>
@@ -246,9 +277,9 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={handleSelect}>
           <span className={`truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
             {session.pinned && <Pin className="mr-1 inline size-3 shrink-0 align-[-1px] text-muted-foreground" />}
-            {session.title}
+            {forkIndex ? `${session.title} (fork #${forkIndex})` : session.title}
           </span>
-          {showSource && <SourceBadge session={session} />}
+          <SourceBadge session={session} />
           <TagBadges session={session} definedKeys={definedKeys ?? null} />
           {session.archivedAt && (
             <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">已归档</span>
@@ -320,18 +351,18 @@ export function SessionItem({ session, showSource, projectLabel, knownChildren, 
         </DropdownMenu>
       </div>
 
-      {/* 子会话钻取（缩进一层；血缘 = parentSessionPath 关联，omo task 子会话不落盘天然不出现）。
-          "全部活动"视图 childrenOpen 直接平铺（knownChildren 已带，无需懒加载）。 */}
-      {expandable && (expanded || (childrenOpen && knownChildren !== undefined)) && (
+      {/* 子会话行内展开（W3 todo 10：仅展开时渲染，缩进一层；血缘 = parentSessionPath 关联，
+          omo task 子会话不落盘天然不出现）。fork 编号表透传子行保持后缀连续。 */}
+      {expandable && expanded && (
         <div className="ml-4 border-l pl-1.5">
-          {(childRows.length === 0 && !loadingChildren && !childrenOpen) ? (
+          {childRows.length === 0 && !loadingChildren ? (
             <div className="px-2 py-1 text-xs text-muted-foreground/60">无子会话</div>
           ) : (
             childRows.map((child) => (
               <SessionItem
                 key={child.id}
                 session={child}
-                showSource
+                forkIndexes={forkIndexes}
                 expandable={false}
                 onDialog={onDialog}
                 onSelect={onSelect}

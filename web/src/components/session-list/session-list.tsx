@@ -1,10 +1,13 @@
-// 会话列表（todo 10 全局平铺重构）：侧栏默认全局视图——全部注册项目的会话按项目分组平铺，
+// 会话列表（W3 todo 10 单列表重构）：侧栏唯一列表——全部注册项目的会话按项目分组平铺，
 // 分组头可折叠（localStorage 按项目记忆），顶部"最近会话"区跨项目按 modified 取最新 8 条直达。
-// 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用）：同项目仅 select；
+// 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）：同项目仅 select；
 // 跨项目轻量切换 currentProject + 应用该项目偏好模型（跳过 lastOpenedAt PATCH）。
-// 数据来自 store.refreshSessions 的聚合分支（todo 9）；视图切换/归档三态/搜索/批量模式在全局视图照常工作，
-// 搜索改走聚合端点并固定 view=all&archived=all（归档会话与 fork 子会话仍可被搜到）。
-// 纯逻辑（分组排序/最近选取/折叠记忆/跨项目判定）在 global-list-data.ts，单测锁定。
+// 数据来自 store.refreshSessions 的聚合分支（todo 9）；旧 human/all 分段控件已删——
+// 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork，
+// 子会话一律点 chevron 行内展开（瞬态，不持久化）。归档三态/搜索/批量模式照常工作，
+// 搜索走聚合端点并固定 archived=all（归档会话与 fork 子会话仍可被搜到）。
+// 纯逻辑（分组排序/最近选取/折叠记忆/跨项目判定）在 global-list-data.ts；fork 编号在
+// session-item.tsx 的 buildForkIndexes（列表加载时整表一次算好缓存），单测锁定。
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,7 +15,7 @@ import { Archive, ArchiveRestore, ChevronDown, Filter, ListChecks, Loader2, Mess
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
-import { useSessionsStore, type ArchivedFilter, type SessionView } from "@/stores/sessions";
+import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +36,7 @@ import {
   recentTop,
   writeCollapsed,
 } from "./global-list-data";
-import { SessionItem } from "./session-item";
+import { SessionItem, buildForkIndexes } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagSelector } from "./tag-selector";
 import { TagManageDialog } from "./tag-manage-dialog";
@@ -81,7 +84,6 @@ function useMarkReadOnView(): void {
 export function SessionList() {
   const currentProject = useUiStore((s) => s.currentProject);
   const projects = useUiStore((s) => s.projects);
-  const view = useSessionsStore((s) => s.view);
   const archived = useSessionsStore((s) => s.archived);
   const byProject = useSessionsStore((s) => s.byProject);
   const loading = useSessionsStore((s) => s.loading);
@@ -136,7 +138,7 @@ export function SessionList() {
     return () => window.removeEventListener(LOCATE_EVENT, onLocate);
   }, []);
 
-  // 全局搜索（250ms 防抖）：走聚合端点，固定 view=all + archived=all（与既有搜索语义一致：
+  // 全局搜索（250ms 防抖）：走聚合端点，固定 archived=all（与既有搜索语义一致：
   // 归档会话与 fork 子会话仍可被搜到）；单请求替代此前跨项目并行 GET，排序沿用服务端口径。
   const runSearch = useCallback(async (q: string) => {
     if (q === "") {
@@ -145,7 +147,7 @@ export function SessionList() {
     }
     setSearching(true);
     try {
-      const res = await api.listSessions({ view: "all", archived: "all", q });
+      const res = await api.listSessions({ archived: "all", q });
       setSearchResults(res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
@@ -175,10 +177,9 @@ export function SessionList() {
     writeCollapsed(project, !next);
   };
 
-  /** 视图/归档切换：聚合口径整体重取（全局视图下两组参数跨项目生效，全部组数据同步换口径） */
-  const switchFilter = (patch: { view?: SessionView; archived?: ArchivedFilter }) => {
+  /** 归档切换：聚合口径整体重取（参数跨项目生效，全部组数据同步换口径） */
+  const switchFilter = (patch: { archived?: ArchivedFilter }) => {
     const s = useSessionsStore.getState();
-    if (patch.view) s.setView(patch.view);
     if (patch.archived) s.setArchived(patch.archived);
     void s.refreshSessions();
   };
@@ -251,6 +252,9 @@ export function SessionList() {
   );
   // 最近会话：跨项目按 modified 取最新 8 条（置顶自然参与）
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
+  // fork 编号表（W3 todo 10）：列表加载时对整份数据一次算好缓存（byProject 引用不变即不重算），
+  // 编号 = 同父兄弟按 sessionPath 升序位次；最近区/搜索结果/行内子会话行共用同一张表。
+  const forkIndexes = useMemo(() => buildForkIndexes(flattenSessions(byProject)), [byProject]);
 
   // ---- 标签（todo 11）----
 
@@ -395,9 +399,9 @@ export function SessionList() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 工具条：新建 + 全局搜索 + 视图/归档切换（搜索模式下隐藏后者）。
+      {/* 工具条：新建 + 全局搜索 + 批量/归档/标签（搜索模式下隐藏后者）。
           触控目标（todo 26 走查修复）：手机 ≥44px（lg 保持桌面紧凑尺寸）。
-          "新建会话"固定在 currentProject 创建（全局视图下分组头 "+" 才是跨项目落点）。 */}
+          "新建会话"固定在 currentProject 创建（分组头 "+" 才是跨项目落点）。 */}
       <div className="shrink-0 space-y-2 border-b px-2 py-2">
         {/* 点击时刻实时读 currentProject：跨项目点击后 300ms 内 React 提交可能未完成，
             render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
@@ -426,26 +430,12 @@ export function SessionList() {
         </div>
         {searchResults === null && (
           <div className="flex items-center gap-1.5">
-            <div className="flex rounded-md border p-0.5 text-xs">
-              <button
-                type="button"
-                className={`rounded px-2 py-2 lg:py-0.5 ${view === "human" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => switchFilter({ view: "human" })}
-              >
-                人工
-              </button>
-              <button
-                type="button"
-                className={`rounded px-2 py-2 lg:py-0.5 ${view === "all" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => switchFilter({ view: "all" })}
-              >
-                全部活动
-              </button>
-            </div>
+            {/* 批量/归档/标签（W3 todo 10：分段控件已删，单列表唯一口径）。
+                whitespace-nowrap + shrink-0 保 390px 窄视口下工具条单行不折行。 */}
             <Button
               variant="ghost"
               size="sm"
-              className={`ml-auto h-11 gap-1 px-1.5 text-xs lg:h-6 ${batchMode ? "text-foreground" : "text-muted-foreground"}`}
+              className={`ml-auto h-11 shrink-0 whitespace-nowrap gap-1 px-1.5 text-xs lg:h-6 ${batchMode ? "text-foreground" : "text-muted-foreground"}`}
               onClick={() => (batchMode ? exitBatch() : setBatchMode(true))}
               data-testid="batch-toggle"
             >
@@ -454,7 +444,7 @@ export function SessionList() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-11 gap-1 px-1.5 text-xs text-muted-foreground lg:h-6">
+                <Button variant="ghost" size="sm" className="h-11 shrink-0 whitespace-nowrap gap-1 px-1.5 text-xs text-muted-foreground lg:h-6">
                   <Filter className="size-3" />
                   {archivedLabel}
                 </Button>
@@ -472,7 +462,7 @@ export function SessionList() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={`h-11 gap-1 px-1.5 text-xs lg:h-6 ${tagFilter.length > 0 ? "text-foreground" : "text-muted-foreground"}`}
+                  className={`h-11 shrink-0 whitespace-nowrap gap-1 px-1.5 text-xs lg:h-6 ${tagFilter.length > 0 ? "text-foreground" : "text-muted-foreground"}`}
                   data-testid="tag-filter-btn"
                 >
                   <Tag className="size-3" />
@@ -588,12 +578,12 @@ export function SessionList() {
               <SessionItem
                 key={s.id}
                 session={s}
-                showSource
+                forkIndexes={forkIndexes}
                 projectLabel={basename(s.project)}
                 expandable={s.parentSessionPath === null}
                 onSelect={selectSession}
-                            onDialog={handleItemDialog}
-                            definedKeys={definedKeys}
+                onDialog={handleItemDialog}
+                definedKeys={definedKeys}
                 onChanged={onChanged}
                 {...itemBatchProps(s)}
               />
@@ -620,7 +610,7 @@ export function SessionList() {
                     <SessionItem
                       key={s.id}
                       session={s}
-                      showSource={view === "all"}
+                      forkIndexes={forkIndexes}
                       projectLabel={basename(s.project)}
                       expandable={s.parentSessionPath === null}
                       onSelect={selectSession}
@@ -638,7 +628,7 @@ export function SessionList() {
               const sessions = byProject[projectPath];
               const expanded = isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath]);
               const isCurrent = projectPath === currentProject;
-              // all 视图分层：子会话按血缘归到父项下；human 视图列表本身全是顶层。
+              // 唯一列表（W3 todo 10）：子会话按血缘归到父项下。
               // 父不在当前数据集（如归档过滤只返回归档子会话）时子会话按孤儿顶层平铺，不丢行。
               const pathSet = new Set((sessions ?? []).map((s) => s.path));
               const tops = (sessions ?? []).filter(
@@ -701,13 +691,12 @@ export function SessionList() {
                           <SessionItem
                             key={s.id}
                             session={s}
-                            showSource={view === "all"}
+                            forkIndexes={forkIndexes}
                             knownChildren={childMap.get(s.path)}
                             expandable={isTop(s)}
-                            childrenOpen={view === "all"}
                             onSelect={selectSession}
-                onDialog={handleItemDialog}
-                definedKeys={definedKeys}
+                            onDialog={handleItemDialog}
+                            definedKeys={definedKeys}
                             onChanged={onChanged}
                             {...itemBatchProps(s)}
                           />

@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { SessionListItem } from "@/lib/api";
 
-GlobalRegistrator.register();
+// bun test 单进程跑多文件：其他测试文件可能已注册（sidebar-single-list 等），双注册会抛错
+if (!(globalThis as { window?: unknown }).window) {
+  GlobalRegistrator.register();
+}
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // radix Dialog 原语透传化：Dialog 按 open 条件渲染 children，其余原语为普通容器。
