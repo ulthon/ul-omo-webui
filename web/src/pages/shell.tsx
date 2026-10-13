@@ -6,16 +6,23 @@
 // 页签切换 handler 读取（切换即卸载重挂，确认放弃才会丢内容）。
 // todo 26：页签栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；visualViewport 高度
 // 同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { FolderOpen, GitBranch } from "lucide-react";
+// W5-15：主区 flex 行右侧新增 todo 可折叠右栏——lg 常驻（展开 w-80 / 折叠窄条），
+// <lg 镜像左栏 fixed 抽屉（inset-y-0，勿套 --app-height，否则软键盘收缩截断抽屉底）；
+// 双抽屉互斥（开其一时自动关另一，经 ui store subscribe 实现左→右方向）；z 序：右抽屉
+// z-[45]（高于左抽屉 z-40，低于 toast z-50），共用遮罩 z-30；折叠初值 lg 展开 / <lg 关闭，
+// 一经用户交互以 localStorage 记忆为准。
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
 import { useUiStore } from "@/stores/ui";
+import { useSessionsStore } from "@/stores/sessions";
 import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
 import { Button } from "@/components/ui/button";
+import { TodoPanel, readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 
 // W5-27 首屏拆分：变更页签（react-diff-view）按需加载，首屏对话页不下载该模块
 const ChangesView = lazy(() =>
@@ -71,7 +78,39 @@ export function AppShell() {
   const [mainTab, setMainTab] = useState<MainTab>("chat");
   // 笔记编辑未保存标记：NotesView 编辑态写入，切页签 handler 读取做确认（todo 15）
   const notesDirtyRef = useRef(false);
+  // W5-15 todo 右栏：当前会话（与会话视图同源派生：选中优先、?session= 深链兜底）
+  const selectedSessionId = useSessionsStore((s) => s.selectedId);
+  const urlSessionId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("session");
+  }, []);
+  const todoSessionId = selectedSessionId ?? urlSessionId;
+  // 折叠态：无 localStorage 记忆时按视口取默认（lg 展开 / <lg 关闭）；一经交互记忆为准
+  const [todoPanelOpen, setTodoPanelOpen] = useState(() => {
+    const stored = readPanelOpenPreference();
+    if (stored !== null) return stored;
+    return window.matchMedia("(min-width: 1024px)").matches;
+  });
   useAppHeight();
+
+  // 右栏开合：记忆持久化；开启侧先关左抽屉（互斥——左→右方向见下方 subscribe）
+  const toggleTodoPanel = () => {
+    const next = !todoPanelOpen;
+    setTodoPanelOpen(next);
+    writePanelOpenPreference(next);
+    if (next) setDrawerOpen(false);
+  };
+
+  // 双抽屉互斥另一半：左抽屉经顶栏汉堡开启时收起右栏（toggleTodoPanel 只覆盖右→左）
+  useEffect(
+    () =>
+      useUiStore.subscribe((state, prev) => {
+        if (!state.drawerOpen || prev.drawerOpen) return;
+        setTodoPanelOpen(false);
+        writePanelOpenPreference(false);
+      }),
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -109,11 +148,15 @@ export function AppShell() {
     <div className="flex flex-col bg-background" style={{ height: "var(--app-height, 100svh)" }}>
       <Topbar />
       <div className="relative flex min-h-0 flex-1">
-        {/* 抽屉遮罩（lg 以下） */}
-        {drawerOpen && (
+        {/* 抽屉遮罩（lg 以下）：左右抽屉共用（互斥下至多一个开启；z-30 镜像左栏） */}
+        {(drawerOpen || todoPanelOpen) && (
           <div
             className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => {
+              setDrawerOpen(false);
+              setTodoPanelOpen(false);
+              writePanelOpenPreference(false);
+            }}
             aria-hidden
           />
         )}
@@ -163,6 +206,16 @@ export function AppShell() {
               </button>
             </div>
             <div className="ml-auto flex items-center gap-1">
+              {/* W5-15 手机右栏抽屉触发（44px 触控目标，lg 以上隐藏——桌面走常驻 aside 折叠条） */}
+              <button
+                type="button"
+                aria-label="打开任务面板"
+                data-testid="todo-panel-toggle"
+                onClick={toggleTodoPanel}
+                className={`${EXTERNAL_LINK_CLASS} lg:hidden`}
+              >
+                <ListTodo className="size-5" />
+              </button>
               {gitUrl && (
                 <a
                   href={gitUrl}
@@ -226,6 +279,41 @@ export function AppShell() {
             )}
           </div>
         </main>
+
+        {/* W5-15 todo 右栏（桌面）：lg 常驻——展开 w-80 / 折叠收为窄条带展开钮。
+            static 流入 flex 行，高度随父级 --app-height 链路自然约束 */}
+        {todoPanelOpen ? (
+          <aside aria-label="任务面板" className="hidden w-80 shrink-0 border-l bg-background lg:block">
+            <TodoPanel sessionId={todoSessionId} onClose={toggleTodoPanel} />
+          </aside>
+        ) : (
+          <aside
+            aria-label="任务面板（已折叠）"
+            className="hidden w-10 shrink-0 flex-col items-center border-l bg-background py-2 lg:flex"
+          >
+            <button
+              type="button"
+              aria-label="展开任务面板"
+              title="展开任务面板"
+              onClick={toggleTodoPanel}
+              className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            >
+              <ListTodo className="size-4" />
+            </button>
+          </aside>
+        )}
+
+        {/* W5-15 todo 右栏（手机）：<lg 固定右缘抽屉，镜像左栏模式。inset-y-0 维持（勿套
+            --app-height——iOS 软键盘收缩会截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于
+            toast z-50（计划 Oracle 低-8：互斥下仅过渡期可能重叠，z-50 有层叠争议） */}
+        <aside
+          aria-label="任务面板"
+          className={`fixed inset-y-0 right-0 z-[45] w-80 border-l bg-background transition-transform duration-200 lg:hidden ${
+            todoPanelOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <TodoPanel sessionId={todoSessionId} onClose={toggleTodoPanel} />
+        </aside>
       </div>
 
       {/* 轻提示 */}
