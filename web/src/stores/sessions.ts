@@ -1,16 +1,12 @@
 // 会话域：按项目分组的会话列表、搜索 q、归档过滤、当前选中。
 // 数据写入来自 GET /api/sessions（组件层触发）与 SSE 元数据事件（todo 14/15 消费）。
 // allMode（todo 9）：跨项目聚合视图——refreshSessions 走聚合端点，结果按 project 分组写入。
-// 旧 human/all 双视图已移除（W3 todo 9）：列表固定含 fork 会话；view 字段仅余侧栏
-// 分段控件的 UI 态（不再参与请求，todo 10 连同控件一并删除）。
+// 旧 human/all 双视图已移除（W3 todo 9 数据层 + 遗留清理）：列表固定含 fork 会话。
 import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 
-/** 侧栏分段控件的遗留 UI 态（服务端已不区分 human/all，此值不再参与任何请求；
- * 保留仅因 session-list 分段控件尚在，todo 10 连同 SessionView 一并删除） */
-export type SessionView = "human" | "all";
 export type ArchivedFilter = "true" | "false" | "all";
 
 /** 会话运行态（SSE 驱动的状态点覆盖值；不在 runStates 中 = 未见 SSE 事件，用引擎探询 active 兜底）。
@@ -33,9 +29,6 @@ interface SessionsState {
    * 该会话任何 SSE 事件刷新（touchRunStateAt），周期清扫据此判无活动超时回落。
    * 组件不消费本字段（状态点仍读 runStates，值形状因此不被破坏）。 */
   runStateAt: Record<string, number>;
-  /** 遗留 UI 态：默认 "all" 与服务端单一口径（含 fork 全量列表）一致，仅影响
-   * 分段控件高亮与来源徽标/子会话平铺展示，不参与请求 */
-  view: SessionView;
   /** 全局搜索：标题/会话名子串（服务端实现，此状态作请求参数） */
   q: string;
   archived: ArchivedFilter;
@@ -47,7 +40,6 @@ interface SessionsState {
   selectedId: string | null;
   loading: boolean;
 
-  setView(view: SessionView): void;
   setQ(q: string): void;
   setArchived(archived: ArchivedFilter): void;
   /** 聚合视图切换（todo 10 侧栏接线；切换后调用方负责 refreshSessions） */
@@ -98,7 +90,6 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
   runStateAt: {},
-  view: "all",
   q: "",
   archived: "false",
   allMode: false,
@@ -106,7 +97,6 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   selectedId: null,
   loading: false,
 
-  setView: (view) => set({ view }),
   setQ: (q) => set({ q }),
   setArchived: (archived) => set({ archived }),
   setAllMode: (allMode) => set({ allMode }),

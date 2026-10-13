@@ -243,9 +243,6 @@ export function setPromptGate(gate: PromptGate | null): void {
 export interface ListSessionsParams {
   /** 缺省 = 聚合模式：server 并行拉取全部注册项目合并单响应（project 字段为 null） */
   project?: string;
-  /** 已废弃（W3 todo 9）：服务端不再区分 human/all，参数不序列化、被忽略。
-   * 类型暂留供 session-list 分段控件过渡编译（todo 10 连同控件一并移除）。 */
-  view?: "human" | "all";
   /** "true"|"false"|"all"，默认 "false" */
   archived?: "true" | "false" | "all";
   q?: string;
