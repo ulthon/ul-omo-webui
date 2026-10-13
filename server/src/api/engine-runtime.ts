@@ -55,11 +55,13 @@ export interface EngineGateway {
   /**
    * 发送 prompt。单驱动约束：目标会话回合进行中抛 ApiError(409, "already_processing")。
    * model 为 "provider/model" 形态（可选，切换当前会话模型）。
+   * durableSessionId：未落盘别名会话（新会话）首条消息落盘后回传的真实 id
+   * （缺陷修复：新会话首条用户消息不显示——前端以此即时换 key）；已落盘会话不回传。
    */
   prompt(
     sessionId: string,
     input: { text: string; images?: EnginePromptInput["images"]; model?: string },
-  ): Promise<{ disposition: string }>;
+  ): Promise<{ disposition: string; durableSessionId?: string }>;
   abort(sessionId: string): Promise<void>;
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
   usage(sessionId: string): Promise<EngineUsageStats>;
@@ -645,7 +647,7 @@ class ProjectRuntime {
   async prompt(
     sessionId: string,
     input: { text: string; images?: EnginePromptInput["images"]; model?: string },
-  ): Promise<{ disposition: string }> {
+  ): Promise<{ disposition: string; durableSessionId?: string }> {
     await this.ensure();
     return this.runExclusive(async () => {
       // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶
@@ -665,6 +667,27 @@ class ProjectRuntime {
           this.streamingPath = adapter.getActiveSession()?.sessionPath ?? null;
           this.roundSeq += 1;
           this.startSettleWatch();
+        }
+        // 首条消息落盘回执补全（缺陷修复：新会话首条用户消息不显示）：未落盘别名会话
+        // 此刻已被引擎写盘，durable id 就绪。立即回填 handle→durable 映射——本轮后续
+        // wire 事件（assistant 流式等）即时携带 durableSessionId，不再依赖 miss 时的
+        // 防抖刷新；并把真实 id 随回执带回，前端即时换 key。
+        if (this.aliases.has(sessionId)) {
+          try {
+            const rows = await adapter.activeSessions();
+            this.rememberHandleRows(rows);
+            const sessionPath = this.aliases.get(sessionId);
+            const row = rows.find((r) => r.sessionPath === sessionPath && r.durableSessionId);
+            if (row?.durableSessionId) {
+              // 别名保留（resolveSession 仍需兜底在途的旧 id 请求）；活跃/流式位切到
+              // 真实 id——单驱动 409 守卫按 id 比较，前端换 key 后以真实 id 再来也拦得住
+              this.activeId = row.durableSessionId;
+              if (this.streamingId === sessionId) this.streamingId = row.durableSessionId;
+              return { disposition: receipt.disposition, durableSessionId: row.durableSessionId };
+            }
+          } catch {
+            // 活跃行查询失败不阻塞回合：退回原回执，事件归属靠 miss 防抖刷新兜底
+          }
         }
         return receipt;
       } catch (err) {
@@ -928,7 +951,7 @@ export class EngineRuntimeRegistry implements EngineGateway {
   async prompt(
     sessionId: string,
     input: { text: string; images?: EnginePromptInput["images"]; model?: string },
-  ): Promise<{ disposition: string }> {
+  ): Promise<{ disposition: string; durableSessionId?: string }> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.prompt(sessionId, input);
   }

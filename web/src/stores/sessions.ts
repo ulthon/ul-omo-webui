@@ -59,6 +59,9 @@ interface SessionsState {
   /** 运行态写入/清除（todo 15 event-dispatch 调用） */
   setRunState(id: string, state: SessionRunState): void;
   clearRunState(id: string): void;
+  /** 未落盘占位行采用真实 id（首条消息落盘后服务端回执带回，缺陷修复：新会话首条
+   *  消息不显示）：行 id、当前选中、运行态点一并迁移 */
+  adoptSessionId(oldId: string, newId: string): void;
 }
 
 function replaceIn(list: SessionListItem[], session: SessionListItem): SessionListItem[] {
@@ -190,5 +193,33 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       const runStates = { ...s.runStates };
       delete runStates[id];
       return { runStates };
+    }),
+
+  adoptSessionId: (oldId, newId) =>
+    set((s) => {
+      if (oldId === newId) return s;
+      let changed = false;
+      const byProject: Record<string, SessionListItem[]> = {};
+      for (const [project, list] of Object.entries(s.byProject)) {
+        const idx = list.findIndex((item) => item.id === oldId);
+        if (idx < 0) {
+          byProject[project] = list;
+          continue;
+        }
+        changed = true;
+        const next = list.slice();
+        next[idx] = { ...list[idx], id: newId };
+        byProject[project] = next;
+      }
+      const selectedId = s.selectedId === oldId ? newId : s.selectedId;
+      let runStates = s.runStates;
+      if (oldId in s.runStates) {
+        runStates = { ...s.runStates };
+        runStates[newId] = runStates[oldId];
+        delete runStates[oldId];
+      }
+      return changed || selectedId !== s.selectedId || runStates !== s.runStates
+        ? { byProject, selectedId, runStates }
+        : s;
     }),
 }));

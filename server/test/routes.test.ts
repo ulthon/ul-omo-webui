@@ -70,6 +70,7 @@ function fakeUsage(): EngineUsageStats {
 class FakeGateway implements EngineGateway {
   sessions: EngineSessionSummary[] = [];
   promptError: unknown = null;
+  promptDurableId: string | null = null;
   promptCalls: Array<{ id: string; input: { text: string; model?: string } }> = [];
   createdResults: Array<{ id: string; sessionPath: string; durable: boolean }> = [];
   deleted: string[] = [];
@@ -93,7 +94,9 @@ class FakeGateway implements EngineGateway {
   async prompt(id: string, input: { text: string; images?: EnginePromptInput["images"]; model?: string }) {
     if (this.promptError) throw this.promptError;
     this.promptCalls.push({ id, input: { text: input.text, model: input.model } });
-    return { disposition: "started" };
+    return this.promptDurableId
+      ? { disposition: "started", durableSessionId: this.promptDurableId }
+      : { disposition: "started" };
   }
   async abort(): Promise<void> {}
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
@@ -406,6 +409,34 @@ describe("会话操作路由", () => {
     });
     expect(empty.status).toBe(400);
     expect((await empty.json()).error.code).toBe("invalid_text");
+  });
+
+  test("prompt：别名会话落盘回执透传 durableSessionId（缺陷修复：新会话首条消息不显示）", async () => {
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+
+    engines.promptDurableId = "d-real-1";
+    const res = await req(app, "/api/sessions/holder-1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "第一条" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sessionId).toBe("holder-1");
+    expect(body.streaming).toBe(true);
+    expect(body.durableSessionId).toBe("d-real-1");
+
+    // 已落盘会话（网关不回 durableSessionId）响应不含该字段
+    engines.promptDurableId = null;
+    const plain = await req(app, "/api/sessions/d-1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "第二条" }),
+    });
+    expect(plain.status).toBe(200);
+    const plainBody = await plain.json();
+    expect("durableSessionId" in plainBody).toBe(false);
   });
 
   test("meta patch（归档/置顶/重命名）与已读清零、草稿、删除", async () => {

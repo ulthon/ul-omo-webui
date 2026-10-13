@@ -60,6 +60,13 @@ interface MessagesState {
   settleStreaming(sessionId: string, finalMessage?: WireMessage): void;
   setStreaming(sessionId: string, streaming: boolean): void;
   clearSession(sessionId: string): void;
+  /** 发送成功后的本地乐观用户条目（缺陷修复：新会话首条用户消息的服务端事件以路由
+   *  句柄寻址、handle→durable 映射回填前不入列）——先本地占位，后续 setEntries 全量
+   *  重取以服务端真值整替；服务端 user 事件到达时按等价吸收（防双列） */
+  appendLocalUserEntry(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string }>): void;
+  /** 首条消息落盘后采用服务端回传的真实 id：迁移消息槽（目标槽已有时事件真值优先，
+   *  仅补携带本地乐观条目防丢） */
+  adoptDurableId(oldId: string, newId: string): void;
 }
 
 function emptySessionMessages(): SessionMessages {
@@ -95,6 +102,31 @@ function syntheticId(msg: WireMessage): string {
   let h = 5381;
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
   return `h${(h >>> 0).toString(36)}-${text.length}`;
+}
+
+/** 本地乐观用户条目 id 前缀（appendLocalUserEntry 生成） */
+const LOCAL_ENTRY_PREFIX = "local-";
+
+/** 消息首个 text part 的文本（无文本 part 返回 null，如纯图消息） */
+function firstTextOf(msg: WireMessage): string | null {
+  const content = Array.isArray(msg.content) ? msg.content : [];
+  for (const part of content) {
+    if (part && part.type === "text" && typeof part.text === "string") return part.text;
+  }
+  return null;
+}
+
+/** 服务端 user 消息事件到达时吸收等价本地乐观占位（同首文本），防双列；
+ * 纯图消息（无文本锚点）不吸收，由全量重取收敛 */
+function absorbLocalUserEntries(list: WireEntry[], serverMsg: WireMessage): WireEntry[] {
+  const serverText = firstTextOf(serverMsg);
+  if (serverText === null || serverText === "") return list;
+  return list.filter((e) => {
+    if (typeof e.id !== "string" || !e.id.startsWith(LOCAL_ENTRY_PREFIX)) return true;
+    const m = e.message as WireMessage | undefined;
+    if (!m || m.role !== "user") return true;
+    return firstTextOf(m) !== serverText;
+  });
 }
 
 function upsertToolRun(
@@ -217,11 +249,13 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               settle(sessionId, msg);
             }
           } else {
-            // user / toolResult 等直接入列（wire 原样）
+            // user / toolResult 等直接入列（wire 原样）。user 消息先吸收等价的本地
+            // 乐观占位（发送成功后即时入列的 local-* 条目）——以服务端真值替换，防双列
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              const base = msg.role === "user" ? absorbLocalUserEntries(cur.entries, msg) : cur.entries;
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(base, entry) } },
               };
             });
           }
@@ -361,6 +395,54 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         if (!(sessionId in s.bySession)) return s;
         const bySession = { ...s.bySession };
         delete bySession[sessionId];
+        return { bySession };
+      }),
+
+    appendLocalUserEntry: (sessionId, text, images) =>
+      set((s) => {
+        const cur = s.bySession[sessionId] ?? emptySessionMessages();
+        const content: WirePart[] = [];
+        if (text) content.push({ type: "text", text });
+        for (const img of images ?? []) content.push({ type: "image", data: img.data, mimeType: img.mimeType });
+        const entry: WireEntry = {
+          type: "message",
+          id: `${LOCAL_ENTRY_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          message: { role: "user", content },
+        };
+        return {
+          bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+        };
+      }),
+
+    adoptDurableId: (oldId, newId) =>
+      set((s) => {
+        if (oldId === newId) return s;
+        const oldSlot = s.bySession[oldId];
+        if (!oldSlot) return s;
+        const newSlot = s.bySession[newId];
+        const bySession = { ...s.bySession };
+        if (!newSlot) {
+          // 直接搬家（常见路径：换 key 先于任何真实 id 事件到达）
+          bySession[newId] = oldSlot;
+        } else if (newSlot.entries.length === 0 && !newSlot.streamingMessage) {
+          // 目标槽存在但为空壳（事件刚建槽未写内容）：旧槽整体迁入，保留新游标
+          bySession[newId] = { ...oldSlot, cursor: newSlot.cursor ?? oldSlot.cursor };
+        } else {
+          // 竞态：换 key 前已有事件在真实 id 槽落下（事件先于回执到达）。事件真值
+          // 优先；目标槽尚无用户消息时把本地乐观条目补进头部防丢（全量重取后整替）
+          const hasUser = newSlot.entries.some(
+            (e) => (e as { message?: { role?: string } }).message?.role === "user",
+          );
+          const carry = hasUser
+            ? []
+            : oldSlot.entries.filter((e) => (e as { message?: { role?: string } }).message?.role === "user");
+          bySession[newId] = {
+            ...newSlot,
+            entries: [...carry, ...newSlot.entries],
+            streaming: newSlot.streaming || oldSlot.streaming,
+          };
+        }
+        delete bySession[oldId];
         return { bySession };
       }),
   };

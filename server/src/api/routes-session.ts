@@ -277,6 +277,10 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       sessionId: id,
       disposition: receipt.disposition,
       streaming: receipt.disposition !== "handled",
+      // 未落盘别名会话首条消息落盘后的真实 id（前端即时换 key；已落盘会话无此字段）
+      ...(typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== id
+        ? { durableSessionId: receipt.durableSessionId }
+        : {}),
       ...(degradations.length > 0 ? { degradations } : {}),
     });
   }));

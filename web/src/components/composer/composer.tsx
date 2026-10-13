@@ -10,6 +10,8 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { useMessagesStore } from "@/stores/messages";
+import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
@@ -163,10 +165,19 @@ export function Composer({
       setSending(true);
       setError(null);
       try {
-        await api.prompt(sessionId, {
-          text: trimmed,
-          images: imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined,
-        });
+        const outgoingImages =
+          imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined;
+        const receipt = await api.prompt(sessionId, { text: trimmed, images: outgoingImages });
+        // 缺陷修复（新会话首条用户消息不显示）：prompt 成功即本地乐观入列——首条消息
+        // 的服务端事件以路由句柄寻址，handle→durable 映射回填前不入列，靠本地占位；
+        // 回执带回真实 id 时即时换 key（消息槽 + 会话行 + 选中态），不等会话行刷新。
+        const messages = useMessagesStore.getState();
+        messages.appendLocalUserEntry(sessionId, trimmed, outgoingImages);
+        if (receipt.streaming) messages.setStreaming(sessionId, true);
+        if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
+          messages.adoptDurableId(sessionId, receipt.durableSessionId);
+          useSessionsStore.getState().adoptSessionId(sessionId, receipt.durableSessionId);
+        }
         if (opts.clearInputs) {
           setImagesBoth([]);
           clearDraft();

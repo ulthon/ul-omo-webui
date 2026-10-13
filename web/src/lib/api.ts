@@ -79,6 +79,8 @@ export interface PromptReceipt {
   /** "handled" 表示无回合（/命令） */
   disposition: string;
   streaming: boolean;
+  /** 未落盘别名会话（新会话）首条消息落盘后的真实会话 id（即时换 key）；已落盘会话无此字段 */
+  durableSessionId?: string;
   degradations?: string[];
 }
 
