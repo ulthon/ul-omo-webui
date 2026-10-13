@@ -28,6 +28,10 @@ server/data/
 .vscode/
 *.swp
 
+# 浏览器测试产物
+.playwright-mcp/
+/oc-context-panel.png
+
 # 系统
 .DS_Store
 Thumbs.db
