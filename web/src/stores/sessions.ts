@@ -18,11 +18,21 @@ export type ArchivedFilter = "true" | "false" | "all";
  * agent_end/settled/idle 落 "idle" 压过过期的 active=true）。 */
 export type SessionRunState = "running" | "waiting" | "idle" | "error";
 
+/** 无活动回落阈值（W1 缺陷 #3）：running/waiting 最后活动距今超过阈值由周期清扫回落
+ * idle（event-dispatch 每 60s 一扫）。waiting 从宽——权限等待合法滞留数小时，30min 只
+ * 兜服务端静默孤儿；活跃会话的事件持续刷新活动时刻，永不被清扫。 */
+export const RUNNING_STALE_MS = 10 * 60_000;
+export const WAITING_STALE_MS = 30 * 60_000;
+
 interface SessionsState {
   /** 按项目绝对路径分组的会话列表 */
   byProject: Record<string, SessionListItem[]>;
   /** 会话运行态覆盖（SSE 事件写入，id → 状态；回合结束清除） */
   runStates: Record<string, SessionRunState>;
+  /** 运行态活动时刻账本（W1 缺陷 #3，与 runStates 同键并行）：setRunState 写入、
+   * 该会话任何 SSE 事件刷新（touchRunStateAt），周期清扫据此判无活动超时回落。
+   * 组件不消费本字段（状态点仍读 runStates，值形状因此不被破坏）。 */
+  runStateAt: Record<string, number>;
   /** 遗留 UI 态：默认 "all" 与服务端单一口径（含 fork 全量列表）一致，仅影响
    * 分段控件高亮与来源徽标/子会话平铺展示，不参与请求 */
   view: SessionView;
@@ -64,6 +74,11 @@ interface SessionsState {
   /** 运行态写入/清除（todo 15 event-dispatch 调用） */
   setRunState(id: string, state: SessionRunState): void;
   clearRunState(id: string): void;
+  /** 该会话任一 SSE 事件的活动记账（event-dispatch 调用；无运行态时 no-op） */
+  touchRunStateAt(id: string): void;
+  /** 无活动超时清扫（W1 缺陷 #3，60s 周期由 event-dispatch 驱动）：running/waiting
+   * 最后活动距今超过阈值回落 idle（常量见文件头）。now 供单测注入确定性时刻。 */
+  sweepStaleRunStates(now?: number): void;
   /** 未落盘占位行采用真实 id（首条消息落盘后服务端回执带回，缺陷修复：新会话首条
    *  消息不显示）：行 id、当前选中、运行态点一并迁移 */
   adoptSessionId(oldId: string, newId: string): void;
@@ -82,6 +97,7 @@ function replaceIn(list: SessionListItem[], session: SessionListItem): SessionLi
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
+  runStateAt: {},
   view: "all",
   q: "",
   archived: "false",
@@ -190,14 +206,43 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     }),
 
   setRunState: (id, state) =>
-    set((s) => (s.runStates[id] === state ? s : { runStates: { ...s.runStates, [id]: state } })),
+    set((s) => {
+      const now = Date.now();
+      if (s.runStates[id] === state) {
+        // 同态写入只刷新活动时刻（runStates 引用不变，状态点订阅者不重渲染）
+        return s.runStateAt[id] === now ? s : { runStateAt: { ...s.runStateAt, [id]: now } };
+      }
+      return {
+        runStates: { ...s.runStates, [id]: state },
+        runStateAt: { ...s.runStateAt, [id]: now },
+      };
+    }),
 
   clearRunState: (id) =>
     set((s) => {
       if (!(id in s.runStates)) return s;
       const runStates = { ...s.runStates };
       delete runStates[id];
-      return { runStates };
+      const runStateAt = { ...s.runStateAt };
+      delete runStateAt[id];
+      return { runStates, runStateAt };
+    }),
+
+  touchRunStateAt: (id) =>
+    set((s) => (id in s.runStateAt ? { runStateAt: { ...s.runStateAt, [id]: Date.now() } } : s)),
+
+  sweepStaleRunStates: (now = Date.now()) =>
+    set((s) => {
+      let next: Record<string, SessionRunState> | null = null;
+      for (const [id, state] of Object.entries(s.runStates)) {
+        if (state !== "running" && state !== "waiting") continue;
+        const at = s.runStateAt[id];
+        if (at === undefined) continue; // 账本缺时刻（外部直写残留）不判超时，宁可不回落
+        const staleMs = state === "running" ? RUNNING_STALE_MS : WAITING_STALE_MS;
+        if (now - at <= staleMs) continue;
+        (next ??= { ...s.runStates })[id] = "idle";
+      }
+      return next === null ? s : { runStates: next };
     }),
 
   adoptSessionId: (oldId, newId) =>
@@ -218,13 +263,19 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       }
       const selectedId = s.selectedId === oldId ? newId : s.selectedId;
       let runStates = s.runStates;
+      let runStateAt = s.runStateAt;
       if (oldId in s.runStates) {
         runStates = { ...s.runStates };
         runStates[newId] = runStates[oldId];
         delete runStates[oldId];
+        if (oldId in runStateAt) {
+          runStateAt = { ...runStateAt };
+          runStateAt[newId] = runStateAt[oldId];
+          delete runStateAt[oldId];
+        }
       }
       return changed || selectedId !== s.selectedId || runStates !== s.runStates
-        ? { byProject, selectedId, runStates }
+        ? { byProject, selectedId, runStates, runStateAt }
         : s;
     }),
 }));

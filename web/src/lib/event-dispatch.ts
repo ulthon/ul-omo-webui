@@ -5,6 +5,11 @@
 // 同步进 sessions store，供 todo 15 状态点消费。
 // gap 帧 / 游标回退（服务端重启游标归零）→ 对已加载会话做全量 refetch（GET messages
 // 先取后换，重取期间界面不清空），替代增量补发——覆盖手机杀后台数分钟的场景。
+// 运行态自愈（W1 缺陷 #3）：服务重启会孤儿化前端 runStates（状态点永卡「运行中」）。
+// 两路修复——(1) 周期清扫：每 60s 把无活动超阈值的 running/waiting 回落 idle（阈值
+// 常量在 stores/sessions.ts），该会话任何 SSE 帧都刷新活动时刻，活跃会话不被误回落；
+// (2) 游标回退（=服务重启强信号）时在 refetchLoadedSessions 旁并行 fire-and-forget
+// GET /api/sessions 重同步（active 三态校准，见 resyncRunStatesFromServer）。
 import { api } from "@/lib/api";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
@@ -16,6 +21,33 @@ let lastCursor: number | null = null;
 
 /** 进行中的全量重取（按会话去重：gap + 游标回退连击时不重复拉取） */
 const refetching = new Set<string>();
+
+/** 运行态清扫周期（W1 缺陷 #3）：60s 一扫；回落阈值常量见 stores/sessions.ts。 */
+export const SWEEP_INTERVAL_MS = 60_000;
+
+/** 运行态清扫定时器（首个 SSE 帧到达时布防——runStates 只能由 SSE 写入，先有帧后有态；
+ * resetDispatchState 拆防，单测隔离用） */
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function armRunStateSweep(): void {
+  if (sweepTimer !== null) return;
+  sweepTimer = setInterval(() => {
+    useSessionsStore.getState().sweepStaleRunStates();
+  }, SWEEP_INTERVAL_MS);
+  // bun 单测环境不挂住进程退出（浏览器 Timer 无 unref，可选调用自动跳过）
+  (sweepTimer as unknown as { unref?: () => void }).unref?.();
+}
+
+function disarmRunStateSweep(): void {
+  if (sweepTimer === null) return;
+  clearInterval(sweepTimer);
+  sweepTimer = null;
+}
+
+/** 清扫是否已布防（单测断言用） */
+export function isRunStateSweepArmed(): boolean {
+  return sweepTimer !== null;
+}
 
 /** 四型对话框 UI method（verification/02）；extension_ui_request 其余 method
  * （omo 扩展的 setStatus/notify 等噪音）不计入"等待权限"。 */
@@ -35,6 +67,7 @@ export function getDispatchCursor(): number | null {
 export function resetDispatchState(): void {
   lastCursor = null;
   refetching.clear();
+  disarmRunStateSweep();
 }
 
 /** 单会话全量重取（gap/游标回退校准与 synthetic settle 补拉共用）：
@@ -71,12 +104,46 @@ export function refetchLoadedSessions(): void {
   }
 }
 
+/** 服务重启（游标回退）后的运行态重同步（W1 缺陷 #3）：与 refetchLoadedSessions 并行
+ * fire-and-forget——refetchSession 本身逐会话发射，没有「全部完成」时刻可耦合。
+ * GET /api/sessions 聚合快照按 active 三态校准既有 runStates（仅列表命中且引擎就绪者）：
+ *   active === null（引擎未就绪）→ 不动；
+ *   active === false → 非 idle 一律落 idle（含 error——服务端已无回合在途）；
+ *   active === true 且权限队列非空 → waiting（权限回合在途，强置 running 是语义回退）；
+ *   active === true 其余 → running。
+ * 列表缺席的会话（跨端已删等）不动，交无活动清扫兜底；快照竞态（快照 true 但回合
+ * 恰在拉取后落定）短暂误 running 可接受——10min 无活动清扫自愈。失败静默同 refetch。 */
+function resyncRunStatesFromServer(): void {
+  api
+    .listSessions({ archived: "all" })
+    .then(({ sessions }) => {
+      const byId = new Map(sessions.map((item) => [item.id, item]));
+      const store = useSessionsStore.getState();
+      const queues = usePermissionsStore.getState().bySession;
+      for (const [id, state] of Object.entries(store.runStates)) {
+        const active = byId.get(id)?.active;
+        if (active !== true && active !== false) continue; // 缺席 / null（引擎未就绪）不动
+        if (!active) {
+          if (state !== "idle") store.setRunState(id, "idle");
+        } else if ((queues[id]?.length ?? 0) > 0) {
+          if (state !== "waiting") store.setRunState(id, "waiting");
+        } else if (state !== "running") {
+          store.setRunState(id, "running");
+        }
+      }
+    })
+    .catch(() => {
+      // 网络瞬断静默：无活动清扫兜底
+    });
+}
+
 /**
  * SSE 帧统一入口（events.ts 调用）。
  * eventType = event: 行原文（wire type 或 "gap"）；data = data: 行 JSON 原文；
  * cursor = id: 行游标（缺失/非法为 null）。
  */
 export function dispatchSseEvent(eventType: string, data: string, cursor: number | null): void {
+  armRunStateSweep(); // 首帧布防运行态清扫（幂等）
   let frame: { event?: unknown; durableSessionId?: unknown };
   try {
     frame = JSON.parse(data) as { event?: unknown; durableSessionId?: unknown };
@@ -86,7 +153,11 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
 
   // 游标记账 + 回退检测：新纪元 id 小于旧游标即服务端重启归零，有不可补的丢失
   if (typeof cursor === "number") {
-    if (lastCursor !== null && cursor < lastCursor) refetchLoadedSessions();
+    if (lastCursor !== null && cursor < lastCursor) {
+      refetchLoadedSessions();
+      // 运行态重同步并行发射（W1 缺陷 #3）：消息全量重取不覆盖 runStates，两路独立校准
+      resyncRunStatesFromServer();
+    }
     lastCursor = cursor;
   }
 
@@ -104,6 +175,10 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const wireSessionId = typeof wire.sessionId === "string" ? wire.sessionId : null;
   const sessionId = durableSessionId ?? wireSessionId;
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
+
+  // 活动记账（W1 缺陷 #3）：该会话任何 SSE 帧都刷新运行态活动时刻——流式 chunk / 工具
+  // 事件持续到达即活跃，永不被 60s 清扫回落；无运行态时 no-op。
+  useSessionsStore.getState().touchRunStateAt(sessionId);
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
   const sessions = useSessionsStore.getState();
