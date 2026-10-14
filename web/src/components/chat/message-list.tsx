@@ -8,6 +8,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { Button } from "@/components/ui/button";
 import type { ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
+import { NavRail } from "./nav-rail";
 
 /** 模型切换点标记（B11）：居中细分隔线 + muted 模型名；仅在 assistant 段 model 变化处出现 */
 export const ModelDivider = memo(function ModelDivider({ model }: { model: string }) {
@@ -113,6 +114,7 @@ export function MessageList({
               <div
                 key={vi.key}
                 data-index={vi.index}
+                data-entry-key={items[vi.index].key}
                 ref={virtualizer.measureElement}
                 className="w-full pb-3"
                 style={{
@@ -128,6 +130,8 @@ export function MessageList({
           </div>
         )}
       </div>
+
+      <NavRail items={items} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
 
       {syncing && (
         <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
