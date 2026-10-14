@@ -14,7 +14,8 @@ import type { WireEntry, WireMessage } from "@/lib/api";
 import { Composer } from "@/components/composer/composer";
 import { CommandBar } from "./command-bar";
 import { commandGate } from "./commands";
-import { MessageList, type ChatListItem } from "./message-list";
+import { MessageList } from "./message-list";
+import { buildMessageItems, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
 import { StatusBar } from "./status-bar";
 
@@ -162,20 +163,10 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     [entries],
   );
 
-  const items = useMemo<ChatListItem[]>(() => {
-    let lastAssistantId: string | null = null;
-    for (const e of messageEntries) {
-      if ((e.message as WireMessage).role === "assistant") lastAssistantId = e.id;
-    }
-    const list: ChatListItem[] = messageEntries.map((e) => ({
-      key: e.id,
-      kind: "entry" as const,
-      entryId: e.id,
-      interrupted: interrupted && e.id === lastAssistantId,
-    }));
-    if (hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });
-    return list;
-  }, [messageEntries, hasStreamingMessage, interrupted]);
+  const items = useMemo<ChatListItem[]>(
+    () => buildMessageItems(messageEntries, { hasStreamingMessage, interrupted }),
+    [messageEntries, hasStreamingMessage, interrupted],
+  );
 
   if (loadState === "loading") {
     return (

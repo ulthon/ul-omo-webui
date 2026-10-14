@@ -6,18 +6,24 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { Button } from "@/components/ui/button";
+import type { ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
 
-export interface ChatListItem {
-  key: string;
-  kind: "entry" | "streaming";
-  entryId?: string;
-  interrupted?: boolean;
-}
+/** 模型切换点标记（B11）：居中细分隔线 + muted 模型名；仅在 assistant 段 model 变化处出现 */
+export const ModelDivider = memo(function ModelDivider({ model }: { model: string }) {
+  return (
+    <div data-testid="model-divider" data-model={model} aria-label={`模型 ${model}`} className="flex items-center gap-3 py-0.5">
+      <span className="h-px min-w-0 flex-1 bg-border" aria-hidden />
+      <span className="shrink-0 text-xs text-muted-foreground">{model}</span>
+      <span className="h-px min-w-0 flex-1 bg-border" aria-hidden />
+    </div>
+  );
+});
 
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
-  return <EntryBubble sessionId={sessionId} entryId={item.entryId!} interrupted={item.interrupted === true} />;
+  if (item.kind === "modelDivider") return <ModelDivider model={item.model} />;
+  return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
 });
 
 /** 距底部小于该值视为"在底部"（跟随流式内容增长） */

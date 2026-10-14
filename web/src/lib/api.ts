@@ -62,6 +62,14 @@ export interface WireMessage {
   [key: string]: unknown;
 }
 
+/** 消息级模型名窄化访问器（B11 切换点标记）：assistant message 载荷透传的 model 字段
+ * （message_end 载荷实证 docs/verification/05-p1-findings.md:54；adapter 对 wire 条目
+ * 原样透传）。老数据/异常（缺失、空串、非字符串）一律 null，消费侧不显示不报错。 */
+export function messageModel(entry: WireEntry): string | null {
+  const model = (entry.message as WireMessage | undefined)?.model;
+  return typeof model === "string" && model !== "" ? model : null;
+}
+
 export interface WirePart {
   type: string;
   [key: string]: unknown;
