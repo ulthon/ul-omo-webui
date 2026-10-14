@@ -7,8 +7,8 @@
 // + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
 // 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
 // + 元数据操作菜单（置顶/重命名/生成标题/归档/复制会话 ID/复制标题/导出 HTML/标签/删除——
-// 重命名与删除弹窗由父级单例托管，标签走选择器）。
-import { useState } from "react";
+// 重命名与删除弹窗由父级单例托管，标签走锚定下拉（docs08-r3 任务 13，锚点=行菜单钮））。
+import { useRef, useState } from "react";
 import { ChevronRight, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
@@ -105,8 +105,9 @@ export interface SessionItemProps {
   knownChildren?: SessionListItem[];
   /** 是否可展开子会话（顶层会话 true，子会话行 false） */
   expandable: boolean;
-  /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开选择器（父级接线，todo 11） */
-  onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem) => void;
+  /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开锚定下拉（父级接线，任务 13；
+   *  anchor = 行菜单钮元素，供父级把 TagDropdown 锚定到本行） */
+  onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem, anchor?: HTMLElement) => void;
   /** 两源定义键集（todo 11 徽标孤儿判定；null = 定义未就绪不渲染徽标） */
   definedKeys?: Set<string> | null;
   /** 选中行为覆盖（todo 10 跨项目统一 handler）：缺省仅 select + 收抽屉；
@@ -132,6 +133,8 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [generatingTitle, setGeneratingTitle] = useState(false);
+  // 行菜单钮（"标签"锚定下拉的锚点元素；菜单项 onSelect 时菜单已关、按钮仍挂载，矩形稳定）
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   // 展示用子会话：懒加载结果优先，否则用列表已带出的 knownChildren（props 会变，
   // 不能在 useState 初始值里固化——那会拿不到首屏之后才出现的数据）
   const childRows = children ?? knownChildren ?? [];
@@ -313,6 +316,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             {/* todo 26 走查修复：手机无 hover，opacity-0 使操作菜单不可达——lg 以下常显；
                 触控目标 44px（lg 保持桌面紧凑 32px） */}
             <Button
+              ref={menuBtnRef}
               variant="ghost"
               size="icon"
               className="size-11 shrink-0 opacity-100 transition-opacity data-[state=open]:opacity-100 lg:size-8 lg:opacity-0 lg:group-hover:opacity-100"
@@ -357,7 +361,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
               导出 HTML
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={busy} onSelect={() => onDialog("tags", session)} data-testid="item-tags">
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => onDialog("tags", session, menuBtnRef.current ?? undefined)}
+              data-testid="item-tags"
+            >
               <Tag className="mr-2 size-4" />
               标签
             </DropdownMenuItem>

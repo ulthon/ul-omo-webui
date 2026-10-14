@@ -1,6 +1,6 @@
-// 标签 UI 纯逻辑（todo 11）：徽标截断、孤儿判定、选择器整替载荷、过滤选项合并、
+// 标签 UI 纯逻辑（todo 11）：徽标截断、孤儿判定、下拉整替载荷、过滤选项合并、
 // 管理弹层整替列表生成。抽成纯函数便于单测（web/tests/tags-ui.test.ts）；
-// 组件层（tag-badge/tag-selector/tag-manage-dialog）只做渲染与请求接线。
+// 组件层（tag-badge/tag-dropdown/tag-manage-dialog）只做渲染与请求接线。
 // 键约定与服务端一致：挂载与定义都以 (scope, name) 为键，scope 取 "global"|"project"。
 
 /** 挂载引用（与服务端 SessionTagRef 同形；createdAt 在列表传输中被裁掉） */

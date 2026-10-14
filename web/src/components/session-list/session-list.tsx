@@ -47,9 +47,9 @@ import {
 } from "./global-list-data";
 import { SessionItem, buildForkIndexes } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
-import { TagSelector } from "./tag-selector";
+import { TagDropdown } from "./tag-dropdown";
 import { TagManageDialog, type TagManageScope } from "./tag-manage-dialog";
-import { definedTagKeys, mergeTagOptions, type TagDefs } from "./tag-data";
+import { definedTagKeys, dedupeTagDefs, mergeTagOptions, type TagDefs } from "./tag-data";
 
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -115,10 +115,11 @@ export function SessionList() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ label: string; done: number; total: number } | null>(null);
   // 标签（todo 11）：两源定义集（涉及项目合并；perProjectDefs 保留项目归属）、
-  // 选择器会话集合、管理弹层域（docs08-r3 任务 11 拆域：null=关闭，否则 global 或 { projectPath }）
+  // 打标签下拉集合（docs08-r3 任务 13：sessions + 锚点元素，null=关闭）、
+  // 管理弹层域（docs08-r3 任务 11 拆域：null=关闭，否则 global 或 { projectPath }）
   const [tagDefs, setTagDefs] = useState<TagDefs | null>(null);
   const [perProjectDefs, setPerProjectDefs] = useState<Record<string, TagDefinition[]>>({});
-  const [tagSelector, setTagSelector] = useState<SessionListItem[] | null>(null);
+  const [tagDropdown, setTagDropdown] = useState<{ sessions: SessionListItem[]; anchor: HTMLElement } | null>(null);
   const [manageScope, setManageScope] = useState<TagManageScope | null>(null);
   // 项目隐藏（A2 docs08-r3 任务 10）：当前项目隐藏需确认弹层（回空会话态），非当前直接执行
   const [hidePending, setHidePending] = useState<string | null>(null);
@@ -500,16 +501,46 @@ export function SessionList() {
     });
   };
 
-  /** 行内菜单分流（todo 11）：rename/delete 走既有弹窗单例；tags 打开选择器 */
-  const handleItemDialog = useCallback((kind: "rename" | "delete" | "tags", session: SessionListItem) => {
-    if (kind === "tags") {
-      setTagSelector([session]);
-      return;
-    }
-    setDialog({ kind, session });
-  }, []);
+  /** 行内菜单分流（todo 11 / 任务 13）：rename/delete 走既有弹窗单例；tags 打开锚定
+   *  下拉（锚点 = 行菜单钮元素，由 session-item 传入） */
+  const handleItemDialog = useCallback(
+    (kind: "rename" | "delete" | "tags", session: SessionListItem, anchor?: HTMLElement) => {
+      if (kind === "tags") {
+        if (anchor) setTagDropdown({ sessions: [session], anchor });
+        return;
+      }
+      setDialog({ kind, session });
+    },
+    [],
+  );
 
   const archivedLabel = archived === "false" ? "未归档" : archived === "true" ? "已归档" : "含归档";
+
+  // ---- 打标签下拉（docs08-r3 任务 13）----
+
+  /** 「管理…」落点域（任务 13 规则写死）：单会话 = 会话所属项目（无所属项目退 global
+   *  仅全局组）；批量 = 选中集全部同属一项目才用该项目，跨项目 null（按钮置灰） */
+  const tagDropdownScope = useMemo<TagManageScope | null>(() => {
+    if (!tagDropdown) return null;
+    if (tagDropdown.sessions.length === 1) {
+      const p = tagDropdown.sessions[0].project;
+      return p ? { projectPath: p } : "global";
+    }
+    const projects = new Set(tagDropdown.sessions.map((s) => s.project));
+    return projects.size === 1 ? { projectPath: [...projects][0] } : null;
+  }, [tagDropdown]);
+
+  /** 下拉两段列表的定义集：单会话/同项目批量 = 该项目的单项目列表（perProjectDefs，
+   *  与管理弹框单组契约同源）；跨项目批量 = 合并集去重（与管理无关，仅展示勾选） */
+  const tagDropdownDefs = useMemo<TagDefs | null>(() => {
+    if (!tagDropdown || !tagDefs) return null;
+    const projects = new Set(tagDropdown.sessions.map((s) => s.project));
+    if (projects.size === 1) {
+      const p = [...projects][0];
+      return { global: tagDefs.global, project: perProjectDefs[p] ?? [] };
+    }
+    return dedupeTagDefs(tagDefs);
+  }, [tagDropdown, tagDefs, perProjectDefs]);
 
   /** 批量模式行 props（todo 25：勾选集合提升到本容器） */
   const itemBatchProps = (s: SessionListItem) =>
@@ -654,13 +685,14 @@ export function SessionList() {
             {archived === "true" ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
             {archived === "true" ? "取消归档" : "归档"}
           </Button>
-          {/* 批量打标签（todo 11）：选择器内对选中集合循环 PUT，进度反馈在选择器内 */}
+          {/* 批量打标签（任务 13）：锚定下拉对选中集合循环 PUT 勾选即存，进度反馈在下拉内；
+              锚点 = 本钮（点击时刻的 DOM 元素存入 state） */}
           <Button
             variant="ghost"
             size="sm"
             className="h-11 gap-1 px-1.5 text-xs lg:h-6"
             disabled={batchBusy || selectedIds.size === 0 || !tagDefs}
-            onClick={() => setTagSelector(findSessions(selectedIds))}
+            onClick={(e) => setTagDropdown({ sessions: findSessions(selectedIds), anchor: e.currentTarget })}
             data-testid="batch-tag-btn"
           >
             <Tag className="size-3" />
@@ -960,16 +992,18 @@ export function SessionList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {tagSelector && tagDefs && (
-        <TagSelector
-          sessions={tagSelector}
-          defs={tagDefs}
-          /* 新建项目标签的落点 = 所选会话的项目（currentProject 与会话项目可能不一致——
-           * 全局视图下跨项目点击轻量切换有竞态窗口，以会话归属为准） */
-          project={tagSelector[0].project}
-          onDefsChanged={() => void reloadTagDefs()}
+      {tagDropdown && tagDropdownDefs && (
+        <TagDropdown
+          anchor={tagDropdown.anchor}
+          sessions={tagDropdown.sessions}
+          defs={tagDropdownDefs}
+          manageScope={tagDropdownScope}
+          onManage={() => {
+            setTagDropdown(null);
+            if (tagDropdownScope) setManageScope(tagDropdownScope);
+          }}
           onClose={() => {
-            setTagSelector(null);
+            setTagDropdown(null);
             onChanged();
           }}
         />
