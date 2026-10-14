@@ -1,21 +1,17 @@
 // 主布局 /：桌面（≥1024px）常驻左侧栏 + 主区；≤768px（lg 断点以下）侧栏抽屉化 + 汉堡按钮。
 // 初始引导：落到 last_opened_at 最新的项目（lib/bootstrap）。
-// 主区页签（todo 19）：「对话 / 未提交变更」切换；todo 15 增加「笔记」页签挂
-// components/notes/notes-view 的 NotesView。页签状态为 shell 本地 state（无跨组件消费）。
-// todo 15：笔记编辑态未保存时切页签弹确认——NotesView 经 dirtyRef 上报 dirty，
-// 页签切换 handler 读取（切换即卸载重挂，确认放弃才会丢内容）。
-// todo 26：页签栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；visualViewport 高度
-// 同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
-// W5-15：主区 flex 行右侧新增 todo 可折叠右栏——lg 常驻（展开 w-80 / 折叠窄条），
-// <lg 镜像左栏 fixed 抽屉（inset-y-0，勿套 --app-height，否则软键盘收缩截断抽屉底）；
-// 双抽屉互斥（开其一时自动关另一，经 ui store subscribe 实现左→右方向）；z 序：右抽屉
-// z-[45]（高于左抽屉 z-40，低于 toast z-50），共用遮罩 z-30；折叠初值 lg 展开 / <lg 关闭，
-// 一经用户交互以 localStorage 记忆为准。
+// C15（docs08-r3 任务 3）：主区永久为对话（ChatPlaceholder），任务/变更/笔记/统计四页签
+// 收敛到右栏 RightRail（components/layout/right-rail），原主区"变更/笔记"页签移除。
+// todo 26：主区顶栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）与手机右栏抽屉触发钮；
+// visualViewport 高度同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
+// W5-15 右栏开合：lg 常驻（展开 / 折叠窄条），<lg 镜像左栏 fixed 抽屉（inset-y-0，勿套
+// --app-height，否则软键盘收缩截断抽屉底）；双抽屉互斥（开其一时自动关另一，经 ui store
+// subscribe 实现左→右方向）；z 序与折叠记忆（senpi-webui:todo-panel-open）机制不变。
 // W2 todo 8：useCtrlPModelPicker 导出供单测挂最小探针验证（避免 mock.module 进程级
 // 粘滞污染同进程后跑的测试文件）。
 // oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
@@ -26,23 +22,8 @@ import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
 import { Button } from "@/components/ui/button";
-import { TodoPanel, readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
-
-// W5-27 首屏拆分：变更页签（react-diff-view）按需加载，首屏对话页不下载该模块
-const ChangesView = lazy(() =>
-  import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
-);
-// todo 15：笔记页签同样按需加载（Markdown 管线首屏已有，仅 notes 组件本体惰性）
-const NotesView = lazy(() =>
-  import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
-);
-
-type MainTab = "chat" | "changes" | "notes";
-
-const TAB_CLASS = (active: boolean) =>
-  `min-h-11 rounded-lg px-3 py-1.5 text-sm transition-colors lg:min-h-9 ${
-    active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-  }`;
+import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
+import { RightRail } from "@/components/layout/right-rail";
 
 /** 手机触控目标外链按钮（44px；desktop 同尺寸不碍事） */
 const EXTERNAL_LINK_CLASS =
@@ -99,10 +80,7 @@ export function AppShell() {
   const [booted, setBooted] = useState(false);
   const [bootFailed, setBootFailed] = useState(false);
   const [retrying, setRetrying] = useState(0);
-  const [mainTab, setMainTab] = useState<MainTab>("chat");
-  // 笔记编辑未保存标记：NotesView 编辑态写入，切页签 handler 读取做确认（todo 15）
-  const notesDirtyRef = useRef(false);
-  // W5-15 todo 右栏：当前会话（与会话视图同源派生：选中优先、?session= 深链兜底）
+  // W5-15 右栏：当前会话（与会话视图同源派生：选中优先、?session= 深链兜底）
   const selectedSessionId = useSessionsStore((s) => s.selectedId);
   const urlSessionId = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -163,13 +141,6 @@ export function AppShell() {
     setBootFailed(false);
     setRetrying((n) => n + 1);
   };
-  // 页签切换：离开笔记编辑态且有未保存修改时弹确认（beforeunload 管不到站内切换）
-  const switchTab = (tab: MainTab) => {
-    if (mainTab === "notes" && tab !== "notes" && notesDirtyRef.current) {
-      if (!window.confirm("笔记有未保存的修改，离开将丢失。确定离开吗？")) return;
-    }
-    setMainTab(tab);
-  };
   return (
     <div className="flex flex-col bg-background" style={{ height: "var(--app-height, 100svh)" }}>
       <Topbar />
@@ -196,41 +167,9 @@ export function AppShell() {
           <Sidebar />
         </aside>
 
-        {/* 主区：todo 16 对话流实体 + todo 19 未提交变更页签 + todo 26 外链入口（kv 配置，未配置隐藏） */}
+        {/* 主区：永久对话（C15）+ todo 26 外链入口（kv 配置，未配置隐藏）与手机右栏抽屉触发 */}
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
-            <div role="tablist" aria-label="主区视图" className="flex items-center gap-1">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mainTab === "chat"}
-                data-testid="main-tab-chat"
-                onClick={() => switchTab("chat")}
-                className={TAB_CLASS(mainTab === "chat")}
-              >
-                对话
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mainTab === "changes"}
-                data-testid="main-tab-changes"
-                onClick={() => switchTab("changes")}
-                className={TAB_CLASS(mainTab === "changes")}
-              >
-                未提交变更
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mainTab === "notes"}
-                data-testid="main-tab-notes"
-                onClick={() => switchTab("notes")}
-                className={TAB_CLASS(mainTab === "notes")}
-              >
-                笔记
-              </button>
-            </div>
             <div className="ml-auto flex items-center gap-1">
               {/* W5-15 手机右栏抽屉触发（44px 触控目标，lg 以上隐藏——桌面走常驻 aside 折叠条） */}
               <button
@@ -280,66 +219,15 @@ export function AppShell() {
                   重试
                 </Button>
               </div>
-            ) : mainTab === "chat" ? (
-              <ChatPlaceholder />
-            ) : mainTab === "notes" ? (
-              <Suspense
-                fallback={
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    加载笔记视图…
-                  </div>
-                }
-              >
-                <NotesView dirtyRef={notesDirtyRef} />
-              </Suspense>
             ) : (
-              <Suspense
-                fallback={
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    加载变更视图…
-                  </div>
-                }
-              >
-                <ChangesView />
-              </Suspense>
+              <ChatPlaceholder />
             )}
           </div>
         </main>
 
-        {/* W5-15 todo 右栏（桌面）：lg 常驻——展开 w-80 / 折叠收为窄条带展开钮。
-            static 流入 flex 行，高度随父级 --app-height 链路自然约束 */}
-        {todoPanelOpen ? (
-          <aside aria-label="任务面板" className="hidden w-80 shrink-0 border-l bg-background lg:block">
-            <TodoPanel sessionId={todoSessionId} onClose={toggleTodoPanel} />
-          </aside>
-        ) : (
-          <aside
-            aria-label="任务面板（已折叠）"
-            className="hidden w-10 shrink-0 flex-col items-center border-l bg-background py-2 lg:flex"
-          >
-            <button
-              type="button"
-              aria-label="展开任务面板"
-              title="展开任务面板"
-              onClick={toggleTodoPanel}
-              className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-            >
-              <ListTodo className="size-4" />
-            </button>
-          </aside>
-        )}
-
-        {/* W5-15 todo 右栏（手机）：<lg 固定右缘抽屉，镜像左栏模式。inset-y-0 维持（勿套
-            --app-height——iOS 软键盘收缩会截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于
-            toast z-50（计划 Oracle 低-8：互斥下仅过渡期可能重叠，z-50 有层叠争议） */}
-        <aside
-          aria-label="任务面板"
-          className={`fixed inset-y-0 right-0 z-[45] w-80 border-l bg-background transition-transform duration-200 lg:hidden ${
-            todoPanelOpen ? "translate-x-0" : "translate-x-full"
-          }`}
-        >
-          <TodoPanel sessionId={todoSessionId} onClose={toggleTodoPanel} />
-        </aside>
+        {/* C15 右栏：桌面展开（带拖宽分隔条与四页签）/ 桌面折叠窄条 / 手机抽屉三形态
+            统一由 RightRail 渲染；开合状态与记忆机制沿用 W5-15（todoPanelOpen） */}
+        <RightRail open={todoPanelOpen} onToggle={toggleTodoPanel} sessionId={todoSessionId} />
       </div>
 
       {/* 轻提示 */}
