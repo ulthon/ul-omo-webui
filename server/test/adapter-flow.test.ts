@@ -132,6 +132,13 @@ class FakeRpcClient implements SenpiRpcClient {
     return thinkingFixture
   }
 
+  commandsFixture: Array<Record<string, unknown>> = []
+  async getCommands(): Promise<Array<Record<string, unknown>>> {
+    this.calls.push({ method: "get_commands" })
+    if (!this.opened) throw new Error("missing_session_id")
+    return this.commandsFixture
+  }
+
   async getSessionStats(): Promise<Record<string, unknown>> {
     return statsFixture
   }
@@ -368,5 +375,32 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
       err = e
     }
     expect((err as EngineAdapterError).code).toBe("unsupported")
+  })
+
+  test("commands 映射 get_commands 行（name/description/source 窄化）；无活跃会话拒绝", async () => {
+    const fake = new FakeRpcClient()
+    fake.commandsFixture = [
+      { name: "account", description: "List and manage accounts.", source: "extension", syntax: "slash", sourceInfo: { source: "builtin" } },
+      { name: "skill:ast-grep", source: "skill", syntax: "dollar" },
+      { name: "w18-spike", description: "模板", source: "prompt" },
+      { name: "", source: "extension" },
+    ]
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    // open_session 前（无活跃会话）：fake 以 missing_session_id 拒绝（06 spike 实证口径）
+    let err: unknown
+    try {
+      await adapter.commands()
+    } catch (e) {
+      err = e
+    }
+    expect((err as EngineAdapterError).code).toBe("no_active_session")
+    await adapter.openSession({})
+    const rows = await adapter.commands()
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toEqual({ name: "account", source: "extension", description: "List and manage accounts." })
+    expect(rows[1]).toEqual({ name: "skill:ast-grep", source: "skill" })
+    expect(rows[2]).toEqual({ name: "w18-spike", source: "prompt", description: "模板" })
+    expect(fake.calls.some((c) => c.method === "get_commands")).toBe(true)
   })
 })

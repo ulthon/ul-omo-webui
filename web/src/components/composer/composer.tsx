@@ -10,29 +10,39 @@
 // 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
 // W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+P 快捷打开）与思考档 chip
 // （模型未下发 supportedThinkingLevels 时整体隐藏），选择随下一条 prompt 注入。
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+// docs08-r3 任务 19：斜杠输入提示（SlashHints）——值以 / 开头且首 token 未闭合时
+// 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令
+// （尾部空格）走既有 prompt 支持路径；上下/回车导航，Esc 关闭并回退打开前输入。
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
-import { ApiError, api, type InputHistoryItem } from "@/lib/api";
+import { ApiError, api, type CommandsResponse, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
+import { SlashHints } from "@/components/composer/slash-hints";
 import { ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import {
+  EMPTY_SLASH_GROUPS,
   MAX_IMAGES,
   PASTE_ATTACHMENT_THRESHOLD,
   appendAttachmentLines,
   dataUrlToBase64,
+  filterSlashGroups,
+  flattenSlashItems,
   formatPasteKb,
   historyPreview,
   readFileAsDataUrl,
+  slashReplaceToken,
+  slashTriggerToken,
   stepHistoryIndex,
   utf8ByteLength,
   validateImageFile,
+  type SlashItem,
 } from "./composer-logic";
 import { useDraft } from "./use-draft";
 
@@ -124,6 +134,28 @@ export function Composer({
   const [snippetAnchor, setSnippetAnchor] = useState<HTMLElement | null>(null);
   const closeSnippetDropdown = useCallback(() => setSnippetDropdownOpen(false), []);
 
+  // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
+  // 触发纯派生自 textarea 值（/ 开头 + 首 token 未闭合）；slashDismissedToken 记录
+  // 「被显式关闭时的 token」实现外点/Esc 关闭后同 token 不再弹出，继续输入（token
+  // 变化）即重开。anchor 用 state 存 DOM 元素（Task12 契约：勿在读渲染期读 ref.current）。
+  const [slashAnchor, setSlashAnchor] = useState<HTMLElement | null>(null);
+  const [slashData, setSlashData] = useState<CommandsResponse | null>(null);
+  const [slashHighlight, setSlashHighlight] = useState(0);
+  const [slashDismissedToken, setSlashDismissedToken] = useState<string | null>(null);
+  /** 打开前输入快照：Esc 回退目标 */
+  const slashSnapshotRef = useRef("");
+  /** document 段 Esc 监听读的镜像（effect 同步，见取数块前） */
+  const slashOpenRef = useRef(false);
+
+  /** 输入统一入口：任何输入都重置下拉高亮（token 变化后从头导航） */
+  const applyText = useCallback(
+    (next: string) => {
+      setSlashHighlight(0);
+      update(next);
+    },
+    [update],
+  );
+
   const openPicker = useCallback((trigger: number | null) => {
     setPicker({ open: true, trigger });
   }, []);
@@ -133,7 +165,7 @@ export function Composer({
       const el = textareaRef.current;
       const caret = el?.selectionStart ?? textRef.current.length;
       const { content, caret: nextCaret } = insertMention(textRef.current, caret, trigger, path);
-      update(content);
+      applyText(content);
       requestAnimationFrame(() => {
         const node = textareaRef.current;
         if (!node) return;
@@ -141,7 +173,7 @@ export function Composer({
         node.setSelectionRange(nextCaret, nextCaret);
       });
     },
-    [update, textRef],
+    [applyText, textRef],
   );
 
   const onPickFile = useCallback(
@@ -160,14 +192,14 @@ export function Composer({
       const el = textareaRef.current;
       const caret = el?.selectionStart ?? textRef.current.length;
       const { content, caret: nextCaret } = insertSnippet(textRef.current, caret, snippet);
-      update(content);
+      applyText(content);
       requestAnimationFrame(() => {
         const node = textareaRef.current;
         if (!node) return;
         node.setSelectionRange(nextCaret, nextCaret);
       });
     },
-    [update, textRef],
+    [applyText, textRef],
   );
 
   // 多行自增高：每次渲染后按内容校正高度；超过 max-h-48 由 CSS 截断并内部滚动
@@ -177,6 +209,101 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   });
+
+  // ---------- 斜杠提示派生与行为（docs08-r3 任务 19） ----------
+
+  // 触发与快照：slashOpen 纯派生自 textarea 值；快照在「从不匹配到匹配」的转移帧
+  // 记录打开前内容（覆盖 onChange/回填/草稿恢复全部路径——use-draft 恢复不经 update）
+  const slashToken = useMemo(() => slashTriggerToken(text), [text]);
+  const slashOpen = slashToken !== null && slashDismissedToken !== slashToken;
+  const prevTextRef = useRef("");
+  useEffect(() => {
+    if (slashTriggerToken(prevTextRef.current) === null && slashToken !== null) {
+      slashSnapshotRef.current = prevTextRef.current;
+    }
+    prevTextRef.current = text;
+    // document 段 Esc 回退监听读的最新开合态镜像（effect 同步，不在渲染期写 ref）
+    slashOpenRef.current = slashOpen;
+  }, [text, slashToken, slashOpen]);
+
+  // 取数：下拉开着即取（服务端 60s 按项目缓存，单次 RPC 毫秒级）；失败静默按空处理
+  useEffect(() => {
+    if (!slashOpen || !project) return;
+    let active = true;
+    api
+      .getCommands(project)
+      .then((res) => {
+        if (active && res.project === project) setSlashData(res);
+      })
+      .catch(() => {
+        // 置空三段：面板显示空态，打字主路径零关联
+        if (active) setSlashData(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [slashOpen, project]);
+
+  const slashGroups = useMemo(
+    () => (slashData && slashToken !== null ? filterSlashGroups(slashData, slashToken) : EMPTY_SLASH_GROUPS),
+    [slashData, slashToken],
+  );
+  const slashItems = useMemo(() => flattenSlashItems(slashGroups), [slashGroups]);
+  // 高亮越界防御（items 收缩后残留大下标）：Enter/渲染都取钳制值
+  const safeHighlight = slashItems.length > 0 ? Math.min(slashHighlight, slashItems.length - 1) : 0;
+
+  /** AnchoredPanel onClose（外点/Esc 截停共用）：记下关闭时 token，同 token 不再弹出 */
+  const closeSlashHints = useCallback(() => {
+    setSlashDismissedToken(slashTriggerToken(textRef.current));
+  }, [textRef]);
+
+  /** Esc 专属的输入回退：恢复打开前快照（面板随值派生自动关闭） */
+  const revertSlashInput = useCallback(() => {
+    const snapshot = slashSnapshotRef.current;
+    closeSlashHints();
+    applyText(snapshot);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(snapshot.length, snapshot.length);
+    });
+  }, [closeSlashHints, applyText]);
+
+  // AnchoredPanel 的 Esc 截停在 document 捕获段（stopPropagation）先执行并调 onClose
+  //（只关面板不回退）；同节点后注册的本监听仍会收到该按键，在此补 Esc 特有的输入
+  // 回退。外点关闭不回退（输入保留，继续输入即 token 变化自动重开）。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !slashOpenRef.current) return;
+      e.preventDefault();
+      revertSlashInput();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [revertSlashInput]);
+
+  /** 选择条目：首 token 替换为 /<name>（含尾部空格），光标落末尾；补参数后按普通 prompt 发送 */
+  const selectSlashItem = useCallback(
+    (item: SlashItem) => {
+      const next = slashReplaceToken(textRef.current, item.name);
+      applyText(next);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(next.length, next.length);
+      });
+    },
+    [applyText, textRef],
+  );
+
+  // anchor 用 state 存 DOM 元素（Task12 契约）：ref callback 挂载即置（历史回填等
+  // 不经 onChange 的路径也能锚定），卸载随 busy 分支整体换 UI 时清空
+  const textareaRefCb = useCallback((el: HTMLTextAreaElement | null) => {
+    textareaRef.current = el;
+    setSlashAnchor(el);
+  }, []);
 
   // ---------- 发送 ----------
 
@@ -370,7 +497,7 @@ export function Composer({
   /** 回填历史条目（可编辑）：文本进草稿链路，光标移到末尾；按钮入口时顺带聚焦 */
   const backfill = useCallback(
     (content: string) => {
-      update(content);
+      applyText(content);
       requestAnimationFrame(() => {
         const el = textareaRef.current;
         if (!el) return;
@@ -378,7 +505,7 @@ export function Composer({
         el.setSelectionRange(content.length, content.length);
       });
     },
-    [update],
+    [applyText],
   );
 
   const openHistory = useCallback(async () => {
@@ -431,10 +558,31 @@ export function Composer({
         if (el.selectionStart === el.selectionEnd) {
           e.preventDefault();
           const pos = el.selectionStart;
-          update(el.value.slice(0, pos) + "@" + el.value.slice(el.selectionEnd));
+          applyText(el.value.slice(0, pos) + "@" + el.value.slice(el.selectionEnd));
           openPicker(pos);
         }
         return;
+      }
+      // 斜杠下拉在场且有可选项时 ↑/↓/Enter 归导航（优先于历史翻阅）：高亮循环移动，
+      // 回车选择高亮项（首 token 替换后值含空格，下拉随值派生自动关闭）。过滤后无
+      // 命中（如 /comp 唯一候选 compact 被不支持名单排除）不消费按键——Enter 落到
+      // 正常发送路径，由命令门拦截不支持的命令并行内明示。
+      if (slashOpen && slashItems.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashHighlight((i) => (i + 1) % slashItems.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashHighlight((i) => (i - 1 + slashItems.length) % slashItems.length);
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          selectSlashItem(slashItems[safeHighlight]!);
+          return;
+        }
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -466,7 +614,7 @@ export function Composer({
         closeHistory();
       }
     },
-    [history, send, historyOlder, historyNewer, closeHistory, openHistory, openPicker, update],
+    [history, send, historyOlder, historyNewer, closeHistory, openHistory, openPicker, applyText, slashOpen, slashItems, safeHighlight, selectSlashItem],
   );
 
   // ---------- 中断态（原 16 行为：状态行 + 停止按钮，输入区让位） ----------
@@ -606,13 +754,13 @@ export function Composer({
       )}
       {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
       <textarea
-        ref={textareaRef}
+        ref={textareaRefCb}
         data-testid="composer-input"
         value={text}
         rows={1}
         placeholder="输入消息，Enter 发送，Shift+Enter 换行"
         disabled={sending}
-        onChange={(e) => update(e.target.value)}
+        onChange={(e) => applyText(e.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         className="max-h-48 min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
@@ -718,6 +866,15 @@ export function Composer({
           }}
           project={project}
           onPick={onPickFile}
+        />
+      )}
+      {slashOpen && slashAnchor && (
+        <SlashHints
+          anchor={slashAnchor}
+          groups={slashGroups}
+          highlight={safeHighlight}
+          onSelect={selectSlashItem}
+          onClose={closeSlashHints}
         />
       )}
       {snippetDropdownOpen && snippetAnchor && (

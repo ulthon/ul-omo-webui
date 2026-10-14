@@ -19,6 +19,7 @@ import { EventBus, attachEventBus, publishPermissionsInvalidated } from "./engin
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
 import { createMetaRoutes } from "./api/routes-meta";
+import { createCommandsRoutes } from "./api/routes-commands";
 import { createProjectRoutes } from "./api/routes-project";
 import { createGitRoutes } from "./api/routes-git";
 import { createFsRoutes } from "./api/routes-fs";
@@ -143,6 +144,7 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 const deps = { meta, engines, configs, projectConfigs, titleGen };
 app.route("/", createSessionRoutes(deps));
 app.route("/", createMetaRoutes(deps));
+app.route("/", createCommandsRoutes(deps));
 app.route("/", createProjectRoutes(deps));
 app.route("/", createGitRoutes(deps));
 app.route("/", createFsRoutes(deps));

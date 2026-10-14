@@ -2,7 +2,8 @@
 // 输入历史翻页。DOM 无关的函数放这里，供 bun 单测直接覆盖；
 // FileReader 等浏览器 API 的薄封装也集中在此（单测跳过）。
 
-import type { DraftInfo, InputHistoryItem } from "@/lib/api";
+import type { CommandsResponse, DraftInfo, InputHistoryItem, SlashCommandInfo } from "@/lib/api";
+import { CHAT_COMMANDS } from "@/components/chat/commands";
 
 // ---------- 草稿（服务端 + localStorage 兜底） ----------
 
@@ -149,4 +150,63 @@ export function appendAttachmentLines(text: string, attachments: ReadonlyArray<{
   if (attachments.length === 0) return text;
   const lines = attachments.map((a) => `[大段文本已保存为附件：${a.path}（按需读取）]`);
   return text ? `${text}\n${lines.join("\n")}` : lines.join("\n");
+}
+
+// ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
+
+export type SlashSection = "extension" | "skill" | "prompt";
+
+/** 下拉条目：section 供分段渲染与段标题，name 为命令形态（技能含 "skill:" 前缀） */
+export interface SlashItem {
+  section: SlashSection;
+  name: string;
+  description?: string;
+}
+
+/** 四个引擎未注册命令（chat/commands.ts supported=false 名单）：绝不进下拉，
+ * 选择/直发路径由命令门拦截不变 */
+const UNSUPPORTED_COMMANDS = new Set(CHAT_COMMANDS.filter((c) => !c.supported).map((c) => c.name));
+
+/**
+ * 触发判定（纯派生）：值以 "/" 开头且首 token 未闭合（无空白）时返回 token 文本
+ * （"/" → ""；"/ini" → "ini"）；首 token 闭合（出现空格）或非斜杠开头返回 null。
+ */
+export function slashTriggerToken(text: string): string | null {
+  const m = /^\/(\S*)$/.exec(text);
+  return m ? m[1] : null;
+}
+
+/** 三段过滤：token 前缀匹配（技能行对去 "skill:" 前缀短名同样命中）；四不支持命令排除 */
+export function filterSlashGroups(commands: CommandsResponse, token: string): Record<SlashSection, SlashItem[]> {
+  const q = token.toLowerCase();
+  const matches = (name: string): boolean => {
+    const lower = name.toLowerCase();
+    return lower.startsWith(q) || (lower.startsWith("skill:") && lower.slice(6).startsWith(q));
+  };
+  const pick = (section: SlashSection, rows: SlashCommandInfo[]): SlashItem[] =>
+    rows
+      .filter((r) => r.name.length > 0 && !UNSUPPORTED_COMMANDS.has(r.name.toLowerCase()) && matches(r.name))
+      .map((r) => ({ section, name: r.name, ...(r.description ? { description: r.description } : {}) }));
+  return {
+    extension: pick("extension", commands.commands.extension),
+    skill: pick("skill", commands.commands.skill),
+    prompt: pick("prompt", commands.commands.prompt),
+  };
+}
+
+/** 空数据（available=false / 取数失败）的空三段，调用方统一走过滤渲染空态 */
+export const EMPTY_SLASH_GROUPS: Record<SlashSection, SlashItem[]> = {
+  extension: [],
+  skill: [],
+  prompt: [],
+};
+
+/** 键盘导航扁平序：引擎命令 → 技能 → 用户提示（与渲染分段一致） */
+export function flattenSlashItems(groups: Record<SlashSection, SlashItem[]>): SlashItem[] {
+  return [...groups.extension, ...groups.skill, ...groups.prompt];
+}
+
+/** 选择替换：首个斜杠 token 换为 /<name>（含尾部空格），保留其余输入；用户补参数后按普通 prompt 发送 */
+export function slashReplaceToken(text: string, name: string): string {
+  return `/${name} ${text.replace(/^\/\S*/, "")}`;
 }

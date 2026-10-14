@@ -29,6 +29,7 @@ import { join } from "node:path";
 import {
   type EngineAdapter,
   type EngineMessagesPage,
+  type EngineCommandInfo,
   type EngineModelInfo,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
@@ -69,6 +70,13 @@ export interface EngineGateway {
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
   usage(sessionId: string): Promise<EngineUsageStats>;
   modelsList(project: string): Promise<EngineModelInfo[]>;
+  /**
+   * 斜杠命令三段枚举（docs08-r3 任务 19）：引擎就绪且有活跃会话时返回按 source
+   * 分组的命令行（extension/skill/prompt）；引擎未就绪（不为此触发 spawn）或无
+   * 活跃会话（open_session 前 RPC 报 missing_session_id，docs/verification/06 实证）
+   * 返回 null——调用方降级（端点 available=false），绝不崩。
+   */
+  commandsList(project: string): Promise<EngineCommandInfo[] | null>;
   /**
    * 删除会话：引擎无删除协议面（rpc-client 全方法核对），实行为删磁盘会话文件
    * 与对应 -artifacts 目录（存在才删，删失败不阻塞），元数据行由路由层清理。
@@ -231,6 +239,8 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
       client.sendExtensionUIResponse(response as never),
     getAvailableModels: () => client.getAvailableModels(),
     getAvailableThinkingLevels: () => client.getAvailableThinkingLevels(),
+    // 斜杠命令面（docs08-r3 任务 19）：宿主 RpcClient 已解包 data.commands
+    getCommands: () => client.getCommands(),
     getSessionStats: () => client.getSessionStats(),
     getMedia: (toolCallId: string, contentIndex: number) => client.getMedia(toolCallId, contentIndex),
   };
@@ -835,6 +845,16 @@ class ProjectRuntime {
     return readModelsStore(this.opts.agentDir ?? defaultAgentDir());
   }
 
+  async commandsList(): Promise<EngineCommandInfo[] | null> {
+    // 命令面无文件直读降级通道（枚举以 get_commands 为权威源，docs/verification/06）：
+    // 引擎未就绪（不为此触发 spawn）或无活跃会话（missing_session_id 硬约束）一律
+    // 返回 null 由端点降级，调用方（前端下拉）按空列表处理不渲染命令段。
+    if (!this.isReady()) return null;
+    const adapter = this.requireAdapter();
+    if (!adapter.getActiveSession()) return null;
+    return adapter.commands();
+  }
+
   async deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }> {
     const row = await this.resolveSession(sessionId);
     if (this.adapter) {
@@ -1058,6 +1078,10 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   async modelsList(project: string): Promise<EngineModelInfo[]> {
     return this.runtimeFor(project).modelsList();
+  }
+
+  async commandsList(project: string): Promise<EngineCommandInfo[] | null> {
+    return this.runtimeFor(project).commandsList();
   }
 
   async deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }> {

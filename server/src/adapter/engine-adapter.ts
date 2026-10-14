@@ -135,6 +135,17 @@ export interface EngineModelInfo {
   supportedThinkingLevels?: string[]
 }
 
+/**
+ * 斜杠命令行（get_commands 映射，docs08-r3 任务 19；通道实证 docs/verification/06）：
+ * source 三值分段——extension=引擎命令、skill=技能（name 固定 "skill:" 前缀）、
+ * prompt=用户提示模板；三组调用契约均为命令直发（引擎侧展开/装载），客户端不插展开文本。
+ */
+export interface EngineCommandInfo {
+  name: string
+  source: string
+  description?: string
+}
+
 /** todo 状态（senpi.todo-state custom entry 的 data.phases，verification/03/05 P1-2） */
 export interface EngineTodoState {
   phases: Array<{
@@ -244,6 +255,12 @@ export interface EngineAdapter {
   modelsList(): Promise<EngineModelInfo[]>
   /** 当前模型可用 thinking 档 */
   thinkingLevels(): Promise<string[]>
+
+  /**
+   * 斜杠命令三段枚举（RPC get_commands；需活跃会话——open_session 前引擎报
+   * missing_session_id，docs/verification/06 实证）。作用于当前活跃会话。
+   */
+  commands(): Promise<EngineCommandInfo[]>
 
   /** 活跃会话 todo 状态（senpi.todo-state 最新条目） */
   todoState(): Promise<EngineTodoState | null>

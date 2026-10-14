@@ -27,6 +27,7 @@ import {
   type EngineAdapter,
   type EngineActiveSession,
   type EngineCapabilities,
+  type EngineCommandInfo,
   type EngineEntry,
   type EngineEvent,
   type EngineEventSubscription,
@@ -102,6 +103,8 @@ export interface SenpiRpcClient {
   sendExtensionUIResponse(response: Record<string, unknown>): Promise<void>
   getAvailableModels(): Promise<Array<Record<string, unknown>>>
   getAvailableThinkingLevels(): Promise<string[]>
+  /** 斜杠命令面（get_commands，宿主 RpcClient 已解包 data.commands；需活跃会话） */
+  getCommands(): Promise<Array<Record<string, unknown>>>
   getSessionStats(): Promise<Record<string, unknown>>
   getMedia(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }>
 }
@@ -223,6 +226,16 @@ export function mapModelInfo(raw: Record<string, unknown>): EngineModelInfo {
   if (typeof raw.contextWindow === "number") info.contextWindow = raw.contextWindow
   if (typeof raw.reasoning === "boolean") info.reasoning = raw.reasoning
   if (Array.isArray(raw.supportedThinkingLevels)) info.supportedThinkingLevels = raw.supportedThinkingLevels.map(String)
+  return info
+}
+
+/** get_commands 行 -> 斜杠命令行（docs/verification/06 实测字段面：name/description/
+ * source/syntax/sourceInfo；下拉只需要 name/description/source 三元组，其余不透传） */
+export function mapCommandInfo(raw: Record<string, unknown>): EngineCommandInfo | null {
+  const name = String(raw.name ?? "")
+  if (!name) return null
+  const info: EngineCommandInfo = { name, source: String(raw.source ?? "") }
+  if (typeof raw.description === "string" && raw.description) info.description = raw.description
   return info
 }
 
@@ -441,6 +454,19 @@ export class SenpiAdapter implements EngineAdapter {
 
   async thinkingLevels(): Promise<string[]> {
     return this.rpc().getAvailableThinkingLevels()
+  }
+
+  async commands(): Promise<EngineCommandInfo[]> {
+    // 活跃会话硬约束：multi-session 下 open_session 前调用被拒 missing_session_id
+    // （docs/verification/06 实证），与 usage/todoState 同款 requireActive 前置
+    this.requireActive()
+    const rows = await this.rpc().getCommands()
+    const out: EngineCommandInfo[] = []
+    for (const row of rows) {
+      const mapped = mapCommandInfo(row)
+      if (mapped) out.push(mapped)
+    }
+    return out
   }
 
   async todoState(): Promise<EngineTodoState | null> {

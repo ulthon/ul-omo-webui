@@ -20,6 +20,7 @@ import { EventBus } from "../src/engine/events";
 import { setEventBus, sseRoutes } from "../src/api/sse";
 import { createSessionRoutes, exportFilename } from "../src/api/routes-session";
 import { createMetaRoutes } from "../src/api/routes-meta";
+import { createCommandsRoutes } from "../src/api/routes-commands";
 import { createProjectRoutes } from "../src/api/routes-project";
 import { createGitRoutes } from "../src/api/routes-git";
 import { createFsRoutes } from "../src/api/routes-fs";
@@ -29,6 +30,7 @@ import { openMetaDb } from "../src/db/meta";
 import { EngineProcessManager, type EngineClientLike, type RpcClientEvent, type RpcClientOptions } from "../src/engine/process-manager";
 import type { ProcProbe } from "../src/engine/orphan-reaper";
 import type {
+  EngineCommandInfo,
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
@@ -106,6 +108,14 @@ class FakeGateway implements EngineGateway {
   async modelsList(): Promise<EngineModelInfo[]> {
     return this.models;
   }
+  commandsResults: Array<EngineCommandInfo[] | null> = [];
+  commandsCalls: string[] = [];
+  async commandsList(project: string): Promise<EngineCommandInfo[] | null> {
+    this.commandsCalls.push(project);
+    const next = this.commandsResults.shift();
+    if (next === undefined) throw new ApiError(409, "no_active_session", "无活跃会话：先 openSession()");
+    return next;
+  }
   async deleteSession(id: string): Promise<{ sessionPath: string; fileExisted: boolean }> {
     this.deleted.push(id);
     return { sessionPath: `/proj/${id}.jsonl`, fileExisted: true };
@@ -149,6 +159,7 @@ function buildApp(engines: EngineGateway, meta = openMetaDb({ path: join(mkdtemp
   const projectConfigs = createProjectConfigStores(configs);
   app.route("/", createSessionRoutes({ meta, engines, configs, projectConfigs }));
   app.route("/", createMetaRoutes({ meta, engines }));
+  app.route("/", createCommandsRoutes({ meta, engines }));
   app.route("/", createProjectRoutes({ meta, engines, projectConfigs }));
   app.route("/", createGitRoutes({ meta, engines }));
   app.route("/", createFsRoutes({ meta, engines }));
@@ -1873,5 +1884,113 @@ describe("SSE data 帧 durableSessionId 注入", () => {
     // durable-1 命中 routing-1 帧放行；routing-2 映射不到被过滤
     expect(text).toContain("routing-1");
     expect(text).not.toContain("routing-2");
+  });
+});
+
+// ---------------------------------------------------------------- 斜杠命令枚举（docs08-r3 任务 19）
+
+describe("GET /api/commands 三段枚举", () => {
+  const row = (name: string, source: string, description?: string): EngineCommandInfo => ({
+    name,
+    source,
+    ...(description ? { description } : {}),
+  });
+
+  test("三段按 source 分组排序；未知 source 归引擎命令段", async () => {
+    const engines = new FakeGateway();
+    engines.commandsResults = [
+      [
+        row("todo", "extension", "Manage todos"),
+        row("skill:ast-grep", "skill", "AST 搜索"),
+        row("doctor", "prompt"),
+        row("weird", "mystery"),
+        row("init", "extension"),
+      ],
+    ];
+    const proj = mkdtempSync(join(tmpdir(), "routes-cmds-"));
+    const { app } = buildApp(engines);
+    try {
+      const res = await req(app, `/api/commands?project=${encodeURIComponent(proj)}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        project: string;
+        available: boolean;
+        commands: Record<"extension" | "skill" | "prompt", EngineCommandInfo[]>;
+      };
+      expect(body.available).toBe(true);
+      expect(body.project).toBe(proj);
+      expect(body.commands.extension.map((r) => r.name)).toEqual(["init", "todo", "weird"]);
+      expect(body.commands.skill.map((r) => r.name)).toEqual(["skill:ast-grep"]);
+      expect(body.commands.prompt.map((r) => r.name)).toEqual(["doctor"]);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("60s 按项目缓存：同项目两次请求取数一次，异项目各自取数", async () => {
+    const engines = new FakeGateway();
+    engines.commandsResults = [[row("init", "extension")], [row("skill:git-master", "skill")]];
+    const projA = mkdtempSync(join(tmpdir(), "routes-cmds-a-"));
+    const projB = mkdtempSync(join(tmpdir(), "routes-cmds-b-"));
+    const { app } = buildApp(engines);
+    try {
+      const first = await (await req(app, `/api/commands?project=${encodeURIComponent(projA)}`)).json();
+      const second = await (await req(app, `/api/commands?project=${encodeURIComponent(projA)}`)).json();
+      expect(first.commands.extension).toHaveLength(1);
+      expect(second.commands.extension).toHaveLength(1);
+      expect(engines.commandsCalls).toEqual([projA]);
+      const third = await (await req(app, `/api/commands?project=${encodeURIComponent(projB)}`)).json();
+      expect(third.commands.skill).toHaveLength(1);
+      expect(engines.commandsCalls).toEqual([projA, projB]);
+    } finally {
+      rmSync(projA, { recursive: true, force: true });
+      rmSync(projB, { recursive: true, force: true });
+    }
+  });
+
+  test("降级不崩：gateway 报 null（引擎未就绪/无活跃会话）→ 200 available=false 空三段且不入缓存", async () => {
+    const engines = new FakeGateway();
+    engines.commandsResults = [null, [row("reload", "extension")]];
+    const proj = mkdtempSync(join(tmpdir(), "routes-cmds-d-"));
+    const { app } = buildApp(engines);
+    try {
+      const down = await (await req(app, `/api/commands?project=${encodeURIComponent(proj)}`)).json();
+      expect(down.available).toBe(false);
+      expect(down.commands).toEqual({ extension: [], skill: [], prompt: [] });
+      // 降级未入缓存：引擎就绪后同项目下一请求即取到真数据
+      const up = await (await req(app, `/api/commands?project=${encodeURIComponent(proj)}`)).json();
+      expect(up.available).toBe(true);
+      expect(up.commands.extension.map((r: EngineCommandInfo) => r.name)).toEqual(["reload"]);
+      expect(engines.commandsCalls).toEqual([proj, proj]);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("gateway 抛错同降级口径；无已知项目 400 no_project", async () => {
+    const engines = new FakeGateway();
+    const { app, meta } = buildApp(engines);
+    const noProject = await req(app, "/api/commands");
+    expect(noProject.status).toBe(400);
+    expect(((await noProject.json()) as { error: { code: string } }).error.code).toBe("no_project");
+
+    const proj = mkdtempSync(join(tmpdir(), "routes-cmds-e-"));
+    meta.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+    try {
+      // commandsResults 已耗尽（空数组 shift 得 undefined → fake 抛 ApiError 409）
+      const res = await req(app, "/api/commands");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { available: boolean };
+      expect(body.available).toBe(false);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  test("project 参数规范化：非绝对路径 400 invalid_project", async () => {
+    const { app } = buildApp(new FakeGateway());
+    const res = await req(app, "/api/commands?project=relative/path");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("invalid_project");
   });
 });

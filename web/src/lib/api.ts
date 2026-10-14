@@ -159,6 +159,21 @@ export interface InputHistoryItem {
   createdAt: string;
 }
 
+/** 斜杠命令行（GET /api/commands；docs08-r3 任务 19，通道实证 docs/verification/06） */
+export interface SlashCommandInfo {
+  name: string;
+  source: string;
+  description?: string;
+}
+
+export interface CommandsResponse {
+  project: string;
+  /** false = 引擎未就绪或无活跃会话（降级）：三段为空，前端下拉不渲染命令面 */
+  available: boolean;
+  /** extension=引擎命令 / skill=技能（name 固定 "skill:" 前缀）/ prompt=用户提示 */
+  commands: { extension: SlashCommandInfo[]; skill: SlashCommandInfo[]; prompt: SlashCommandInfo[] };
+}
+
 export interface GitStatusResponse {
   project: string;
   entries: Array<Record<string, unknown>>;
@@ -435,6 +450,13 @@ export const api = {
   async listModels(project?: string): Promise<ModelsResponse> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/models${qs}`);
+  },
+
+  // ---- 斜杠命令枚举（docs08-r3 任务 19：SlashHints 三段下拉数据源） ----
+  /** 三段一次取数（引擎命令/技能/用户提示，服务端 60s 按项目缓存）；引擎未就绪
+   * 或无活跃会话时 available=false 空三段（降级不渲染，绝不 5xx）。 */
+  async getCommands(project: string): Promise<CommandsResponse> {
+    return request(`/api/commands?project=${encodeURIComponent(project)}`);
   },
 
   // ---- 项目 ----
