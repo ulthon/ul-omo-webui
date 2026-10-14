@@ -48,7 +48,7 @@ import {
 import { SessionItem, buildForkIndexes } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagSelector } from "./tag-selector";
-import { TagManageDialog } from "./tag-manage-dialog";
+import { TagManageDialog, type TagManageScope } from "./tag-manage-dialog";
 import { definedTagKeys, mergeTagOptions, type TagDefs } from "./tag-data";
 
 function basename(path: string): string {
@@ -114,10 +114,12 @@ export function SessionList() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ label: string; done: number; total: number } | null>(null);
-  // 标签（todo 11）：两源定义集（涉及项目合并）、选择器会话集合、管理弹层
+  // 标签（todo 11）：两源定义集（涉及项目合并；perProjectDefs 保留项目归属）、
+  // 选择器会话集合、管理弹层域（docs08-r3 任务 11 拆域：null=关闭，否则 global 或 { projectPath }）
   const [tagDefs, setTagDefs] = useState<TagDefs | null>(null);
+  const [perProjectDefs, setPerProjectDefs] = useState<Record<string, TagDefinition[]>>({});
   const [tagSelector, setTagSelector] = useState<SessionListItem[] | null>(null);
-  const [manageOpen, setManageOpen] = useState(false);
+  const [manageScope, setManageScope] = useState<TagManageScope | null>(null);
   // 项目隐藏（A2 docs08-r3 任务 10）：当前项目隐藏需确认弹层（回空会话态），非当前直接执行
   const [hidePending, setHidePending] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
@@ -385,9 +387,13 @@ export function SessionList() {
         registered.map((p) => api.listTags(p.projectPath).then((r) => r.project).catch(() => [] as TagDefinition[])),
       );
       setTagDefs({ global: global.global, project: projectLists.flat() });
+      // 项目归属保留（任务 11 拆域）：管理弹框项目入口需要该项目的单项目列表，
+      // 合并集会把其他项目的定义整替进本项目
+      setPerProjectDefs(Object.fromEntries(registered.map((p, i) => [p.projectPath, projectLists[i]])));
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
         setTagDefs({ global: [], project: [] });
+        setPerProjectDefs({});
       }
     }
   }, []);
@@ -602,7 +608,8 @@ export function SessionList() {
                   ))
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setManageOpen(true)} data-testid="manage-tags-item">
+                {/* 全局入口（任务 11 拆域）：恒 global，与当前项目无关 */}
+                <DropdownMenuItem onSelect={() => setManageScope("global")} data-testid="manage-tags-item">
                   管理标签
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -762,7 +769,7 @@ export function SessionList() {
                   {/* 分组头（C16 todo 9）：manual 档下整行作为桌面 HTML5 拖拽源/目标。
                       右侧为分组头唯一 DropdownMenu（A2 docs08-r3 任务 10 吸收任务 9 的
                       手机过渡"上移/下移"菜单而成，手机与桌面同菜单）：排序组（仅 manual 档）
-                      /"隐藏该项目"（当前项目带确认弹层）/「管理标签」预留入口（任务 11 接线）。 */}
+                      /"隐藏该项目"（当前项目带确认弹层）/「管理标签」（任务 11 已接线：scope=本分组项目）。 */}
                   <div
                     className={`flex items-center gap-0.5 ${manual && dragOverPath === projectPath ? "rounded-md outline outline-1 outline-primary/50" : ""}`}
                     draggable={manual}
@@ -811,7 +818,7 @@ export function SessionList() {
                       {/* 空项目组显示但标注 0（todo 10） */}
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
-                    {/* 分组头唯一菜单（A2）：三组语义——排序（仅 manual 档）/隐藏/管理标签（任务 11 接线）。
+                    {/* 分组头唯一菜单（A2）：三组语义——排序（仅 manual 档）/隐藏/管理标签（任务 11 已接线）。
                         菜单 onSelect 内实时读 currentProject（跨项目点击后 render 闭包可能滞后）。 */}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -858,8 +865,11 @@ export function SessionList() {
                           隐藏该项目
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {/* 预留入口（任务 11 接线）：项目域标签管理弹框落地后启用 */}
-                        <DropdownMenuItem disabled data-testid="group-manage-tags">
+                        {/* 项目入口（任务 11 拆域接线）：管理弹框 scope = 本分组项目 */}
+                        <DropdownMenuItem
+                          data-testid="group-manage-tags"
+                          onSelect={() => setManageScope({ projectPath })}
+                        >
                           管理标签
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -964,12 +974,18 @@ export function SessionList() {
           }}
         />
       )}
-      {manageOpen && tagDefs && (
+      {manageScope && tagDefs && (
         <TagManageDialog
-          project={currentProject ?? ""}
-          defs={tagDefs}
+          scope={manageScope}
+          /* 单组契约：弹框只用 scope 对应组——项目入口传该项目的单项目列表
+           *（合并集会把其他项目的定义整替进本项目），全局入口只传 global 组 */
+          defs={
+            typeof manageScope === "object"
+              ? { global: [], project: perProjectDefs[manageScope.projectPath] ?? [] }
+              : { global: tagDefs.global, project: [] }
+          }
           onChanged={() => void reloadTagDefs()}
-          onClose={() => setManageOpen(false)}
+          onClose={() => setManageScope(null)}
         />
       )}
     </div>
