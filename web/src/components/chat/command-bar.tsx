@@ -1,6 +1,7 @@
 // 斜杠命令按钮行（todo 24）。命令映射与支持度实证见 commands.ts 与
-// docs/verification/05：当前四命令引擎侧均不支持（按钮禁用 + 明示，禁止静默直发）；
-// 支持路径保留（POST prompt 发送原文，引擎命令系统处理），供后续实证翻案时启用。
+// docs/verification/05：支持路径保留（POST prompt 发送原文，引擎命令系统处理）；
+// 全不支持时整条不渲染（docs08-r3 任务 14/A4：数据驱动显隐，禁用态死文案移除），
+// 命令门链（commands.ts → chat-view → api.prompt）不随显隐变化，输入拦截继续兜底。
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
@@ -24,11 +25,11 @@ export function CommandBar({ sessionId, busy }: { sessionId: string; busy: boole
 
   const allUnsupported = CHAT_COMMANDS.every((c) => !c.supported);
 
+  // 全不支持 → 整条不渲染；任一命令受支持才按按钮逻辑出现
+  if (allUnsupported) return null;
+
   return (
     <div data-testid="command-bar" className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-muted-foreground">
-        命令{allUnsupported && <span className="hidden sm:inline">（引擎不支持，已禁用）</span>}
-      </span>
       {CHAT_COMMANDS.map((cmd) => (
         <button
           key={cmd.name}
