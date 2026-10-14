@@ -4,6 +4,8 @@
 // 引用（光标落插入点之后），路径随 prompt 文本自然发送。
 // todo 14：常用语面板（SnippetPanelDialog）——条目插入走草稿链路，条目直发经
 // sendText(clearInputs:false) 只发送条目文本，不动输入框既有草稿/图片/历史。
+// docs08-r3 A1：常用语按钮改开锚定下拉（SnippetDropdown，AnchoredPanel 基础件），
+// 非模态不抢焦点；插入/直发语义同上，「查看全部」仍打开旧弹框兜底（管理留弹框）。
 // todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语；
 // 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
 // W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+P 快捷打开）与思考档 chip
@@ -16,6 +18,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
+import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
 import { ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
@@ -91,8 +94,12 @@ export function Composer({
   // 在当前光标处插入）。选中后经 update() 走草稿链路插入 `@path `，光标落插入点之后。
   const [picker, setPicker] = useState<{ open: boolean; trigger: number | null } | null>(null);
 
-  // 常用语面板（todo 14）：工具条按钮入口
+  // 常用语（todo 14 / docs08-r3 A1）：snippetDropdown* = 工具条按钮的锚定下拉；
+  // snippetOpen 仅作「查看全部」打开旧弹框（SnippetPanelDialog）的开关
   const [snippetOpen, setSnippetOpen] = useState(false);
+  const [snippetDropdownOpen, setSnippetDropdownOpen] = useState(false);
+  const [snippetAnchor, setSnippetAnchor] = useState<HTMLElement | null>(null);
+  const closeSnippetDropdown = useCallback(() => setSnippetDropdownOpen(false), []);
 
   const openPicker = useCallback((trigger: number | null) => {
     setPicker({ open: true, trigger });
@@ -517,14 +524,20 @@ export function Composer({
           >
             <ImagePlus className="size-5" />
           </button>
-          {/* 常用语面板入口（todo 14） */}
+          {/* 常用语锚定下拉入口（docs08-r3 A1）；「查看全部」进旧弹框 */}
           <button
             type="button"
             data-testid="snippet-btn"
             aria-label="常用语"
             title="常用语"
-            onClick={() => setSnippetOpen(true)}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+            aria-expanded={snippetDropdownOpen}
+            onClick={(e) => {
+              setSnippetAnchor(e.currentTarget);
+              setSnippetDropdownOpen((v) => !v);
+            }}
+            className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
+              snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+            }`}
           >
             <MessageSquareText className="size-5" />
           </button>
@@ -563,6 +576,31 @@ export function Composer({
           }}
           project={project}
           onPick={onPickFile}
+        />
+      )}
+      {snippetDropdownOpen && snippetAnchor && (
+        <SnippetDropdown
+          anchor={snippetAnchor}
+          onClose={closeSnippetDropdown}
+          project={project}
+          busy={busy}
+          sending={sending}
+          // 插入：先收下拉再走草稿链路；rAF 焦点回输入框（排队晚于 insertSnippetText
+          // 的 caret 落位 rAF，focus() 保留 selection）
+          onInsert={(content) => {
+            closeSnippetDropdown();
+            insertSnippetText(content);
+            requestAnimationFrame(() => textareaRef.current?.focus());
+          }}
+          // 直发：收下拉后走 sendText(clearInputs:false)，不动既有草稿/图片/历史
+          onSendNow={(content) => {
+            closeSnippetDropdown();
+            sendSnippetNow(content);
+          }}
+          onViewAll={() => {
+            closeSnippetDropdown();
+            setSnippetOpen(true);
+          }}
         />
       )}
       {snippetOpen && (
