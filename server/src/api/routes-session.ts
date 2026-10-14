@@ -1,10 +1,19 @@
-// 会话 REST 路由（todo 9）：建/列表/消息/prompt/abort/权限/草稿/已读/元数据/删除/usage。
+// 会话 REST 路由（todo 9）：建/列表/消息/prompt/abort/权限/草稿/已读/元数据/删除/usage/附件。
 // 错误统一 {error:{code,message}}（http.ts route 包装）；鉴权由入口 /api/* 中间件覆盖。
 import { Hono, type Context } from "hono";
+import { lstatSync, mkdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   EngineSessionSummary,
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
+import {
+  ATTACHMENT_MAX_BYTES,
+  attachmentsRoot,
+  generatedAttachmentName,
+  projectAttachmentsDir,
+  validateAttachmentName,
+} from "./attachments";
 import type { SessionMeta, SessionTagRef } from "../db/meta";
 import type { TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
@@ -124,6 +133,20 @@ export function exportFilename(title: string, sessionId: string): { ascii: strin
  * listProjectPaths（engine-runtime.ts 属并行任务领地禁改），按结构能力探测：
  * 真实 EngineRuntimeRegistry 具备该方法；缺失时聚合退化为空列表。 */
 type ProjectListerGateway = EngineGateway & { listProjectPaths?: () => string[] };
+
+/** 附件端点需要"会话 → 所属项目路径"反查。EngineGateway 接口未含 resolveSessionRow，
+ * 同 ProjectListerGateway 结构能力探测先例：真实 EngineRuntimeRegistry 具备该方法
+ * （纯读不触发 spawn），fake 测试按需提供。 */
+type SessionRowGateway = EngineGateway & {
+  resolveSessionRow?: (sessionId: string) => Promise<EngineSessionSummary | null>;
+};
+
+/** 附件端点共用：会话 id 反查所属项目路径（附件临时区按项目隔离的键） */
+async function requireSessionProject(deps: ApiDeps, sessionId: string): Promise<string> {
+  const row = await (deps.engines as SessionRowGateway).resolveSessionRow?.(sessionId);
+  if (!row) throw new ApiError(404, "session_not_found", `会话不存在：${sessionId}`);
+  return row.cwd;
+}
 
 /** 会话列表行（合并元数据 + active 探询后的形态） */
 type SessionListRow = ReturnType<typeof mergeSessionRow> & { active: boolean | null };
@@ -435,6 +458,92 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     if (!id) throw new ApiError(400, "invalid_request", "session 查询参数必填");
     const usage = await deps.engines.usage(id);
     return c.json({ sessionId: id, usage });
+  }));
+
+  // ---------- 附件临时区（docs08-r3 任务 17：大文本粘贴转附件） ----------
+  // 文件落 DATA_DIR/attachments/<projectHash>/；prompt 只带绝对路径行由引擎按需
+  // 读取，故 DELETE 仅挂用户显式移除 chip（发送成功后文件刻意留存，48h 清理兜底）。
+
+  // 上传大文本：content（≤1MB UTF-8 字节）+ 可选 name（纯文件名，含分隔符或 .. 即 400，
+  // 缺省服务端自生成）→ { path 绝对路径, name, bytes }
+  app.post("/api/sessions/:id/attachments", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const project = await requireSessionProject(deps, id);
+    const body = await parseJsonBody(c);
+    if (typeof body.content !== "string" || body.content.length === 0) {
+      throw new ApiError(400, "invalid_content", "content 必填且不能为空");
+    }
+    const bytes = Buffer.byteLength(body.content, "utf8");
+    if (bytes > ATTACHMENT_MAX_BYTES) {
+      throw new ApiError(400, "content_too_large", `content 超过 1MB 上限（${bytes} 字节）`);
+    }
+    const name = validateAttachmentName(body.name);
+    const root = deps.attachmentsRoot ?? attachmentsRoot();
+    const dir = projectAttachmentsDir(root, project);
+    mkdirSync(dir, { recursive: true });
+    // mkdir 后目录必存在；realpath 规范化防 DATA_DIR 自身经符号链接挂载
+    const dirReal = realpathSync(dir);
+    const filename = name ?? generatedAttachmentName();
+    // filename 已保证纯文件名（白名单/自生成），join 后落点必然在 dirReal 内
+    const target = join(dirReal, filename);
+    // 目录内预置同名符号链接会劫持 writeFileSync 跟随写出（外部文件被污染）——
+    // lstat 不跟随，先查先拒绝，做到零写出；写入后 realpath 复核兜底 lstat→write
+    // 窗口的 TOCTOU 残余
+    try {
+      if (lstatSync(target).isSymbolicLink()) {
+        unlinkSync(target);
+        throw new ApiError(403, "attachment_escape", "附件落点越界被拒绝");
+      }
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // ENOENT = 无预置文件，正常继续
+    }
+    writeFileSync(target, body.content, "utf8");
+    const real = realpathSync(target);
+    if (real !== target || !real.startsWith(dirReal + "/")) {
+      try {
+        unlinkSync(target);
+      } catch {
+        // 尽力清理
+      }
+      throw new ApiError(403, "attachment_escape", "附件落点越界被拒绝");
+    }
+    return c.json({ path: target, name: filename, bytes }, 201);
+  }));
+
+  // 删除附件：?path= 必填；realpath 必须严格位于本会话所属项目的
+  // attachments/<projectHash>/ 内（等于目录本身、其他项目临时文件、临时区外
+  // 任意路径、符号链接逃逸一律 403）；目标不存在 404。
+  app.delete("/api/sessions/:id/attachments", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const project = await requireSessionProject(deps, id);
+    const raw = c.req.query("path");
+    if (typeof raw !== "string" || raw === "") {
+      throw new ApiError(400, "invalid_request", "path 查询参数必填");
+    }
+    const root = deps.attachmentsRoot ?? attachmentsRoot();
+    const dir = projectAttachmentsDir(root, project);
+    let dirReal: string;
+    try {
+      dirReal = realpathSync(dir);
+    } catch {
+      // 本项目附件目录不存在 = 不可能有属于本项目的附件
+      throw new ApiError(404, "attachment_not_found", "附件不存在");
+    }
+    let real: string;
+    try {
+      real = realpathSync(raw);
+    } catch {
+      throw new ApiError(404, "attachment_not_found", "附件不存在");
+    }
+    if (real === dirReal || !real.startsWith(dirReal + "/")) {
+      throw new ApiError(403, "attachment_escape", "路径越界被拒绝");
+    }
+    if (!statSync(real).isFile()) {
+      throw new ApiError(400, "invalid_path", "目标不是文件");
+    }
+    unlinkSync(real);
+    return c.json({ ok: true });
   }));
 
   return app;

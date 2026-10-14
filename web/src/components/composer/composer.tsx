@@ -11,7 +11,7 @@
 // W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+P 快捷打开）与思考档 chip
 // （模型未下发 supportedThinkingLevels 时整体隐藏），选择随下一条 prompt 注入。
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
 import { ApiError, api, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
@@ -24,10 +24,14 @@ import { insertSnippet, snippetActionDisabled } from "@/components/composer/snip
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import {
   MAX_IMAGES,
+  PASTE_ATTACHMENT_THRESHOLD,
+  appendAttachmentLines,
   dataUrlToBase64,
+  formatPasteKb,
   historyPreview,
   readFileAsDataUrl,
   stepHistoryIndex,
+  utf8ByteLength,
   validateImageFile,
 } from "./composer-logic";
 import { useDraft } from "./use-draft";
@@ -39,6 +43,14 @@ interface ImageAttachment {
   mimeType: string;
 }
 
+/** 大段文本附件 chip（B10 docs08-r3 任务 17）：文件已落服务端临时区，prompt 只带路径行 */
+interface TextAttachment {
+  id: string;
+  name: string;
+  /** 服务端临时区绝对路径（DATA_DIR/attachments/<projectHash>/），发送拼接进 prompt */
+  path: string;
+}
+
 /** 历史翻阅态：items 新在前（服务端 id DESC），index 当前高亮条 */
 interface ActiveHistory {
   items: InputHistoryItem[];
@@ -46,6 +58,7 @@ interface ActiveHistory {
 }
 
 let imageSeq = 0;
+let attachmentSeq = 0;
 
 export function Composer({
   sessionId,
@@ -85,6 +98,16 @@ export function Composer({
     imagesRef.current = next;
     setImages(next);
   }, []);
+
+  // 大段粘贴转附件（B10）：attachmentsRef 同步镜像同 images 模式；pasteOffer =
+  // 超阈值粘贴挂起的选择（原样插入/作为附件发送/忽略），同一时刻至多一条（新粘贴覆盖旧条）
+  const [attachments, setAttachments] = useState<TextAttachment[]>([]);
+  const attachmentsRef = useRef<TextAttachment[]>([]);
+  const setAttachmentsBoth = useCallback((next: TextAttachment[]) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  }, []);
+  const [pasteOffer, setPasteOffer] = useState<{ content: string; bytes: number } | null>(null);
 
   const [history, setHistory] = useState<ActiveHistory | null>(null);
   /** 进入历史翻阅前的输入内容（下翻越过最新一条时还原） */
@@ -159,30 +182,36 @@ export function Composer({
 
   /**
    * 发送文本两态入口（todo 14）：
-   * - clearInputs:true = 普通发送（键盘/按钮），携带输入框图片，成功后清图片/草稿/历史
-   *   态（todo 21 原 send() 行为逐项保留）；
+   * - clearInputs:true = 普通发送（键盘/按钮），携带输入框图片与大段文本附件，成功后
+   *   清图片/附件/草稿/历史态。附件生命周期铁律（B10）：发送成功后附件条仅本地清空，
+   *   绝不 DELETE——prompt 只带绝对路径行，文件留待引擎按需读取（48h 按龄清理兜底）；
    * - clearInputs:false = 常用语直发：只发送该文本，不掺输入框现有内容，也不清空现有
-   *   草稿/图片/历史条。两态共用 prompt 调用、appendInputHistory 与 onSent。
+   *   草稿/图片/附件/历史条。两态共用 prompt 调用、appendInputHistory 与 onSent。
+   * prompt 体拼接（B10）：用户文本 + 换行 + 每附件一行
+   * `[大段文本已保存为附件：<绝对路径>（按需读取）]`——附件正文不进 prompt。
    */
   const sendText = useCallback(
     async (rawText: string, opts: { clearInputs: boolean }) => {
       const trimmed = rawText.trim();
       const imgs = opts.clearInputs ? imagesRef.current : undefined;
+      const atts = opts.clearInputs ? attachmentsRef.current : [];
       if (busy || sending) return;
-      // 普通发送：文本与图片皆空早退（原校验，有图无文本仍可发）；直发必须有文本
-      if (!trimmed && imgs && imgs.length === 0) return;
+      // 普通发送：文本/图片/附件皆空早退（原校验扩展，有图或有附件无文本仍可发）；直发必须有文本
+      if (!trimmed && imgs && imgs.length === 0 && atts.length === 0) return;
       if (!trimmed && !opts.clearInputs) return;
       setSending(true);
       setError(null);
       try {
         const outgoingImages =
           imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined;
-        const receipt = await api.prompt(sessionId, { text: trimmed, images: outgoingImages });
+        const outgoingText = appendAttachmentLines(trimmed, atts);
+        const receipt = await api.prompt(sessionId, { text: outgoingText, images: outgoingImages });
         // 缺陷修复（新会话首条用户消息不显示）：prompt 成功即本地乐观入列——首条消息
         // 的服务端事件以路由句柄寻址，handle→durable 映射回填前不入列，靠本地占位；
         // 回执带回真实 id 时即时换 key（消息槽 + 会话行 + 选中态），不等会话行刷新。
+        // 入列文本与 prompt 同源（含附件路径行），与引擎落盘消息保持一致。
         const messages = useMessagesStore.getState();
-        messages.appendLocalUserEntry(sessionId, trimmed, outgoingImages);
+        messages.appendLocalUserEntry(sessionId, outgoingText, outgoingImages);
         if (receipt.streaming) messages.setStreaming(sessionId, true);
         if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
           messages.adoptDurableId(sessionId, receipt.durableSessionId);
@@ -190,11 +219,14 @@ export function Composer({
         }
         if (opts.clearInputs) {
           setImagesBoth([]);
+          // 附件仅本地清空，不调 DELETE（文件留引擎按需读取，48h 清理兜底）
+          setAttachmentsBoth([]);
           clearDraft();
           setHistory(null);
           draftBeforeHistoryRef.current = "";
         }
-        // 输入历史追加（服务端去重、上限 200）；空文本不追加（直发也属一次输入）
+        // 输入历史追加（服务端去重、上限 200）；存用户原文（不含附件路径行，回填可编辑）；
+        // 空文本不追加（直发也属一次输入）
         if (project && trimmed) void api.appendInputHistory(project, trimmed).catch(() => {});
         onSent();
       } catch (err) {
@@ -207,7 +239,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [busy, sending, sessionId, project, clearDraft, setImagesBoth, onSent],
+    [busy, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
@@ -271,13 +303,66 @@ export function Composer({
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // 图片粘贴链路原样（B10 不改语义）：图片文件优先于文本分支
       const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
       if (files.length > 0) {
         e.preventDefault();
         void addImageFiles(files);
+        return;
+      }
+      // 大段文本（B10）：text/plain 超 4KB 拦截默认粘贴，弹选择条（原样插入/作为附件
+      // 发送/忽略）；阈值内走浏览器默认行为不动
+      const text = e.clipboardData.getData("text/plain");
+      if (text) {
+        const bytes = utf8ByteLength(text);
+        if (bytes > PASTE_ATTACHMENT_THRESHOLD) {
+          e.preventDefault();
+          setPasteOffer({ content: text, bytes });
+        }
       }
     },
     [addImageFiles],
+  );
+
+  // ---------- 大段粘贴转附件（B10） ----------
+
+  /** 选择条「原样插入」：内容走草稿链路插入光标处，光标落插入内容之后 */
+  const insertPasteContent = useCallback(
+    (content: string) => {
+      setPasteOffer(null);
+      insertSnippetText(content);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [insertSnippetText],
+  );
+
+  /** 选择条「作为附件发送」：POST 落服务端临时区后加附件 chip；失败 toast 不加条 */
+  const attachPasteContent = useCallback(
+    async (content: string) => {
+      setPasteOffer(null);
+      try {
+        const res = await api.postAttachment(sessionId, { content });
+        setAttachmentsBoth([...attachmentsRef.current, { id: `att-${++attachmentSeq}`, name: res.name, path: res.path }]);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "附件保存失败", "error");
+      }
+    },
+    [sessionId, setAttachmentsBoth, showToast],
+  );
+
+  /** chip 显式移除：本地即删 + fire DELETE（失败 toast；文件另有 48h 按龄清理兜底）。
+   * 发送成功清空条绝不走这里（附件留存供引擎按需读取）。 */
+  const removeAttachment = useCallback(
+    (id: string) => {
+      const target = attachmentsRef.current.find((a) => a.id === id);
+      setAttachmentsBoth(attachmentsRef.current.filter((a) => a.id !== id));
+      if (target) {
+        void api.removeAttachment(sessionId, target.path).catch((err: unknown) => {
+          showToast(err instanceof Error ? err.message : "附件清理失败（48h 后自动清理）", "error");
+        });
+      }
+    },
+    [sessionId, setAttachmentsBoth, showToast],
   );
 
   // ---------- 输入历史 ----------
@@ -406,10 +491,42 @@ export function Composer({
     );
   }
 
-  const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
+  const canSend = (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
+      {pasteOffer && (
+        <div
+          data-testid="paste-offer-bar"
+          className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
+        >
+          <span className="shrink-0">大段文本（{formatPasteKb(pasteOffer.bytes)}）：</span>
+          <button
+            type="button"
+            data-testid="paste-insert"
+            onClick={() => insertPasteContent(pasteOffer.content)}
+            className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
+          >
+            原样插入
+          </button>
+          <button
+            type="button"
+            data-testid="paste-attach"
+            onClick={() => void attachPasteContent(pasteOffer.content)}
+            className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
+          >
+            作为附件发送
+          </button>
+          <button
+            type="button"
+            data-testid="paste-dismiss"
+            onClick={() => setPasteOffer(null)}
+            className="min-h-8 rounded-md border px-2 text-muted-foreground transition-colors hover:bg-muted"
+          >
+            忽略
+          </button>
+        </div>
+      )}
       {history && (
         <div
           data-testid="history-bar"
@@ -455,6 +572,31 @@ export function Composer({
                 data-testid="image-thumb-remove"
                 onClick={() => removeImage(img.id)}
                 className="absolute -top-2.5 -right-2.5 flex size-11 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:text-destructive"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {attachments.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="attachment-strip">
+          {attachments.map((att) => (
+            <div
+              key={att.id}
+              data-testid="attachment-chip"
+              className="flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-lg border bg-muted/40 px-2 text-xs"
+            >
+              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="max-w-44 truncate" title={att.path}>
+                {att.name}
+              </span>
+              <button
+                type="button"
+                aria-label="移除附件"
+                data-testid="attachment-chip-remove"
+                onClick={() => removeAttachment(att.id)}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
               >
                 <X className="size-4" />
               </button>

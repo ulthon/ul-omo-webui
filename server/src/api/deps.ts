@@ -20,4 +20,9 @@ export interface ApiDeps {
    * routes-session 缺省时模型缺省回退纯库读（部分测试装配的兼容形态）。
    */
   projectConfigs?: ProjectConfigStores;
+  /**
+   * 附件临时区根（docs08-r3 任务 17）：缺省 DATA_DIR/attachments（api/attachments.ts）。
+   * 测试注入临时目录，端点写入/校验/删除全部以它为界。
+   */
+  attachmentsRoot?: string;
 }

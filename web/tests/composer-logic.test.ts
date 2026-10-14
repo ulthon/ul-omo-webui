@@ -4,10 +4,14 @@ import { describe, expect, test } from "bun:test";
 import type { DraftInfo } from "@/lib/api";
 import {
   MAX_IMAGE_BYTES,
+  PASTE_ATTACHMENT_THRESHOLD,
+  appendAttachmentLines,
   dataUrlToBase64,
+  formatPasteKb,
   historyPreview,
   resolveDraftSource,
   stepHistoryIndex,
+  utf8ByteLength,
   validateImageFile,
   type LocalDraft,
 } from "@/components/composer/composer-logic";
@@ -84,5 +88,39 @@ describe("historyPreview", () => {
     expect(historyPreview({ id: 1, projectPath: "/p", content: long, createdAt: "" })).toBe(
       `${"x".repeat(40)}…`,
     );
+  });
+});
+
+describe("大段粘贴转附件（B10 docs08-r3 任务 17）", () => {
+  test("阈值常量为 4096 字节", () => {
+    expect(PASTE_ATTACHMENT_THRESHOLD).toBe(4096);
+  });
+  test("utf8ByteLength 按 UTF-8 字节计（CJK 3 字节、emoji 4 字节）", () => {
+    expect(utf8ByteLength("")).toBe(0);
+    expect(utf8ByteLength("abc")).toBe(3);
+    expect(utf8ByteLength("中")).toBe(3);
+    expect(utf8ByteLength("😀")).toBe(4);
+    expect(utf8ByteLength("中".repeat(1366))).toBe(4098); // > 4KB：按字符数误判会漏
+  });
+  test("formatPasteKb：一位小数，≥100KB 取整", () => {
+    expect(formatPasteKb(4097)).toBe("4 KB");
+    expect(formatPasteKb(5321)).toBe("5.2 KB");
+    expect(formatPasteKb(1024 * 250)).toBe("250 KB");
+  });
+  test("appendAttachmentLines：文本+换行+路径行；内容不进 prompt", () => {
+    const atts = [{ path: "/data/attachments/abc123/paste-1.txt" }];
+    expect(appendAttachmentLines("你好", atts)).toBe(
+      "你好\n[大段文本已保存为附件：/data/attachments/abc123/paste-1.txt（按需读取）]",
+    );
+  });
+  test("appendAttachmentLines：多附件多行；纯附件发送仅路径行；无附件原样返回", () => {
+    const atts = [{ path: "/a/1.txt" }, { path: "/b/2.txt" }];
+    expect(appendAttachmentLines("hi", atts)).toBe(
+      "hi\n[大段文本已保存为附件：/a/1.txt（按需读取）]\n[大段文本已保存为附件：/b/2.txt（按需读取）]",
+    );
+    expect(appendAttachmentLines("", atts)).toBe(
+      "[大段文本已保存为附件：/a/1.txt（按需读取）]\n[大段文本已保存为附件：/b/2.txt（按需读取）]",
+    );
+    expect(appendAttachmentLines("原文", [])).toBe("原文");
   });
 });

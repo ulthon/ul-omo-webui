@@ -122,3 +122,31 @@ export function historyPreview(item: InputHistoryItem, max = 40): string {
   const oneLine = item.content.replace(/\s+/g, " ").trim();
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
+
+// ---------- 大段粘贴转附件（B10 docs08-r3 任务 17） ----------
+
+/** 粘贴文本超过该 UTF-8 字节数即弹选择条（原样插入 / 作为附件发送 / 忽略） */
+export const PASTE_ATTACHMENT_THRESHOLD = 4096;
+
+/** UTF-8 字节数：阈值判定按字节口径（与服务端 1MB 上限、CJK 粘贴场景对齐） */
+export function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** 选择条体积文案：KB 一位小数（≥100 KB 取整），恒有 " KB" 后缀 */
+export function formatPasteKb(bytes: number): string {
+  const kb = bytes / 1024;
+  const rounded = kb >= 100 ? Math.round(kb) : Math.round(kb * 10) / 10;
+  return `${rounded} KB`;
+}
+
+/**
+ * 发送时 prompt 体拼接（铁律：附件内容不进 prompt 正文，只带绝对路径行由引擎
+ * 按需读取）：text + 换行 + 每附件一行 `[大段文本已保存为附件：<绝对路径>（按需读取）]`；
+ * text 为空（纯附件发送）时仅返回路径行。无附件原样返回。
+ */
+export function appendAttachmentLines(text: string, attachments: ReadonlyArray<{ path: string }>): string {
+  if (attachments.length === 0) return text;
+  const lines = attachments.map((a) => `[大段文本已保存为附件：${a.path}（按需读取）]`);
+  return text ? `${text}\n${lines.join("\n")}` : lines.join("\n");
+}

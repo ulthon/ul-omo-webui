@@ -419,6 +419,18 @@ export const api = {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
   },
 
+  // ---- 附件（docs08-r3 任务 17：大文本粘贴转附件） ----
+  /** 大段文本存服务端附件临时区（DATA_DIR/attachments/<projectHash>/，≤1MB），
+   * 返回绝对路径供 prompt 拼接路径行由引擎按需读取。 */
+  async postAttachment(sessionId: string, body: { content: string; name?: string }): Promise<{ path: string; name: string; bytes: number }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/attachments`, jsonInit("POST", body));
+  },
+  /** 删除附件临时文件。仅挂用户显式移除 chip——发送成功后文件刻意留存
+   * （引擎按需读取），48h 按龄清理兜底，发送清空绝不调用本方法。 */
+  async removeAttachment(sessionId: string, path: string): Promise<{ ok: boolean }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/attachments?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+  },
+
   // ---- models ----
   async listModels(project?: string): Promise<ModelsResponse> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";

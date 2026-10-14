@@ -25,6 +25,7 @@ import { createFsRoutes } from "./api/routes-fs";
 import { createSnippetsRoutes } from "./api/routes-snippets";
 import { createTagsRoutes } from "./api/routes-tags";
 import { createNotesRoutes } from "./api/routes-notes";
+import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 
@@ -261,6 +262,15 @@ try {
   void migrateProjectPreferences(projectConfigs, meta).catch((err: unknown) => {
     console.warn(`项目偏好迁移异常中断（下次启动补迁）：${err instanceof Error ? err.message : String(err)}`);
   });
+  // 附件临时区按龄清理（docs08-r3 任务 17）：启动时扫 DATA_DIR/attachments/*/ 下
+  // mtime>48h 的文件删除。发送成功后附件文件刻意留存（prompt 只带路径行，引擎
+  // 随时按需读取），用户显式移除才即时删——此处是唯一的过期兜底，不是常规删除路径。
+  try {
+    const purged = purgeStaleAttachments(attachmentsRoot());
+    if (purged > 0) console.log(`附件临时区清理：${purged} 个过期文件（>48h）`);
+  } catch (err) {
+    console.warn(`附件临时区清理失败：${err instanceof Error ? err.message : String(err)}`);
+  }
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   if (
