@@ -21,8 +21,8 @@ export interface TagDefs {
   project: TagDefinition[];
 }
 
-/** 行内徽标最多显示的标签数（计划：3 个以内全显，超出折叠为 +N） */
-export const TAG_BADGE_LIMIT = 3;
+/** 行内徽标最多显示的标签数（docs08-r3 C14：1 个全显，超出折叠为 +N 计数） */
+export const TAG_BADGE_LIMIT = 1;
 
 /** (scope,name) 唯一键（与 routes-tags 服务端去重键同形） */
 export function tagKey(ref: TagRef): string {

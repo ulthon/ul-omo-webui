@@ -2,7 +2,8 @@
  * 侧栏单列表回归测试（W3 todo 10）：
  * - buildForkIndexes：fork 编号 = 同父兄弟按 sessionPath 升序的 1..N 位次，
  *   输入顺序打乱 / 重复调用结果稳定（列表加载时一次算好缓存的契约）
- * - SessionItem：fork 行徽标 GitFork + "fork"、标题后缀「(fork #N)」；人工行保持 User + "人工"
+ * - SessionItem：fork 行徽标 GitFork + "fork"、标题后缀「(fork #N)」；人工行不显来源徽标
+ *   （docs08-r3 C14 删「人工」分支）
  * - 子会话行内展开/收起（knownChildren 免请求；缺省走懒加载 archived=all 按血缘过滤），
  *   展开/收起均为瞬态（无持久化副作用）
  * - SessionList：human/all 分段控件删除（唯一列表口径），工具条 批量/归档/标签
@@ -161,13 +162,13 @@ describe("SessionItem 来源徽标与 fork 后缀", () => {
     expect(container.textContent).toContain("演示父会话 (fork #2)");
   });
 
-  test("人工行：User 图标 + 人工文本徽标，无后缀", async () => {
+  test("人工行：无来源徽标（docs08-r3 C14），无后缀", async () => {
     const container = await mount(
       createElement(SessionItem, { session: makeSession("human-row", { title: "人工会话" }), expandable: false, onDialog: () => {}, onChanged: () => {} }),
     );
     const badge = [...container.querySelectorAll("span")].find((s) => s.textContent?.trim() === "人工");
-    expect(badge).toBeDefined();
-    expect(badge?.querySelector("svg.lucide-user")).toBeDefined();
+    expect(badge).toBeUndefined();
+    expect(container.querySelector("svg.lucide-user")).toBeNull();
     expect(container.textContent).not.toContain("(fork #");
   });
 

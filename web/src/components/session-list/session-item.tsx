@@ -2,12 +2,13 @@
 // 会话列表行（W3 todo 10 单列表重构）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
 // 引擎探询 active 兜底）+ 标题（fork 行带「(fork #N)」后缀，编号 = 同父兄弟按 sessionPath 序，
 // 列表加载时由 session-list 经 buildForkIndexes 一次算好传入）+ 来源标识（fork 子会话 GitFork
-// 徽标 / 人工创建徽标）+ 标签徽标（todo 11，最多 3 + N、孤儿灰显可清理）+ 未读徽标 + 相对时间
+// 徽标；人工创建不显标，docs08-r3 C14 紧凑化）+ 标签徽标（todo 11，最多 1 + N、孤儿灰显可清理）
+// + 未读徽标 + 相对时间（桌面显示，<sm 隐藏，docs08-r3 C14）
 // + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
 // 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
 // + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
-import { ChevronRight, Download, GitFork, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, User, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { ChevronRight, Download, GitFork, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -52,27 +53,17 @@ function StatusDot({ runState, active }: { runState: SessionRunState | null; act
   return <span className={`size-1.5 shrink-0 rounded-full ${cls}`} title={title} />;
 }
 
-/** 来源标识（W3 todo 10 改名）：fork 子会话（parentSessionPath 非空）用 GitFork + "fork"，
- * 人工创建保持 User + "人工"。单列表下恒显示（旧 human/all 视图差分随分段控件删除）。 */
+/** 来源标识（W3 todo 10 改名；docs08-r3 C14 紧凑化删「人工」分支——仅 fork 子会话显标，
+ * 人工创建无徽标，行内不再有恒显的来源噪音）。 */
 function SourceBadge({ session }: { session: SessionListItem }) {
-  if (session.parentSessionPath) {
-    return (
-      <span
-        className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-        title={`fork 自 ${session.parentSessionPath}`}
-      >
-        <GitFork className="size-2.5" />
-        fork
-      </span>
-    );
-  }
+  if (!session.parentSessionPath) return null;
   return (
     <span
       className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-      title="人工创建"
+      title={`fork 自 ${session.parentSessionPath}`}
     >
-      <User className="size-2.5" />
-      人工
+      <GitFork className="size-2.5" />
+      fork
     </span>
   );
 }
@@ -231,10 +222,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
   return (
     <div>
       <div
-        className={`group flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-sm ${
-          selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+        className={`group relative flex items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${
+          selected ? "bg-primary/10" : "hover:bg-accent/50"
         }`}
       >
+        {/* 选中态双信号之二：行首 2px primary 竖条（C13）。inset-y-1 + rounded-full
+            做圆角补偿——竖条圆头收进行圆角内，不与 rounded-md 行角打架；与
+            hover:bg-accent/50（无竖条无 primary 底）彻底拉开。 */}
+        {selected && <span aria-hidden className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" />}
         {/* 批量选择框（行首；勾选集合提升到 session-list） */}
         {selectable && (
           <button
@@ -275,7 +270,10 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         <StatusDot runState={runState} active={session.active} />
 
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={handleSelect}>
-          <span className={`truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
+          {/* min-w-9：极端挤压（超长标题+多徽标窄行）下标题保底 2 字符宽，
+              防止 truncate 的 flex 收缩极值把标题压成 0 宽（overflow hidden 使
+              min-width:auto 失效，无此下限会整段消失） */}
+          <span className={`min-w-9 truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
             {session.pinned && <Pin className="mr-1 inline size-3 shrink-0 align-[-1px] text-muted-foreground" />}
             {forkIndex ? `${session.title} (fork #${forkIndex})` : session.title}
           </span>
@@ -285,11 +283,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">已归档</span>
           )}
           {projectLabel && (
-            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground" title={session.project}>
+            <span className="shrink min-w-0 truncate rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground" title={session.project}>
               {projectLabel}
             </span>
           )}
-          <span className="ml-auto shrink-0 text-[11px] text-muted-foreground/70">{formatRelative(session.modified)}</span>
+          {/* C14 紧凑化：<sm 隐藏相对时间（手机端行高由 44px 触控元素保证，不塌）；
+              桌面极端挤压（超长标题+徽标+未读同屏）下时间作为唯一可收缩项先让位，
+              未读徽标 shrink-0 优先保住 */}
+          <span className="ml-auto hidden shrink min-w-0 truncate text-[11px] text-muted-foreground/70 sm:inline">{formatRelative(session.modified)}</span>
           {session.unreadCount > 0 && (
             <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
               {session.unreadCount > 99 ? "99+" : session.unreadCount}

@@ -1,5 +1,5 @@
-// 标签 UI 纯逻辑单测（todo 11）：
-// - visibleTags 徽标截断（3 个全显 / 超出 +N）
+// 标签 UI 纯逻辑单测（todo 11；docs08-r3 C14 徽标上限 1+计数）：
+// - visibleTags 徽标截断（1 个全显 / 超出 +N）
 // - isOrphanTag / orphanTags 孤儿判定（挂载的 (scope,name) 不在两源定义集中）
 // - nextSessionTags 选择器勾选 → 整替载荷生成
 // - mergeTagOptions 过滤 chips 选项合并去重（全局 + 项目级，跨 scope 同名去重）
@@ -38,22 +38,22 @@ describe("visibleTags 徽标截断", () => {
     expect(visibleTags([])).toEqual({ shown: [], extra: 0 });
   });
 
-  test("3 个以内全显不折叠", () => {
-    const tags = [ref("global", "a"), ref("project", "b"), ref("global", "c")];
+  test("1 个以内全显不折叠", () => {
+    const tags = [ref("global", "a")];
     const { shown, extra } = visibleTags(tags);
-    expect(shown).toHaveLength(3);
+    expect(shown).toHaveLength(1);
     expect(extra).toBe(0);
   });
 
-  test("超出 3 个折叠为前 3 + 计数", () => {
+  test("超出 1 个折叠为前 1 + 计数（C14）", () => {
     const tags = [ref("global", "a"), ref("project", "b"), ref("global", "c"), ref("project", "d"), ref("global", "e")];
     const { shown, extra } = visibleTags(tags);
-    expect(shown.map((t) => t.name)).toEqual(["a", "b", "c"]);
-    expect(extra).toBe(2);
+    expect(shown.map((t) => t.name)).toEqual(["a"]);
+    expect(extra).toBe(4);
   });
 
-  test("常量契约为 3（计划：最多显示 3 个 + N）", () => {
-    expect(TAG_BADGE_LIMIT).toBe(3);
+  test("常量契约为 1（docs08-r3 C14：最多显示 1 个 + N 计数）", () => {
+    expect(TAG_BADGE_LIMIT).toBe(1);
   });
 });
 
