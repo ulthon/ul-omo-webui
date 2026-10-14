@@ -11,6 +11,7 @@
 // (2) 游标回退（=服务重启强信号）时在 refetchLoadedSessions 旁并行 fire-and-forget
 // GET /api/sessions 重同步（active 三态校准，见 resyncRunStatesFromServer）。
 import { api } from "@/lib/api";
+import { sseDebugEnabled } from "@/lib/events";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
@@ -175,6 +176,16 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const wireSessionId = typeof wire.sessionId === "string" ? wire.sessionId : null;
   const sessionId = durableSessionId ?? wireSessionId;
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
+
+  // D18 诊断（senpi_debug_sse 开关）：帧到达 + 分发目标键 + 与选中键的错配信号。
+  // route ≠ selected 且为消息类帧 = "消息写进不可见槽"（durableLookup miss 键错配嫌疑）的直接证据。
+  if (sseDebugEnabled()) {
+    const selected = useSessionsStore.getState().selectedId;
+    const mismatch = selected !== null && sessionId !== selected;
+    console.debug(
+      `[sse-dispatch] type=${eventType} cursor=${cursor ?? "-"} durable=${durableSessionId ?? "-"} wire=${wireSessionId ?? "-"} route=${sessionId} selected=${selected ?? "-"}${mismatch ? " MISMATCH" : ""}`,
+    );
+  }
 
   // 活动记账（W1 缺陷 #3）：该会话任何 SSE 帧都刷新运行态活动时刻——流式 chunk / 工具
   // 事件持续到达即活跃，永不被 60s 清扫回落；无运行态时 no-op。

@@ -48,3 +48,7 @@ export function engineRegistryPath(): string {
 export function agentDir(): string {
   return process.env.SENPI_WEBUI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
+
+/** SSE 链路诊断日志开关（D18 排查）：SENPI_WEBUI_DEBUG_SSE truthy 时服务端 stdout 输出
+ * 连接建立/状态迁移/帧写出/durableLookup miss 日志；关闭时零输出零行为差异。 */
+export const DEBUG_SSE = /^(1|true|yes|on)$/i.test(process.env.SENPI_WEBUI_DEBUG_SSE ?? "");

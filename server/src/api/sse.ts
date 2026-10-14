@@ -50,6 +50,13 @@
 import { Hono } from "hono"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, type BridgeEvent } from "../engine/events"
+import { DEBUG_SSE } from "../config"
+
+/** D18 诊断日志（SENPI_WEBUI_DEBUG_SSE 开关，默认关）：连接/帧/durableLookup 观测，
+ * 关闭时零输出、生产行为零改动。 */
+function dlog(line: string): void {
+  if (DEBUG_SSE) console.log(`[sse-debug] ${line}`)
+}
 
 export const sseRoutes = new Hono()
 
@@ -104,10 +111,22 @@ function wireSessionId(e: BridgeEvent): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined
 }
 
-/** data 帧载荷：映射可得时注入 durableSessionId（可选加法字段），否则保持原两字段。 */
+/** data 帧载荷：映射可得时注入 durableSessionId（可选加法字段），否则保持原两字段。
+ * 诊断开着时输出帧级 durable 命中/miss 观测（miss = 信封不注入 durableSessionId，
+ * 前端回退 wire sessionId 建 store 键——键错配嫌疑的直接信号）。 */
 function dataPayload(e: BridgeEvent, durableLookup: SseRuntime["durableLookup"]): string {
   const handle = wireSessionId(e)
   const durable = handle !== undefined ? durableLookup?.(e.projectPath, handle) : undefined
+  if (DEBUG_SSE) {
+    const type = wireType(e)
+    if (handle === undefined) {
+      dlog(`frame id=${e.id} type=${type} wire=- durable=-`)
+    } else if (durable === undefined) {
+      dlog(`frame id=${e.id} type=${type} wire=${handle} durable=MISS project=${e.projectPath}`)
+    } else {
+      dlog(`frame id=${e.id} type=${type} wire=${handle} durable=${durable}`)
+    }
+  }
   if (durable === undefined) {
     return JSON.stringify({ projectPath: e.projectPath, event: e.event })
   }
@@ -246,6 +265,7 @@ sseRoutes.get("/events", (c) => {
     // hono streamSSE 语义：cb 返回即关闭响应流。长驻 SSE 必须把 cb 挂在
     // "连接关闭" 的 promise 上，由 cleanup（写失败 / abort）解除挂起。
     let closeResolve: (() => void) | null = null
+    dlog(`open afterId=${afterId} filter=${sessionFilter ?? "-"} heartbeatMs=${heartbeatMs}`)
 
     const cleanup = (): void => {
       if (cleaned) return
@@ -260,16 +280,22 @@ sseRoutes.get("/events", (c) => {
       closeResolve?.()
       closeResolve = null
     }
-    stream.onAbort(cleanup)
+    stream.onAbort(() => {
+      dlog(`close reason=client-abort lastSentId=${conn.lastSentId} queue=${conn.queue.length}`)
+      cleanup()
+    })
 
     const flush = async (): Promise<void> => {
       if (conn.flushing || conn.closed) return
+      // 慢消费者观测（嫌疑 a 旁证：队列停摆/积压会让帧滞留服务端，客户端侧表现为不实时）
+      if (conn.queue.length > 100) dlog(`backlog queue=${conn.queue.length} lastSentId=${conn.lastSentId}`)
       conn.flushing = true
       try {
         while (conn.queue.length > 0 && !conn.closed) {
           const frame = conn.queue.shift()
           if (!frame) break
           if (frame.kind === "gap") {
+            dlog(`gap frame from=${frame.from} to=${frame.to} id=${frame.id}`)
             await stream.writeSSE({
               event: "gap",
               data: JSON.stringify({ from: frame.from, to: frame.to }),
@@ -281,6 +307,7 @@ sseRoutes.get("/events", (c) => {
           conn.lastSentId = frame.kind === "gap" ? frame.id : frame.event.id
         }
       } catch {
+        dlog(`close reason=write-error lastSentId=${conn.lastSentId} queue=${conn.queue.length}`)
         cleanup()
       } finally {
         conn.flushing = false
@@ -312,6 +339,11 @@ sseRoutes.get("/events", (c) => {
         durableLookup,
         isEngineRunning ?? (() => true),
       )
+      dlog(
+        `replay after=${afterId} buffered=${replay.events.length} kept=${replayEvents.length} gap=${
+          replay.gap ? `${replay.gapFrom}->${replay.gapTo}` : "no"
+        }`,
+      )
       for (const e of replayEvents) {
         if (!matchesFilter(e)) continue
         conn.queue.push({ kind: "event", event: e })
@@ -321,7 +353,10 @@ sseRoutes.get("/events", (c) => {
       // 心跳注释行保活（不产生 SSE 事件，客户端不可见）；写失败即断开，清理
       heartbeat = setInterval(() => {
         if (conn.closed) return
-        stream.write(": ping\n\n").catch(cleanup)
+        stream.write(": ping\n\n").catch(() => {
+          dlog(`close reason=heartbeat-write-error lastSentId=${conn.lastSentId}`)
+          cleanup()
+        })
       }, heartbeatMs)
       heartbeat.unref?.()
 

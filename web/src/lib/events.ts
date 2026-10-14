@@ -80,6 +80,23 @@ function resolveForceFetchTransport(): boolean {
   }
 }
 
+/** D18 诊断开关：localStorage senpi_debug_sse=1 或 URL ?debugSse=1 时，连接状态迁移与
+ * 帧到达经 console.debug 输出（与服务端 SENPI_WEBUI_DEBUG_SSE 互相独立；QA 时两端同开）。
+ * function 声明保证 event-dispatch 循环 import 场景下的提升绑定。 */
+export function sseDebugEnabled(): boolean {
+  try {
+    if (typeof window === "undefined" || typeof localStorage === "undefined") return false;
+    if (new URLSearchParams(window.location.search).has("debugSse")) return true;
+    return localStorage.getItem("senpi_debug_sse") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function dlog(line: string): void {
+  if (sseDebugEnabled()) console.debug(`[sse-client] ${line}`);
+}
+
 export class EventsClient {
   private readonly url: string;
   private readonly baseBackoffMs: number;
@@ -170,9 +187,11 @@ export class EventsClient {
     this.openedAt = Date.now();
     this.gotFrame = false;
     this.opened = false;
+    dlog(`es connecting url=${this.url}`);
     const es = this.createEs(this.url);
     this.es = es;
     es.onopen = () => {
+      dlog("es open");
       this.backoffMs = this.baseBackoffMs; // 恢复在线复位退避
       this.online = true;
       this.opened = true;
@@ -180,6 +199,7 @@ export class EventsClient {
       this.armStallWatch(); // OPEN 后布防首消息停滞判定
     };
     es.onerror = () => {
+      dlog(`es error opened=${this.opened} gotFrame=${this.gotFrame} stickyFetch=${this.stickyFetch}`);
       this.online = false;
       this.disarmStallWatch();
       // OPEN 过但零帧即断（无论停滞超时还是 Chrome 侧提前断开）= EventSource 通道零产出，
@@ -196,6 +216,7 @@ export class EventsClient {
   }
 
   private onEventSourceFrame(ev: MessageEvent): void {
+    dlog(`es frame type=${ev.type} cursor=${ev.lastEventId || "-"}`);
     this.gotFrame = true;
     this.disarmStallWatch(); // 有消息即解除停滞判定（本连接内不再检测）
     const raw = ev.lastEventId;
@@ -208,6 +229,7 @@ export class EventsClient {
   private armStallWatch(): void {
     this.disarmStallWatch();
     this.stallCancel = this.scheduleFn(() => {
+      dlog(`es stall-timeout ${this.stallTimeoutMs}ms zero-frame -> sticky fetch`);
       this.stallCancel = null;
       this.stickyFetch = true;
       this.online = false;
@@ -231,6 +253,7 @@ export class EventsClient {
     const headers: Record<string, string> = {};
     const cursor = getDispatchCursor();
     if (cursor !== null) headers["Last-Event-ID"] = String(cursor);
+    dlog(`fetch connecting lastEventId=${cursor ?? "-"}`);
     void this.fetchImpl(this.url, { headers, signal: controller.signal })
       .then((res) => {
         if (controller.signal.aborted) return;
@@ -238,12 +261,14 @@ export class EventsClient {
           throw new Error(`sse fetch HTTP ${res.status}`);
         }
         if (!res.body) throw new Error("sse fetch 无响应体");
+        dlog("fetch open");
         this.online = true;
         this.backoffMs = this.baseBackoffMs;
         useUiStore.getState().setConnection("online");
         return this.pumpSseStream(res.body);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        dlog(`fetch error aborted=${controller.signal.aborted} stopped=${this.stopped} msg=${err instanceof Error ? err.message : String(err)}`);
         if (controller.signal.aborted || this.stopped) return; // 主动关闭不重连
         controller.abort(); // 幂等：异常退出（idle timeout / stream ended）时中止半死的响应流，防连接累积
         this.abortController = null; // 连接已结束，允许下次 open 重建
@@ -291,7 +316,10 @@ export class EventsClient {
         );
       });
       const { done, value } = result;
-      if (done) break;
+      if (done) {
+        dlog("fetch stream-ended");
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       let idx: number;
       while ((idx = buffer.indexOf("\n")) >= 0) {
@@ -330,6 +358,7 @@ export class EventsClient {
     if (this.stopped || this.cancelTimer) return;
     const delay = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 2, this.maxBackoffMs);
+    dlog(`reconnect scheduled in ${delay}ms stickyFetch=${this.stickyFetch}`);
     this.cancelTimer = this.scheduleFn(() => {
       this.cancelTimer = null;
       this.open();
