@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 import { EventBus, attachEventBus } from "../src/engine/events"
-import { sseRoutes, setEventBus } from "../src/api/sse"
+import { SSE_HEARTBEAT_TYPE, sseRoutes, setEventBus } from "../src/api/sse"
 import { EngineProcessManager } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
 
@@ -286,12 +286,54 @@ describe("GET /api/events", () => {
     expect(parseBlock(liveBlock[0]).id).toBe("5")
   })
 
-  test("心跳：无事件期间按间隔发注释行 : ping", async () => {
-    const { app } = makeApp({ heartbeatMs: 50 })
+  test("心跳：无事件期间按间隔发 event: hb 具名帧（占用 id 流水）", async () => {
+    const { bus, app } = makeApp({ heartbeatMs: 50 })
     const res = await app.request("/api/events")
+    // 先来一条真实事件占 id=1，随后到达的应为心跳帧 id=2
+    bus.publish(PROJ, wireEvent("s1", 1))
+    const blocks = await readSseBlocks(res.body!, 2)
+    const f1 = parseBlock(blocks[0])
+    expect(f1.event).toBe("message_update")
+    expect(f1.id).toBe("1")
+    const hb = parseBlock(blocks[1])
+    expect(hb.event).toBe(SSE_HEARTBEAT_TYPE)
+    expect(hb.id).toBe("2")
+    const payload = JSON.parse(hb.data!)
+    expect(payload.projectPath).toBe("")
+    expect(payload.event.type).toBe(SSE_HEARTBEAT_TYPE)
+    expect(typeof payload.event.t).toBe("number")
+    await res.body!.cancel()
+  })
+
+  test("重放把 hb 当普通帧参与 id 序列：Last-Event-ID 续发透传、gap 不因 hb 误报", async () => {
+    const { bus, app } = makeApp() // 默认心跳 60s，测试窗口内无自发心跳，手动发布等价帧
+    bus.publish(PROJ, wireEvent("s1", 1))
+    const res1 = await app.request("/api/events")
+    const b1 = await readSseBlocks(res1.body!, 1)
+    expect(parseBlock(b1[0]).id).toBe("1")
+    await res1.body!.cancel()
+
+    // 断开期间：真实事件(id2) → 心跳(id3) → 真实事件(id4)
+    bus.publish(PROJ, wireEvent("s1", 2))
+    bus.publish("", { type: SSE_HEARTBEAT_TYPE, t: 0 } as never)
+    bus.publish(PROJ, wireEvent("s1", 4))
+
+    // 持 id=2 重连：续发 3(hb), 4，无 gap、hb 正常透传（重放过滤只针对权限请求帧）
+    const res2 = await app.request("/api/events", { headers: { "Last-Event-ID": "2" } })
+    const blocks = await readSseBlocks(res2.body!, 2)
+    const f1 = parseBlock(blocks[0])
+    expect(f1.event).toBe(SSE_HEARTBEAT_TYPE)
+    expect(f1.id).toBe("3")
+    expect(parseBlock(blocks[1]).id).toBe("4")
+    expect(blocks.every((b) => parseBlock(b).event !== "gap")).toBe(true)
+    await res2.body!.cancel()
+  })
+
+  test("?session= 过滤下心跳帧仍到达（看门狗续期依赖 hb，不许被滤掉）", async () => {
+    const { app } = makeApp({ heartbeatMs: 50 })
+    const res = await app.request(`/api/events?session=${encodeURIComponent("s-none")}`)
     const blocks = await readSseBlocks(res.body!, 1)
-    expect(blocks[0]).toBe(": ping")
-    expect(parseBlock(blocks[0]).comment).toBe(true)
+    expect(parseBlock(blocks[0]).event).toBe(SSE_HEARTBEAT_TYPE)
     await res.body!.cancel()
   })
 

@@ -25,8 +25,13 @@
  *     前端输入区永久锁死。实时扇出路径不受影响；
  *   - `?session=` 过滤：wire sessionId（routing handle）或 durableSessionId
  *     任一匹配即放行（durable 匹配是加法兼容：REST 侧只发 durable id）；
- *   - 心跳：每 heartbeatMs（默认 15s，生产装配 8s——Bun 空闲超时实测 ~12s，
- *     心跳周期必须小于它，防空闲 SSE 连接被服务端掐断）写一行注释 `: ping` 保活。
+ *     心跳 hb 帧无会话身份，无条件放行（被滤掉会让该连接的客户端看门狗失活）；
+ *   - 心跳（D18 修复）：每 heartbeatMs（默认 15s，生产装配 8s——Bun 空闲超时实测
+ *     ~12s，心跳周期必须小于它）向事件桥发布一条具名 `event: hb` 帧，替代原注释行
+ *     `: ping`——EventSource 对注释行不派发事件，客户端停摆看门狗
+ *     （web/src/lib/events.ts 滚动续期制）依赖 hb 帧续期。hb 占用 id 流水：与普通
+ *     帧同走环形缓冲、重放（透传，重放过滤只针对 extension_ui_request）、
+ *     Last-Event-ID 序列与 gap 语义；客户端分发层对无 sessionId 帧游标记账后短路。
  *
  * 挂载与装配（集成收口者参考，本文件不改 index.ts）：
  *
@@ -60,6 +65,17 @@ function dlog(line: string): void {
 
 export const sseRoutes = new Hono()
 
+/** 心跳 wire 事件 type（D18 修复）：具名 `event: hb` 帧替代注释行 `: ping`。
+ * EventSource 只对客户端监听列表内的类型派发事件，看门狗续期依赖 hb 可派发。 */
+export const SSE_HEARTBEAT_TYPE = "hb"
+
+/** 发布一条全局心跳事件：占用 id 流水（重放透传、Last-Event-ID 序列参与、客户端
+ * 游标跟随推进——三处语义核对见计划任务 2）。projectPath 空串 = 全局帧，无
+ * sessionId，客户端分发层游标记账后短路返回，不进任何 store。 */
+function publishHeartbeat(bus: EventBus): BridgeEvent {
+  return bus.publish("", { type: SSE_HEARTBEAT_TYPE, t: Date.now() } as never)
+}
+
 interface SseOptions {
   /** 心跳间隔毫秒（默认 15s；生产装配 8s，见头注释）。 */
   heartbeatMs?: number
@@ -79,17 +95,28 @@ interface SseRuntime {
   isEngineRunning: SseOptions["isEngineRunning"]
 }
 
-/** EventBus 装配口：集成收口时在进程启动期调用一次（构造参数注入实例）。 */
+/** EventBus 装配口：集成收口时在进程启动期调用一次（构造参数注入实例）。
+ * 同时启动全局心跳节拍：publish 进桥后经订阅扇出到全部连接（连接级 interval 退役
+ * ——扇出即每连接字节流，Bun 空闲保活职责不变）。重复调用先清旧节拍器。 */
 export function setEventBus(bus: EventBus, options?: SseOptions): void {
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
   runtime = {
     bus,
     heartbeatMs: options?.heartbeatMs ?? 15000,
     durableLookup: options?.durableLookup,
     isEngineRunning: options?.isEngineRunning,
   }
+  heartbeatTimer = setInterval(() => {
+    publishHeartbeat(bus)
+  }, runtime.heartbeatMs)
+  ;(heartbeatTimer as unknown as { unref?: () => void }).unref?.()
 }
 
 let runtime: SseRuntime | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
 /** 每个 SSE 连接独立的待发队列与游标位：慢消费者不影响其他连接，
  * 队列内顺序 = 游标顺序（publish 同步扇出入队；初始 gap/replay 帧先入队，
@@ -250,6 +277,8 @@ sseRoutes.get("/events", (c) => {
   const afterId = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
   const sessionFilter = c.req.query("session")
   const matchesFilter = (e: BridgeEvent): boolean => {
+    // 心跳帧无会话身份，无条件放行：被 ?session= 滤掉会让该连接的看门狗失活
+    if ((e.event as { type?: unknown }).type === SSE_HEARTBEAT_TYPE) return true
     if (sessionFilter === undefined) return true
     if (wireSessionId(e) === sessionFilter) return true
     // durable id 匹配（加法兼容）：REST 侧只发 durable id，前端用它过滤
@@ -261,7 +290,6 @@ sseRoutes.get("/events", (c) => {
     const conn: Connection = { queue: [], lastSentId: afterId, flushing: false, closed: false }
     let cleaned = false
     let unsubscribe: (() => void) | null = null
-    let heartbeat: ReturnType<typeof setInterval> | null = null
     // hono streamSSE 语义：cb 返回即关闭响应流。长驻 SSE 必须把 cb 挂在
     // "连接关闭" 的 promise 上，由 cleanup（写失败 / abort）解除挂起。
     let closeResolve: (() => void) | null = null
@@ -273,10 +301,6 @@ sseRoutes.get("/events", (c) => {
       conn.closed = true
       unsubscribe?.()
       unsubscribe = null
-      if (heartbeat) {
-        clearInterval(heartbeat)
-        heartbeat = null
-      }
       closeResolve?.()
       closeResolve = null
     }
@@ -350,15 +374,8 @@ sseRoutes.get("/events", (c) => {
       }
       await flush()
 
-      // 心跳注释行保活（不产生 SSE 事件，客户端不可见）；写失败即断开，清理
-      heartbeat = setInterval(() => {
-        if (conn.closed) return
-        stream.write(": ping\n\n").catch(() => {
-          dlog(`close reason=heartbeat-write-error lastSentId=${conn.lastSentId}`)
-          cleanup()
-        })
-      }, heartbeatMs)
-      heartbeat.unref?.()
+      // 心跳由全局节拍器向事件桥 publish（setEventBus 内），经订阅扇出到本连接：
+      // hb 是普通 id 序列帧，写失败同样走 flush 的 catch 统一清理
 
       // cb 挂起保持长驻流；cleanup（客户端断开写失败 / abort）时解除，
       // cb 返回后 hono run() 的 finally 才 close 响应。

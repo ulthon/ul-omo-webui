@@ -2,19 +2,24 @@
 // 事件统一经 lib/event-dispatch 的 dispatchSseEvent 入口分发进 stores。
 //
 // 传输双路径：
-//   1. EventSource（主路径）——OPEN 后 stallTimeoutMs 内零消息判定停摆，关闭并永久切换
-//      fetch 流（模式粘滞，页面生命周期内不回退）。停滞检测针对的环境病见 learnings
-//      W4 todo 23：Chrome 153 的 EventSource 对 Bun SSE 流间歇停摆（OPEN 后零解析，
-//      同页 fetch 流正常）。每次连接 OPEN 后布防，收到任何帧即解除——活跃收流期绝不误触发。
+//   1. EventSource（主路径）——停摆看门狗为持续滚动续期制（D18 修复）：OPEN 布防第一拍，
+//      此后任何已注册事件帧（含服务端 hb 心跳）都重置计时；期望帧间隔上限取
+//      max(stallTimeoutMs, 2×heartbeatMs)（生产心跳 8s → 16s 窗口），健康空闲连接的
+//      hb 到达即续期、永不超窗；真停摆（反代掐流 / Chrome EventSource 环境病，learnings
+//      W4 todo 23）窗口内感知并粘滞切换 fetch 流（模式粘滞，页面生命周期内不回退）。
+//      旧实现"OPEN 布防一次、首帧永久解除"留有首帧后盲区且对注释行心跳无感知（纯空闲
+//      5s 即误切）——两者均已由具名 hb 帧 + 滚动看门狗消除。
 //   2. fetch 流（降级路径）——fetch('/api/events', {headers: Last-Event-ID}) + ReadableStream
 //      手写 SSE 帧解析（event/data/id 行、多行 data 合并、心跳注释行跳过、chunk 边界缓冲），
 //      断线走同一套指数退避，重连请求自带 Last-Event-ID 头（游标取自分发层记账）。
 //   QA 强制开关：localStorage senpi_sse_transport=fetch 或 URL ?transport=fetch（生产用户无感）。
 //
-// 服务端契约（server/src/api/sse.ts）：event 行 = wire type；data 行 =
+// 服务端契约（server/src/api/sse.ts）：event 行 = wire type（心跳为具名 hb 帧，占用 id
+// 流水：重放透传、Last-Event-ID 序列参与、游标跟随）；data 行 =
 // {projectPath, event, durableSessionId?}；id 行 = 全局自增游标；游标越界先发 event: gap
-// 再从最旧可用续发；心跳注释行保活。分发层据 gap 帧与游标回退做活动会话全量重取兜底。
-import { dispatchSseEvent, getDispatchCursor } from "@/lib/event-dispatch";
+// 再从最旧可用续发。分发层据 gap 帧与游标回退做活动会话全量重取兜底；停摆/半死触发的
+// 重连额外强制 refetchLoadedSessions 全量对账（防御纵深，见 dispatch 侧游标回退路径）。
+import { dispatchSseEvent, getDispatchCursor, refetchLoadedSessions } from "@/lib/event-dispatch";
 import { useUiStore } from "@/stores/ui";
 
 /** 客户端监听的 SSE event: 类型集合。服务端 wire type 是开放集，EventSource 模式下未列出
@@ -22,6 +27,7 @@ import { useUiStore } from "@/stores/ui";
  * 新类型时在此追加。 */
 const HANDLED_EVENT_TYPES: readonly string[] = [
   "gap",
+  "hb", // 服务端心跳具名帧（D18 修复）：不加入此列表则 EventSource 永不派发，看门狗失活
   "message_start",
   "message_update",
   "message_end",
@@ -40,6 +46,9 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */
 const CONNECTING_STALE_MS = 5000;
 
+/** 服务端心跳间隔毫秒（与 server/src/index.ts:95 生产装配对应；hb 帧按此节拍到达） */
+const HEARTBEAT_MS = 8000;
+
 /** fetch 流空闲上限毫秒：服务端心跳 8s，超过 3 倍窗口全静默（含心跳）视为半死连接，
  * 主动断开走重连（fetch 无原生保活感知，半死连接不会自行报错） */
 const FETCH_IDLE_MS = 25000;
@@ -51,8 +60,11 @@ export interface EventsClientOptions {
   baseBackoffMs?: number;
   /** 退避上限毫秒（默认 30000） */
   maxBackoffMs?: number;
-  /** EventSource 停滞判定窗口毫秒（默认 5000）：OPEN 后该窗口内零消息即切 fetch 流 */
+  /** EventSource 停滞判定窗口基准毫秒（默认 5000）：看门狗实际窗口取
+   * max(本值, 2×heartbeatMs)——生产心跳 8s 即 16s 窗口 */
   stallTimeoutMs?: number;
+  /** 服务端心跳间隔毫秒（默认 8000，与生产装配对应；单测注入用） */
+  heartbeatMs?: number;
   /** EventSource 工厂（单测注入 mock 用） */
   createEventSource?: (url: string) => EventSource;
   /** 延时调度（单测驱动退避/停滞序列用）；返回取消函数 */
@@ -102,6 +114,8 @@ export class EventsClient {
   private readonly baseBackoffMs: number;
   private readonly maxBackoffMs: number;
   private readonly stallTimeoutMs: number;
+  /** 停摆看门狗窗口：max(stallTimeoutMs, 2×heartbeatMs)——健康心跳（8s 间隔）永不超窗 */
+  private readonly stallWindowMs: number;
   private readonly createEs: (url: string) => EventSource;
   private readonly scheduleFn: (fn: () => void, ms: number) => () => void;
   private readonly fetchImpl: typeof fetch;
@@ -123,12 +137,15 @@ export class EventsClient {
   private opened = false;
   /** fetch 流模式粘滞标志：一旦置位页面生命周期内不回退 EventSource */
   private stickyFetch: boolean;
+  /** 最近一次 fetch read 是否因 25s 空闲超时失败（区分半死连接与一般断线，对账判定用） */
+  private fetchIdleTimedOut = false;
 
   constructor(options: EventsClientOptions = {}) {
     this.url = options.url ?? "/api/events";
     this.baseBackoffMs = options.baseBackoffMs ?? 1000;
     this.maxBackoffMs = options.maxBackoffMs ?? 30000;
     this.stallTimeoutMs = options.stallTimeoutMs ?? 5000;
+    this.stallWindowMs = Math.max(this.stallTimeoutMs, 2 * (options.heartbeatMs ?? HEARTBEAT_MS));
     this.createEs = options.createEventSource ?? ((url) => new EventSource(url));
     this.scheduleFn = options.schedule ?? defaultSchedule;
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
@@ -196,7 +213,7 @@ export class EventsClient {
       this.online = true;
       this.opened = true;
       useUiStore.getState().setConnection("online");
-      this.armStallWatch(); // OPEN 后布防首消息停滞判定
+      this.resetStallWatch(); // OPEN 后布防滚动看门狗第一拍
     };
     es.onerror = () => {
       dlog(`es error opened=${this.opened} gotFrame=${this.gotFrame} stickyFetch=${this.stickyFetch}`);
@@ -205,7 +222,11 @@ export class EventsClient {
       // OPEN 过但零帧即断（无论停滞超时还是 Chrome 侧提前断开）= EventSource 通道零产出，
       // 属停摆形态，粘滞切换 fetch 流（切换无害：fetch 模式功能等价且正是环境病解法）；
       // 未 OPEN 的连接失败属建连问题（401/拒连），fetch 同样连不上，不做切换
-      if (this.opened && !this.gotFrame) this.stickyFetch = true;
+      if (this.opened && !this.gotFrame) {
+        this.stickyFetch = true;
+        // 零帧停摆 = 可能已错过帧：重连前强制全量对账兜底（自愈纵深）
+        refetchLoadedSessions();
+      }
       useUiStore.getState().setConnection("reconnecting");
       this.closeEs();
       this.scheduleReconnect();
@@ -218,25 +239,33 @@ export class EventsClient {
   private onEventSourceFrame(ev: MessageEvent): void {
     dlog(`es frame type=${ev.type} cursor=${ev.lastEventId || "-"}`);
     this.gotFrame = true;
-    this.disarmStallWatch(); // 有消息即解除停滞判定（本连接内不再检测）
+    this.resetStallWatch(); // 任何已注册事件帧（含 hb 心跳）都续期看门狗（滚动制）
     const raw = ev.lastEventId;
     const parsed = Number(raw);
     const cursor = raw !== "" && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
     dispatchSseEvent(ev.type, ev.data, cursor);
   }
 
-  /** OPEN 后 stallTimeoutMs 内零消息 → 判定 EventSource 停摆，粘滞切换 fetch 流 */
-  private armStallWatch(): void {
+  /**
+   * 停摆看门狗（D18 修复，滚动续期制）：OPEN 布防第一拍，此后任何已注册事件帧重置
+   * 计时。窗口 = max(stallTimeoutMs, 2×heartbeatMs)（生产 16s > 2 倍 8s 心跳间隔：
+   * 健康空闲连接的 hb 到达即续期，永不超窗）。超窗 = 期望帧间隔内零帧 → 真停摆
+   * （反代掐流 / 连接半死 / 环境病），粘滞切 fetch 并强制全量对账。
+   * 旧实现"OPEN 布防一次、首帧永久解除"留有首帧后不可感知盲区。
+   */
+  private resetStallWatch(): void {
     this.disarmStallWatch();
     this.stallCancel = this.scheduleFn(() => {
-      dlog(`es stall-timeout ${this.stallTimeoutMs}ms zero-frame -> sticky fetch`);
+      dlog(`es stall-watch fired ${this.stallWindowMs}ms no-frame -> sticky fetch + full refetch`);
       this.stallCancel = null;
       this.stickyFetch = true;
       this.online = false;
+      // 停摆期间帧可能已丢：重连前强制全量对账（复用 dispatch 层游标回退的自愈路径）
+      refetchLoadedSessions();
       useUiStore.getState().setConnection("reconnecting");
       this.closeEs();
       this.scheduleReconnect();
-    }, this.stallTimeoutMs);
+    }, this.stallWindowMs);
   }
 
   private disarmStallWatch(): void {
@@ -273,6 +302,8 @@ export class EventsClient {
         controller.abort(); // 幂等：异常退出（idle timeout / stream ended）时中止半死的响应流，防连接累积
         this.abortController = null; // 连接已结束，允许下次 open 重建
         this.online = false;
+        // 半死连接（25s 全静默）期间帧可能已丢：重连前强制全量对账兜底
+        if (this.fetchIdleTimedOut) refetchLoadedSessions();
         useUiStore.getState().setConnection("reconnecting");
         this.scheduleReconnect();
       });
@@ -289,6 +320,7 @@ export class EventsClient {
     let dataLines: string[] = [];
     let eventCursorRaw = "";
     let hasEvent = false;
+    this.fetchIdleTimedOut = false;
     const flushEvent = () => {
       if (!hasEvent) return;
       const cursorRaw = eventCursorRaw;
@@ -301,9 +333,13 @@ export class EventsClient {
       hasEvent = false;
     };
     for (;;) {
-      // 空闲检测：read 挂起超过 FETCH_IDLE_MS（服务端心跳 8s 应至少到一次）即断线重连
+      // 空闲检测（25s 判定机制零改动）：read 挂起超过 FETCH_IDLE_MS（服务端心跳 8s 应
+      // 至少到一次）即断线重连；超时标记用于重连前对账判定（区分半死与一般断线）
       const result = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("sse fetch idle timeout")), FETCH_IDLE_MS);
+        const timer = setTimeout(() => {
+          this.fetchIdleTimedOut = true;
+          reject(new Error("sse fetch idle timeout"));
+        }, FETCH_IDLE_MS);
         reader.read().then(
           (r) => {
             clearTimeout(timer);

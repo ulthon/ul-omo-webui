@@ -591,21 +591,22 @@ describe("fetch 流降级", () => {
     client.stop();
   });
 
-  test("EventSource OPEN 后停滞 5s 零消息切 fetch；模式粘滞（断流重连不再回 EventSource）", async () => {
+  test("EventSource OPEN 后看门狗窗口内零消息切 fetch；模式粘滞（断流重连不再回 EventSource）", async () => {
     const scheduler = new MockScheduler();
     const stream = new MockSseStream();
     const calls: MockFetchRecord[] = [];
     const client = new EventsClient({
       stallTimeoutMs: 5000,
+      heartbeatMs: 8000,
       createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
       schedule: scheduler.schedule,
       fetchImpl: makeFetchMock(stream, calls),
     });
     client.start();
-    MockEventSource.instances[0].emitOpen(); // 布防停滞判定
-    expect(scheduler.delays().at(-1)).toBe(5000);
+    MockEventSource.instances[0].emitOpen(); // 布防滚动看门狗第一拍
+    expect(scheduler.delays().at(-1)).toBe(16000); // 窗口 = max(5000, 2×8000)
 
-    scheduler.flush(); // 5s 零消息 → 停摆判定，挂重连退避
+    scheduler.flush(); // 窗口内零帧 → 停摆判定，挂重连退避
     scheduler.flush(); // 退避到期 → fetch 接管
     expect(calls).toHaveLength(1);
     await tick();
@@ -624,42 +625,117 @@ describe("fetch 流降级", () => {
     client.stop();
   });
 
-  test("EventSource OPEN 后零帧即断同样判定停摆切 fetch（Chrome 153 断开式停摆形态）", async () => {
+  test("任何帧（含 hb 心跳）续期看门狗：活跃/健康空闲收流期绝不误切，停帧满窗才切", () => {
     const scheduler = new MockScheduler();
     const stream = new MockSseStream();
     const calls: MockFetchRecord[] = [];
-    const instancesBefore = MockEventSource.instances.length;
     const client = new EventsClient({
       stallTimeoutMs: 5000,
+      heartbeatMs: 8000,
       createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
       schedule: scheduler.schedule,
       fetchImpl: makeFetchMock(stream, calls),
     });
     client.start();
-    MockEventSource.instances.at(-1)!.emitOpen();
-    MockEventSource.instances.at(-1)!.emitError(); // OPEN 后零帧即断
+    const es = MockEventSource.instances[0];
+    es.emitOpen();
+    expect(scheduler.pendingCount()).toBe(1);
+
+    // 事件帧续期：旧一轮计时被取消，新一轮重新计时（滚动制，而非解除）
+    es.emit("message_start", { projectPath: "/p", event: { type: "message_start", sessionId: "s1", id: "e1", message: { role: "user", content: [] } } }, 1);
+    expect(scheduler.pendingCount()).toBe(1);
+    expect(scheduler.entries.filter((e) => e.cancelled)).toHaveLength(1);
+
+    // hb 心跳帧同样续期（生产 8s 节拍：健康空闲连接每次心跳都重置 16s 窗口）
+    es.emit("hb", { projectPath: "", event: { type: "hb", t: 1 } }, 2);
+    expect(scheduler.pendingCount()).toBe(1);
+    expect(scheduler.delays().at(-1)).toBe(16000);
+    expect(scheduler.entries.filter((e) => !e.cancelled)).toHaveLength(1);
+
+    // 最后一次续期后模拟窗口流逝（无新帧）→ 才判定停摆
+    scheduler.flush();
+    expect(scheduler.pendingCount()).toBe(1); // 重连退避挂起
     scheduler.flush();
     expect(calls).toHaveLength(1); // 切 fetch 接管
-    expect(MockEventSource.instances.length).toBe(instancesBefore + 1); // 不再回 EventSource（粘滞）
     client.stop();
   });
 
-  test("收到帧即解除停滞判定（活跃收流期绝不误切）", () => {
+  test("停摆超窗切 fetch 时强制 refetchLoadedSessions 全量对账（自愈兜底）", async () => {
+    useMessagesStore.setState({ bySession: { s1: loadedMessages([]) } });
+    const page = { sessionId: "s1", entries: [{ type: "message", id: "m1" }], leafId: "m1", cursor: "m1" };
+    const fetchLog = stubFetch((url) =>
+      url.includes("/api/sessions/s1/messages") ? { status: 200, body: page } : { status: 404, body: { error: "unknown" } },
+    );
+    try {
+      const scheduler = new MockScheduler();
+      const stream = new MockSseStream();
+      const client = new EventsClient({
+        stallTimeoutMs: 5000,
+        heartbeatMs: 8000,
+        createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
+        schedule: scheduler.schedule,
+        fetchImpl: makeFetchMock(stream, []),
+      });
+      client.start();
+      MockEventSource.instances[0].emitOpen();
+      scheduler.flush(); // 超窗 → 停摆判定 → 对账
+      await tick();
+      await tick();
+      expect(fetchLog.calls.some((c) => c.includes("/api/sessions/s1/messages"))).toBe(true);
+      expect(useMessagesStore.getState().bySession["s1"]!.entries).toEqual([{ type: "message", id: "m1" }]);
+      client.stop();
+    } finally {
+      fetchLog.restore();
+    }
+  });
+
+  test("EventSource OPEN 后零帧即断同样判定停摆切 fetch，并触发对账", async () => {
+    useMessagesStore.setState({ bySession: { s1: loadedMessages([]) } });
+    const page = { sessionId: "s1", entries: [{ type: "message", id: "m1" }], leafId: "m1", cursor: "m1" };
+    const fetchLog = stubFetch((url) =>
+      url.includes("/api/sessions/s1/messages") ? { status: 200, body: page } : { status: 404, body: { error: "unknown" } },
+    );
+    try {
+      const scheduler = new MockScheduler();
+      const stream = new MockSseStream();
+      const calls: MockFetchRecord[] = [];
+      const instancesBefore = MockEventSource.instances.length;
+      const client = new EventsClient({
+        stallTimeoutMs: 5000,
+        heartbeatMs: 8000,
+        createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
+        schedule: scheduler.schedule,
+        fetchImpl: makeFetchMock(stream, calls),
+      });
+      client.start();
+      MockEventSource.instances.at(-1)!.emitOpen();
+      MockEventSource.instances.at(-1)!.emitError(); // OPEN 后零帧即断
+      await tick();
+      await tick();
+      expect(calls).toHaveLength(0); // error 路径先退避，未立即 fetch
+      expect(fetchLog.calls.some((c) => c.includes("/api/sessions/s1/messages"))).toBe(true); // 对账已发射
+      expect(useMessagesStore.getState().bySession["s1"]!.entries).toEqual([{ type: "message", id: "m1" }]);
+      scheduler.flush();
+      expect(calls).toHaveLength(1); // 退避到期切 fetch
+      expect(MockEventSource.instances.length).toBe(instancesBefore + 1); // 不再回 EventSource（粘滞）
+      client.stop();
+    } finally {
+      fetchLog.restore();
+    }
+  });
+
+  test("hb 心跳帧经分发：游标推进、不进任何 store（follow-only 语义）", () => {
     const scheduler = new MockScheduler();
-    const stream = new MockSseStream();
-    const calls: MockFetchRecord[] = [];
-    const client = new EventsClient({
-      stallTimeoutMs: 5000,
-      createEventSource: ((url: string) => new MockEventSource(url)) as unknown as (url: string) => EventSource,
-      schedule: scheduler.schedule,
-      fetchImpl: makeFetchMock(stream, calls),
-    });
+    const client = freshClient(scheduler);
     client.start();
-    MockEventSource.instances[0].emitOpen();
-    MockEventSource.instances[0].emit("message_start", { projectPath: "/p", event: { type: "message_start", sessionId: "s1", id: "e1", message: { role: "user", content: [] } } }, 1);
-    expect(scheduler.pendingCount()).toBe(0); // 停滞计时已取消
-    scheduler.flush();
-    expect(calls).toHaveLength(0); // 未切换
+    const es = MockEventSource.instances[0];
+    es.emitOpen();
+    es.emit("hb", { projectPath: "", event: { type: "hb", t: 123 } }, 7);
+    expect(getDispatchCursor()).toBe(7);
+    expect(useMessagesStore.getState().bySession).toEqual({});
+    // 后续真实帧游标正常衔接（hb 参与 id 序列不断链）
+    es.emit("agent_start", { projectPath: "/p", event: { type: "agent_start", sessionId: "s1" } }, 8);
+    expect(getDispatchCursor()).toBe(8);
     client.stop();
   });
 
