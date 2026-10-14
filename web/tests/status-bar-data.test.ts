@@ -1,9 +1,11 @@
 // 状态条纯助手单测（todo 24）：usage 形态容错、消息级增量累加、显示格式化。
+// A5 追加：turnSpeed 速度环快照容错解析（parseTurnSpeed）。
 import { describe, expect, test } from "bun:test";
 import {
   addMessageUsage,
   formatCost,
   formatTokens,
+  parseTurnSpeed,
   toUsageStats,
   type UsageStats,
 } from "@/components/chat/status-bar-data";
@@ -80,6 +82,39 @@ describe("addMessageUsage（message_end 条目的 message.usage 增量）", () =
       contextUsage: { tokens: 900, contextWindow: 100000, percent: 0.9 },
     });
     expect(addMessageUsage(snapshot, { usage: messageUsage })!.context).toEqual(snapshot.context);
+  });
+});
+
+describe("parseTurnSpeed（A5：usage.turnSpeed 容错解析）", () => {
+  const sample = (tokPerSec: number, endedAt = "2026-10-13T01:00:00.000Z") => ({ tokPerSec, endedAt });
+
+  test("正常快照：样本原样保留，均值取服务端值", () => {
+    const r = parseTurnSpeed({
+      turnSpeed: { turns: [sample(20), sample(30, "2026-10-13T01:01:00.000Z")], averageTokPerSec: 25 },
+    });
+    expect(r.turns.length).toBe(2);
+    expect(r.turns[0]).toEqual(sample(20));
+    expect(r.averageTokPerSec).toBe(25);
+  });
+
+  test("无回合：turns 缺失/空数组 → 空列表 + average null（前端显示暂无数据）", () => {
+    expect(parseTurnSpeed({}).turns).toEqual([]);
+    expect(parseTurnSpeed({ turnSpeed: { turns: [], averageTokPerSec: 0 } })).toEqual({
+      turns: [],
+      averageTokPerSec: null,
+    });
+    expect(parseTurnSpeed(null).averageTokPerSec).toBeNull();
+  });
+
+  test("脏样本丢弃：tok/s 非有限/≤0、endedAt 非字符串；均值异常回退本地均值", () => {
+    const r = parseTurnSpeed({
+      turnSpeed: {
+        turns: [sample(20), sample(NaN), sample(0), sample(-5), { tokPerSec: 30 }, sample(40)],
+        averageTokPerSec: -1, // 服务端均值异常 → 回退本地均值 (20+40)/2
+      },
+    });
+    expect(r.turns.map((t) => t.tokPerSec)).toEqual([20, 40]);
+    expect(r.averageTokPerSec).toBeCloseTo(30);
   });
 });
 

@@ -91,6 +91,19 @@ export interface EnginePromptReceipt {
   disposition: string
 }
 
+/** 回合速度样本（A5：单条 assistant 消息 message_start→message_end 配对；
+ * tokPerSec = 该消息 output tokens / 持续秒数。"回合样本"口径 = 每条 assistant 消息一个样本） */
+export interface EngineTurnSample {
+  tokPerSec: number
+  endedAt: string
+}
+
+/** 最近 N 回合速度（每项目内存速度环快照，不落库；N=20 按 endedAt 滑动） */
+export interface EngineTurnSpeed {
+  turns: EngineTurnSample[]
+  averageTokPerSec: number
+}
+
 /** 会话级 usage 统计（getSessionStats 映射；verification/05 P1-4：事件级 usage 在 message_end/assistant 消息上） */
 export interface EngineUsageStats {
   sessionId: string
@@ -109,6 +122,8 @@ export interface EngineUsageStats {
   }
   cost: number
   contextUsage?: { tokens: number; contextWindow: number; percent: number }
+  /** A5 回合速度（非 getSessionStats 字段，由运行时层从内存速度环附加；无环数据时不下发） */
+  turnSpeed?: EngineTurnSpeed
 }
 
 /** 可用模型（get_available_models 映射） */

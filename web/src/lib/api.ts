@@ -107,10 +107,23 @@ export interface SessionMetaInfo {
   updatedAt: string;
 }
 
+/** 回合速度样本（A5：assistant 消息 message_start→end 配对，tokPerSec = output tokens / 秒） */
+export interface TurnSpeedSample {
+  tokPerSec: number;
+  endedAt: string;
+}
+
+/** 最近 N 回合速度（服务端内存速度环快照，无回合时 turns 为空数组） */
+export interface TurnSpeed {
+  turns: TurnSpeedSample[];
+  averageTokPerSec: number;
+}
+
 export interface UsageInfo {
   tokens?: Record<string, number>;
   cost?: Record<string, unknown>;
   contextUsage?: { tokens: number; contextWindow: number; percent: number };
+  turnSpeed?: TurnSpeed;
   [key: string]: unknown;
 }
 

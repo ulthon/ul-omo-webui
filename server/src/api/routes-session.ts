@@ -424,7 +424,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     });
   }));
 
-  // 会话 usage 统计（会话级累计，verification/05 P1-4：get_session_stats）
+  // 会话 usage 统计（会话级累计，verification/05 P1-4：get_session_stats）；
+  // A5：usage 内含可选 turnSpeed（运行时层内存速度环附加，engine-runtime usage() 取数口）
   app.get("/api/usage", route(async (c: Context) => {
     const id = c.req.query("session");
     if (!id) throw new ApiError(400, "invalid_request", "session 查询参数必填");

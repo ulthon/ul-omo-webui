@@ -9,10 +9,11 @@
 // dirty 契约（原 shell 页签切换 guard 迁入）：NotesView 经 dirtyRef 上报编辑未保存，
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
 // 页签面板 lazy：变更/笔记按需加载（react-diff-view / notes 组件本体不进首屏），
-// 统计为空态占位（后续任务填充）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
+// 统计为静态 StatPanel（组件轻、无重依赖）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
 import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { BarChart3, ListTodo } from "lucide-react";
+import { ListTodo } from "lucide-react";
+import { StatPanel } from "@/components/chat/stat-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 
 const ChangesView = lazy(() =>
@@ -70,17 +71,6 @@ function clampRailWidth(width: number): number {
   return Math.min(RAIL_WIDTH_MAX, Math.max(RAIL_WIDTH_MIN, Math.round(width)));
 }
 
-/** 统计页签空态占位：真实 StatPanel 由后续任务填充，本任务仅保证页签可用不报错 */
-function StatsPlaceholder() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-      <BarChart3 className="size-8 text-muted-foreground/40" />
-      <p className="text-sm text-muted-foreground">暂无统计数据</p>
-      <p className="text-xs text-muted-foreground/70">token 用量与回合速度统计将在后续版本提供</p>
-    </div>
-  );
-}
-
 function RailLoading({ text }: { text: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{text}</div>;
 }
@@ -119,7 +109,7 @@ function RailBody({
   onClose: () => void;
 }) {
   if (tab === "todo") return <TodoPanel sessionId={sessionId} onClose={onClose} />;
-  if (tab === "stats") return <StatsPlaceholder />;
+  if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   return (
     <Suspense fallback={<RailLoading text={tab === "notes" ? "加载笔记视图…" : "加载变更视图…"} />}>
       {tab === "notes" ? <NotesView dirtyRef={notesDirtyRef} /> : <ChangesView />}
@@ -128,7 +118,7 @@ function RailBody({
 }
 
 /** 右栏容器：open/onToggle 由宿主传入（折叠记忆 senpi-webui:todo-panel-open 的既有机制不变）。
- *  sessionId 与会话视图同源派生；无选中会话时 todo 显示"未选择会话"、统计为空态占位，
+ *  sessionId 与会话视图同源派生；无选中会话时 todo/统计各自显示空态，
  *  变更/笔记按项目维度自带空态（原样挂载不改）。 */
 export function RightRail({
   open,

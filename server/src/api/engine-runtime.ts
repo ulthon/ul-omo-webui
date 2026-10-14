@@ -35,6 +35,8 @@ import {
   type EnginePromptInput,
   type EngineSessionSummary,
   type EngineThinkingLevel,
+  type EngineTurnSample,
+  type EngineTurnSpeed,
   type EngineUsageStats,
 } from "../adapter/engine-adapter";
 import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
@@ -265,6 +267,18 @@ class ProjectRuntime {
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   /** 已计过未读的 assistant 消息 id（幂等去重；封顶防泄漏） */
   private readonly countedMessages = new Set<string>();
+  /** A5 速度环容量：每会话保留最近 N 条 assistant 消息 tok/s 样本（endedAt 序滑动） */
+  private static readonly TURN_RING_CAPACITY = 20;
+  /** 速度环在途起点封顶（end 缺席如引擎崩溃时不无限积累，同 countedMessages 处置） */
+  private static readonly TURN_START_CAP = 200;
+  /** A5 回合速度环：durable id → 最近 N 条 tok/s 样本（内存态，invalidate 清空，不落库） */
+  private readonly turnSpeedByDurable = new Map<string, EngineTurnSample[]>();
+  /** 在途 assistant 消息起点：wire sessionId（routing handle）→ { 起始时刻, durable 解析快照 }。
+   * 真实 wire 的 message_start/end 无消息 id 字段（QA SSE 实证 2026-10-13：帧形态
+   * {type,message,sessionId}；前端 fixtures 的 id 形态是落盘条目合成物）——配对依赖
+   * 同会话 assistant 消息流式串行不重叠的计划假设（同一 handle 同时至多一条 assistant
+   * 在途；间插的 user start/end 不触碰本表，随后被本会话下一条 assistant start 覆盖）。 */
+  private readonly messageStartAt = new Map<string, { at: number; durable: string | undefined }>();
 
   constructor(
     private readonly manager: EngineProcessManager,
@@ -309,7 +323,9 @@ class ProjectRuntime {
         const wire = event as {
           type?: string;
           sessionId?: unknown;
+          id?: unknown;
           entry?: { type?: unknown; id?: unknown; message?: { role?: unknown } };
+          message?: { role?: unknown; usage?: unknown };
         };
         const type = wire.type;
         if (type === "agent_end" || type === "agent_settled" || type === "agent_idle") {
@@ -323,6 +339,13 @@ class ProjectRuntime {
               : null;
           this.settleRound();
           if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, type);
+          return;
+        }
+        // A5 回合速度环挂点：assistant 消息 message_start 记起点、message_end 取
+        // message.usage.output 配对（05 P1-4：消息级 usage 落在 message_end 上）。
+        // user 消息同样产生两事件但无 usage 实证（05 P1-4），一律忽略。
+        if (type === "message_start" || type === "message_end") {
+          this.recordTurnSpeedEvent(wire, type);
           return;
         }
         // 未读计数接线（todo 15 发现刷新归零）：assistant 消息条目落地即 unread+1。
@@ -353,6 +376,56 @@ class ProjectRuntime {
     }
     const durable = this.durableSessionIdFor(handle);
     if (durable) this.opts.recordUnread?.(this.projectPath, durable);
+  }
+
+  /** A5 挂点实现：assistant 消息 start/end 配对 → tok/s 样本入环。
+   * 配对口径铁律：仅 assistant 消息；起点按 wire sessionId 存取（同 handle 同时至多
+   * 一条 assistant 在途的串行假设，见字段注释）；无配对起点、output ≤ 0、elapsed ≤ 0
+   * 或非有限值的样本一律丢弃。
+   * durable 解析用回调作用域内现成的 durableSessionIdFor（prompt 回执已回填映射，
+   * assistant 事件到达时正常命中）；miss 时起点快照存 undefined，end 再解析一次。 */
+  private recordTurnSpeedEvent(
+    wire: { sessionId?: unknown; message?: { role?: unknown; usage?: unknown } },
+    phase: "message_start" | "message_end",
+  ): void {
+    if (wire.message?.role !== "assistant") return;
+    const handle = typeof wire.sessionId === "string" ? wire.sessionId : undefined;
+    if (handle === undefined) return;
+    if (phase === "message_start") {
+      if (this.messageStartAt.size >= ProjectRuntime.TURN_START_CAP) {
+        // Map 保持插入序，裁掉最早半量残留（end 缺席样本不再积累）
+        for (const key of [...this.messageStartAt.keys()].slice(0, ProjectRuntime.TURN_START_CAP / 2)) {
+          this.messageStartAt.delete(key);
+        }
+      }
+      this.messageStartAt.set(handle, {
+        at: Date.now(),
+        durable: this.durableSessionIdFor(handle),
+      });
+      return;
+    }
+    const start = this.messageStartAt.get(handle);
+    this.messageStartAt.delete(handle);
+    if (!start) return;
+    const usage = (wire.message.usage ?? null) as Record<string, unknown> | null;
+    const output = usage && typeof usage === "object" ? Number(usage.output) : NaN;
+    const elapsedMs = Date.now() - start.at;
+    if (!Number.isFinite(output) || output <= 0 || !Number.isFinite(elapsedMs) || elapsedMs <= 0) return;
+    const durable = start.durable ?? this.durableSessionIdFor(handle);
+    if (!durable) return;
+    const ring = this.turnSpeedByDurable.get(durable) ?? [];
+    ring.push({ tokPerSec: output / (elapsedMs / 1000), endedAt: new Date().toISOString() });
+    if (ring.length > ProjectRuntime.TURN_RING_CAPACITY) ring.shift();
+    this.turnSpeedByDurable.set(durable, ring);
+  }
+
+  /** A5 速度环只读快照（turns 为拷贝防外泄内部数组；空环 averageTokPerSec=0） */
+  private turnSpeedSnapshot(durable: string): EngineTurnSpeed {
+    const ring = this.turnSpeedByDurable.get(durable) ?? [];
+    const turns = ring.map((t) => ({ ...t }));
+    const averageTokPerSec =
+      turns.length > 0 ? turns.reduce((sum, t) => sum + t.tokPerSec, 0) / turns.length : 0;
+    return { turns, averageTokPerSec };
   }
 
   // ---- 收尾监视（todo 16 实证：个别回合收尾 wire 事件全部缺席）----
@@ -476,6 +549,9 @@ class ProjectRuntime {
     this.handleToDurable.clear();
     this.knownDurable.clear();
     this.stopSettleWatch();
+    // A5 速度环同属会话态：崩溃/重启后 handle 全换，内存环清空属预期（自然重建）
+    this.turnSpeedByDurable.clear();
+    this.messageStartAt.clear();
   }
 
   /** 引擎就绪时的**回合进行中**会话路径（active 字段语义 = 回合进行中，todo 15 修复） */
@@ -739,7 +815,11 @@ class ProjectRuntime {
     await this.ensure();
     return this.runExclusive(async () => {
       await this.switchTo(sessionId);
-      return this.requireAdapter().usage();
+      const stats = await this.requireAdapter().usage();
+      // A5：附加内存速度环快照（durable 键）。别名 id（未落盘窗口）无映射则不下发
+      // turnSpeed，前端按"暂无数据"降级；此时环内也尚无样本（样本归属真实 durable id）。
+      const durable = this.durableSessionIdFor(sessionId);
+      return durable ? { ...stats, turnSpeed: this.turnSpeedSnapshot(durable) } : stats;
     });
   }
 
