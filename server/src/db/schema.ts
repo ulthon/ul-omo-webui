@@ -105,4 +105,9 @@ export function ensureSchema(db: Database): void {
     db.exec("ALTER TABLE meta_project ADD COLUMN created_at TEXT");
     db.run("UPDATE meta_project SET created_at = ?", [new Date().toISOString()]);
   }
+  // A2（docs08-r3 todo 10）：meta_project 补 hidden 软标记列（项目隐藏）。DEFAULT 0 为
+  // 常量（ALTER 合法），单步加列即可；幂等：列已存在时跳过（重复启动零改写）。
+  if (!projectCols.some((c) => c.name === "hidden")) {
+    db.exec("ALTER TABLE meta_project ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+  }
 }

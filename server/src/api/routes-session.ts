@@ -220,7 +220,11 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
 
     if (rawProject === undefined || rawProject === "") {
       const lister = deps.engines as ProjectListerGateway;
-      const projects = lister.listProjectPaths?.() ?? [];
+      // A2（docs08-r3 todo 10）：聚合模式过滤 hidden 项目的分组（软标记在 meta_project，
+      // 无 meta 行的项目视为未隐藏——与侧栏可见性口径一致）；单项目显式访问不过滤。
+      const projects = (lister.listProjectPaths?.() ?? []).filter(
+        (project) => deps.meta.getProjectMeta(project)?.hidden !== true,
+      );
       const settled = await Promise.allSettled(
         projects.map((project) => listProjectSessions(deps, project, archived, q, tagNames)),
       );

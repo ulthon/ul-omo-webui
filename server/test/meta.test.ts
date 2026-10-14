@@ -214,6 +214,15 @@ describe("meta_project CRUD", () => {
     const x = db.getProjectMeta("/w/x")!;
     expect(x.preferredModel).toBe("glm-5.3-flash");
     expect(x.lastOpenedAt).toBe("2026-10-07T00:00:00.000Z");
+    expect(x.hidden).toBe(false); // A2：新行缺省未隐藏，部分更新不改写 hidden
+
+    // A2（docs08-r3 todo 10）：hidden 软标记往返
+    db.updateProjectMeta("/w/x", { hidden: true });
+    expect(db.getProjectMeta("/w/x")?.hidden).toBe(true);
+    db.updateProjectMeta("/w/x", { lastOpenedAt: "2026-10-08T00:00:00.000Z" });
+    expect(db.getProjectMeta("/w/x")?.hidden).toBe(true); // 其他字段更新保留 hidden
+    db.updateProjectMeta("/w/x", { hidden: false });
+    expect(db.getProjectMeta("/w/x")?.hidden).toBe(false);
 
     const list = db.listProjectMeta();
     expect(list.map((p) => p.projectPath)).toEqual(["/w/x", "/w/y"]); // last_opened_at 新在前
@@ -261,7 +270,7 @@ describe("meta_project.preferred_agent 删列迁移（W1 todo 6）", () => {
       const raw = new Database(path);
       const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
       expect(cols.some((c) => c.name === "preferred_agent")).toBe(false);
-      expect(cols.map((c) => c.name)).toEqual(["project_path", "preferred_model", "last_opened_at", "created_at"]);
+      expect(cols.map((c) => c.name)).toEqual(["project_path", "preferred_model", "last_opened_at", "created_at", "hidden"]);
       raw.close();
     }
 
@@ -328,6 +337,54 @@ describe("meta_project.created_at 迁移（C16 docs08-r3 todo 9）", () => {
       const raw = new Database(path);
       const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
       expect(cols.filter((c) => c.name === "created_at")).toHaveLength(1);
+      raw.close();
+    }
+  });
+});
+
+describe("meta_project.hidden 迁移（A2 docs08-r3 todo 10）", () => {
+  test("老库无列 → openMetaDb 后补列存量行 hidden=false；二次启动幂等不改写", () => {
+    const path = dbFile("hidden-migration");
+    // 以旧版 DDL（无 hidden）造库，预置一行存量数据（模拟升级前存量库）
+    {
+      const old = new Database(path, { create: true });
+      old.exec(`
+        CREATE TABLE meta_project (
+          project_path     TEXT PRIMARY KEY,
+          preferred_model  TEXT,
+          last_opened_at   TEXT,
+          created_at       TEXT
+        );
+      `);
+      old.run("INSERT INTO meta_project (project_path, preferred_model, last_opened_at, created_at) VALUES (?, ?, ?, ?)", [
+        "/old/keep", "glm-5.3-flash", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z",
+      ]);
+      old.close();
+    }
+
+    // 第一次打开：单步加列（NOT NULL DEFAULT 0），存量行 hidden=false，其余列数据原样
+    const db = openMetaDb({ path });
+    const row = db.getProjectMeta("/old/keep")!;
+    expect(row.hidden).toBe(false);
+    expect(row.preferredModel).toBe("glm-5.3-flash");
+    expect(row.lastOpenedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(row.createdAt).toBe("2026-01-01T00:00:00.000Z");
+
+    // 隐藏后重开（二次启动）：列已存在跳过加列，hidden 值不被改写（幂等）
+    db.updateProjectMeta("/old/keep", { hidden: true });
+    db.close();
+    const again = openMetaDb({ path });
+    expect(again.getProjectMeta("/old/keep")?.hidden).toBe(true);
+    again.close();
+
+    // 列形状：hidden 恰好一个、NOT NULL DEFAULT 0
+    {
+      const raw = new Database(path);
+      const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string; notnull: number; dflt_value: string | null }>;
+      expect(cols.filter((c) => c.name === "hidden")).toHaveLength(1);
+      const hidden = cols.find((c) => c.name === "hidden")!;
+      expect(hidden.notnull).toBe(1);
+      expect(hidden.dflt_value).toBe("0");
       raw.close();
     }
   });

@@ -193,12 +193,18 @@ function ProjectPermissionSection() {
  * 每行「移除」按钮（44px 触控）弹确认对话框；确认后 DELETE /api/projects（只删注册行，
  * 会话数据与会话 meta 原样保留）→ refetch projects；移除的是当前项目时清 currentProject
  * 与选中会话（回到空会话状态），非当前项目不动选中。项目切换下拉保持纯切换语义，
- * 管理动作只在本区提供（设置 = 管理心智）。 */
+ * 管理动作只在本区提供（设置 = 管理心智）。
+ * A2（docs08-r3 任务 10）：顶部"正常/已隐藏"筛选分段控件 + 每行「隐藏/取消隐藏」按钮
+ * （PUT /api/projects/hidden 软标记，注册行与会话 meta 保留）；隐藏当前项目复用注销的
+ * 回空会话态流程；hidden 行不加额外徽标（筛选视图本身即可见性，missing 徽标沿用现状）。 */
 export function ProjectManagementSection() {
   const projects = useUiStore((s) => s.projects);
   const currentProject = useUiStore((s) => s.currentProject);
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [view, setView] = useState<"normal" | "hidden">("normal");
+  const [pendingHide, setPendingHide] = useState<string | null>(null);
+  const [hiding, setHiding] = useState(false);
 
   const remove = async () => {
     const target = pending;
@@ -224,15 +230,96 @@ export function ProjectManagementSection() {
     }
   };
 
+  /** 隐藏/取消隐藏（A2）：软标记 PUT 后 refetch 权威刷新；隐藏的是当前项目时复用
+   * 注销的回空会话态流程（清 currentProject + 选中会话），非当前项目不动选中。 */
+  const setHidden = async (target: string, hidden: boolean) => {
+    if (hiding) return;
+    setHiding(true);
+    try {
+      await api.putProjectHidden(target, hidden);
+      setPendingHide(null);
+      const res = await api.listProjects();
+      const ui = useUiStore.getState();
+      ui.setProjects(res.projects);
+      if (hidden && ui.currentProject === target) {
+        ui.setCurrentProject(null);
+        useSessionsStore.getState().select(null);
+      }
+      ui.showToast(hidden ? "已隐藏项目，可在\"已隐藏\"筛选中恢复" : "已恢复显示项目", "info");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "操作失败，请重试", "error");
+    } finally {
+      setHiding(false);
+    }
+  };
+
+  const hiddenCount = projects.filter((p) => p.hidden === true).length;
+  const visible = projects.filter((p) => (view === "hidden") === (p.hidden === true));
+
+  const hideButtonOf = (p: (typeof projects)[number]) =>
+    p.hidden === true ? (
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11 shrink-0 px-3"
+        data-testid="project-unhide-button"
+        disabled={hiding}
+        onClick={() => void setHidden(p.projectPath, false)}
+      >
+        取消隐藏
+      </Button>
+    ) : (
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11 shrink-0 px-3"
+        data-testid="project-hide-button"
+        disabled={hiding}
+        onClick={() =>
+          p.projectPath === currentProject ? setPendingHide(p.projectPath) : void setHidden(p.projectPath, true)
+        }
+      >
+        隐藏
+      </Button>
+    );
+
   return (
     <div className="border-t pt-1">
       <div className="space-y-1.5">
-        <p className="text-sm font-medium">项目管理</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">项目管理</p>
+          {/* 正常/已隐藏筛选（A2）：面板内临时视图态（不持久化），计数即容量提示 */}
+          <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label="项目可见性筛选" data-testid="project-visibility-filter">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "normal"}
+              data-testid="project-filter-normal"
+              className={`min-h-7 rounded px-2 text-xs ${view === "normal" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setView("normal")}
+            >
+              正常 {projects.length - hiddenCount}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "hidden"}
+              data-testid="project-filter-hidden"
+              className={`min-h-7 rounded px-2 text-xs ${view === "hidden" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setView("hidden")}
+            >
+              已隐藏 {hiddenCount}
+            </button>
+          </div>
+        </div>
         {projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">尚无已注册项目。</p>
+        ) : visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{view === "hidden" ? "没有已隐藏的项目。" : "全部项目均已隐藏。"}</p>
         ) : (
           <ul className="space-y-1">
-            {projects.map((p) => (
+            {visible.map((p) => (
               <li
                 key={p.projectPath}
                 className="flex items-center justify-between gap-2"
@@ -252,15 +339,18 @@ export function ProjectManagementSection() {
                     <span className="shrink-0 text-[10px] leading-none text-muted-foreground">当前</span>
                   )}
                 </span>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="min-h-11 shrink-0 px-3"
-                  data-testid="project-remove-button"
-                  onClick={() => setPending(p.projectPath)}
-                >
-                  移除
-                </Button>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {hideButtonOf(p)}
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="min-h-11 shrink-0 px-3"
+                    data-testid="project-remove-button"
+                    onClick={() => setPending(p.projectPath)}
+                  >
+                    移除
+                  </Button>
+                </span>
               </li>
             ))}
           </ul>
@@ -297,6 +387,42 @@ export function ProjectManagementSection() {
               onClick={() => void remove()}
             >
               {removing ? "移除中…" : "确认移除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 隐藏当前项目确认（A2）：回空会话态是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
+      <Dialog
+        open={pendingHide !== null}
+        onOpenChange={(open) => {
+          if (!hiding) setPendingHide(open ? pendingHide : null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>隐藏项目</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1.5 text-left">
+                <p>将隐藏「{pendingHide ? basename(pendingHide) : ""}」：侧栏分组不再显示。</p>
+                <p>
+                  若隐藏的是当前项目，将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在"已隐藏"筛选中恢复。
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" disabled={hiding} onClick={() => setPendingHide(null)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={hiding}
+              data-testid="project-hide-confirm"
+              onClick={() => pendingHide && void setHidden(pendingHide, true)}
+            >
+              {hiding ? "隐藏中…" : "确认隐藏"}
             </Button>
           </DialogFooter>
         </DialogContent>

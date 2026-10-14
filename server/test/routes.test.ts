@@ -766,6 +766,94 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("PUT /api/projects/hidden 软标记：往返/幂等/校验/GET 回显，meta_session 原样保留", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-hidden-"));
+    const dead = mkdtempSync(join(tmpdir(), "routes-hidden-dead-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      meta.updateProjectMeta(proj, { lastOpenedAt: "2026-01-01T00:00:00.000Z" });
+      meta.updateProjectMeta(dead, { lastOpenedAt: "2026-01-02T00:00:00.000Z" });
+      meta.updateSessionMeta("s-keep", { pinned: true, renamedTitle: "保留名" });
+
+      // 形状校验（malformed input）：非绝对路径 / 非布尔 hidden → 400
+      const badPath = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "not-absolute", hidden: true }),
+      });
+      expect(badPath.status).toBe(400);
+      expect((await badPath.json()).error.code).toBe("invalid_project");
+      const badHidden = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, hidden: "yes" }),
+      });
+      expect(badHidden.status).toBe(400);
+      expect((await badHidden.json()).error.code).toBe("invalid_hidden");
+      const missingField = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj }),
+      });
+      expect(missingField.status).toBe(400);
+
+      // 未注册路径 → 404 not_registered
+      const unregistered = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "/definitely/not-registered", hidden: true }),
+      });
+      expect(unregistered.status).toBe(404);
+      expect((await unregistered.json()).error.code).toBe("not_registered");
+
+      // 隐藏往返：GET 回显 hidden:true；meta_session 原样（软标记不碰置顶/改名）
+      const hide = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, hidden: true }),
+      });
+      expect(hide.status).toBe(200);
+      expect((await hide.json()).project).toMatchObject({ projectPath: proj, hidden: true });
+      expect(meta.getSessionMeta("s-keep")?.renamedTitle).toBe("保留名");
+
+      // 二次隐藏幂等：重复 PUT 同值不崩、确定性同结果
+      const twice = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, hidden: true }),
+      });
+      expect(twice.status).toBe(200);
+      expect((await twice.json()).project).toMatchObject({ hidden: true });
+
+      // 死项目（missing）同样可标记（hidden+missing 组合场景入口）
+      const deadRes = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: dead, hidden: true }),
+      });
+      expect(deadRes.status).toBe(200);
+
+      // GET /api/projects 全量列表回显 hidden 字段
+      let list = await (await req(app, "/api/projects")).json();
+      expect(list.projects.find((p: { projectPath: string }) => p.projectPath === proj).hidden).toBe(true);
+      expect(list.projects.find((p: { projectPath: string }) => p.projectPath === proj).missing).toBeUndefined();
+
+      // 恢复：PUT false → hidden:false
+      const restore = await req(app, "/api/projects/hidden", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: proj, hidden: false }),
+      });
+      expect(restore.status).toBe(200);
+      expect((await restore.json()).project).toMatchObject({ hidden: false });
+      list = await (await req(app, "/api/projects")).json();
+      expect(list.projects.find((p: { projectPath: string }) => p.projectPath === proj).hidden).toBe(false);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+      rmSync(dead, { recursive: true, force: true });
+    }
+  });
+
   test("POST /api/projects/restart 调用网关重建并校验路径", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-restart-"));
     const engines = new FakeGateway();

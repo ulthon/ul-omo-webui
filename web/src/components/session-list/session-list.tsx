@@ -11,7 +11,7 @@
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronDown, Filter, GripVertical, ListChecks, Loader2, MessageSquare, Plus, Search, Tag, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
@@ -19,6 +19,14 @@ import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -110,6 +118,9 @@ export function SessionList() {
   const [tagDefs, setTagDefs] = useState<TagDefs | null>(null);
   const [tagSelector, setTagSelector] = useState<SessionListItem[] | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  // 项目隐藏（A2 docs08-r3 任务 10）：当前项目隐藏需确认弹层（回空会话态），非当前直接执行
+  const [hidePending, setHidePending] = useState<string | null>(null);
+  const [hiding, setHiding] = useState(false);
 
   const listBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -250,10 +261,13 @@ export function SessionList() {
 
   // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
   // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行退化
-  // lastOpenedAt 稳定序）、manual=kv 手动序（未列项目按 activity 规则追加）
+  // lastOpenedAt 稳定序）、manual=kv 手动序（未列项目按 activity 规则追加）。
+  // A2 客户端防御过滤（双保险第二道）：hidden 分组在此剔除——服务端聚合已滤
+  // hidden 项目会话（byProject 无该键），但空分组渲染自 ui store projects，
+  // 不滤则隐藏项目的空分组头仍会出现。
   const sortedProjects = useMemo(
     () =>
-      groupOrder(projects.map((p) => p.projectPath), byProject, currentProject, {
+      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, currentProject, {
         mode: projectSort,
         manualOrder: projectOrder,
         meta: Object.fromEntries(
@@ -262,6 +276,34 @@ export function SessionList() {
       }),
     [projects, byProject, currentProject, projectSort, projectOrder],
   );
+
+  /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
+   * 上面 sortedProjects 的防御过滤）+ refreshSessions（服务端聚合口径同步换）；
+   * 隐藏的是当前项目时复用注销的回空会话态流程（清 currentProject + 选中会话），
+   * 非当前项目不动选中。 */
+  const hideProject = async (projectPath: string, hidden: boolean) => {
+    if (hiding) return;
+    setHiding(true);
+    try {
+      await api.putProjectHidden(projectPath, hidden);
+      setHidePending(null);
+      const res = await api.listProjects();
+      const ui = useUiStore.getState();
+      ui.setProjects(res.projects);
+      if (hidden && ui.currentProject === projectPath) {
+        ui.setCurrentProject(null);
+        useSessionsStore.getState().select(null);
+      }
+      void useSessionsStore.getState().refreshSessions();
+      ui.showToast(hidden ? "已隐藏项目，可在设置的项目管理中恢复" : "已恢复显示项目", "info");
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "操作失败，请重试", "error");
+      }
+    } finally {
+      setHiding(false);
+    }
+  };
 
   // ---- 手动排序（C16 todo 9，仅 manual 档）：本地先行更新 + kv 持久（跨设备一致）----
   /** 顺序落 kv：本地 store 先行（即时生效），PUT 失败仅提示（下次 bootstrap 重读 kv 纠偏） */
@@ -297,7 +339,7 @@ export function SessionList() {
     [currentProject, sortedProjects, persistManualOrder],
   );
 
-  /** 上移/下移一位（手机过渡实现；任务 10 落地分组头 DropdownMenu 时吸收为唯一菜单） */
+  /** 上移/下移一位（manual 档；入口在分组头唯一 DropdownMenu——手机与桌面同菜单） */
   const moveProjectByStep = useCallback(
     (projectPath: string, delta: -1 | 1) => {
       const order = useUiStore.getState().projectOrder;
@@ -717,9 +759,10 @@ export function SessionList() {
               }
               return (
                 <div key={projectPath} data-project-group={projectPath}>
-                  {/* 分组头（C16 todo 9）：manual 档下整行作为桌面 HTML5 拖拽源/目标；
-                      手机（<lg）无拖拽，经右侧过渡菜单"上移/下移"调序——任务 10 落地分组头
-                      DropdownMenu 时吸收合并为分组头唯一菜单（接线点：该菜单整体替换）。 */}
+                  {/* 分组头（C16 todo 9）：manual 档下整行作为桌面 HTML5 拖拽源/目标。
+                      右侧为分组头唯一 DropdownMenu（A2 docs08-r3 任务 10 吸收任务 9 的
+                      手机过渡"上移/下移"菜单而成，手机与桌面同菜单）：排序组（仅 manual 档）
+                      /"隐藏该项目"（当前项目带确认弹层）/「管理标签」预留入口（任务 11 接线）。 */}
                   <div
                     className={`flex items-center gap-0.5 ${manual && dragOverPath === projectPath ? "rounded-md outline outline-1 outline-primary/50" : ""}`}
                     draggable={manual}
@@ -768,37 +811,59 @@ export function SessionList() {
                       {/* 空项目组显示但标注 0（todo 10） */}
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
-                    {/* 手动排序手机过渡菜单（<lg 可见）：上移/下移；样式从简，任务 10 吸收 */}
-                    {manual && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            data-testid="group-move-menu"
-                            aria-label={`调整 ${basename(projectPath)} 排序`}
-                            className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
-                          >
-                            <GripVertical className="size-3.5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            disabled={index <= 0}
-                            data-testid="group-move-up"
-                            onSelect={() => moveProjectByStep(projectPath, -1)}
-                          >
-                            上移
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={index >= sortedProjects.length - 1}
-                            data-testid="group-move-down"
-                            onSelect={() => moveProjectByStep(projectPath, 1)}
-                          >
-                            下移
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
+                    {/* 分组头唯一菜单（A2）：三组语义——排序（仅 manual 档）/隐藏/管理标签（任务 11 接线）。
+                        菜单 onSelect 内实时读 currentProject（跨项目点击后 render 闭包可能滞后）。 */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="group-menu"
+                          aria-label={`${basename(projectPath)} 分组菜单`}
+                          className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:size-6"
+                        >
+                          <MoreVertical className="size-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" data-testid="group-menu-content">
+                        {manual && (
+                          <>
+                            <DropdownMenuItem
+                              disabled={index <= 0}
+                              data-testid="group-move-up"
+                              onSelect={() => moveProjectByStep(projectPath, -1)}
+                            >
+                              上移
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={index >= sortedProjects.length - 1}
+                              data-testid="group-move-down"
+                              onSelect={() => moveProjectByStep(projectPath, 1)}
+                            >
+                              下移
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                          </>
+                        )}
+                        <DropdownMenuItem
+                          data-testid="group-hide"
+                          onSelect={() => {
+                            if (useUiStore.getState().currentProject === projectPath) {
+                              setHidePending(projectPath);
+                            } else {
+                              void hideProject(projectPath, true);
+                            }
+                          }}
+                        >
+                          <EyeOff className="mr-2 size-3.5" />
+                          隐藏该项目
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        {/* 预留入口（任务 11 接线）：项目域标签管理弹框落地后启用 */}
+                        <DropdownMenuItem disabled data-testid="group-manage-tags">
+                          管理标签
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {/* 分组头 "+"：在该项目内新建并轻量切到该项目（todo 10 新建会话落点） */}
                     <button
                       type="button"
@@ -850,6 +915,41 @@ export function SessionList() {
       </div>
 
       <SessionDialogs state={dialog} onClose={() => setDialog(null)} onChanged={onChanged} />
+      {/* 隐藏当前项目确认（A2）：回空会话态是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
+      <Dialog
+        open={hidePending !== null}
+        onOpenChange={(open) => {
+          if (!hiding) setHidePending(open ? hidePending : null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>隐藏项目</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1.5 text-left">
+                <p>将隐藏「{hidePending ? basename(hidePending) : ""}」：侧栏分组不再显示。</p>
+                <p>
+                  它是当前项目，隐藏后将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在设置的项目管理中恢复。
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" disabled={hiding} onClick={() => setHidePending(null)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={hiding}
+              data-testid="group-hide-confirm"
+              onClick={() => hidePending && void hideProject(hidePending, true)}
+            >
+              {hiding ? "隐藏中…" : "确认隐藏"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {tagSelector && tagDefs && (
         <TagSelector
           sessions={tagSelector}

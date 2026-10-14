@@ -341,4 +341,34 @@ describe("GET /api/sessions 聚合模式（project 缺省）", () => {
     rmSync(p1, { recursive: true, force: true });
     rmSync(p2, { recursive: true, force: true });
   });
+
+  test("hidden 项目过滤（A2 docs08-r3 todo 10）：聚合模式分组消失，单项目显式访问不过滤", async () => {
+    const { p1, p2, engines } = setupTwoProjects();
+    const { app, meta } = buildApp(engines);
+    // 隐藏 p1：聚合只回 p2 会话；恢复后 p1 会话回归（软标记往返，数据零丢失）
+    meta.updateProjectMeta(p1, { hidden: true });
+    let body = await (await req(app, "/api/sessions")).json();
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["b1"]);
+    expect(body.sessions.every((s: { project: string }) => s.project === p2)).toBe(true);
+
+    meta.updateProjectMeta(p1, { hidden: false });
+    body = await (await req(app, "/api/sessions")).json();
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a1", "b1", "a2"]);
+
+    // 单项目显式访问不过滤：隐藏项目的会话仍可按 project 参数直达
+    body = await (await req(app, `/api/sessions?project=${encodeURIComponent(p1)}`)).json();
+    expect(body.sessions.map((s: { id: string }) => s.id)).toEqual(["a1", "a2"]);
+
+    // 无 meta 行的项目（引擎清单有、库无注册行）视为未隐藏，照常聚合
+    const p3 = mkdtempSync(join(tmpdir(), "agg-p3-"));
+    engines.registeredProjects = [p1, p2, p3];
+    engines.sessionsByProject[p3] = [
+      summary({ id: "c1", path: `${p3}/c1.jsonl`, cwd: p3, modified: "2026-01-03T00:00:00.000Z" }),
+    ];
+    body = await (await req(app, "/api/sessions")).json();
+    expect(body.sessions.some((s: { id: string }) => s.id === "c1")).toBe(true);
+    rmSync(p1, { recursive: true, force: true });
+    rmSync(p2, { recursive: true, force: true });
+    rmSync(p3, { recursive: true, force: true });
+  });
 });

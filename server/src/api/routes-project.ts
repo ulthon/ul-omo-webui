@@ -160,6 +160,27 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     return c.json({ path: body.path, removed: true });
   }));
 
+  // 项目隐藏软标记（A2 docs08-r3 todo 10）：hidden 只改 meta_project.hidden 列——
+  // 注册行、会话数据与会话 meta 原样保留，GET /api/sessions 聚合模式据此过滤分组，
+  // 设置面板"已隐藏"筛选可见可恢复。path 校验与注销同口径（形状校验 + 注册键精确匹配，
+  // 支持 hidden 死项目）；hidden 必须是布尔（不做真值宽容，防误传字符串静默生效）。
+  // 幂等：重复 PUT 同值不崩不变形（二次隐藏为确定性同结果）。
+  app.put("/api/projects/hidden", route(async (c: Context) => {
+    const body = await parseJsonBody(c);
+    if (typeof body.path !== "string" || body.path.length === 0 || !body.path.startsWith("/")) {
+      throw new ApiError(400, "invalid_project", "path 必须是绝对路径");
+    }
+    if (typeof body.hidden !== "boolean") {
+      throw new ApiError(400, "invalid_hidden", "hidden 必须是布尔值");
+    }
+    if (!deps.meta.getProjectMeta(body.path)) {
+      throw new ApiError(404, "not_registered", "项目未注册");
+    }
+    deps.meta.updateProjectMeta(body.path, { hidden: body.hidden });
+    const meta = deps.meta.getProjectMeta(body.path);
+    return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(body.path)) : null });
+  }));
+
   // 重建项目引擎进程：spawn 参数级配置（权限预设 permissionPreset 等）
   // 变更后的生效口。会话态失效属预期（下次访问懒加载重建）。
   app.post("/api/projects/restart", route(async (c: Context) => {

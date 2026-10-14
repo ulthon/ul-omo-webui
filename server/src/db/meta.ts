@@ -46,11 +46,14 @@ export interface ProjectMeta {
   lastOpenedAt: string | null;
   /** 注册时间（C16 todo 9）：迁移前存量行 = 迁移时刻（同值），新注册行 = 注册时刻 */
   createdAt: string | null;
+  /** 隐藏软标记（A2 docs08-r3 todo 10）：true = 侧栏聚合列表不出现该分组（注册行与会话元数据保留） */
+  hidden: boolean;
 }
 
 export interface ProjectMetaPatch {
   preferredModel?: string | null;
   lastOpenedAt?: string | null;
+  hidden?: boolean;
 }
 
 export interface NoteMeta {
@@ -180,6 +183,29 @@ function toNoteMeta(row: NoteRow): NoteMeta {
     updatedAt: row.updated_at,
   };
 }
+
+/** hidden 为 INTEGER 列（0/1），SELECT 别名 camelCase 后经此转 boolean */
+interface ProjectMetaRow {
+  projectPath: string;
+  preferredModel: string | null;
+  lastOpenedAt: string | null;
+  createdAt: string | null;
+  hidden: number;
+}
+
+function toProjectMeta(row: ProjectMetaRow): ProjectMeta {
+  return {
+    projectPath: row.projectPath,
+    preferredModel: row.preferredModel,
+    lastOpenedAt: row.lastOpenedAt,
+    createdAt: row.createdAt,
+    hidden: row.hidden === 1,
+  };
+}
+
+const PROJECT_META_SELECT = `SELECT project_path AS projectPath, preferred_model AS preferredModel,
+        last_opened_at AS lastOpenedAt, created_at AS createdAt, hidden
+ FROM meta_project`;
 
 export interface MetaDb {
   readonly path: string;
@@ -465,20 +491,17 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
     },
 
     getProjectMeta(projectPath) {
-      return get<ProjectMeta>(
-        `SELECT project_path AS projectPath, preferred_model AS preferredModel,
-                last_opened_at AS lastOpenedAt, created_at AS createdAt
-         FROM meta_project WHERE project_path = ?`,
+      const row = get<ProjectMetaRow>(
+        `${PROJECT_META_SELECT} WHERE project_path = ?`,
         projectPath,
       );
+      return row ? toProjectMeta(row) : null;
     },
 
     listProjectMeta() {
-      return all<ProjectMeta>(
-        `SELECT project_path AS projectPath, preferred_model AS preferredModel,
-                last_opened_at AS lastOpenedAt, created_at AS createdAt
-         FROM meta_project ORDER BY last_opened_at DESC`,
-      );
+      return all<ProjectMetaRow>(
+        `${PROJECT_META_SELECT} ORDER BY last_opened_at DESC`,
+      ).map(toProjectMeta);
     },
 
     updateProjectMeta(projectPath, patch) {
@@ -486,20 +509,22 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
         const existing = meta.getProjectMeta(projectPath);
         if (existing) {
           run(
-            `UPDATE meta_project SET preferred_model = ?, last_opened_at = ?
+            `UPDATE meta_project SET preferred_model = ?, last_opened_at = ?, hidden = ?
              WHERE project_path = ?`,
             patch.preferredModel === undefined ? existing.preferredModel : patch.preferredModel,
             patch.lastOpenedAt === undefined ? existing.lastOpenedAt : patch.lastOpenedAt,
+            patch.hidden === undefined ? (existing.hidden ? 1 : 0) : (patch.hidden ? 1 : 0),
             projectPath,
           );
         } else {
           run(
-            `INSERT INTO meta_project (project_path, preferred_model, last_opened_at, created_at)
-             VALUES (?, ?, ?, ?)`,
+            `INSERT INTO meta_project (project_path, preferred_model, last_opened_at, created_at, hidden)
+             VALUES (?, ?, ?, ?, ?)`,
             projectPath,
             patch.preferredModel ?? null,
             patch.lastOpenedAt ?? null,
             nowIso(),
+            patch.hidden === true ? 1 : 0,
           );
         }
       });

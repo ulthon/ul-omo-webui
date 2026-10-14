@@ -21,6 +21,9 @@ export interface ProjectMeta {
   /** 死项目守卫（W1 #2）：仅路径已不存在/不再是目录的条目携带 missing:true，
    * 可解析条目省略该字段；bootstrap 自动恢复据此静默跳过。 */
   missing?: boolean;
+  /** 隐藏软标记（A2 docs08-r3 todo 10）：true = 侧栏聚合分组不显示，设置"已隐藏"筛选可见可恢复；
+   * 可选以兼容旧服务端响应与单测构造 */
+  hidden?: boolean;
 }
 
 export interface SessionListItem {
@@ -428,6 +431,12 @@ export const api = {
    * 引擎进程生命周期。 */
   async removeProject(path: string): Promise<{ path: string; removed: boolean }> {
     return request("/api/projects", jsonInit("DELETE", { path }));
+  },
+  /** 项目隐藏软标记（A2 docs08-r3 任务 10）：hidden 只写 meta_project.hidden 列——
+   * 注册行与会话 meta 原样保留，侧栏聚合分组消失（GET /api/sessions 聚合过滤 +
+   * 侧栏客户端防御过滤双保险），设置"已隐藏"筛选可恢复；未注册 404 not_registered。 */
+  async putProjectHidden(path: string, hidden: boolean): Promise<{ ok: boolean; project: ProjectMeta | null }> {
+    return request("/api/projects/hidden", jsonInit("PUT", { path, hidden }));
   },
   async patchProjectMeta(patch: {
     path: string;
