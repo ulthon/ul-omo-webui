@@ -628,6 +628,79 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("POST /api/projects create:true：mkdir -p 后注册；父级不可写 403；中段是文件 400；已存在幂等", async () => {
+    const base = mkdtempSync(join(tmpdir(), "routes-create-"));
+    const { app, meta } = buildApp(new FakeGateway());
+    try {
+      // 不存在的多级路径 → 递归建目录并注册，返回 realpath 形态
+      const target = join(base, "a", "b", "new-proj");
+      const res = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: target, create: true }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).project.projectPath).toBe(target);
+      expect(existsSync(target)).toBe(true);
+      expect(meta.getProjectMeta(target)).not.toBeNull();
+
+      // 尾部斜杠与 .. 规范化后等价（幂等注册同一路径）
+      const again = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: `${target}/../new-proj/`, create: true }),
+      });
+      expect(again.status).toBe(200);
+      expect((await again.json()).project.projectPath).toBe(target);
+
+      // 已存在的空目录 + create:true → 直接注册（不 mkdir）
+      const existing = join(base, "existing");
+      mkdirSync(existing);
+      const reg = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: existing, create: true }),
+      });
+      expect(reg.status).toBe(200);
+
+      // 中段是文件 → 父级不是目录 400
+      writeFileSync(join(base, "afile"), "x");
+      const throughFile = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: join(base, "afile", "sub"), create: true }),
+      });
+      expect(throughFile.status).toBe(400);
+      expect((await throughFile.json()).error.code).toBe("mkdir_failed");
+
+      // 只读父级 → 403 mkdir_forbidden（root 绕过权限位，仅非 root 环境可断言；
+      // root 下该目录 mkdir 会成功，此时跳过 403 断言只验证不炸）
+      const readonly = join(base, "readonly");
+      mkdirSync(readonly, { mode: 0o555 });
+      const denied = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: join(readonly, "child"), create: true }),
+      });
+      if (typeof process.getuid === "function" && process.getuid() !== 0) {
+        expect(denied.status).toBe(403);
+        expect((await denied.json()).error.code).toBe("mkdir_forbidden");
+      } else {
+        expect([200, 403]).toContain(denied.status);
+      }
+
+      // 形状校验：非绝对路径/NUL → 400（create 分支同原口径）
+      const rel = await req(app, "/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "relative/path", create: true }),
+      });
+      expect(rel.status).toBe(400);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   test("DELETE /api/projects 注销：删注册行保留 meta_session，未注册 404，重复注销 404", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-remove-"));
     const dead = mkdtempSync(join(tmpdir(), "routes-remove-dead-"));

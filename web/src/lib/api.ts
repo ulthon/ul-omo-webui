@@ -405,8 +405,10 @@ export const api = {
   async listProjects(): Promise<{ projects: ProjectMeta[] }> {
     return request("/api/projects");
   },
-  async addProject(path: string): Promise<{ ok: boolean; project: ProjectMeta | null }> {
-    return request("/api/projects", jsonInit("POST", { path }));
+  /** 注册项目；create=true（docs08-r3 任务 20"新建并添加"）：路径不存在时服务端
+   * 按安全口径 mkdir -p 后注册（父级不可写 403 / 中段非目录 400，错误走 ApiError.message）。 */
+  async addProject(path: string, create = false): Promise<{ ok: boolean; project: ProjectMeta | null }> {
+    return request("/api/projects", jsonInit("POST", { path, ...(create ? { create: true } : {}) }));
   },
   /** 项目注销（W1 #1）：删 meta_project 注册行，项目内会话数据与会话 meta（置顶/改名/
    * 标签）原样保留，重新添加即恢复；未注册（含重复注销）404 not_registered。不涉及

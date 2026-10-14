@@ -5,14 +5,23 @@
 // 请求函数可注入（单测）。行点击 = 选中 + 未展开时下钻；chevron 单独承担展开/收起。
 // ".." 行以 folder-up 图标区分（置顶由服务端合成顺序保证）。
 // 已注册项目行置灰 + "已添加"徽标：禁止选中（onSelect 不触发）但保留下钻导航。
-// DirectoryPickerDialog：添加项目用的目录选择弹窗，390 移动端全屏（h-dvh 覆盖类同 FilePickerDialog），
-// 当前选中路径高亮 + "选择此目录"确认；重开弹窗条件挂载即全新初始态。
-import { useCallback, useEffect, useState } from "react";
+// DirectoryPickerDialog（docs08-r3 任务 20 重做，OpenChamber 式联动）：顶部路径输入框
+// （停顿 300ms → fsBrowse 刷新列表；Enter 立即跳转；非法路径行内报错保留原列表）+
+// 中部单层目录列表（服务端 ".." 行保留为列表首行）：单击=选中（确认钮启用）、
+// 双击目录=下钻（列表与路径框同步）；已注册目录置灰 + "已添加"徽标禁选（仍可下钻）；
+// Show hidden 开关默认隐藏 entry.hidden 项；确认回填 add-project-dialog 路径输入，
+// 路径不存在（404）时确认钮变"新建并添加"→ addProject(path, true) 建目录并注册。
+// 390 移动端全屏（h-dvh 覆盖类同 FilePickerDialog）；重开弹窗条件挂载即全新初始态。
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronRight, Folder, FolderOpen, FolderUp, LoaderCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { api, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { api, ApiError, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/api";
+import { useUiStore } from "@/stores/ui";
 import {
   initialDirTree,
+  normalizeBrowsePath,
+  PICKER_DEBOUNCE_MS,
   treeCollapse,
   treeExpand,
   treeLoaded,
@@ -210,7 +219,7 @@ export function DirectoryTree({
   );
 }
 
-/** 目录选择弹窗：确认回传所选目录绝对路径；条件挂载 Body，重开即重置选中 */
+/** 目录选择弹窗：确认回传所选目录路径；条件挂载 Body，重开即全新初始态 */
 export function DirectoryPickerDialog({
   open,
   onOpenChange,
@@ -222,7 +231,7 @@ export function DirectoryPickerDialog({
   onOpenChange: (open: boolean) => void;
   onConfirm: (path: string) => void;
   fetchDir?: DirTreeFetcher;
-  /** 已注册项目 realpath 集合：命中行置灰禁选（透传 DirectoryTree） */
+  /** 已注册项目 realpath 集合：命中行置灰 + "已添加"徽标 + 禁选（仍可双击下钻） */
   registeredPaths?: ReadonlySet<string>;
 }) {
   return (
@@ -247,6 +256,9 @@ export function DirectoryPickerDialog({
   );
 }
 
+/** 确认钮状态：pick=选择此目录（回填）；create=路径不存在，新建并添加（建目录+注册） */
+type ConfirmState = { kind: "pick"; target: string } | { kind: "create"; target: string } | null;
+
 function PickerBody({
   onConfirm,
   onClose,
@@ -258,29 +270,227 @@ function PickerBody({
   fetchDir?: DirTreeFetcher;
   registeredPaths?: ReadonlySet<string>;
 }) {
+  const fetchDirFn = fetchDir ?? api.fsBrowse;
+  const [pathInput, setPathInput] = useState("/");
+  const [entries, setEntries] = useState<FsBrowseEntry[]>([]);
+  const [browsing, setBrowsing] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+  /** 最后一次对 pathInput 的浏览 404：确认钮变"新建并添加" */
+  const [notFound, setNotFound] = useState(false);
+  /** 成功浏览过的判重键（normalizeBrowsePath 形态），用于跳过同形重复请求 */
+  const [browsedKey, setBrowsedKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // 竞态守卫：过期响应丢弃；在飞判重键避免"立即跳转 + 防抖到期"双发同键请求
+  const seqRef = useRef(0);
+  const inFlightRef = useRef<string | null>(null);
+  const browse = useCallback(
+    (target: string) => {
+      const key = normalizeBrowsePath(target);
+      if (target.length === 0) {
+        seqRef.current += 1;
+        inFlightRef.current = null;
+        setBrowsing(false);
+        setListError(null);
+        setNotFound(false);
+        return;
+      }
+      if (!target.startsWith("/")) {
+        seqRef.current += 1;
+        inFlightRef.current = null;
+        setBrowsing(false);
+        setListError("路径必须以 / 开头");
+        setNotFound(false);
+        return;
+      }
+      if (inFlightRef.current === key) return;
+      if (key === browsedKey && !notFound && listError === null) return;
+      const seq = ++seqRef.current;
+      inFlightRef.current = key;
+      setBrowsing(true);
+      setListError(null);
+      setSelected(null);
+      fetchDirFn(target)
+        .then((res) => {
+          if (seq !== seqRef.current) return;
+          inFlightRef.current = null;
+          setEntries(res.entries);
+          setBrowsedKey(key);
+          setBrowsing(false);
+          setNotFound(false);
+          setListError(res.error === "eacces" ? "目录不可读" : null);
+        })
+        .catch((err: unknown) => {
+          if (seq !== seqRef.current) return;
+          inFlightRef.current = null;
+          setBrowsing(false);
+          if (err instanceof ApiError && err.status === 404) {
+            setNotFound(true);
+            setListError(`路径不存在：${target}（可新建并添加）`);
+          } else {
+            setNotFound(false);
+            setListError(err instanceof Error ? err.message : "目录加载失败");
+          }
+        });
+    },
+    [fetchDirFn, browsedKey, notFound, listError],
+  );
+  const browseRef = useRef(browse);
+  useEffect(() => {
+    browseRef.current = browse;
+  });
+
+  // 路径框停顿 300ms 联动列表（非法路径在 browse 内行内报错且保留原列表）；
+  // ref 更新 effect 声明在前，本 effect 排定时器时读到的已是最新 browse
+  useEffect(() => {
+    const timer = setTimeout(() => browseRef.current(pathInput), PICKER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [pathInput]);
+
+  /** 立即跳转（Enter / 双击下钻）：路径框与列表同步，防抖定时器到期后按判重键跳过 */
+  const jump = useCallback((target: string) => {
+    setPathInput(target);
+    browseRef.current(target);
+  }, []);
+
+  // 确认目标：单击选中行 > 输入路径不存在（新建并添加）> 当前已浏览目录
+  const confirmState: ConfirmState = selected
+    ? { kind: "pick", target: selected }
+    : notFound
+      ? { kind: "create", target: pathInput }
+      : browsedKey !== null && normalizeBrowsePath(pathInput) === browsedKey
+        ? { kind: "pick", target: pathInput }
+        : null;
+
+  /** 新建并添加：服务端 mkdir -p（父级可写校验）后注册；成功刷新项目集合并回填 */
+  const createAndAdd = async (target: string) => {
+    const path = target.trim();
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await api.addProject(path, true);
+      const { projects } = await api.listProjects();
+      useUiStore.getState().setProjects(projects);
+      onConfirm(path);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "创建失败，请重试");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const visible = showHidden ? entries : entries.filter((e) => !e.hidden);
+
+  const onPathKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      browseRef.current(pathInput);
+    }
+  };
 
   return (
     <>
       <DialogHeader className="shrink-0 gap-1.5">
         <DialogTitle>浏览目录</DialogTitle>
         <DialogDescription className="text-xs">
-          从文件系统根逐级展开选择项目所在目录；已添加的项目置灰标记，仍可进入查看
+          输入路径回车跳转，单击选中、双击进入；已添加的项目置灰标记，仍可双击进入
         </DialogDescription>
       </DialogHeader>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-1" data-testid="dir-tree-scroll">
-        <DirectoryTree
-          selectedPath={selected}
-          onSelect={setSelected}
-          fetchDir={fetchDir}
-          registeredPaths={registeredPaths}
+      <Input
+        value={pathInput}
+        onChange={(e) => {
+          setPathInput(e.target.value);
+          setCreateError(null);
+        }}
+        onKeyDown={onPathKeyDown}
+        placeholder="/home/user/my-project"
+        className="shrink-0 font-mono text-sm"
+        data-testid="dir-picker-path"
+        aria-label="目录路径"
+        aria-invalid={listError !== null || undefined}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {listError && (
+        <p data-testid="dir-picker-error" className="shrink-0 text-xs text-destructive">
+          {listError}
+        </p>
+      )}
+      {createError && (
+        <p data-testid="dir-picker-create-error" className="shrink-0 text-xs text-destructive">
+          {createError}
+        </p>
+      )}
+
+      <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={showHidden}
+          onChange={(e) => setShowHidden(e.target.checked)}
+          data-testid="dir-picker-show-hidden"
         />
+        显示隐藏目录
+      </label>
+
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-1" data-testid="dir-picker-list" role="listbox" aria-label="目录列表">
+        {browsing ? (
+          <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" />
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="p-3 text-sm text-muted-foreground">
+            {listError === null && entries.length > 0 ? "（均为隐藏目录，可打开上方开关显示）" : "目录为空"}
+          </div>
+        ) : (
+          visible.map((entry) => {
+            const registered = registeredPaths.has(entry.path);
+            const isParent = entry.name === "..";
+            return (
+              <div
+                key={entry.path}
+                data-testid={`dir-row-${entry.path}`}
+                role="option"
+                aria-selected={selected === entry.path || undefined}
+                aria-disabled={registered || undefined}
+                title={registered ? "已添加：仍可双击进入" : undefined}
+                onClick={() => {
+                  if (!registered) setSelected(entry.path);
+                }}
+                onDoubleClick={() => jump(entry.path)}
+                className={`flex h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm transition-colors ${
+                  selected === entry.path ? "bg-muted" : "hover:bg-muted/60"
+                }`}
+              >
+                {isParent ? (
+                  <FolderUp className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Folder className="size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span className={`min-w-0 truncate font-mono ${registered ? "text-muted-foreground/60" : ""}`}>
+                  {entry.name}
+                </span>
+                {registered && (
+                  <span
+                    data-testid={`dir-added-${entry.path}`}
+                    className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                  >
+                    已添加
+                  </span>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
 
       <div className="flex shrink-0 flex-col gap-2">
         <p data-testid="dir-picker-selected" className="truncate font-mono text-xs text-muted-foreground">
-          {selected ?? "尚未选择目录"}
+          {confirmState ? confirmState.target : "尚未选择目录"}
         </p>
         <div className="flex items-center justify-end gap-2">
           <button
@@ -294,11 +504,15 @@ function PickerBody({
           <button
             type="button"
             data-testid="dir-picker-confirm"
-            disabled={!selected}
-            onClick={() => selected && onConfirm(selected)}
+            disabled={confirmState === null || browsing || creating}
+            onClick={() => {
+              if (!confirmState) return;
+              if (confirmState.kind === "create") void createAndAdd(confirmState.target);
+              else onConfirm(confirmState.target);
+            }}
             className="flex h-11 items-center rounded-lg bg-primary px-4 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
           >
-            选择此目录
+            {confirmState?.kind === "create" ? (creating ? "创建中…" : "新建并添加") : "选择此目录"}
           </button>
         </div>
       </div>

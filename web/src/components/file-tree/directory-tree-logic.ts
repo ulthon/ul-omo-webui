@@ -7,6 +7,9 @@ import type { FsBrowseEntry } from "@/lib/api";
 /** 补全防抖窗口：输入停顿该毫秒数后才发起目录请求 */
 export const SUGGEST_DEBOUNCE_MS = 300;
 
+/** DirectoryPickerDialog 路径框联动防抖窗口（docs08-r3 任务 20）：停顿后才刷新列表 */
+export const PICKER_DEBOUNCE_MS = 300;
+
 /** 下拉建议条数上限（目录几十条以内，深目录防刷屏） */
 export const SUGGEST_LIMIT = 30;
 
@@ -59,6 +62,16 @@ export function pickSuggestions(raw: string, entries: FsBrowseEntry[]): FsBrowse
 /** 点选建议后的回填值：建议目录完整路径 + 尾随 /（可继续下钻输入） */
 export function suggestionBackfill(entry: FsBrowseEntry): string {
   return `${entry.path}/`;
+}
+
+/**
+ * 浏览判重键（docs08-r3 任务 20 联动）：合并连续斜杠、去尾斜杠（根 "/" 保留）。
+ * 不展开 .. 与 .（交服务端 resolve）——仅用于跳过同形输入的重复请求，多一次请求无害。
+ */
+export function normalizeBrowsePath(raw: string): string {
+  const merged = raw.replace(/\/{2,}/g, "/");
+  if (merged.length <= 1) return merged;
+  return merged.replace(/\/+$/, "") || "/";
 }
 
 // ---------- DirectoryTree 状态转移（纯函数，状态三件套整体替换触发渲染） ----------

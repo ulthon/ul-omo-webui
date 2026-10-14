@@ -1,8 +1,8 @@
 // 路径校验（todo 9 验收硬条件）：项目路径与项目内子路径。
 // 规则（计划 185 行）：resolve 后必须仍在允许范围内；覆盖 ../ 逃逸、绝对路径注入、
 // 符号链接逃逸（realpath 复核）。
-import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { accessSync, constants, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ApiError } from "./http";
 
 /**
@@ -26,6 +26,72 @@ export function validateProjectInput(raw: unknown): string {
     throw new ApiError(400, "invalid_project", `项目路径不是目录：${raw}`);
   }
   return real;
+}
+
+/**
+ * create:true 分支（docs08-r3 任务 20"新建并添加"）：路径不存在时建目录再注册。
+ * 安全口径（与 browse/validateProjectInput 同源，不做软链接解析放宽）：
+ * 1. 形状校验（绝对路径、无 NUL、≤4096——对齐 routes-fs browse 口径）后 resolve 规范化；
+ * 2. lstat 目标：存在（含悬空符号链接——lstat 不跟随，不算不存在）→ 交回
+ *    validateProjectInput 走原口径（幂等注册/非目录/悬空链接 400）；
+ * 3. 不存在 → 上溯最近存在祖先：必须是目录且可写（accessSync W_OK，不可写 403）；
+ * 4. mkdirSync recursive（即 mkdir -p：从最近祖先起补建余下链），失败按错误码映射；
+ * 5. 建成后 validateProjectInput 复核并注册（realpath 归一，绝不放宽）。
+ */
+export function createProjectInput(raw: unknown): string {
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new ApiError(400, "invalid_project", "project 必须是绝对目录路径");
+  }
+  if (!raw.startsWith("/")) {
+    throw new ApiError(400, "invalid_project", `project 必须是绝对路径：${raw}`);
+  }
+  if (raw.includes("\0")) {
+    throw new ApiError(400, "invalid_project", "project 不能包含 NUL 字节");
+  }
+  if (raw.length > 4096) {
+    throw new ApiError(400, "invalid_project", "project 过长");
+  }
+  const target = resolve(raw);
+  let exists = true;
+  try {
+    lstatSync(target);
+  } catch (err) {
+    // ENOENT=不存在；ENOTDIR=中段是文件（目标同样不可达）——都走 mkdir 探测流程，
+    // 由祖先探测给出更可操作的"父级不是目录"；其余 stat 错误交回原校验口径
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") exists = false;
+  }
+  if (exists) return validateProjectInput(target);
+
+  let parent = dirname(target);
+  for (;;) {
+    let stat: ReturnType<typeof statSync>;
+    try {
+      stat = statSync(parent);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" && parent !== "/") {
+        parent = dirname(parent);
+        continue;
+      }
+      throw new ApiError(400, "mkdir_failed", `无法创建目录（父级探测失败）：${raw}`);
+    }
+    if (!stat.isDirectory()) {
+      throw new ApiError(400, "mkdir_failed", `父级不是目录，无法创建：${raw}`);
+    }
+    break;
+  }
+  try {
+    accessSync(parent, constants.W_OK);
+  } catch {
+    throw new ApiError(403, "mkdir_forbidden", `父级目录不可写：${parent}`);
+  }
+  try {
+    mkdirSync(target, { recursive: true });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new ApiError(400, "mkdir_failed", `创建目录失败：${raw}（${reason}）`);
+  }
+  return validateProjectInput(target);
 }
 
 /**

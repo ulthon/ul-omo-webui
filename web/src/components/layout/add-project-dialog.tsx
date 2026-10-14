@@ -1,9 +1,11 @@
 // 添加项目弹窗（todo 16 增强）：手动输入优先可见 + 路径自动补全 + "浏览…"目录树选择。
 // 补全：输入停顿 300ms 且目录部分（最后一个 / 及之前）相对上次已取目录有新增时，
 // 调 GET /api/fs/browse 拉子目录建议；非绝对路径与越界 403 一律静默不建议。
-// W5 todo 14：浏览放开到文件系统根；目录树中已注册项目置灰 + "已添加"徽标 + 禁选（可进入），
+// W5 todo 14：浏览放开到文件系统根；目录选择中已注册项目置灰 + "已添加"徽标 + 禁选（可进入），
 // 已注册集合取自 ui store（bootstrap 经 GET /api/projects 预载，projectPath 为服务端 realpath）。
-// 回填只改输入框值，提交仍走 POST /api/projects 服务端校验（存在性/合法性唯一裁决方，重复注册幂等）。
+// docs08-r3 任务 20：浏览弹窗改为路径框与单层列表联动式；确认仍只回填输入框（本组件提交
+// 仍走 POST /api/projects 普通注册，服务端校验存在性/合法性，重复注册幂等）；输入路径不存在时
+// 弹窗内确认钮变"新建并添加"（弹窗内部直调 addProject(path, true) 建目录并注册，成功后同样回填）。
 // 从 topbar.tsx 移出独立成文件：弹窗体条件挂载（每次打开全新初始态，同 FilePickerDialog 模式）。
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";

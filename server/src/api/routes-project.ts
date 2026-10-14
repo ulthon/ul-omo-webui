@@ -14,7 +14,7 @@ import { ApiError, parseJsonBody, route } from "./http";
 import { THINKING_LEVEL_VALUES, type PreferredThinkingLevel } from "../conf/config-store";
 import type { ApiDeps } from "./deps";
 import type { ProjectMeta } from "../db/meta";
-import { validateProjectInput } from "./paths";
+import { validateProjectInput, createProjectInput } from "./paths";
 
 /** meta 行 + 合并偏好响应（preferredModel/permissionPreset/preferredThinkingLevel 为合并值；损坏降级时附 configError） */
 function projectResponse(meta: ProjectMeta, view: ProjectPreferenceView) {
@@ -57,10 +57,15 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     });
   }));
 
-  // 注册项目：路径校验（存在 + 目录 + realpath 规范化），幂等（重复注册刷新 last_opened_at）
+  // 注册项目：路径校验（存在 + 目录 + realpath 规范化），幂等（重复注册刷新 last_opened_at）。
+  // create:true（docs08-r3 任务 20"新建并添加"）：路径不存在时由 createProjectInput
+  // 先按安全口径建目录（最近存在祖先是目录且可写才 mkdir -p）再走同一校验注册。
   app.post("/api/projects", route(async (c: Context) => {
     const body = await parseJsonBody(c);
-    const project = validateProjectInput(body.path);
+    const project =
+      body.create === true
+        ? createProjectInput(body.path)
+        : validateProjectInput(body.path);
     deps.meta.updateProjectMeta(project, { lastOpenedAt: new Date().toISOString() });
     const meta = deps.meta.getProjectMeta(project);
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(project)) : null });
