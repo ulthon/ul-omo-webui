@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Copy, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { WireMessage } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { refreshSessions } from "@/lib/bootstrap";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
@@ -17,28 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { entryRole, findForkTargetEntry, messageRawText } from "./message-actions-data";
-
-/** 剪贴板写入：clipboard API 失败（非 https/未授权）降级隐藏 textarea + execCommand */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      ta.remove();
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
 
 export function MessageActions({ sessionId, entryId, align = "start" }: { sessionId: string; entryId: string; align?: "start" | "end" }) {
   const showToast = useUiStore((s) => s.showToast);

@@ -6,11 +6,13 @@
 // + 未读徽标 + 相对时间（桌面显示，<sm 隐藏，docs08-r3 C14）
 // + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
 // 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
-// + 元数据操作菜单（置顶/重命名/归档/标签/删除——重命名与删除弹窗由父级单例托管，标签走选择器）。
+// + 元数据操作菜单（置顶/重命名/生成标题/归档/复制会话 ID/复制标题/导出 HTML/标签/删除——
+// 重命名与删除弹窗由父级单例托管，标签走选择器）。
 import { useState } from "react";
-import { ChevronRight, Download, GitFork, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { ChevronRight, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
@@ -219,6 +221,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
   // fork 标题后缀（W3 todo 10）：编号表命中才显示（搜索结果不在主列表数据集时自然缺省）
   const forkIndex = session.parentSessionPath ? forkIndexes?.get(session.path) : undefined;
 
+  /** 复制会话 ID / 标题（A8）：一律走降级助手（纯 HTTP 非安全源 navigator.clipboard 恒 undefined，
+   * 禁止裸用 clipboard API），按返回布尔 toast。复制的是点击时刻的 props 快照值——
+   * 菜单打开期间会话被重命名不影响本次复制结果（stale 即语义）。 */
+  const copyField = async (text: string, label: string) => {
+    const ok = await copyText(text);
+    showToast(ok ? `已复制${label}` : "复制失败（浏览器未授权剪贴板）", ok ? undefined : "error");
+  };
+
   return (
     <div>
       <div
@@ -334,6 +344,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             <DropdownMenuItem disabled={busy} onSelect={() => void patch({ archived: !session.archivedAt })}>
               {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
               {session.archivedAt ? "取消归档" : "归档"}
+            </DropdownMenuItem>
+            <DropdownMenuItem data-testid="item-copy-id" onSelect={() => void copyField(session.id, "会话 ID")}>
+              <Hash className="mr-2 size-4" />
+              复制会话 ID
+            </DropdownMenuItem>
+            <DropdownMenuItem data-testid="item-copy-title" onSelect={() => void copyField(session.title, "标题")}>
+              <Copy className="mr-2 size-4" />
+              复制标题
             </DropdownMenuItem>
             <DropdownMenuItem disabled={exporting} onSelect={() => void exportHtml()}>
               {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
