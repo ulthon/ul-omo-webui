@@ -11,7 +11,7 @@
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronDown, Filter, ListChecks, Loader2, MessageSquare, Plus, Search, Tag, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Filter, GripVertical, ListChecks, Loader2, MessageSquare, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   LOCATE_EVENT,
+  PROJECT_ORDER_KV,
   crossProjectDecision,
   flattenSessions,
   groupOrder,
@@ -84,6 +85,8 @@ function useMarkReadOnView(): void {
 export function SessionList() {
   const currentProject = useUiStore((s) => s.currentProject);
   const projects = useUiStore((s) => s.projects);
+  const projectSort = useUiStore((s) => s.projectSort);
+  const projectOrder = useUiStore((s) => s.projectOrder);
   const archived = useSessionsStore((s) => s.archived);
   const byProject = useSessionsStore((s) => s.byProject);
   const loading = useSessionsStore((s) => s.loading);
@@ -245,11 +248,80 @@ export function SessionList() {
     }
   };
 
-  // 分组排序：当前项目组最前，其余按各组最新 modified 降序（纯函数 groupOrder）
+  // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
+  // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行退化
+  // lastOpenedAt 稳定序）、manual=kv 手动序（未列项目按 activity 规则追加）
   const sortedProjects = useMemo(
-    () => groupOrder(projects.map((p) => p.projectPath), byProject, currentProject),
-    [projects, byProject, currentProject],
+    () =>
+      groupOrder(projects.map((p) => p.projectPath), byProject, currentProject, {
+        mode: projectSort,
+        manualOrder: projectOrder,
+        meta: Object.fromEntries(
+          projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null, lastOpenedAt: p.lastOpenedAt }]),
+        ),
+      }),
+    [projects, byProject, currentProject, projectSort, projectOrder],
   );
+
+  // ---- 手动排序（C16 todo 9，仅 manual 档）：本地先行更新 + kv 持久（跨设备一致）----
+  /** 顺序落 kv：本地 store 先行（即时生效），PUT 失败仅提示（下次 bootstrap 重读 kv 纠偏） */
+  const persistManualOrder = useCallback(async (nextOrder: string[]) => {
+    useUiStore.getState().setProjectOrder(nextOrder);
+    try {
+      await api.putSettings({ [PROJECT_ORDER_KV]: JSON.stringify(nextOrder) });
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast("保存手动排序失败", "error");
+      }
+    }
+  }, []);
+
+  /** 把某项目移到当前展示序的目标位（当前项目组置顶规则不动——kv 序仅作用于其余组） */
+  const moveProjectTo = useCallback(
+    (srcPath: string, targetPath: string) => {
+      const order = useUiStore.getState().projectOrder;
+      // 基准：现有 kv 序（过滤掉已注销路径）∪ 当前未列项目按展示序追加，保证拖拽增量可预期
+      const registered = useUiStore.getState().projects.map((p) => p.projectPath);
+      const base = [
+        ...order.filter((p) => registered.includes(p)),
+        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+      ].filter((p, i, arr) => arr.indexOf(p) === i);
+      const from = base.indexOf(srcPath);
+      const to = base.indexOf(targetPath);
+      if (from < 0 || to < 0 || from === to) return;
+      const next = [...base];
+      next.splice(from, 1);
+      next.splice(to, 0, srcPath);
+      void persistManualOrder(next);
+    },
+    [currentProject, sortedProjects, persistManualOrder],
+  );
+
+  /** 上移/下移一位（手机过渡实现；任务 10 落地分组头 DropdownMenu 时吸收为唯一菜单） */
+  const moveProjectByStep = useCallback(
+    (projectPath: string, delta: -1 | 1) => {
+      const order = useUiStore.getState().projectOrder;
+      const registered = useUiStore.getState().projects.map((p) => p.projectPath);
+      const base = [
+        ...order.filter((p) => registered.includes(p)),
+        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+      ].filter((p, i, arr) => arr.indexOf(p) === i);
+      const from = base.indexOf(projectPath);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= base.length) return;
+      const next = [...base];
+      next.splice(from, 1);
+      next.splice(to, 0, projectPath);
+      void persistManualOrder(next);
+    },
+    [currentProject, sortedProjects, persistManualOrder],
+  );
+
+  // 桌面拖拽状态（HTML5 DnD，仅 manual 档分组头）：dragger 存被拖路径，drop 目标经
+  // dataTransfer 传递路径字符串；stale state（拖拽中途刷新）无持久副作用——未 drop 即无写
+  const manual = projectSort === "manual";
+  const dragProjectRef = useRef<string | null>(null);
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
   // 最近会话：跨项目按 modified 取最新 8 条（置顶自然参与）
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
   // fork 编号表（W3 todo 10）：列表加载时对整份数据一次算好缓存（byProject 引用不变即不重算），
@@ -624,7 +696,7 @@ export function SessionList() {
             )}
             {recent.length > 0 && sortedProjects.length > 0 && <div className="mx-1.5 border-t" />}
 
-            {sortedProjects.map((projectPath) => {
+            {sortedProjects.map((projectPath, index) => {
               const sessions = byProject[projectPath];
               const expanded = isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath]);
               const isCurrent = projectPath === currentProject;
@@ -645,12 +717,47 @@ export function SessionList() {
               }
               return (
                 <div key={projectPath} data-project-group={projectPath}>
-                  <div className="flex items-center gap-0.5">
+                  {/* 分组头（C16 todo 9）：manual 档下整行作为桌面 HTML5 拖拽源/目标；
+                      手机（<lg）无拖拽，经右侧过渡菜单"上移/下移"调序——任务 10 落地分组头
+                      DropdownMenu 时吸收合并为分组头唯一菜单（接线点：该菜单整体替换）。 */}
+                  <div
+                    className={`flex items-center gap-0.5 ${manual && dragOverPath === projectPath ? "rounded-md outline outline-1 outline-primary/50" : ""}`}
+                    draggable={manual}
+                    data-testid="group-header"
+                    onDragStart={(e) => {
+                      dragProjectRef.current = projectPath;
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", projectPath);
+                    }}
+                    onDragEnd={() => {
+                      dragProjectRef.current = null;
+                      setDragOverPath(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!manual || dragProjectRef.current === null || dragProjectRef.current === projectPath) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDragOverPath(projectPath);
+                    }}
+                    onDragLeave={(e) => {
+                      if (!manual) return;
+                      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                      setDragOverPath((cur) => (cur === projectPath ? null : cur));
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverPath(null);
+                      const src = e.dataTransfer.getData("text/plain") || dragProjectRef.current;
+                      dragProjectRef.current = null;
+                      if (!src || src === projectPath) return;
+                      moveProjectTo(src, projectPath);
+                    }}
+                  >
                     <button
                       type="button"
                       data-testid="group-toggle"
                       aria-expanded={expanded}
-                      className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7"
+                      className={`flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7 ${manual ? "cursor-grab active:cursor-grabbing" : ""}`}
                       onClick={() => toggleGroup(projectPath)}
                     >
                       <ChevronDown className={`size-3 shrink-0 transition-transform ${expanded ? "" : "-rotate-90"}`} />
@@ -661,6 +768,37 @@ export function SessionList() {
                       {/* 空项目组显示但标注 0（todo 10） */}
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
+                    {/* 手动排序手机过渡菜单（<lg 可见）：上移/下移；样式从简，任务 10 吸收 */}
+                    {manual && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            data-testid="group-move-menu"
+                            aria-label={`调整 ${basename(projectPath)} 排序`}
+                            className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                          >
+                            <GripVertical className="size-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            disabled={index <= 0}
+                            data-testid="group-move-up"
+                            onSelect={() => moveProjectByStep(projectPath, -1)}
+                          >
+                            上移
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={index >= sortedProjects.length - 1}
+                            data-testid="group-move-down"
+                            onSelect={() => moveProjectByStep(projectPath, 1)}
+                          >
+                            下移
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                     {/* 分组头 "+"：在该项目内新建并轻量切到该项目（todo 10 新建会话落点） */}
                     <button
                       type="button"

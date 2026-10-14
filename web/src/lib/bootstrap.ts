@@ -2,6 +2,7 @@
 // 顶栏切换项目与初始引导共用 openProject。
 import { api, ApiError } from "@/lib/api";
 import type { ProjectMeta } from "@/lib/api";
+import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -85,14 +86,19 @@ export async function bootstrap(): Promise<void> {
   const projectsRes = await api.listProjects();
   ui.setProjects(projectsRes.projects);
 
-  // 外链入口配置（todo 26）：kv 键 external-git-url / external-files-url，空值视为未配置（入口隐藏）。
-  // 拉取失败不阻塞主流程（入口缺失无害，设置弹层保存后会更新 store）。
+  // 外链入口配置（todo 26）+ 侧栏项目排序档（C16 todo 9）：kv 键 external-git-url /
+  // external-files-url 与 sidebar.projectSort / sidebar.projectOrder。拉取失败不阻塞主
+  // 流程（入口缺失、排序回退 activity 均无害，设置弹层保存后会更新 store）。
   try {
     const { settings } = await api.getSettings();
+    const ui = useUiStore.getState();
     ui.setExternalLinks({
       gitUrl: settings["external-git-url"]?.trim() || null,
       filesUrl: settings["external-files-url"]?.trim() || null,
     });
+    ui.setProjectSort(parseProjectSort(settings[PROJECT_SORT_KV]));
+    // 手动顺序仅档位为 manual 时消费；kv 缺失/非法 JSON/非数组回退空数组（activity 语义兜底）
+    ui.setProjectOrder(parseManualProjectOrder(settings[PROJECT_ORDER_KV]) ?? []);
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {
       // 静默：无外链配置时入口不渲染，属预期形态

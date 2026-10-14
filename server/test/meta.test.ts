@@ -204,11 +204,11 @@ describe("meta_project CRUD", () => {
 
     db.updateProjectMeta("/w/x", { preferredModel: "glm-5.3-flash", lastOpenedAt: "2026-10-01T00:00:00.000Z" });
     db.updateProjectMeta("/w/y", { preferredModel: "glm-5.3-flash", lastOpenedAt: "2026-10-06T00:00:00.000Z" });
-    expect(db.getProjectMeta("/w/x")).toEqual({
-      projectPath: "/w/x",
-      preferredModel: "glm-5.3-flash",
-      lastOpenedAt: "2026-10-01T00:00:00.000Z",
-    });
+    const wx = db.getProjectMeta("/w/x")!;
+    expect(wx.projectPath).toBe("/w/x");
+    expect(wx.preferredModel).toBe("glm-5.3-flash");
+    expect(wx.lastOpenedAt).toBe("2026-10-01T00:00:00.000Z");
+    expect(typeof wx.createdAt).toBe("string"); // C16：新注册行带注册时刻
 
     db.updateProjectMeta("/w/x", { lastOpenedAt: "2026-10-07T00:00:00.000Z" }); // 只动一个字段
     const x = db.getProjectMeta("/w/x")!;
@@ -246,28 +246,90 @@ describe("meta_project.preferred_agent 删列迁移（W1 todo 6）", () => {
     }
 
     // 第一次打开（真实文件路径，走 openMetaDb → ensureSchema 的 PRAGMA 检测路径）：
-    // 迁移删列，其余列数据原样保留
+    // 迁移删列，其余列数据原样保留；created_at 同批迁移补列（存量行回填迁移时刻）
     const db = openMetaDb({ path });
-    expect(db.getProjectMeta("/legacy/a")).toEqual({
-      projectPath: "/legacy/a",
-      preferredModel: "glm-5.3-flash",
-      lastOpenedAt: "2026-01-01T00:00:00.000Z",
-    });
+    const legacyRow = db.getProjectMeta("/legacy/a")!;
+    expect(legacyRow.projectPath).toBe("/legacy/a");
+    expect(legacyRow.preferredModel).toBe("glm-5.3-flash");
+    expect(legacyRow.lastOpenedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(typeof legacyRow.createdAt).toBe("string");
+    const migratedAt = legacyRow.createdAt as string;
     db.close();
 
-    // 列确已消失（独立连接读 PRAGMA，避免依赖存储层 SELECT 形状）
+    // 列确已消失/已补齐（独立连接读 PRAGMA，避免依赖存储层 SELECT 形状）
     {
       const raw = new Database(path);
       const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
       expect(cols.some((c) => c.name === "preferred_agent")).toBe(false);
-      expect(cols.map((c) => c.name)).toEqual(["project_path", "preferred_model", "last_opened_at"]);
+      expect(cols.map((c) => c.name)).toEqual(["project_path", "preferred_model", "last_opened_at", "created_at"]);
       raw.close();
     }
 
-    // 第二次启动：列已不存在，PRAGMA 检测跳过 DROP，无错且数据不变（幂等）
+    // 第二次启动：preferred_agent 列已不存在跳过 DROP；created_at 已存在跳过加列与
+    // 回填（存量值不被改写）——双迁移均幂等
     const again = openMetaDb({ path });
     expect(again.getProjectMeta("/legacy/a")?.preferredModel).toBe("glm-5.3-flash");
+    expect(again.getProjectMeta("/legacy/a")?.createdAt).toBe(migratedAt);
     again.close();
+  });
+});
+
+describe("meta_project.created_at 迁移（C16 docs08-r3 todo 9）", () => {
+  test("存量行两步迁移：ALTER 可空列 + 回填迁移时刻；二次启动幂等不改写", () => {
+    const path = dbFile("created-at-migration");
+    // 以旧版 DDL（无 created_at）造库，预置两行存量数据（模拟升级前存量库）
+    {
+      const old = new Database(path, { create: true });
+      old.exec(`
+        CREATE TABLE meta_project (
+          project_path     TEXT PRIMARY KEY,
+          preferred_model  TEXT,
+          last_opened_at   TEXT
+        );
+      `);
+      old.run("INSERT INTO meta_project (project_path, preferred_model, last_opened_at) VALUES (?, ?, ?)", [
+        "/old/first", null, "2026-01-01T00:00:00.000Z",
+      ]);
+      old.run("INSERT INTO meta_project (project_path, preferred_model, last_opened_at) VALUES (?, ?, ?)", [
+        "/old/second", "glm-5.3-flash", "2026-02-01T00:00:00.000Z",
+      ]);
+      old.close();
+    }
+
+    // 第一次打开：加列 + 回填。存量行 createdAt 非空且同行同值（同一迁移时刻）——
+    // 用值相等断言而非时间窗比较，避免时间竞态（对抗类：flaky tests）
+    const db = openMetaDb({ path });
+    const first = db.getProjectMeta("/old/first")!;
+    const second = db.getProjectMeta("/old/second")!;
+    expect(typeof first.createdAt).toBe("string");
+    expect(second.createdAt).toBe(first.createdAt);
+    // 存量数据原样（回填只写 created_at 列）
+    expect(first.lastOpenedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(second.preferredModel).toBe("glm-5.3-flash");
+    const migratedAt = first.createdAt as string;
+    db.close();
+
+    // 二次启动：列已存在，跳过加列与回填，存量值不被改写（幂等）
+    const again = openMetaDb({ path });
+    expect(again.getProjectMeta("/old/first")?.createdAt).toBe(migratedAt);
+
+    // 迁移后新注册行取注册时刻（晚于迁移时刻，ISO 字典序可比）
+    again.updateProjectMeta("/new/after", { lastOpenedAt: new Date().toISOString() });
+    const after = again.getProjectMeta("/new/after")!;
+    expect(typeof after.createdAt).toBe("string");
+    expect(after.createdAt! > migratedAt).toBe(true);
+    // 已有行重复 upsert（重复注册刷新 last_opened_at 语义）不改动 created_at
+    again.updateProjectMeta("/old/first", { lastOpenedAt: new Date().toISOString() });
+    expect(again.getProjectMeta("/old/first")?.createdAt).toBe(migratedAt);
+    again.close();
+
+    // 列形状：ALTER 追加在末尾，恰好一个 created_at
+    {
+      const raw = new Database(path);
+      const cols = raw.query("PRAGMA table_info(meta_project)").all() as Array<{ name: string }>;
+      expect(cols.filter((c) => c.name === "created_at")).toHaveLength(1);
+      raw.close();
+    }
   });
 });
 

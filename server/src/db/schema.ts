@@ -96,4 +96,13 @@ export function ensureSchema(db: Database): void {
   if (projectCols.some((c) => c.name === "preferred_agent")) {
     db.exec("ALTER TABLE meta_project DROP COLUMN preferred_agent");
   }
+  // C16（docs08-r3 todo 9）：meta_project 补 created_at 注册时间列（侧栏"添加"排序档的
+  // 数据基础）。SQLite ALTER TABLE ADD COLUMN 不接受非常量 DEFAULT（CURRENT_TIMESTAMP），
+  // 两步走：先加可空列，再回填存量行为迁移时刻——存量行 createdAt 同值，前端"添加"档
+  // 对这批行退化为 last_opened_at 稳定排序。幂等：列已存在时跳过加列与回填（重复启动
+  // 不重复改写存量值，新注册行的注册时刻不受影响）。
+  if (!projectCols.some((c) => c.name === "created_at")) {
+    db.exec("ALTER TABLE meta_project ADD COLUMN created_at TEXT");
+    db.run("UPDATE meta_project SET created_at = ?", [new Date().toISOString()]);
+  }
 }

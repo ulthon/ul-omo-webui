@@ -1,6 +1,7 @@
 // UI 全局域：连接状态、抽屉开关、当前项目、模型选择、轻提示。
 import { create } from "zustand";
 import type { ModelInfo, ProjectMeta } from "@/lib/api";
+import type { ProjectSortMode } from "@/components/session-list/global-list-data";
 
 export type ConnectionStatus = "online" | "reconnecting";
 
@@ -41,6 +42,12 @@ interface UiState {
   modelPickerOpen: boolean;
   /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
   externalLinks: ExternalLinks;
+  /** 侧栏项目排序档位（C16 todo 9）：meta_kv sidebar.projectSort 持久（缺省 activity），
+   * bootstrap 读 GET /api/settings 填充，设置弹层改档即 PUT；不落 localStorage（跨设备一致）。 */
+  projectSort: ProjectSortMode;
+  /** 手动顺序（C16 todo 9）：meta_kv sidebar.projectOrder 的 JSON 路径数组解析结果；
+   * 拖拽/上移下移后本地先行更新再异步落 kv。 */
+  projectOrder: string[];
   toast: Toast | null;
 
   setConnection(status: ConnectionStatus): void;
@@ -55,6 +62,8 @@ interface UiState {
   setSelectedThinkingLevel(level: string | null): void;
   setModelPickerOpen(open: boolean): void;
   setExternalLinks(links: ExternalLinks): void;
+  setProjectSort(sort: ProjectSortMode): void;
+  setProjectOrder(order: string[]): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
 }
@@ -73,6 +82,8 @@ export const useUiStore = create<UiState>()((set) => ({
   selectedThinkingLevel: null,
   modelPickerOpen: false,
   externalLinks: { gitUrl: null, filesUrl: null },
+  projectSort: "activity",
+  projectOrder: [],
   toast: null,
 
   setConnection: (status) => set({ connection: status }),
@@ -86,6 +97,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setExternalLinks: (links) => set({ externalLinks: links }),
+  setProjectSort: (sort) => set({ projectSort: sort }),
+  setProjectOrder: (order) => set({ projectOrder: order }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;

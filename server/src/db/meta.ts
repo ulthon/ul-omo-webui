@@ -44,6 +44,8 @@ export interface ProjectMeta {
   projectPath: string;
   preferredModel: string | null;
   lastOpenedAt: string | null;
+  /** 注册时间（C16 todo 9）：迁移前存量行 = 迁移时刻（同值），新注册行 = 注册时刻 */
+  createdAt: string | null;
 }
 
 export interface ProjectMetaPatch {
@@ -465,7 +467,7 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
     getProjectMeta(projectPath) {
       return get<ProjectMeta>(
         `SELECT project_path AS projectPath, preferred_model AS preferredModel,
-                last_opened_at AS lastOpenedAt
+                last_opened_at AS lastOpenedAt, created_at AS createdAt
          FROM meta_project WHERE project_path = ?`,
         projectPath,
       );
@@ -474,7 +476,7 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
     listProjectMeta() {
       return all<ProjectMeta>(
         `SELECT project_path AS projectPath, preferred_model AS preferredModel,
-                last_opened_at AS lastOpenedAt
+                last_opened_at AS lastOpenedAt, created_at AS createdAt
          FROM meta_project ORDER BY last_opened_at DESC`,
       );
     },
@@ -492,11 +494,12 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
           );
         } else {
           run(
-            `INSERT INTO meta_project (project_path, preferred_model, last_opened_at)
-             VALUES (?, ?, ?)`,
+            `INSERT INTO meta_project (project_path, preferred_model, last_opened_at, created_at)
+             VALUES (?, ?, ?, ?)`,
             projectPath,
             patch.preferredModel ?? null,
             patch.lastOpenedAt ?? null,
+            nowIso(),
           );
         }
       });

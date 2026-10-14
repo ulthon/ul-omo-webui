@@ -13,6 +13,8 @@ import {
   groupOrder,
   isGroupExpanded,
   latestModified,
+  parseManualProjectOrder,
+  parseProjectSort,
   readCollapsed,
   recentTop,
   writeCollapsed,
@@ -85,6 +87,90 @@ describe("groupOrder 分组排序", () => {
   test("latestModified：空组为空串（恒排尾）", () => {
     expect(latestModified([])).toBe("");
     expect(latestModified([makeSession("x", "/p", "2026-02-03T00:00:00.000Z")])).toBe("2026-02-03T00:00:00.000Z");
+  });
+});
+
+describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
+  const byProject = {
+    "/a": [makeSession("a1", "/a", "2026-01-05T00:00:00.000Z")],
+    "/b": [makeSession("b1", "/b", "2026-01-09T00:00:00.000Z")],
+    "/c": [makeSession("c1", "/c", "2026-01-07T00:00:00.000Z")],
+  };
+
+  test("activity 档（缺省）与无参数调用同结果：当前置顶 + 最新 modified 降序", () => {
+    expect(groupOrder(["/a", "/b", "/c"], byProject, "/a")).toEqual(["/a", "/b", "/c"]);
+    expect(groupOrder(["/a", "/b", "/c"], byProject, "/a", { mode: "activity" })).toEqual(["/a", "/b", "/c"]);
+  });
+
+  test("added 档：按 createdAt 升序；存量行（createdAt 同值）退化为 lastOpenedAt 稳定序", () => {
+    // 迁移后注册时间：c < a < b（与 activity 序不同，验证档位生效）
+    const meta = {
+      "/a": { createdAt: "2026-03-02T00:00:00.000Z", lastOpenedAt: "2026-03-05T00:00:00.000Z" },
+      "/b": { createdAt: "2026-03-03T00:00:00.000Z", lastOpenedAt: "2026-03-06T00:00:00.000Z" },
+      "/c": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-07T00:00:00.000Z" },
+    };
+    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
+    // 当前项目组置顶规则不动
+    expect(groupOrder(["/a", "/b", "/c"], byProject, "/b", { mode: "added", meta })).toEqual(["/b", "/c", "/a"]);
+    // 存量行：createdAt 全部同为迁移时刻 → 按 lastOpenedAt 升序稳定退化
+    const legacy = {
+      "/x": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-09T00:00:00.000Z" },
+      "/y": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-08T00:00:00.000Z" },
+      "/z": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-10T00:00:00.000Z" },
+    };
+    expect(groupOrder(["/x", "/y", "/z"], byProject, null, { mode: "added", meta: legacy })).toEqual(["/y", "/x", "/z"]);
+    // meta 缺失 defensively 当空值走稳定退化序（不崩）
+    expect(groupOrder(["/a", "/b"], byProject, null, { mode: "added" })).toEqual(["/a", "/b"]);
+  });
+
+  test("manual 档：kv 序生效，未列项目按 activity 规则追加，未知/重复路径忽略不崩", () => {
+    // kv 序 [c, a]：b 未列 → 按 modified 降序追加到尾
+    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual", manualOrder: ["/c", "/a"] })).toEqual([
+      "/c",
+      "/a",
+      "/b",
+    ]);
+    // 未知路径（已注销）与重复项忽略
+    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual", manualOrder: ["/ghost", "/c", "/c", "/a"] })).toEqual([
+      "/c",
+      "/a",
+      "/b",
+    ]);
+    // 当前项目组置顶规则不动（kv 序仅作用于其余组）
+    expect(groupOrder(["/a", "/b", "/c"], byProject, "/c", { mode: "manual", manualOrder: ["/a", "/c"] })).toEqual([
+      "/c",
+      "/a",
+      "/b",
+    ]);
+    // 无 kv 序（undefined）回退 activity 规则
+    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual" })).toEqual(["/b", "/c", "/a"]);
+  });
+
+  test("parseProjectSort：合法值透传，缺失/未知/空回退 activity", () => {
+    expect(parseProjectSort("activity")).toBe("activity");
+    expect(parseProjectSort("added")).toBe("added");
+    expect(parseProjectSort("manual")).toBe("manual");
+    expect(parseProjectSort(undefined)).toBe("activity");
+    expect(parseProjectSort(null)).toBe("activity");
+    expect(parseProjectSort("")).toBe("activity");
+    expect(parseProjectSort("bogus")).toBe("activity");
+  });
+
+  test("parseManualProjectOrder：合法数组透传；非法 JSON/非数组/非字符串项/重复项容错", () => {
+    expect(parseManualProjectOrder('["/a","/b"]')).toEqual(["/a", "/b"]);
+    // 重复项去重
+    expect(parseManualProjectOrder('["/a","/a","/b"]')).toEqual(["/a", "/b"]);
+    // 非字符串项忽略
+    expect(parseManualProjectOrder('["/a",3,null,"/b"]')).toEqual(["/a", "/b"]);
+    // 缺失/空串 → null（回退当前档规则）
+    expect(parseManualProjectOrder(undefined)).toBeNull();
+    expect(parseManualProjectOrder(null)).toBeNull();
+    expect(parseManualProjectOrder("")).toBeNull();
+    // 非法 JSON / 非数组 → null 不崩
+    expect(parseManualProjectOrder("{not-json")).toBeNull();
+    expect(parseManualProjectOrder('"plain-string"')).toBeNull();
+    expect(parseManualProjectOrder('{"a":1}')).toBeNull();
+    expect(parseManualProjectOrder("42")).toBeNull();
   });
 });
 

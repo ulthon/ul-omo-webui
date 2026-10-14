@@ -10,7 +10,11 @@ import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
-import { locateProjectInSidebar } from "@/components/session-list/global-list-data";
+import {
+  PROJECT_SORT_KV,
+  locateProjectInSidebar,
+  type ProjectSortMode,
+} from "@/components/session-list/global-list-data";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -301,6 +305,65 @@ export function ProjectManagementSection() {
   );
 }
 
+/** 设置面板"侧栏"分区（C16 docs08-r3 todo 9）：项目排序三档单选（活动/添加/手动拖拽）。
+ * 档位存 meta_kv sidebar.projectSort（走既有 PUT /api/settings，跨设备一致，不落
+ * localStorage）；改档即存即生效（session-list 从 ui store 读档位派生分组顺序）。
+ * added 档对存量项目（迁移前注册，createdAt 同为迁移时刻）退化为最近打开时间稳定序，
+ * 文案如实注明。手动档的拖拽/上移下移交互在侧栏分组头（session-list.tsx）。 */
+const PROJECT_SORT_OPTIONS: ReadonlyArray<{ value: ProjectSortMode; label: string }> = [
+  { value: "activity", label: "活动时间（默认）" },
+  { value: "added", label: "添加时间" },
+  { value: "manual", label: "手动拖拽" },
+];
+
+function SidebarSortSection() {
+  const projectSort = useUiStore((s) => s.projectSort);
+  const [saving, setSaving] = useState(false);
+
+  const changeSort = async (mode: ProjectSortMode) => {
+    if (mode === projectSort || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [PROJECT_SORT_KV]: mode });
+      useUiStore.getState().setProjectSort(mode);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存排序设置失败", "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">侧栏</p>
+        <p className="text-xs text-muted-foreground">项目分组排序</p>
+        <div role="radiogroup" aria-label="项目分组排序" data-testid="project-sort-group" className="space-y-1">
+          {PROJECT_SORT_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7" data-testid={`project-sort-option-${opt.value}`}>
+              <input
+                type="radio"
+                name="project-sort"
+                value={opt.value}
+                checked={projectSort === opt.value}
+                disabled={saving}
+                onChange={() => void changeSort(opt.value)}
+                className="size-4 accent-primary"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          按添加时间排序时，升级前注册的历史项目以最近打开时间为准；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SettingsForm({ onDone }: { onDone: () => void }) {
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
@@ -373,6 +436,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       </form>
       <ProjectPermissionSection />
       <ProjectManagementSection />
+      <SidebarSortSection />
     </>
   );
 }

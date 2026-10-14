@@ -10,6 +10,9 @@ export interface ProjectMeta {
   projectPath: string;
   preferredModel: string | null;
   lastOpenedAt: string | null;
+  /** 注册时间（C16 todo 9）：迁移前存量行 = 迁移时刻（同值），added 排序档对这批行
+   * 退化为 lastOpenedAt 稳定序；可选以兼容旧服务端响应与单测构造 */
+  createdAt?: string | null;
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
    * 变更需项目引擎重启（restartProject）后生效。 */
   permissionPreset?: string | null;

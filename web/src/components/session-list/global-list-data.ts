@@ -18,6 +18,39 @@ export interface ProjectPreference {
   preferredModel: string | null;
 }
 
+/** 侧栏项目排序档位（C16 docs08-r3 todo 9）：
+ * activity=现状（各组最新会话 modified 降序）；added=注册时间 createdAt 升序
+ * （存量行 createdAt 同为迁移时刻，退化为 lastOpenedAt 稳定序）；manual=手动顺序。
+ * 档位与手动顺序存 meta_kv（sidebar.projectSort / sidebar.projectOrder），跨设备一致。 */
+export type ProjectSortMode = "activity" | "added" | "manual";
+
+/** meta_kv 键名（走 GET/PUT /api/settings） */
+export const PROJECT_SORT_KV = "sidebar.projectSort";
+export const PROJECT_ORDER_KV = "sidebar.projectOrder";
+
+/** kv 值解析：缺失/未知值一律回退 activity（对抗 malformed input 不崩） */
+export function parseProjectSort(raw: string | null | undefined): ProjectSortMode {
+  return raw === "added" || raw === "manual" ? raw : "activity";
+}
+
+/** 手动顺序 kv 值解析（JSON 路径数组）：非法 JSON/非数组/非字符串项返回 null（回退当前
+ * 档规则），重复项去重；未知路径在 groupOrder 消费时忽略，此处不做注册集校验 */
+export function parseManualProjectOrder(raw: string | null | undefined): string[] | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const out: string[] = [];
+    for (const item of parsed) {
+      if (typeof item !== "string" || out.includes(item)) continue;
+      out.push(item);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 type CollapseStorage = Pick<Storage, "getItem" | "setItem">;
 
 function defaultStorage(): CollapseStorage | null {
@@ -34,13 +67,49 @@ export function latestModified(list: SessionListItem[]): string {
   return latest;
 }
 
-/** 分组排序：当前项目组最前，其余按各组最新 modified 降序（计划 todo 10） */
+/** 分组排序（C16 docs08-r3 todo 9 参数化）：当前项目组置顶规则三档通用、不变。
+ * activity（缺省）=其余按各组最新 modified 降序；added=按项目注册时间 createdAt 升序，
+ * createdAt 相同（存量迁移行同值）退化为 lastOpenedAt 升序稳定序；manual=手动顺序
+ * （kv 数组序），未列项目与已注销路径按 activity 规则追加/忽略。 */
 export function groupOrder(
   projectPaths: string[],
   byProject: Record<string, SessionListItem[]>,
   currentProject: string | null,
+  opts?: {
+    mode?: ProjectSortMode;
+    /** 注册元数据（createdAt/lastOpenedAt），added 档用；缺省视为空值走稳定退化序 */
+    meta?: Record<string, { createdAt: string | null; lastOpenedAt: string | null }>;
+    /** 手动顺序（kv 解析结果），manual 档用 */
+    manualOrder?: string[];
+  },
 ): string[] {
+  const mode = opts?.mode ?? "activity";
   const rest = projectPaths.filter((p) => p !== currentProject);
+
+  if (mode === "manual" && opts?.manualOrder) {
+    const known = new Set(rest);
+    const seen = new Set<string>();
+    const listed = opts.manualOrder.filter((p) => known.has(p) && !seen.has(p) && (seen.add(p), true));
+    const unlisted = rest.filter((p) => !seen.has(p));
+    unlisted.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
+    const ordered = [...listed, ...unlisted];
+    return currentProject && projectPaths.includes(currentProject) ? [currentProject, ...ordered] : ordered;
+  }
+
+  if (mode === "added") {
+    const meta = opts?.meta ?? {};
+    rest.sort((a, b) => {
+      const ca = meta[a]?.createdAt ?? "";
+      const cb = meta[b]?.createdAt ?? "";
+      if (ca !== cb) return ca < cb ? -1 : 1;
+      // 存量行 createdAt 同为迁移时刻 → 退化 lastOpenedAt 稳定排序（设置区文案注明）
+      const la = meta[a]?.lastOpenedAt ?? "";
+      const lb = meta[b]?.lastOpenedAt ?? "";
+      return la < lb ? -1 : la > lb ? 1 : 0;
+    });
+    return currentProject && projectPaths.includes(currentProject) ? [currentProject, ...rest] : rest;
+  }
+
   rest.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
   if (currentProject && projectPaths.includes(currentProject)) return [currentProject, ...rest];
   return rest;
