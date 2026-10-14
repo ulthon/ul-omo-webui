@@ -39,3 +39,23 @@
   padding: 0.75rem;
   text-align: center;
 }
+
+/* 右栏窄栏适配（C15-b）：仅作用于"未提交变更"页签的展开区（.changes-detail 作用域），
+   工具卡片 diff 不受影响。官方默认 table-layout:fixed + pre-wrap 在 384 级宽度下
+   既换行又没有滚动出口——这里把 diff 表格改为块级滚动容器（width:100% 沿用官方值，
+   代码行 white-space:pre 撑出 min-content 宽度），长行不换行不截断、横向滚动查看。
+   覆写与官方样式表同为未分层样式、且选择器特异性更高并靠后导入，级联胜出可靠。 */
+.changes-detail .diff-surface {
+  display: block;
+  overflow-x: auto;
+}
+
+.changes-detail .diff-code {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.changes-detail .diff-decoration-content {
+  white-space: pre;
+}
