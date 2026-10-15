@@ -26,6 +26,10 @@ export function buildMessageItems(
   let sawModel = false;
   const list: ChatListItem[] = [];
   for (const e of entries) {
+    // toolResult 不单独入列：结果已由 ToolCard 按 toolCallId 关联展示（parts.tsx 同口径，
+    // ToolResultLine 恒空）；入列只会渲染出带"助手+时间"头部的空壳行，每个工具调用
+    // 多占一行死空间（任务 10 走查发现，390/1920 同样存在）。
+    if (e.message.role === "toolResult") continue;
     if (e.message.role === "assistant") {
       const model = messageModel(e);
       if (model !== null && (!sawModel || model !== lastModel)) {
