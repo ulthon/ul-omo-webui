@@ -94,6 +94,37 @@ describe("缺陷修复：新会话首条用户消息", () => {
     expect(slot.entries.length).toBe(3); // srv-u1 + local 占位 + srv-u2
   });
 
+  // 缺陷回归（2026-10-15 实测复现：用户消息气泡闪现即消失）：
+  // 引擎对 user 消息发 message_start/message_end 对 + entry_appended（真条目被
+  // 记忆白名单丢弃）；message_end(user) 事件对象若按原样入列，type="message_end"
+  // 会被渲染层 isMessageEntry（只认 type:"message"）过滤——吸收已删本地乐观占位，
+  // 净效果 = 用户消息不可见。入列必须归一为 type:"message"（settle 定格同构）。
+  test("服务端 user 事件入列条目须归一为可渲染的 type:\"message\"（带事件 id）", () => {
+    useMessagesStore.getState().appendLocalUserEntry("d-2", "首条");
+    useMessagesStore.getState().applyWireEvent("d-2", {
+      type: "message_end",
+      id: "srv-x1",
+      message: { role: "user", content: [{ type: "text", text: "首条" }] },
+    });
+    const slot = useMessagesStore.getState().bySession["d-2"];
+    expect(slot.entries.length).toBe(1);
+    const entry = asLocal(slot.entries[0]);
+    expect(entry.type).toBe("message");
+    expect(entry.id).toBe("srv-x1");
+    expect(entry.message?.role).toBe("user");
+    expect(entry.message?.content?.[0]).toEqual({ type: "text", text: "首条" });
+  });
+
+  test("服务端 user 事件无 id 时回落确定性合成 id（start/end 双帧幂等去重）", () => {
+    const msg = { role: "user", content: [{ type: "text", text: "同一条" }] };
+    useMessagesStore.getState().applyWireEvent("d-3", { type: "message_start", message: msg });
+    useMessagesStore.getState().applyWireEvent("d-3", { type: "message_end", message: msg });
+    const slot = useMessagesStore.getState().bySession["d-3"];
+    expect(slot.entries.length).toBe(1);
+    expect(asLocal(slot.entries[0]).type).toBe("message");
+    expect(asLocal(slot.entries[0]).id).toMatch(/^h[0-9a-z]+-\d+$/);
+  });
+
   test("同文本双条排队：服务端事件逐条吸收，一次事件只吞一条占位（spike (b)-7 去重键加固）", () => {
     // 两条同文本排队占位（引擎不去重，磁盘四行——两条独立 user 条目 + 各自回复）
     useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");

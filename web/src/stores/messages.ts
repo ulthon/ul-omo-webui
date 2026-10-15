@@ -281,12 +281,20 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             }
           } else {
             // user / toolResult 等直接入列（wire 原样）。user 消息先吸收等价的本地
-            // 乐观占位（发送成功后即时入列的 local-* 条目）——以服务端真值替换，防双列
+            // 乐观占位（发送成功后即时入列的 local-* 条目）——以服务端真值替换，防双列。
+            // 入列归一为 {type:"message", id, message}（settle 定格同构）：事件对象本身
+            // （type:"message_start"/"message_end"）不是可渲染条目——渲染层 isMessageEntry
+            // 只认 type:"message"，按事件原样入列会被过滤成不可见，而本地占位已被吸收，
+            // 净效果 = 用户消息闪现即消失（2026-10-15 实测复现；真条目的 entry_appended
+            // 帧另被记忆白名单丢弃，message 通道是 user 消息唯一可见入列路径）。
+            // id 缺失回落确定性合成 id：start/end 双帧同消息按 id 幂等去重。
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
               const base = msg.role === "user" ? absorbLocalUserEntries(cur.entries, msg) : cur.entries;
+              const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : syntheticId(msg);
+              const stored: WireEntry = { ...entry, type: "message", id };
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(base, entry) } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(base, stored) } },
               };
             });
           }
