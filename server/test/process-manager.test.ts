@@ -203,7 +203,11 @@ describe("状态机：启动与健康检查", () => {
       // doStart 失败被 catch 进退避，ensureRunning 正常返回快照
       const snap = await m.ensureRunning(PROJ)
       expect(["backoff", "starting"]).toContain(snap.state)
-      await sleep(60) // 退避到点再失败一次
+      // 轮询等退避到点再失败一次（固定 sleep 在负载下会早于定时器醒来，时序竞态）
+      await waitFor(() => {
+        const s = m.getStatus(PROJ)
+        return s?.state === "backoff" && (s?.consecutiveRestarts ?? 0) >= 2
+      }, 2000)
       const s2 = m.getStatus(PROJ)
       expect(s2?.state).toBe("backoff")
       expect(s2?.consecutiveRestarts).toBeGreaterThanOrEqual(2)
@@ -307,8 +311,9 @@ describe("状态机：崩溃与重启退避", () => {
     await m.recover(PROJ)
     expect(m.getStatus(PROJ)?.consecutiveRestarts).toBe(1)
     expect(m.getStatus(PROJ)?.state).toBe("backoff")
-    // unavailable 期间 ensureRunning 抛错
-    await sleep(60)
+    // 轮询等退避到点仍失败触顶 → 回到 unavailable（固定 sleep 在负载下会早于定时器醒来）
+    await waitFor(() => m.getStatus(PROJ)?.state === "unavailable", 2000)
+    expect(m.getStatus(PROJ)?.state).toBe("unavailable")
     void fakes
   })
 
