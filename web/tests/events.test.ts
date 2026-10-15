@@ -435,7 +435,9 @@ describe("gap 与游标回退", () => {
       dispatchSseEvent("gap", JSON.stringify({ from: 1, to: 5 }), 42);
       await tick();
       await tick();
-      expect(fetchLog.calls).toHaveLength(1); // 活动会话被校准，失败不抛、不清空 store
+      // 活动会话被校准（docs08-r4 任务 11 起 gap 另发一次 GET /queue 排队对账，不计入本断言），
+      // 失败不抛、不清空 store
+      expect(fetchLog.calls.filter((c) => c.includes("/api/sessions/s1/messages"))).toHaveLength(1);
       expect(useMessagesStore.getState().bySession["s1"]).toBeDefined();
     } finally {
       fetchLog.restore();

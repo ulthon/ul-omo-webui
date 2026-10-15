@@ -94,6 +94,56 @@ describe("缺陷修复：新会话首条用户消息", () => {
     expect(slot.entries.length).toBe(3); // srv-u1 + local 占位 + srv-u2
   });
 
+  test("同文本双条排队：服务端事件逐条吸收，一次事件只吞一条占位（spike (b)-7 去重键加固）", () => {
+    // 两条同文本排队占位（引擎不去重，磁盘四行——两条独立 user 条目 + 各自回复）
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");
+    expect(useMessagesStore.getState().bySession["d-1"].entries.length).toBe(2);
+
+    // 第一条投递（message_end role=user）：只吸收一条（剩余占位在前，服务端真值 append 在尾）
+    useMessagesStore.getState().applyWireEvent("d-1", {
+      type: "message_end",
+      id: "srv-q1",
+      message: { role: "user", content: [{ type: "text", text: "同文本" }] },
+    });
+    let slot = useMessagesStore.getState().bySession["d-1"];
+    expect(slot.entries.length).toBe(2);
+    expect(asLocal(slot.entries[0]).id?.startsWith("local-")).toBe(true);
+    expect(asLocal(slot.entries[1]).id).toBe("srv-q1");
+
+    // 第二条投递：吸收最后一条占位，无残留无重复
+    useMessagesStore.getState().applyWireEvent("d-1", {
+      type: "message_end",
+      id: "srv-q2",
+      message: { role: "user", content: [{ type: "text", text: "同文本" }] },
+    });
+    slot = useMessagesStore.getState().bySession["d-1"];
+    expect(slot.entries.length).toBe(2);
+    expect(asLocal(slot.entries[0]).id).toBe("srv-q1");
+    expect(asLocal(slot.entries[1]).id).toBe("srv-q2");
+  });
+
+  test("排队占位带 queued 标记；撤销移除只删排队占位（removeQueuedLocalEntry 首条 / removeAll 全清）", () => {
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "排队甲", undefined, "steer");
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "排队甲", undefined, "followUp");
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "普通占位");
+    let entries = useMessagesStore.getState().bySession["d-1"].entries;
+    expect(entries.filter((e) => (e as { queued?: unknown }).queued !== undefined).length).toBe(2);
+
+    // 单条撤销：同文本取首条，普通占位不动
+    useMessagesStore.getState().removeQueuedLocalEntry("d-1", "排队甲");
+    entries = useMessagesStore.getState().bySession["d-1"].entries;
+    expect(entries.length).toBe(2);
+    expect((entries[0] as { queued?: unknown }).queued).toEqual({ mode: "followUp" });
+    expect(asLocal(entries[1]).id?.startsWith("local-")).toBe(true);
+
+    // 整队清空：全部排队占位移除，普通占位保留
+    useMessagesStore.getState().removeAllQueuedLocalEntries("d-1");
+    entries = useMessagesStore.getState().bySession["d-1"].entries;
+    expect(entries.length).toBe(1);
+    expect(asLocal(entries[0]).message?.content?.[0]).toEqual({ type: "text", text: "普通占位" });
+  });
+
   test("adoptDurableId：目标槽不存在时直接搬家（含流式态）", () => {
     useMessagesStore.getState().appendLocalUserEntry("holder-1", "第一条");
     useMessagesStore.getState().setStreaming("holder-1", true);

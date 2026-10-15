@@ -64,8 +64,20 @@ interface MessagesState {
   clearSession(sessionId: string): void;
   /** 发送成功后的本地乐观用户条目（缺陷修复：新会话首条用户消息的服务端事件以路由
    *  句柄寻址、handle→durable 映射回填前不入列）——先本地占位，后续 setEntries 全量
-   *  重取以服务端真值整替；服务端 user 事件到达时按等价吸收（防双列） */
-  appendLocalUserEntry(sessionId: string, text: string, images?: Array<{ data: string; mimeType: string }>): void;
+   *  重取以服务端真值整替；服务端 user 事件到达时按等价吸收（防双列）。
+   *  queuedMode：回合中排队发送（docs08-r4 任务 11）——占位带"排队中"标记，气泡徽标
+   *  与撤销移除以此甄别；服务端真值事件吸收后标记自然消失（投递=排队结束）。 */
+  appendLocalUserEntry(
+    sessionId: string,
+    text: string,
+    images?: Array<{ data: string; mimeType: string }>,
+    queuedMode?: "steer" | "followUp",
+  ): void;
+  /** 撤销单条排队项后移除其本地"排队中"占位（同文本取首条，spike：引擎不去重、
+   *  两条独立排队项只能撤其一） */
+  removeQueuedLocalEntry(sessionId: string, text: string): void;
+  /** 整队清空后移除全部"排队中"占位（撤空的消息永不会再投递，不删则成幽灵气泡） */
+  removeAllQueuedLocalEntries(sessionId: string): void;
   /** 首条消息落盘后采用服务端回传的真实 id：迁移消息槽（目标槽已有时事件真值优先，
    *  仅补携带本地乐观条目防丢） */
   adoptDurableId(oldId: string, newId: string): void;
@@ -109,6 +121,15 @@ function syntheticId(msg: WireMessage): string {
 /** 本地乐观用户条目 id 前缀（appendLocalUserEntry 生成） */
 const LOCAL_ENTRY_PREFIX = "local-";
 
+/** "排队中"本地占位甄别（docs08-r4 任务 11）：appendLocalUserEntry 的 queuedMode 标记 */
+function isQueuedLocalEntry(entry: WireEntry): entry is WireEntry & { message: WireMessage } {
+  if (typeof entry.id !== "string" || !entry.id.startsWith(LOCAL_ENTRY_PREFIX)) return false;
+  const queued = entry.queued as { mode?: unknown } | undefined;
+  if (queued === undefined) return false;
+  const m = entry.message as WireMessage | undefined;
+  return Boolean(m && m.role === "user");
+}
+
 /** 消息首个 text part 的文本（无文本 part 返回 null，如纯图消息） */
 function firstTextOf(msg: WireMessage): string | null {
   const content = Array.isArray(msg.content) ? msg.content : [];
@@ -119,15 +140,22 @@ function firstTextOf(msg: WireMessage): string | null {
 }
 
 /** 服务端 user 消息事件到达时吸收等价本地乐观占位（同首文本），防双列；
- * 纯图消息（无文本锚点）不吸收，由全量重取收敛 */
+ * 纯图消息（无文本锚点）不吸收，由全量重取收敛。
+ * 去重键加固（docs08-r4 任务 11，spike (b)-7：引擎对同文本双条排队不去重）——
+ * 每个服务端 user 事件只吸收一条匹配占位（按排队序先进的先收），绝不一次吞掉全部
+ * 同文本占位，两条独立排队项各自等价吸收、互不坍缩。 */
 function absorbLocalUserEntries(list: WireEntry[], serverMsg: WireMessage): WireEntry[] {
   const serverText = firstTextOf(serverMsg);
   if (serverText === null || serverText === "") return list;
+  let absorbed = false;
   return list.filter((e) => {
+    if (absorbed) return true;
     if (typeof e.id !== "string" || !e.id.startsWith(LOCAL_ENTRY_PREFIX)) return true;
     const m = e.message as WireMessage | undefined;
     if (!m || m.role !== "user") return true;
-    return firstTextOf(m) !== serverText;
+    if (firstTextOf(m) !== serverText) return true;
+    absorbed = true;
+    return false;
   });
 }
 
@@ -413,7 +441,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         return { bySession };
       }),
 
-    appendLocalUserEntry: (sessionId, text, images) =>
+    appendLocalUserEntry: (sessionId, text, images, queuedMode) =>
       set((s) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
         const content: WirePart[] = [];
@@ -423,10 +451,35 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           type: "message",
           id: `${LOCAL_ENTRY_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           message: { role: "user", content },
+          ...(queuedMode ? { queued: { mode: queuedMode } } : {}),
         };
         return {
           bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
         };
+      }),
+
+    removeQueuedLocalEntry: (sessionId, text) =>
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (!cur) return s;
+        let removed = false;
+        const entries = cur.entries.filter((e) => {
+          if (removed) return true;
+          if (!isQueuedLocalEntry(e) || firstTextOf(e.message as WireMessage) !== text) return true;
+          removed = true;
+          return false;
+        });
+        if (!removed) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries } } };
+      }),
+
+    removeAllQueuedLocalEntries: (sessionId) =>
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (!cur) return s;
+        const entries = cur.entries.filter((e) => !isQueuedLocalEntry(e));
+        if (entries.length === cur.entries.length) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries } } };
       }),
 
     adoptDurableId: (oldId, newId) =>

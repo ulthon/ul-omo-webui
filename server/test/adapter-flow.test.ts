@@ -113,6 +113,17 @@ class FakeRpcClient implements SenpiRpcClient {
     this.calls.push({ method: "abort" })
   }
 
+  async clearQueue(): Promise<unknown> {
+    this.calls.push({ method: "clearQueue" })
+    return { steering: [], followUp: [], ordered: [] }
+  }
+  async getSteeringMessages(): Promise<string[]> {
+    return []
+  }
+  async getFollowUpMessages(): Promise<string[]> {
+    return []
+  }
+
   onEvent(listener: (e: EngineEvent) => void): () => void {
     this.listeners.push(listener)
     return () => {

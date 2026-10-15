@@ -4,6 +4,7 @@ import { Hono, type Context } from "hono";
 import { lstatSync, mkdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
@@ -38,6 +39,16 @@ function parseThinkingLevel(raw: unknown): EngineThinkingLevel | undefined {
   if (typeof raw === "string" && THINKING_LEVELS.has(raw)) return raw as EngineThinkingLevel;
   // 引擎实测 glm 系档位为 low/high/max，无 off（docs/verification/01）
   throw new ApiError(400, "invalid_thinking_level", "thinkingLevel 仅支持 low/high/max");
+}
+
+const STREAMING_BEHAVIORS: ReadonlySet<string> = new Set(["steer", "followUp"]);
+
+/** 排队语义枚举校验（docs08-r4 任务 11，与 parseThinkingLevel 同一解析惯例） */
+function parseStreamingBehavior(raw: unknown): EnginePromptInput["streamingBehavior"] {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw === "string" && STREAMING_BEHAVIORS.has(raw)) return raw as EnginePromptInput["streamingBehavior"];
+  // 引擎回合中入队仅认 steer/followUp 两档（spike 实测，其余值报 already processing）
+  throw new ApiError(400, "invalid_streaming_behavior", "streamingBehavior 仅支持 steer/followUp");
 }
 
 function parseImages(raw: unknown): Array<{ type: "image"; data: string; mimeType: string }> {
@@ -278,7 +289,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   }));
 
   // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、
-  // thinkingLevel 可选 low/high/max（W2 todo 7，与 POST /api/sessions 同一解析惯例）、agent 接受但降级）
+  // thinkingLevel 可选 low/high/max（W2 todo 7，与 POST /api/sessions 同一解析惯例）、
+  // streamingBehavior 可选 steer/followUp（docs08-r4 任务 11：回合中入队而非 409）、agent 接受但降级）
   app.post("/api/sessions/:id/prompt", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const body = await parseJsonBody(c);
@@ -287,6 +299,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     }
     const images = parseImages(body.images);
     const thinkingLevel = parseThinkingLevel(body.thinkingLevel);
+    const streamingBehavior = parseStreamingBehavior(body.streamingBehavior);
     let model: string | undefined;
     if (typeof body.model === "string" && body.model) {
       splitModelId(body.model);
@@ -297,7 +310,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       // 引擎无 agent 选择协议面（docs/verification/05 P1-5）；显式降级不静默丢弃
       degradations.push("agent: 引擎无 agent 选择协议面，参数未生效（capabilities.agentsList=false）");
     }
-    const receipt = await deps.engines.prompt(id, { text: body.text, images, model, thinkingLevel });
+    const receipt = await deps.engines.prompt(id, { text: body.text, images, model, thinkingLevel, streamingBehavior });
     return c.json({
       sessionId: id,
       disposition: receipt.disposition,
@@ -314,6 +327,21 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     const id = requireParam(c, "id");
     await deps.engines.abort(id);
     return c.json({ ok: true, sessionId: id });
+  }));
+
+  // 排队快照对账（docs08-r4 任务 11，spike 指引 2）：断线重连/初次渲染拉一次；
+  // 增量走 queue_update wire 事件（SSE 原样透传，前端 store 消化）
+  app.get("/api/sessions/:id/queue", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const snapshot = await deps.engines.queueList(id);
+    return c.json({ sessionId: id, ...snapshot });
+  }));
+
+  // 整队清空（引擎无单条撤单协议面；单条撤销=前端自持列表清空后保留项重排），返回被撤项
+  app.delete("/api/sessions/:id/queue", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const snapshot = await deps.engines.queueClear(id);
+    return c.json({ sessionId: id, ...snapshot });
   }));
 
   // 权限/表单应答（verification/02 四型）：value|confirmed|cancelled 至少一项

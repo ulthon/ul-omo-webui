@@ -15,6 +15,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
+  EngineQueueSnapshot,
 } from "../src/adapter/engine-adapter";
 import type { EngineGateway } from "../src/api/engine-runtime";
 import { openMetaDb } from "../src/db/meta";
@@ -38,6 +39,12 @@ class NoEngines implements EngineGateway {
     throw new Error("notes routes must not prompt");
   }
   async abort(): Promise<void> {}
+  async queueList(): Promise<EngineQueueSnapshot> {
+    throw new Error("queue routes must not be touched here");
+  }
+  async queueClear(): Promise<EngineQueueSnapshot> {
+    throw new Error("queue routes must not be touched here");
+  }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
   async usage(): Promise<EngineUsageStats> {
     throw new Error("notes routes must not read usage");

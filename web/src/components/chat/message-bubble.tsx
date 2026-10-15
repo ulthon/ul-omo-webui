@@ -20,6 +20,7 @@ function BubbleShell({
   timestamp,
   interrupted,
   live,
+  queued,
   actions,
   children,
 }: {
@@ -27,6 +28,7 @@ function BubbleShell({
   timestamp: string | null;
   interrupted?: boolean;
   live?: boolean;
+  queued?: boolean;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -36,6 +38,15 @@ function BubbleShell({
       <div className="group flex w-full items-center justify-end gap-1">
         {actions}
         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-primary-foreground">
+          {/* 排队中徽标（docs08-r4 任务 11）：本地排队占位专属；服务端真值事件吸收占位后消失 */}
+          {queued && (
+            <span
+              data-testid="queued-badge"
+              className="mb-1 block w-fit rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[11px] leading-4"
+            >
+              排队中
+            </span>
+          )}
           {children}
         </div>
       </div>
@@ -109,6 +120,8 @@ export const EntryBubble = memo(function EntryBubble({
   if (!entry) return null;
   const message = entry.message as WireMessage;
   const role = message.role === "user" ? "user" : "assistant";
+  // 排队中标记（docs08-r4 任务 11）：本地排队占位条目带 queued 字段（消息 store 写入）
+  const queued = role === "user" && entry.queued !== undefined;
   // 消息级操作仅挂 user/assistant 定格气泡（toolResult 走 ToolCard 关联展示，无气泡菜单）
   const showActions = message.role === "user" || message.role === "assistant";
   return (
@@ -116,6 +129,7 @@ export const EntryBubble = memo(function EntryBubble({
       role={role}
       timestamp={typeof entry.timestamp === "string" ? entry.timestamp : null}
       interrupted={role === "assistant" ? interrupted : undefined}
+      queued={queued}
       actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
     >
       <MessageContent message={message} sessionId={sessionId} live={false} />

@@ -14,10 +14,11 @@
 // 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令
 // （尾部空格）走既有 prompt 支持路径；上下/回车导航，Esc 关闭并回退打开前输入。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, ImagePlus, MessageSquareText, Plus, Square, X } from "lucide-react";
-import { ApiError, api, type CommandsResponse, type InputHistoryItem } from "@/lib/api";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
+import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
+import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
@@ -73,13 +74,16 @@ let attachmentSeq = 0;
 
 export function Composer({
   sessionId,
-  busy,
+  queueAvailable,
+  permissionLocked,
   onSent,
   onAborted,
 }: {
   sessionId: string;
-  /** 会话回合中或权限未决（chat-view composerLocked）：输入禁用 + 停止按钮（原 16 行为） */
-  busy: boolean;
+  /** 排队可用性 = 会话流式态（docs08-r4 任务 11 busy 拆解）：输入可用、发送变排队 */
+  queueAvailable: boolean;
+  /** 权限锁 = 权限未决：禁一切输入动作，保持整锁形态（原 busy 语义的一半，语义不放宽） */
+  permissionLocked: boolean;
   onSent: () => void;
   onAborted: () => void;
 }) {
@@ -140,6 +144,16 @@ export function Composer({
   // 胶囊+发送），blur 后可再点"+"展开。桌面档（sm+）布局与本状态无涉。
   const isCompact = useIsMobile("(max-width: 639.98px)");
   const [toolsOpen, setToolsOpen] = useState(false);
+
+  // 排队发送模式（docs08-r4 任务 11，spike 指引 1）：默认 followUp（做完后继续），
+  // 可切 steer（下一回合边界插入当前工作）；ref 镜像供异步发送读最新值（images 同款）
+  const [queueMode, setQueueMode] = useState<"steer" | "followUp">("followUp");
+  const queueModeRef = useRef<"steer" | "followUp">("followUp");
+  const toggleQueueMode = useCallback(() => {
+    const next = queueModeRef.current === "followUp" ? "steer" : "followUp";
+    queueModeRef.current = next;
+    setQueueMode(next);
+  }, []);
 
   // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
   // 触发纯派生自 textarea 值（/ 开头 + 首 token 未闭合）；slashDismissedToken 记录
@@ -329,7 +343,9 @@ export function Composer({
       const trimmed = rawText.trim();
       const imgs = opts.clearInputs ? imagesRef.current : undefined;
       const atts = opts.clearInputs ? attachmentsRef.current : [];
-      if (busy || sending) return;
+      // busy 语义定则（docs08-r4 任务 11）：权限锁禁发送；流式态放行（发送变排队）。
+      // 排队判定读发送瞬间的 store 流式态（不经渲染闭包，回合刚结束/开始的窗口也对）
+      if (permissionLocked || sending) return;
       // 普通发送：文本/图片/附件皆空早退（原校验扩展，有图或有附件无文本仍可发）；直发必须有文本
       if (!trimmed && imgs && imgs.length === 0 && atts.length === 0) return;
       if (!trimmed && !opts.clearInputs) return;
@@ -339,25 +355,57 @@ export function Composer({
         const outgoingImages =
           imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined;
         const outgoingText = appendAttachmentLines(trimmed, atts);
-        const receipt = await api.prompt(sessionId, { text: outgoingText, images: outgoingImages });
+        const queuing = useMessagesStore.getState().bySession[sessionId]?.streaming ?? false;
+        // 排队请求只带 streamingBehavior（spike 铁律；api.prompt 自动剥模型/思考档注入，
+        // images 未实测随排队投递、同样省略——图片条保留待下次直发）
+        let receipt: PromptReceipt;
+        try {
+          receipt = await api.prompt(
+            sessionId,
+            queuing
+              ? { text: outgoingText, streamingBehavior: queueModeRef.current }
+              : { text: outgoingText, images: outgoingImages },
+          );
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 409)) throw err;
+          // 回合结束瞬间竞态（QA 实测）：本地流式位已翻 false 但服务端单驱动守卫
+          // 尚未清位——转排队重试一次。spike F2：实例内回合中带 streamingBehavior
+          // 一律 queued（跨进程从不 409），排队是 already processing 的正确动作。
+          receipt = await api.prompt(sessionId, { text: outgoingText, streamingBehavior: queueModeRef.current });
+        }
         // 缺陷修复（新会话首条用户消息不显示）：prompt 成功即本地乐观入列——首条消息
         // 的服务端事件以路由句柄寻址，handle→durable 映射回填前不入列，靠本地占位；
         // 回执带回真实 id 时即时换 key（消息槽 + 会话行 + 选中态），不等会话行刷新。
         // 入列文本与 prompt 同源（含附件路径行），与引擎落盘消息保持一致。
         const messages = useMessagesStore.getState();
-        messages.appendLocalUserEntry(sessionId, outgoingText, outgoingImages);
-        if (receipt.streaming) messages.setStreaming(sessionId, true);
-        if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
-          messages.adoptDurableId(sessionId, receipt.durableSessionId);
-          useSessionsStore.getState().adoptSessionId(sessionId, receipt.durableSessionId);
-        }
-        if (opts.clearInputs) {
-          setImagesBoth([]);
-          // 附件仅本地清空，不调 DELETE（文件留引擎按需读取，48h 清理兜底）
-          setAttachmentsBoth([]);
-          clearDraft();
-          setHistory(null);
-          draftBeforeHistoryRef.current = "";
+        if (receipt.disposition === "queued") {
+          // 排队接受（回执 queued）：本地排队列表乐观占位（queue_update 确认后转正式
+          // 项）+ "排队中"气泡占位（投递时服务端 user 事件按等价吸收，徽标随之消失）。
+          // 不动 streaming 态（排队回合同一 run，run 尾才 settle 一次——spike (b)-5）。
+          useQueueStore.getState().addPending(sessionId, outgoingText, queueModeRef.current);
+          messages.appendLocalUserEntry(sessionId, outgoingText, undefined, queueModeRef.current);
+          if (opts.clearInputs) {
+            // 附件路径行已随排队文本投递 → 附件条清空；图片未投递 → 保留待直发
+            setAttachmentsBoth([]);
+            clearDraft();
+            setHistory(null);
+            draftBeforeHistoryRef.current = "";
+          }
+        } else {
+          messages.appendLocalUserEntry(sessionId, outgoingText, outgoingImages);
+          if (receipt.streaming) messages.setStreaming(sessionId, true);
+          if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
+            messages.adoptDurableId(sessionId, receipt.durableSessionId);
+            useSessionsStore.getState().adoptSessionId(sessionId, receipt.durableSessionId);
+          }
+          if (opts.clearInputs) {
+            setImagesBoth([]);
+            // 附件仅本地清空，不调 DELETE（文件留引擎按需读取，48h 清理兜底）
+            setAttachmentsBoth([]);
+            clearDraft();
+            setHistory(null);
+            draftBeforeHistoryRef.current = "";
+          }
         }
         // 输入历史追加（服务端去重、上限 200）；存用户原文（不含附件路径行，回填可编辑）；
         // 空文本不追加（直发也属一次输入）
@@ -365,6 +413,7 @@ export function Composer({
         onSent();
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) {
+          // 兜底文案（spike 指引 4）：正常"发送撞回合"已转排队，409 仅剩外部驱动/状态漂移
           setError("该会话正在被另一个窗口处理中，请等待其完成后再发送");
         } else {
           setError(err instanceof Error ? err.message : String(err));
@@ -373,7 +422,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [busy, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent],
+    [permissionLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
@@ -516,7 +565,8 @@ export function Composer({
   );
 
   const openHistory = useCallback(async () => {
-    if (!project || busy || sending) return;
+    // busy 语义定则（docs08-r4 任务 11）：历史翻阅仅权限锁拦（流式态放行）
+    if (!project || permissionLocked || sending) return;
     let items: InputHistoryItem[];
     try {
       ({ items } = await api.listInputHistory(project, 200));
@@ -527,7 +577,7 @@ export function Composer({
     draftBeforeHistoryRef.current = textRef.current;
     setHistory({ items, index: 0 });
     backfill(items[0].content);
-  }, [project, busy, sending, backfill, textRef]);
+  }, [project, permissionLocked, sending, backfill, textRef]);
 
   const historyOlder = useCallback(() => {
     if (!history) return;
@@ -624,9 +674,10 @@ export function Composer({
     [history, send, historyOlder, historyNewer, closeHistory, openHistory, openPicker, applyText, slashOpen, slashItems, safeHighlight, selectSlashItem],
   );
 
-  // ---------- 中断态（原 16 行为：状态行 + 停止按钮，输入区让位） ----------
+  // ---------- 权限锁形态（原 busy 整锁：权限未决禁一切输入动作，语义不放宽） ----------
+  // 流式态不再走整锁（docs08-r4 任务 11）：输入保留、发送变排队、停止钮移入正常形态
 
-  if (busy) {
+  if (permissionLocked) {
     return (
       <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 pb-[max(env(safe-area-inset-bottom),8px)] text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
@@ -864,7 +915,8 @@ export function Composer({
         anchor={snippetAnchor}
         onClose={closeSnippetDropdown}
         project={project}
-        busy={busy}
+        // busy 语义定则（docs08-r4 任务 11）：仅权限锁禁直发——流式态直发转排队
+        busy={permissionLocked}
         sending={sending}
         // 插入：先收下拉再走草稿链路；rAF 焦点回输入框（排队晚于 insertSnippetText
         // 的 caret 落位 rAF，focus() 保留 selection）
@@ -891,7 +943,8 @@ export function Composer({
         if (!open) setSnippetOpen(false);
       }}
       project={project}
-      actionDisabled={snippetActionDisabled(busy, sending)}
+      // busy 语义定则（docs08-r4 任务 11）：仅权限锁禁直发——流式态直发转排队
+      actionDisabled={snippetActionDisabled(permissionLocked, sending)}
       onInsert={(content) => {
         insertSnippetText(content);
         setSnippetOpen(false);
@@ -909,11 +962,59 @@ export function Composer({
     />
   ) : null;
 
+  // 排队模式切换钮（docs08-r4 任务 11）：流式态可见，点击在 followUp/steer 间切换，
+  // 图标+title 明示两档语义（跟答=做完后继续 / 插入=下一回合边界并入当前工作）；
+  // 尺寸/圆角随断点参数化（手机胶囊内 size-9 圆全、桌面工具行 size-11 圆角）
+  const queueModeToggleNode = (buttonClass: string) =>
+    queueAvailable ? (
+      <button
+        type="button"
+        data-testid="queue-mode-btn"
+        aria-label={queueMode === "followUp" ? "排队模式：跟答" : "排队模式：插入"}
+        title={
+          queueMode === "followUp"
+            ? "排队模式：跟答（当前回合做完后执行）。点击切换为插入"
+            : "排队模式：插入（下一回合边界并入当前工作）。点击切换为跟答"
+        }
+        onClick={toggleQueueMode}
+        className={buttonClass}
+      >
+        {queueMode === "followUp" ? <SkipForward className="size-4" /> : <CornerDownRight className="size-4" />}
+      </button>
+    ) : null;
+  // 停止钮（流式态保留，abort 语义不变：中断当前回合；排队项挂起待下次发送——spike (b)-6）
+  const stopButtonNode = (buttonClass: string) =>
+    queueAvailable ? (
+      <button
+        type="button"
+        data-testid="abort-btn"
+        aria-label="停止生成"
+        title="停止当前回合（排队项保留，将在下次发送时执行）"
+        onClick={() => void abort()}
+        className={buttonClass}
+      >
+        <Square className="size-4" />
+      </button>
+    ) : null;
+  const stopButtonSm = stopButtonNode(
+    "flex size-9 shrink-0 items-center justify-center rounded-xl border border-border text-destructive transition-colors hover:bg-destructive/10",
+  );
+  const queueModeToggleSm = queueModeToggleNode(
+    "flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted",
+  );
+  const stopButtonMd = stopButtonNode(
+    "flex size-11 shrink-0 items-center justify-center rounded-lg border border-border text-destructive transition-colors hover:bg-destructive/10",
+  );
+  const queueModeToggleMd = queueModeToggleNode(
+    "flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
+  );
+
   // ---------- 手机档（<sm）胶囊输入区（docs08-r4 任务 7） ----------
   // 参考在线 OpenChamber 390 实测形态：贴边胶囊（圆角 border，内嵌无边框 textarea），
   // 左端"+"收纳低频工具（展开行在胶囊上方），右端内嵌发送钮（size-9，canSend 语义不变）；
   // textarea 聚焦即收起展开区，blur 后可再展开。上方各条（粘贴选择/历史/图片/附件）
-  // 形态不变；斜杠提示仍锚定 textarea（锚定元素不变），busy 分支在更早处先行返回。
+  // 形态不变；斜杠提示仍锚定 textarea（锚定元素不变）。流式态：模式切换钮入胶囊
+  // （发送钮旁），停止钮胶囊外小钮（docs08-r4 任务 11）。
   if (isCompact) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
@@ -930,48 +1031,53 @@ export function Composer({
             </div>
           </div>
         )}
-        <div
-          data-testid="composer-capsule"
-          className="flex items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
-        >
-          <button
-            type="button"
-            data-testid="composer-more-btn"
-            aria-label="更多"
-            title="更多：历史、@、图片、常用语、模型"
-            aria-expanded={toolsOpen}
-            onClick={() => setToolsOpen((v) => !v)}
-            className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
-              toolsOpen ? "bg-muted text-foreground" : "text-muted-foreground"
-            }`}
+        <div className="flex items-end gap-1.5">
+          <div
+            data-testid="composer-capsule"
+            className="flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
           >
-            <Plus className="size-5" />
-          </button>
-          <textarea
-            ref={textareaRefCb}
-            data-testid="composer-input"
-            value={text}
-            rows={1}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            disabled={sending}
-            onChange={(e) => applyText(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onFocus={() => setToolsOpen(false)}
-            className="max-h-48 min-h-9 w-full flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
-          />
-          <button
-            type="button"
-            data-testid="send-btn"
-            aria-label="发送"
-            disabled={!canSend}
-            onClick={() => void send()}
-            className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
-              canSend ? "bg-accent text-accent-foreground hover:bg-muted" : "bg-muted text-muted-foreground"
-            }`}
-          >
-            <ArrowUp className="size-5" />
-          </button>
+            <button
+              type="button"
+              data-testid="composer-more-btn"
+              aria-label="更多"
+              title="更多：历史、@、图片、常用语、模型"
+              aria-expanded={toolsOpen}
+              onClick={() => setToolsOpen((v) => !v)}
+              className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
+                toolsOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              <Plus className="size-5" />
+            </button>
+            <textarea
+              ref={textareaRefCb}
+              data-testid="composer-input"
+              value={text}
+              rows={1}
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              disabled={sending}
+              onChange={(e) => applyText(e.target.value)}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              onFocus={() => setToolsOpen(false)}
+              className="max-h-48 min-h-9 w-full flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            />
+            {queueModeToggleSm}
+            <button
+              type="button"
+              data-testid="send-btn"
+              aria-label={queueAvailable ? "排队发送" : "发送"}
+              title={queueAvailable ? "回合进行中：发送将排队（当前回合结束后执行）" : "发送"}
+              disabled={!canSend}
+              onClick={() => void send()}
+              className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+                canSend ? "bg-accent text-accent-foreground hover:bg-muted" : "bg-muted text-muted-foreground"
+              }`}
+            >
+              <ArrowUp className="size-5" />
+            </button>
+          </div>
+          {stopButtonSm}
         </div>
         {fileInputNode}
         {errorLine}
@@ -1005,15 +1111,19 @@ export function Composer({
       {fileInputNode}
       <div className="flex items-center gap-1">
         <div className="flex shrink-0 items-center gap-1">{toolButtons}</div>
-        {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐 */}
+        {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐。
+            流式态（docs08-r4 任务 11）：停止钮与排队模式切换钮插队发送钮左侧，发送变排队语义 */}
         <div className="ml-auto flex min-w-0 items-center gap-1">
           <ThinkingChip />
           <ModelChip />
+          {stopButtonMd}
+          {queueModeToggleMd}
           {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
           <button
             type="button"
             data-testid="send-btn"
-            aria-label="发送"
+            aria-label={queueAvailable ? "排队发送" : "发送"}
+            title={queueAvailable ? "回合进行中：发送将排队（当前回合结束后执行）" : "发送"}
             disabled={!canSend}
             onClick={() => void send()}
             className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${

@@ -15,6 +15,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
+  EngineQueueSnapshot,
 } from "../src/adapter/engine-adapter";
 import { ApiError } from "../src/api/http";
 import { createSessionRoutes } from "../src/api/routes-session";
@@ -71,6 +72,12 @@ class FakeProjectGateway implements EngineGateway {
     return { disposition: "started" };
   }
   async abort(): Promise<void> {}
+  async queueList(): Promise<EngineQueueSnapshot> {
+    return { steering: [], followUp: [], ordered: [] };
+  }
+  async queueClear(): Promise<EngineQueueSnapshot> {
+    return { steering: [], followUp: [], ordered: [] };
+  }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
   async usage(): Promise<EngineUsageStats> {
     throw new ApiError(500, "internal", "not canned in this test file");

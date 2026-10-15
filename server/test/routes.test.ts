@@ -35,6 +35,7 @@ import type {
   EngineModelInfo,
   EnginePermissionReply,
   EnginePromptInput,
+  EngineQueueSnapshot,
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
@@ -73,11 +74,17 @@ class FakeGateway implements EngineGateway {
   sessions: EngineSessionSummary[] = [];
   promptError: unknown = null;
   promptDurableId: string | null = null;
-  promptCalls: Array<{ id: string; input: { text: string; model?: string; thinkingLevel?: EngineThinkingLevel } }> = [];
+  promptCalls: Array<{
+    id: string;
+    input: { text: string; model?: string; thinkingLevel?: EngineThinkingLevel; streamingBehavior?: "steer" | "followUp" };
+  }> = [];
   createdResults: Array<{ id: string; sessionPath: string; durable: boolean }> = [];
   deleted: string[] = [];
   activePaths: string[] | null = null;
   models: EngineModelInfo[] = [];
+  queueListResult: EngineQueueSnapshot = { steering: [], followUp: [], ordered: [] };
+  queueClearResult: EngineQueueSnapshot = { steering: [], followUp: [], ordered: [] };
+  queueCalls: Array<{ op: "list" | "clear"; id: string }> = [];
 
   async sessionsList(): Promise<EngineSessionSummary[]> {
     return this.sessions;
@@ -93,12 +100,37 @@ class FakeGateway implements EngineGateway {
   async messages(_id: string, _cursor?: string): Promise<EngineMessagesPage> {
     return { entries: [], leafId: "leaf-1", cursor: "leaf-1" };
   }
-  async prompt(id: string, input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel }) {
+  async prompt(
+    id: string,
+    input: {
+      text: string;
+      images?: EnginePromptInput["images"];
+      model?: string;
+      thinkingLevel?: EngineThinkingLevel;
+      streamingBehavior?: "steer" | "followUp";
+    },
+  ) {
     if (this.promptError) throw this.promptError;
-    this.promptCalls.push({ id, input: { text: input.text, model: input.model, thinkingLevel: input.thinkingLevel } });
+    this.promptCalls.push({
+      id,
+      input: {
+        text: input.text,
+        model: input.model,
+        thinkingLevel: input.thinkingLevel,
+        streamingBehavior: input.streamingBehavior,
+      },
+    });
     return this.promptDurableId
       ? { disposition: "started", durableSessionId: this.promptDurableId }
       : { disposition: "started" };
+  }
+  async queueList(id: string): Promise<EngineQueueSnapshot> {
+    this.queueCalls.push({ op: "list", id });
+    return this.queueListResult;
+  }
+  async queueClear(id: string): Promise<EngineQueueSnapshot> {
+    this.queueCalls.push({ op: "clear", id });
+    return this.queueClearResult;
   }
   async abort(): Promise<void> {}
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
@@ -460,6 +492,75 @@ describe("会话操作路由", () => {
     expect(bad.status).toBe(400);
     expect((await bad.json()).error.code).toBe("invalid_thinking_level");
     expect(engines.promptCalls.length).toBe(3);
+  });
+
+  test("prompt streamingBehavior 透传（docs08-r4 任务 11 排队）：合法下传网关、缺省 undefined、非法 400", async () => {
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+
+    // 合法两档逐个透传（followUp 默认档 / steer 插入档）
+    for (const behavior of ["followUp", "steer"] as const) {
+      const res = await req(app, "/api/sessions/s1/prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "排队消息", streamingBehavior: behavior }),
+      });
+      expect(res.status).toBe(200);
+      expect(engines.promptCalls.at(-1)?.input.streamingBehavior).toBe(behavior);
+    }
+
+    // 缺省 → undefined（普通发送，回合中由网关 409 守卫拦截）
+    await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "普通" }),
+    });
+    expect(engines.promptCalls[2].input.streamingBehavior).toBeUndefined();
+
+    // 档位外取值 400（与 parseThinkingLevel 同一惯例）
+    const bad = await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hi", streamingBehavior: "interrupt" }),
+    });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error.code).toBe("invalid_streaming_behavior");
+    expect(engines.promptCalls.length).toBe(3);
+  });
+
+  test("queue 快照与整队清空路由（docs08-r4 任务 11）：GET 对账 / DELETE 撤队返回被撤项", async () => {
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+
+    engines.queueListResult = {
+      steering: ["插入项"],
+      followUp: ["跟答一", "跟答二"],
+      ordered: [],
+    };
+    const list = await req(app, "/api/sessions/s1/queue", { method: "GET" });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({
+      sessionId: "s1",
+      steering: ["插入项"],
+      followUp: ["跟答一", "跟答二"],
+      ordered: [],
+    });
+
+    engines.queueClearResult = {
+      steering: [],
+      followUp: ["跟答一", "跟答二"],
+      ordered: [
+        { text: "跟答一", mode: "followUp", enqueueOrder: 3 },
+        { text: "跟答二", mode: "followUp", enqueueOrder: 4 },
+      ],
+    };
+    const clear = await req(app, "/api/sessions/s1/queue", { method: "DELETE" });
+    expect(clear.status).toBe(200);
+    expect(await clear.json()).toEqual({ sessionId: "s1", ...engines.queueClearResult });
+    expect(engines.queueCalls).toEqual([
+      { op: "list", id: "s1" },
+      { op: "clear", id: "s1" },
+    ]);
   });
 
   test("prompt：别名会话落盘回执透传 durableSessionId（缺陷修复：新会话首条消息不显示）", async () => {

@@ -34,6 +34,7 @@ import {
   type EngineOpenSessionResult,
   type EnginePermissionReply,
   type EnginePromptInput,
+  type EngineQueueSnapshot,
   type EngineSessionSummary,
   type EngineThinkingLevel,
   type EngineTurnSample,
@@ -56,7 +57,9 @@ export interface EngineGateway {
   /** 会话消息分页（游标 = 上页 leafId） */
   messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage>;
   /**
-   * 发送 prompt。单驱动约束：目标会话回合进行中抛 ApiError(409, "already_processing")。
+   * 发送 prompt。单驱动约束：目标会话回合进行中抛 ApiError(409, "already_processing")；
+   * 携带 streamingBehavior（docs08-r4 任务 11）时放行改为入队（回执 disposition="queued"，
+   * 排队回合与当前回合同一 run，仅在 run 尾 settle 一次）。
    * model 为 "provider/model" 形态（可选，切换当前会话模型）。
    * thinkingLevel 为 low/high/max（可选，W2 todo 7 起逐回合下传引擎）。
    * durableSessionId：未落盘别名会话（新会话）首条消息落盘后回传的真实 id
@@ -64,8 +67,18 @@ export interface EngineGateway {
    */
   prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
-  ): Promise<{ disposition: string; durableSessionId?: string }>;
+    input: {
+      text: string
+      images?: EnginePromptInput["images"]
+      model?: string
+      thinkingLevel?: EngineThinkingLevel
+      streamingBehavior?: EnginePromptInput["streamingBehavior"]
+    },
+  ): Promise<{ disposition: string; durableSessionId?: string }>
+  /** 排队对账快照（getSteeringMessages/getFollowUpMessages；断线重连/初次渲染拉一次） */
+  queueList(sessionId: string): Promise<EngineQueueSnapshot>
+  /** 整队清空（引擎无单条撤单协议面，单条撤销由前端清空后重排实现），返回被撤项 */
+  queueClear(sessionId: string): Promise<EngineQueueSnapshot>;
   abort(sessionId: string): Promise<void>;
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
   usage(sessionId: string): Promise<EngineUsageStats>;
@@ -230,9 +243,14 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
     listSessions: () => client.listSessions(),
     getEntries: (since?: string) => client.getEntries(since),
     fork: (entryId: string, options?: { position?: "before" | "at" }) => client.fork(entryId, options),
-    prompt: (message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"] }) =>
+    prompt: (message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"]; streamingBehavior?: EnginePromptInput["streamingBehavior"] }) =>
       client.prompt(message, options as never),
     abort: () => client.abort(),
+    // 队列协议面（docs08-r4 任务 11）：包装层显式清单必须随 SenpiRpcClient 接口同步扩充，
+    // 否则运行时实例缺方法（QA 实测 getSteeringMessages is not a function 即漏此处）
+    clearQueue: (options?: { abortWillFollow?: boolean }) => client.clearQueue(options),
+    getSteeringMessages: () => client.getSteeringMessages(),
+    getFollowUpMessages: () => client.getFollowUpMessages(),
     onEvent: (listener: (event: { type: string; [key: string]: unknown }) => void) =>
       client.onEvent(listener as never),
     sendExtensionUIResponse: (response: Record<string, unknown>) =>
@@ -733,12 +751,21 @@ class ProjectRuntime {
 
   async prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
+    input: {
+      text: string
+      images?: EnginePromptInput["images"]
+      model?: string
+      thinkingLevel?: EngineThinkingLevel
+      streamingBehavior?: EnginePromptInput["streamingBehavior"]
+    },
   ): Promise<{ disposition: string; durableSessionId?: string }> {
     await this.ensure();
     return this.runExclusive(async () => {
-      // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶
-      if (this.streamingId === sessionId) {
+      // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶。
+      // docs08-r4 任务 11（spike 实证）：携带 streamingBehavior 时放行——prompt 入引擎队列
+      // （回执 "queued"），streamingId 保持占用（排队回合同一 run，run 尾才 settle 一次）。
+      // 跨窗口 409 落点见下方 catch 的 already processing 映射，语义不变。
+      if (this.streamingId === sessionId && !input.streamingBehavior) {
         throw new ApiError(409, "already_processing", "该会话已有进行中的回合（单驱动约束，请先 abort 或等待回合结束）");
       }
       await this.switchTo(sessionId);
@@ -751,6 +778,7 @@ class ProjectRuntime {
           text: input.text,
           images: input.images,
           thinkingLevel: input.thinkingLevel,
+          streamingBehavior: input.streamingBehavior,
         });
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
         if (receipt.disposition !== "handled") {
@@ -789,6 +817,24 @@ class ProjectRuntime {
         }
         throw err;
       }
+    });
+  }
+
+  /** 排队对账快照（断线重连/初次渲染各拉一次；增量走 queue_update wire 事件透传） */
+  async queueList(sessionId: string): Promise<EngineQueueSnapshot> {
+    await this.ensure();
+    return this.runExclusive(async () => {
+      await this.switchTo(sessionId);
+      return this.requireAdapter().queueList();
+    });
+  }
+
+  /** 整队清空（返回被撤项；单条撤销由前端清空后保留项重新入队实现） */
+  async queueClear(sessionId: string): Promise<EngineQueueSnapshot> {
+    await this.ensure();
+    return this.runExclusive(async () => {
+      await this.switchTo(sessionId);
+      return this.requireAdapter().queueClear();
     });
   }
 
@@ -1055,10 +1101,26 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   async prompt(
     sessionId: string,
-    input: { text: string; images?: EnginePromptInput["images"]; model?: string; thinkingLevel?: EngineThinkingLevel },
+    input: {
+      text: string
+      images?: EnginePromptInput["images"]
+      model?: string
+      thinkingLevel?: EngineThinkingLevel
+      streamingBehavior?: EnginePromptInput["streamingBehavior"]
+    },
   ): Promise<{ disposition: string; durableSessionId?: string }> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.prompt(sessionId, input);
+  }
+
+  async queueList(sessionId: string): Promise<EngineQueueSnapshot> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.queueList(sessionId);
+  }
+
+  async queueClear(sessionId: string): Promise<EngineQueueSnapshot> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.queueClear(sessionId);
   }
 
   async abort(sessionId: string): Promise<void> {

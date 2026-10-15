@@ -16,6 +16,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
+  EngineQueueSnapshot,
 } from "../src/adapter/engine-adapter";
 import type { EngineGateway } from "../src/api/engine-runtime";
 import { openConfigStore } from "../src/conf/config-store";
@@ -66,6 +67,12 @@ class FakeGateway implements EngineGateway {
     throw new Error("tags routes must not prompt");
   }
   async abort(): Promise<void> {}
+  async queueList(): Promise<EngineQueueSnapshot> {
+    throw new Error("queue routes must not be touched here");
+  }
+  async queueClear(): Promise<EngineQueueSnapshot> {
+    throw new Error("queue routes must not be touched here");
+  }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
   async usage(): Promise<EngineUsageStats> {
     throw new Error("tags routes must not read usage");

@@ -37,6 +37,7 @@ import {
   type EngineOpenSessionResult,
   type EnginePermissionReply,
   type EnginePromptInput,
+  type EngineQueueSnapshot,
   type EngineSessionSummary,
   type EngineThinkingLevel,
   type EngineTodoState,
@@ -97,8 +98,20 @@ export interface SenpiRpcClient {
   getEntries(since?: string): Promise<{ entries: EngineEntry[]; leafId: string | null }>
   /** 从指定条目 fork 新会话（verification/05 P1-1 实证可用；"before" 仅接受 user 消息条目） */
   fork(entryId: string, options?: { position?: "before" | "at" }): Promise<{ text: string; cancelled: boolean }>
-  prompt(message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"] }): Promise<unknown>
+  prompt(
+    message: string,
+    options?: {
+      thinkingLevel?: string
+      images?: EnginePromptInput["images"]
+      /** 回合中排队语义（docs08-r4 任务 11）：steer/followUp，引擎回合中接受并回 "queued" */
+      streamingBehavior?: "steer" | "followUp"
+    },
+  ): Promise<unknown>
   abort(): Promise<void>
+  /** 队列协议面（spike 实证生产运行时全 75 方法含此三项；无单条撤单，clearQueue 整队清空并返回被撤项） */
+  clearQueue(options?: { abortWillFollow?: boolean }): Promise<unknown>
+  getSteeringMessages(): Promise<string[]>
+  getFollowUpMessages(): Promise<string[]>
   onEvent(listener: (event: EngineEvent) => void): () => void
   sendExtensionUIResponse(response: Record<string, unknown>): Promise<void>
   getAvailableModels(): Promise<Array<Record<string, unknown>>>
@@ -242,6 +255,22 @@ export function mapCommandInfo(raw: Record<string, unknown>): EngineCommandInfo 
 /** 权限应答帧（verification/02：{type:"extension_ui_response", id, value|confirmed}，取消 {cancelled:true}） */
 export function buildPermissionResponse(requestId: string, reply: EnginePermissionReply): Record<string, unknown> {
   return { type: "extension_ui_response", id: requestId, ...reply }
+}
+
+/** 队列快照归一：引擎回执字段从宽甄别（string[] 与 ordered 项三字段），异常形态容错为空 */
+export function normalizeQueueSnapshot(raw: unknown): EngineQueueSnapshot {
+  const r = (raw ?? {}) as Record<string, unknown>
+  const stringArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+  const ordered = Array.isArray(r.ordered)
+    ? r.ordered
+        .map((item) => item as Record<string, unknown>)
+        .filter(
+          (item): item is { text: string; mode: string; enqueueOrder: number } =>
+            typeof item.text === "string" && typeof item.mode === "string" && typeof item.enqueueOrder === "number",
+        )
+        .map((item) => ({ text: item.text, mode: item.mode, enqueueOrder: item.enqueueOrder }))
+    : []
+  return { steering: stringArray(r.steering), followUp: stringArray(r.followUp), ordered }
 }
 
 /** 就绪轮询与握手参数 */
@@ -420,12 +449,29 @@ export class SenpiAdapter implements EngineAdapter {
 
   async prompt(input: EnginePromptInput): Promise<{ disposition: string }> {
     this.requireActive()
+    // spike 铁律（task-2-spike (b)-8 实测）：排队 prompt 不得携带 thinkingLevel，
+    // 引擎直接拒绝（"Cannot set thinkingLevel on a queued prompt…"）——边界处剥除
     const res = await this.rpc().prompt(input.text, {
-      thinkingLevel: input.thinkingLevel,
+      thinkingLevel: input.streamingBehavior ? undefined : input.thinkingLevel,
       images: input.images,
+      streamingBehavior: input.streamingBehavior,
     })
-    // disposition="handled" 表示无回合（如 /命令），调用方不要等 agent_settled（verification/02 结论 4）
+    // disposition="handled" 表示无回合（如 /命令），调用方不要等 agent_settled（verification/02 结论 4）；
+    // disposition="queued" 表示回合中入队（streamingBehavior 生效），同一 run 尾才 settle
     return { disposition: String(res ?? "") }
+  }
+
+  /** 排队对账（spike 指引 2）：两查询只回挂起文本数组（steering/followUp 分列），无 enqueueOrder */
+  async queueList(): Promise<EngineQueueSnapshot> {
+    this.requireActive()
+    const [steering, followUp] = await Promise.all([this.rpc().getSteeringMessages(), this.rpc().getFollowUpMessages()])
+    return normalizeQueueSnapshot({ steering, followUp, ordered: [] })
+  }
+
+  /** 整队清空（spike 实测撤单干净：不落盘、不起回合），返回被撤项（ordered 含 enqueueOrder） */
+  async queueClear(): Promise<EngineQueueSnapshot> {
+    this.requireActive()
+    return normalizeQueueSnapshot(await this.rpc().clearQueue())
   }
 
   async abort(): Promise<void> {

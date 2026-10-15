@@ -11,6 +11,7 @@ import { readSessionUrl } from "@/lib/session-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
+import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { Composer } from "@/components/composer/composer";
@@ -19,6 +20,7 @@ import { commandGate } from "./commands";
 import { MessageList } from "./message-list";
 import { buildMessageItems, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
+import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
 
 /** 无选中会话时的空态提示 */
@@ -58,8 +60,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // DOM 不存在（非 CSS 隐藏）；桌面（lg+）现状保留。
   const isMobile = useIsMobile();
 
-  // 输入锁：流式中或权限未决都阻塞回合（P0-2 实证：挂起权限回合不结束）。
-  // 权限锁不依赖 agent_start 时序（个别回合该帧缺失，todo 16 QA 第 3 轮实证）。
+  // 输入锁拆解（docs08-r4 任务 11）：权限锁（hasPendingPermission）与流式态分离——
+  // 权限锁禁一切输入动作（P0-2 实证：挂起权限回合不结束）；流式态输入可用、发送变
+  // 排队（Composer 双信号下传）。CommandBar 维持原 composerLocked 单布尔口径不变。
   const composerLocked = streaming || hasPendingPermission;
 
   // / 命令门（todo 24）：注册到 api.prompt 链路，输入以 / 开头且命中不支持命令时
@@ -118,6 +121,11 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         void api.markRead(sessionId).catch(() => {});
         // 预取前端 auto-allow 列表（kv，命中时权限 select 自动放行不弹卡）
         usePermissionsStore.getState().refreshAutoAllow(sessionId);
+        // 排队快照对账（docs08-r4 任务 11，初次渲染拉一次；增量走 queue_update 事件）
+        api
+          .getQueue(sessionId)
+          .then((snapshot) => useQueueStore.getState().setSnapshot(sessionId, snapshot))
+          .catch(() => {});
       })
       .catch(() => {
         if (!cancelled) setLoadState("error");
@@ -201,10 +209,13 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+          {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
+          <QueueBar sessionId={sessionId} />
           <CommandBar sessionId={sessionId} busy={composerLocked} />
           <Composer
             sessionId={sessionId}
-            busy={composerLocked}
+            queueAvailable={streaming}
+            permissionLocked={hasPendingPermission}
             onSent={() => setInterrupted(false)}
             onAborted={() => setInterrupted(true)}
           />

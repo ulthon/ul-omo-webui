@@ -108,6 +108,24 @@ export interface DraftInfo {
   updatedAt: string;
 }
 
+/** 排队单项（queue_update.ordered / GET queue 快照同构；enqueueOrder 为引擎实例内单调序号，
+ *  对账快照无该序号时为 null） */
+export interface QueueItem {
+  text: string;
+  mode: "steer" | "followUp";
+  enqueueOrder: number | null;
+  /** 入队时刻（本端发送者本地时钟；对账/他端项为首次见到时刻） */
+  enqueuedAt: number;
+}
+
+/** 排队快照（GET/DELETE /api/sessions/:id/queue；ordered 仅整队清空回执携带） */
+export interface QueueSnapshot {
+  sessionId: string;
+  steering: string[];
+  followUp: string[];
+  ordered: Array<{ text: string; mode: string; enqueueOrder: number }>;
+}
+
 export interface SessionMetaInfo {
   sessionId: string;
   pinned: boolean;
@@ -325,7 +343,15 @@ export const api = {
   },
   async prompt(
     sessionId: string,
-    body: { text: string; images?: Array<{ data: string; mimeType: string }>; model?: string; thinkingLevel?: string; agent?: string },
+    body: {
+      text: string;
+      images?: Array<{ data: string; mimeType: string }>;
+      model?: string;
+      thinkingLevel?: string;
+      agent?: string;
+      /** 回合中排队语义（docs08-r4 任务 11）：携带时本请求转为入队而非 409 */
+      streamingBehavior?: "steer" | "followUp";
+    },
   ): Promise<PromptReceipt> {
     // 防呆（todo 22）：模型列表已确认为空时引擎无可用模型，发送必然失败——客户端直接拦截，
     // 不发请求；输入区捕获 ApiError 后行内展示。
@@ -335,6 +361,14 @@ export const api = {
     }
     // 命令门（todo 24）：/ 前缀命中不支持命令时抛 ApiError（chat-view 注册的 commandGate）
     promptGate?.(body.text);
+    // 排队请求铁律（spike 实证）：只带 streamingBehavior——不注入模型/思考档偏好
+    //（排队 prompt 带 thinkingLevel 引擎直接拒绝；模型切换属会话级操作，排队窗口不做）
+    if (body.streamingBehavior) {
+      return request(
+        `/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
+        jsonInit("POST", { text: body.text, streamingBehavior: body.streamingBehavior }),
+      );
+    }
     // 顶栏选中的当前偏好随下一条 prompt 生效：服务端对活跃会话执行 setModel（会话 jsonl
     // 追加 model_change 条目，verification/01 有该条目形态）；调用方显式传 model 时以其为准。
     const model = body.model ?? ui.selectedModel ?? undefined;
@@ -350,6 +384,14 @@ export const api = {
   },
   async abort(sessionId: string): Promise<{ ok: boolean; sessionId: string }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, jsonInit("POST", {}));
+  },
+  /** 排队快照对账（docs08-r4 任务 11）：断线重连/初次渲染各拉一次；增量走 queue_update 事件 */
+  async getQueue(sessionId: string): Promise<QueueSnapshot> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/queue`);
+  },
+  /** 整队清空（引擎无单条撤单协议面），返回被撤项（ordered 含 enqueueOrder） */
+  async clearQueue(sessionId: string): Promise<QueueSnapshot> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/queue`, { method: "DELETE" });
   },
   async respondPermission(
     sessionId: string,

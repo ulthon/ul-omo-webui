@@ -33,6 +33,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
+  EngineQueueSnapshot,
 } from "../src/adapter/engine-adapter";
 import type { ApiError as ApiErrorClass } from "../src/api/http";
 
@@ -62,6 +63,12 @@ class FakeGateway implements EngineGateway {
     return { disposition: "started" };
   }
   async abort(): Promise<void> {}
+  async queueList(): Promise<EngineQueueSnapshot> {
+    return { steering: [], followUp: [], ordered: [] };
+  }
+  async queueClear(): Promise<EngineQueueSnapshot> {
+    return { steering: [], followUp: [], ordered: [] };
+  }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
   async usage(): Promise<EngineUsageStats> {
     throw new Error("not used");

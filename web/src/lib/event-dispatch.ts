@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
+import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -105,6 +106,22 @@ export function refetchLoadedSessions(): void {
   }
 }
 
+/** 排队快照对账（docs08-r4 任务 11，spike 指引 2）：断线重连（游标回退）时对已加载
+ * 会话拉一次 GET queue——queue_update 是增量事件不重放，重连窗口内的入队/出队只有
+ * 快照能校准。失败静默（下次回退/渲染兜底）。 */
+export function resyncQueues(): void {
+  for (const sessionId of Object.keys(useMessagesStore.getState().bySession)) {
+    api
+      .getQueue(sessionId)
+      .then((snapshot) => {
+        useQueueStore.getState().setSnapshot(sessionId, snapshot);
+      })
+      .catch(() => {
+        // 网络瞬断 / 引擎未就绪静默：下一次回退或打开会话兜底
+      });
+  }
+}
+
 /** 服务重启（游标回退）后的运行态重同步（W1 缺陷 #3）：与 refetchLoadedSessions 并行
  * fire-and-forget——refetchSession 本身逐会话发射，没有「全部完成」时刻可耦合。
  * GET /api/sessions 聚合快照按 active 三态校准既有 runStates（仅列表命中且引擎就绪者）：
@@ -156,6 +173,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   if (typeof cursor === "number") {
     if (lastCursor !== null && cursor < lastCursor) {
       refetchLoadedSessions();
+      resyncQueues();
       // 运行态重同步并行发射（W1 缺陷 #3）：消息全量重取不覆盖 runStates，两路独立校准
       resyncRunStatesFromServer();
     }
@@ -164,6 +182,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
 
   if (eventType === "gap") {
     refetchLoadedSessions();
+    resyncQueues();
     return;
   }
 
@@ -244,6 +263,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     const isAssistant = typeof msg === "object" && msg !== null && (msg as { role?: unknown }).role === "assistant";
     const viewing = sessions.selectedId === sessionId && pageVisible();
     if (isAssistant && !viewing) sessions.bumpUnread(sessionId);
+  }
+
+  // 排队列表增量（docs08-r4 任务 11，spike (b)-2）：queue_update 载荷
+  // {steering[], followUp[], ordered:[{text,mode,enqueueOrder}]}，ordered 为引擎侧
+  // 全量真相（入队与出队宣布都发）。主通道 applyWireEvent 对未知类型静默忽略，此处分流。
+  if (wire.type === "queue_update") {
+    const ordered = Array.isArray(wire.ordered) ? (wire.ordered as Array<Record<string, unknown>>) : [];
+    useQueueStore.getState().applyUpdate(sessionId, ordered);
   }
 
   // 消息主通道（未知类型在 store 内静默忽略）

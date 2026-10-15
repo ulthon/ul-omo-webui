@@ -84,11 +84,33 @@ export interface EnginePromptInput {
   /** 多模态图片（ImageContent：{type:"image", data: base64, mimeType}；落盘为 message content 内联 base64，verification/05 P1-3） */
   images?: Array<{ type: "image"; data: string; mimeType: string }>
   thinkingLevel?: EngineThinkingLevel
+  /**
+   * 回合进行中排队语义（docs08-r4 任务 11，spike 实证 .omo/evidence/docs08-r4/task-2-spike.md）：
+   * "steer"=下一 turn 边界并入当前工作；"followUp"=当前回合做完后继续。
+   * 携带该字段时回合中 prompt 不再 409 而是入队（回执 disposition="queued"）。
+   * 铁律：排队调用不得携带 thinkingLevel（引擎直接拒绝，spike (b)-8 实测）。
+   */
+  streamingBehavior?: "steer" | "followUp"
 }
 
 /** prompt 接受结果。disposition="handled" 表示没有开启回合（如 /命令），不要等 agent_settled */
 export interface EnginePromptReceipt {
   disposition: string
+}
+
+/** 排队单项（queue_update.ordered / clearQueue 回执同构；enqueueOrder 为引擎实例内单调序号） */
+export interface EngineQueueItem {
+  text: string
+  mode: string
+  enqueueOrder: number
+}
+
+/** 排队快照：getSteeringMessages/getFollowUpMessages 对账（无 enqueueOrder，ordered 为空）
+ * 与 clearQueue 整队回执（ordered 完整）两种来源的统一形态 */
+export interface EngineQueueSnapshot {
+  steering: string[]
+  followUp: string[]
+  ordered: EngineQueueItem[]
 }
 
 /** 回合速度样本（A5：单条 assistant 消息 message_start→message_end 配对；
@@ -242,6 +264,11 @@ export interface EngineAdapter {
   prompt(input: EnginePromptInput): Promise<EnginePromptReceipt>
   /** 中断当前回合 */
   abort(): Promise<void>
+
+  /** 当前活跃会话排队快照（getSteeringMessages/getFollowUpMessages；对账用，无 enqueueOrder） */
+  queueList(): Promise<EngineQueueSnapshot>
+  /** 整队清空当前活跃会话队列（clearQueue；返回被撤项，ordered 含 enqueueOrder） */
+  queueClear(): Promise<EngineQueueSnapshot>
 
   /** 订阅引擎事件流（权限请求、流式增量、工具事件等全部经此；详见 EngineEvent 注释） */
   events(listener: (event: EngineEvent) => void): EngineEventSubscription
