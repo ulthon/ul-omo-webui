@@ -1,4 +1,4 @@
-// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计四页签收敛到右栏。
+// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计/记忆五页签收敛到右栏。
 // 三处宿主由本组件统一渲染：桌面展开（lg 常驻，带拖宽分隔条）、桌面折叠窄条（w-10）、
 // 手机固定右缘抽屉（<lg，勿套 --app-height，镜像左栏模式）；开合状态与记忆
 // （senpi-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
@@ -9,10 +9,13 @@
 // dirty 契约（原 shell 页签切换 guard 迁入）：NotesView 经 dirtyRef 上报编辑未保存，
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
 // 页签面板 lazy：变更/笔记按需加载（react-diff-view / notes 组件本体不进首屏），
-// 统计为静态 StatPanel（组件轻、无重依赖）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
+// 统计/记忆为静态轻组件（无重依赖，惰性反而闪 fallback）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
+// 五页签宽度（docs08-r4 任务 10 记录的 R4）：手机抽屉 320px 容器内 5×2 字标签，
+// px 收紧为 1.5 档（桌面 lg 恢复 px-2）+ nowrap，保证不换行不截断。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
 import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
+import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { useUiStore } from "@/stores/ui";
@@ -24,13 +27,14 @@ const NotesView = lazy(() =>
   import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
 );
 
-export type RightRailTab = "todo" | "changes" | "notes" | "stats";
+export type RightRailTab = "todo" | "changes" | "notes" | "stats" | "memory";
 
 const TABS: { id: RightRailTab; label: string }[] = [
   { id: "todo", label: "任务" },
   { id: "changes", label: "变更" },
   { id: "notes", label: "笔记" },
   { id: "stats", label: "统计" },
+  { id: "memory", label: "记忆" },
 ];
 
 /** 宽度记忆 localStorage 键与拖宽边界（px） */
@@ -40,7 +44,7 @@ const RAIL_WIDTH_MAX = 560;
 const RAIL_WIDTH_DEFAULT = 384;
 
 const TAB_CLASS = (active: boolean) =>
-  `min-h-11 flex-1 rounded-lg px-2 py-1.5 text-sm transition-colors lg:min-h-9 ${
+  `min-h-11 min-w-0 flex-1 whitespace-nowrap rounded-lg px-1.5 py-1.5 text-sm transition-colors lg:min-h-9 lg:px-2 ${
     active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
   }`;
 
@@ -155,6 +159,7 @@ function RailBody({
 }) {
   if (tab === "todo") return <TodoPanel sessionId={sessionId} onClose={onClose} />;
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
+  if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
   return (
     <Suspense fallback={<RailLoading text={tab === "notes" ? "加载笔记视图…" : "加载变更视图…"} />}>
       {tab === "notes" ? <NotesView dirtyRef={notesDirtyRef} /> : <ChangesView />}
@@ -225,7 +230,7 @@ export function RightRail({
 
   return (
     <>
-      {/* 桌面（lg+）展开：拖宽分隔条 + 四页签栏 + 面板体。分隔条绝对定位骑跨左缘边框，
+      {/* 桌面（lg+）展开：拖宽分隔条 + 五页签栏 + 面板体。分隔条绝对定位骑跨左缘边框，
           w-1.5 命中区 + hover/focus 视觉反馈；宽度内联样式承载拖宽 */}
       {open ? (
         <aside

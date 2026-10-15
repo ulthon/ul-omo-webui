@@ -605,6 +605,13 @@ export const api = {
   }): Promise<{ snippets: SnippetEntry[] }> {
     return request("/api/snippets", jsonInit("PUT", body));
   },
+
+  // ---- 记忆浏览（docs08-r4 任务 12，只读）----
+  /** 项目记忆库 facts：服务端只读 repo/notes/facts/*.md（bullet 拆条）与 repo/system/*.md
+   * （正文整体）；库缺失/空返回空列表 + libraryPath 说明，不报错（诚实空态）。 */
+  async getMemoryFacts(project: string): Promise<MemoryFactsResponse> {
+    return request(`/api/memory/facts?project=${encodeURIComponent(project)}`);
+  },
 };
 
 export interface FsBrowseEntry {
@@ -636,4 +643,28 @@ export interface TagRef {
 export interface SnippetEntry {
   content: string;
   sort: number;
+}
+
+/** 记忆月文件组（GET /api/memory/facts；front-matter 已剥离，bullet 拆条，条目原文不截断） */
+export interface MemoryFactsGroup {
+  file: string;
+  description: string | null;
+  entries: string[];
+}
+
+/** system 记忆正文组（markdown 正文整体返回，不拆条） */
+export interface MemorySystemDoc {
+  file: string;
+  description: string | null;
+  body: string;
+}
+
+/** 记忆库浏览响应：exists=false = 库目录不存在（诚实空态；libraryPath 仍给出预期落点） */
+export interface MemoryFactsResponse {
+  project: string;
+  libraryId: string;
+  libraryPath: string;
+  exists: boolean;
+  facts: MemoryFactsGroup[];
+  system: MemorySystemDoc[];
 }
