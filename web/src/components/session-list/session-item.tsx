@@ -234,8 +234,10 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
 
   return (
     <div>
+      {/* 行密度（2026-10-15 对标 OpenChamber，双端一起压）：手机 = py-1 + 子件 ≤32px → 40px 行；
+          桌面 = lg:py-0.5 → 36px 行；行间距为零（相邻 div 贴排），信息密度以文字为主。 */}
       <div
-        className={`group relative flex items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${
+        className={`group relative flex items-center gap-1 rounded-md px-1.5 py-1 text-sm lg:py-0.5 ${
           selected ? "bg-primary/10" : "hover:bg-accent/50"
         }`}
       >
@@ -250,7 +252,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             role="checkbox"
             aria-checked={!!checked}
             aria-label={`选择会话：${session.title}`}
-            className="flex size-11 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground lg:size-5"
+            className="flex size-8 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground lg:size-5"
             onClick={(e) => {
               e.stopPropagation();
               onToggleCheck?.(session);
@@ -263,7 +265,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
           <button
             type="button"
             aria-label={expanded ? "收起子会话" : "展开子会话"}
-            className={`flex size-11 shrink-0 items-center justify-center rounded hover:bg-muted lg:size-4 ${
+            className={`flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted lg:size-4 ${
               hasKnownChildren ? "text-muted-foreground" : "text-muted-foreground/40"
             }`}
             onClick={(e) => {
@@ -278,7 +280,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             )}
           </button>
         ) : (
-          <span className="size-11 shrink-0 lg:size-4" />
+          <span className="size-7 shrink-0 lg:size-4" />
         )}
         <StatusDot runState={runState} active={session.active} />
 
@@ -300,10 +302,10 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               {projectLabel}
             </span>
           )}
-          {/* C14 紧凑化：<sm 隐藏相对时间（手机端行高由 44px 触控元素保证，不塌）；
-              桌面极端挤压（超长标题+徽标+未读同屏）下时间作为唯一可收缩项先让位，
-              未读徽标 shrink-0 优先保住 */}
-          <span className="ml-auto hidden shrink min-w-0 truncate text-[11px] text-muted-foreground/70 sm:inline">{formatRelative(session.modified)}</span>
+          {/* 相对时间双端常显（2026-10-15 密度对标反转 C14 的 <sm 隐藏——OC 同款信息量，
+              40px 行内塞得下）；极端挤压（超长标题+徽标+时间同屏）下时间仍作为唯一可收缩项
+              先让位（min-w-0 truncate），未读徽标 shrink-0 优先保住 */}
+          <span className="ml-auto shrink min-w-0 truncate text-[11px] text-muted-foreground/70">{formatRelative(session.modified)}</span>
           {session.unreadCount > 0 && (
             <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
               {session.unreadCount > 99 ? "99+" : session.unreadCount}
@@ -313,13 +315,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {/* todo 26 走查修复：手机无 hover，opacity-0 使操作菜单不可达——lg 以下常显；
-                触控目标 44px（lg 保持桌面紧凑 32px） */}
+            {/* 手机常显（无 hover 可言）；触控目标 32px（2026-10-15 密度对标由 44px 收窄——
+                选中主目标=整行 40px 全宽，菜单是次要动作，OC 同款量级；行高不再被按钮撑到 52px）；
+                lg 保持桌面紧凑 32px */}
             <Button
               ref={menuBtnRef}
               variant="ghost"
               size="icon"
-              className="size-11 shrink-0 opacity-100 transition-opacity data-[state=open]:opacity-100 lg:size-8 lg:opacity-0 lg:group-hover:opacity-100"
+              className="size-8 shrink-0 opacity-100 transition-opacity data-[state=open]:opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
               aria-label="会话操作"
             >
               <MoreVertical className="size-3.5" />
