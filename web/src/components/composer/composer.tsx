@@ -14,7 +14,7 @@
 // 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令
 // （尾部空格）走既有 prompt 支持路径；上下/回车导航，Esc 关闭并回退打开前输入。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, ImagePlus, MessageSquareText, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, ImagePlus, MessageSquareText, Plus, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
@@ -26,6 +26,7 @@ import { SlashHints } from "@/components/composer/slash-hints";
 import { ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   EMPTY_SLASH_GROUPS,
   MAX_IMAGES,
@@ -133,6 +134,12 @@ export function Composer({
   const [snippetDropdownOpen, setSnippetDropdownOpen] = useState(false);
   const [snippetAnchor, setSnippetAnchor] = useState<HTMLElement | null>(null);
   const closeSnippetDropdown = useCallback(() => setSnippetDropdownOpen(false), []);
+
+  // docs08-r4 任务 7：手机档（<sm）胶囊输入区。历史/@/图片/常用语/chips 收进"更多"
+  // 入口（胶囊左端"+"），展开的工具行在胶囊上方；textarea 聚焦即收起展开区（只留
+  // 胶囊+发送），blur 后可再点"+"展开。桌面档（sm+）布局与本状态无涉。
+  const isCompact = useIsMobile("(max-width: 639.98px)");
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
   // 触发纯派生自 textarea 值（/ 开头 + 首 token 未闭合）；slashDismissedToken 记录
@@ -641,117 +648,347 @@ export function Composer({
 
   const canSend = (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending;
 
+  // ---------- 桌面/手机共享子树（docs08-r4 任务 7）：两分支同源，仅容器排布不同 ----------
+
+  const pasteOfferBar = pasteOffer ? (
+    <div
+      data-testid="paste-offer-bar"
+      className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
+    >
+      <span className="shrink-0">大段文本（{formatPasteKb(pasteOffer.bytes)}）：</span>
+      <button
+        type="button"
+        data-testid="paste-insert"
+        onClick={() => insertPasteContent(pasteOffer.content)}
+        className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
+      >
+        原样插入
+      </button>
+      <button
+        type="button"
+        data-testid="paste-attach"
+        onClick={() => void attachPasteContent(pasteOffer.content)}
+        className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
+      >
+        作为附件发送
+      </button>
+      <button
+        type="button"
+        data-testid="paste-dismiss"
+        onClick={() => setPasteOffer(null)}
+        className="min-h-8 rounded-md border px-2 text-muted-foreground transition-colors hover:bg-muted"
+      >
+        忽略
+      </button>
+    </div>
+  ) : null;
+  const historyBar = history ? (
+    <div
+      data-testid="history-bar"
+      className="flex items-center gap-1.5 rounded-lg border bg-muted/40 px-1.5 py-1 text-xs text-muted-foreground"
+    >
+      <button
+        type="button"
+        data-testid="history-prev"
+        aria-label="更早一条"
+        onClick={historyOlder}
+        className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
+      >
+        <ChevronUp className="size-4" />
+      </button>
+      <span className="shrink-0 tabular-nums">
+        {history.index + 1}/{history.items.length}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{historyPreview(history.items[history.index])}</span>
+      <span className="hidden shrink-0 sm:inline">Esc 退出</span>
+      <button
+        type="button"
+        data-testid="history-next"
+        aria-label="更新一条"
+        onClick={historyNewer}
+        className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
+      >
+        <ChevronDown className="size-4" />
+      </button>
+    </div>
+  ) : null;
+  const imageStrip =
+    images.length > 0 ? (
+      <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="image-strip">
+        {images.map((img) => (
+          <div key={img.id} data-testid="image-thumb" className="relative size-16 shrink-0">
+            <img
+              src={`data:${img.mimeType};base64,${img.data}`}
+              alt="待发送图片"
+              className="size-16 rounded-lg border object-cover"
+            />
+            <button
+              type="button"
+              aria-label="移除图片"
+              data-testid="image-thumb-remove"
+              onClick={() => removeImage(img.id)}
+              className="absolute -top-2.5 -right-2.5 flex size-11 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:text-destructive"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    ) : null;
+  const attachmentStrip =
+    attachments.length > 0 ? (
+      <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="attachment-strip">
+        {attachments.map((att) => (
+          <div
+            key={att.id}
+            data-testid="attachment-chip"
+            className="flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-lg border bg-muted/40 px-2 text-xs"
+          >
+            <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="max-w-44 truncate" title={att.path}>
+              {att.name}
+            </span>
+            <button
+              type="button"
+              aria-label="移除附件"
+              data-testid="attachment-chip-remove"
+              onClick={() => removeAttachment(att.id)}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    ) : null;
+  // 低频工具按钮本体：桌面工具条与手机"更多"工具行共用（仅收纳位置不同，逻辑零改动）
+  const toolButtons = (
+    <>
+      <button
+        type="button"
+        data-testid="history-btn"
+        aria-label="输入历史"
+        title="输入历史（↑ 翻阅）"
+        aria-pressed={history !== null}
+        onClick={() => (history ? closeHistory() : void openHistory())}
+        className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
+          history ? "bg-muted text-foreground" : "text-muted-foreground"
+        }`}
+      >
+        <History className="size-5" />
+      </button>
+      <button
+        type="button"
+        data-testid="at-btn"
+        aria-label="引用文件"
+        title="引用文件（插入 @路径）"
+        disabled={!project}
+        onClick={() => openPicker(null)}
+        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+      >
+        <AtSign className="size-5" />
+      </button>
+      <button
+        type="button"
+        data-testid="image-btn"
+        aria-label="添加图片"
+        title="添加图片（可粘贴截图）"
+        onClick={() => fileInputRef.current?.click()}
+        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+      >
+        <ImagePlus className="size-5" />
+      </button>
+      {/* 常用语锚定下拉入口（docs08-r3 A1）；「查看全部」进旧弹框 */}
+      <button
+        type="button"
+        data-testid="snippet-btn"
+        aria-label="常用语"
+        title="常用语"
+        aria-expanded={snippetDropdownOpen}
+        onClick={(e) => {
+          setSnippetAnchor(e.currentTarget);
+          setSnippetDropdownOpen((v) => !v);
+        }}
+        className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
+          snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+        }`}
+      >
+        <MessageSquareText className="size-5" />
+      </button>
+    </>
+  );
+  const errorLine = error ? (
+    <p className="text-xs text-destructive" data-testid="composer-error">
+      {error}
+    </p>
+  ) : null;
+  const fileInputNode = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/*"
+      multiple
+      data-testid="composer-file-input"
+      className="hidden"
+      onChange={(e) => {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = "";
+        void addImageFiles(files);
+      }}
+    />
+  );
+  const filePickerNode =
+    picker?.open && project ? (
+      <FilePickerDialog
+        open
+        onOpenChange={(open) => {
+          if (!open) setPicker(null);
+        }}
+        project={project}
+        onPick={onPickFile}
+      />
+    ) : null;
+  const slashHintsNode =
+    slashOpen && slashAnchor ? (
+      <SlashHints
+        anchor={slashAnchor}
+        groups={slashGroups}
+        highlight={safeHighlight}
+        onSelect={selectSlashItem}
+        onClose={closeSlashHints}
+      />
+    ) : null;
+  const snippetDropdownNode =
+    snippetDropdownOpen && snippetAnchor ? (
+      <SnippetDropdown
+        anchor={snippetAnchor}
+        onClose={closeSnippetDropdown}
+        project={project}
+        busy={busy}
+        sending={sending}
+        // 插入：先收下拉再走草稿链路；rAF 焦点回输入框（排队晚于 insertSnippetText
+        // 的 caret 落位 rAF，focus() 保留 selection）
+        onInsert={(content) => {
+          closeSnippetDropdown();
+          insertSnippetText(content);
+          requestAnimationFrame(() => textareaRef.current?.focus());
+        }}
+        // 直发：收下拉后走 sendText(clearInputs:false)，不动既有草稿/图片/历史
+        onSendNow={(content) => {
+          closeSnippetDropdown();
+          sendSnippetNow(content);
+        }}
+        onViewAll={() => {
+          closeSnippetDropdown();
+          setSnippetOpen(true);
+        }}
+      />
+    ) : null;
+  const snippetPanelNode = snippetOpen ? (
+    <SnippetPanelDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) setSnippetOpen(false);
+      }}
+      project={project}
+      actionDisabled={snippetActionDisabled(busy, sending)}
+      onInsert={(content) => {
+        insertSnippetText(content);
+        setSnippetOpen(false);
+      }}
+      onSendNow={(content) => {
+        setSnippetOpen(false);
+        sendSnippetNow(content);
+      }}
+      // 关闭后焦点回输入框（radix 默认回触发钮）；插入光标已在 insertSnippetText
+      // 的 rAF 中落位，focus() 保留现有 selection
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        textareaRef.current?.focus();
+      }}
+    />
+  ) : null;
+
+  // ---------- 手机档（<sm）胶囊输入区（docs08-r4 任务 7） ----------
+  // 参考在线 OpenChamber 390 实测形态：贴边胶囊（圆角 border，内嵌无边框 textarea），
+  // 左端"+"收纳低频工具（展开行在胶囊上方），右端内嵌发送钮（size-9，canSend 语义不变）；
+  // textarea 聚焦即收起展开区，blur 后可再展开。上方各条（粘贴选择/历史/图片/附件）
+  // 形态不变；斜杠提示仍锚定 textarea（锚定元素不变），busy 分支在更早处先行返回。
+  if (isCompact) {
+    return (
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
+        {pasteOfferBar}
+        {historyBar}
+        {imageStrip}
+        {attachmentStrip}
+        {toolsOpen && (
+          <div className="flex flex-wrap items-center gap-1" data-testid="composer-tools-row">
+            {toolButtons}
+            <div className="ml-auto flex items-center gap-1">
+              <ThinkingChip />
+              <ModelChip />
+            </div>
+          </div>
+        )}
+        <div
+          data-testid="composer-capsule"
+          className="flex items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+        >
+          <button
+            type="button"
+            data-testid="composer-more-btn"
+            aria-label="更多"
+            title="更多：历史、@、图片、常用语、模型"
+            aria-expanded={toolsOpen}
+            onClick={() => setToolsOpen((v) => !v)}
+            className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
+              toolsOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+            }`}
+          >
+            <Plus className="size-5" />
+          </button>
+          <textarea
+            ref={textareaRefCb}
+            data-testid="composer-input"
+            value={text}
+            rows={1}
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            disabled={sending}
+            onChange={(e) => applyText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onFocus={() => setToolsOpen(false)}
+            className="max-h-48 min-h-9 w-full flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+          />
+          <button
+            type="button"
+            data-testid="send-btn"
+            aria-label="发送"
+            disabled={!canSend}
+            onClick={() => void send()}
+            className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+              canSend ? "bg-accent text-accent-foreground hover:bg-muted" : "bg-muted text-muted-foreground"
+            }`}
+          >
+            <ArrowUp className="size-5" />
+          </button>
+        </div>
+        {fileInputNode}
+        {errorLine}
+        {filePickerNode}
+        {slashHintsNode}
+        {snippetDropdownNode}
+        {snippetPanelNode}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
-      {pasteOffer && (
-        <div
-          data-testid="paste-offer-bar"
-          className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
-        >
-          <span className="shrink-0">大段文本（{formatPasteKb(pasteOffer.bytes)}）：</span>
-          <button
-            type="button"
-            data-testid="paste-insert"
-            onClick={() => insertPasteContent(pasteOffer.content)}
-            className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
-          >
-            原样插入
-          </button>
-          <button
-            type="button"
-            data-testid="paste-attach"
-            onClick={() => void attachPasteContent(pasteOffer.content)}
-            className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
-          >
-            作为附件发送
-          </button>
-          <button
-            type="button"
-            data-testid="paste-dismiss"
-            onClick={() => setPasteOffer(null)}
-            className="min-h-8 rounded-md border px-2 text-muted-foreground transition-colors hover:bg-muted"
-          >
-            忽略
-          </button>
-        </div>
-      )}
-      {history && (
-        <div
-          data-testid="history-bar"
-          className="flex items-center gap-1.5 rounded-lg border bg-muted/40 px-1.5 py-1 text-xs text-muted-foreground"
-        >
-          <button
-            type="button"
-            data-testid="history-prev"
-            aria-label="更早一条"
-            onClick={historyOlder}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
-          >
-            <ChevronUp className="size-4" />
-          </button>
-          <span className="shrink-0 tabular-nums">
-            {history.index + 1}/{history.items.length}
-          </span>
-          <span className="min-w-0 flex-1 truncate">{historyPreview(history.items[history.index])}</span>
-          <span className="hidden shrink-0 sm:inline">Esc 退出</span>
-          <button
-            type="button"
-            data-testid="history-next"
-            aria-label="更新一条"
-            onClick={historyNewer}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
-          >
-            <ChevronDown className="size-4" />
-          </button>
-        </div>
-      )}
-      {images.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="image-strip">
-          {images.map((img) => (
-            <div key={img.id} data-testid="image-thumb" className="relative size-16 shrink-0">
-              <img
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt="待发送图片"
-                className="size-16 rounded-lg border object-cover"
-              />
-              <button
-                type="button"
-                aria-label="移除图片"
-                data-testid="image-thumb-remove"
-                onClick={() => removeImage(img.id)}
-                className="absolute -top-2.5 -right-2.5 flex size-11 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:text-destructive"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {attachments.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="attachment-strip">
-          {attachments.map((att) => (
-            <div
-              key={att.id}
-              data-testid="attachment-chip"
-              className="flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-lg border bg-muted/40 px-2 text-xs"
-            >
-              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="max-w-44 truncate" title={att.path}>
-                {att.name}
-              </span>
-              <button
-                type="button"
-                aria-label="移除附件"
-                data-testid="attachment-chip-remove"
-                onClick={() => removeAttachment(att.id)}
-                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      {pasteOfferBar}
+      {historyBar}
+      {imageStrip}
+      {attachmentStrip}
       {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
       <textarea
         ref={textareaRefCb}
@@ -765,73 +1002,9 @@ export function Composer({
         onPaste={onPaste}
         className="max-h-48 min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
       />
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        data-testid="composer-file-input"
-        className="hidden"
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          e.target.value = "";
-          void addImageFiles(files);
-        }}
-      />
+      {fileInputNode}
       <div className="flex items-center gap-1">
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            data-testid="history-btn"
-            aria-label="输入历史"
-            title="输入历史（↑ 翻阅）"
-            aria-pressed={history !== null}
-            onClick={() => (history ? closeHistory() : void openHistory())}
-            className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
-              history ? "bg-muted text-foreground" : "text-muted-foreground"
-            }`}
-          >
-            <History className="size-5" />
-          </button>
-          <button
-            type="button"
-            data-testid="at-btn"
-            aria-label="引用文件"
-            title="引用文件（插入 @路径）"
-            disabled={!project}
-            onClick={() => openPicker(null)}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-          >
-            <AtSign className="size-5" />
-          </button>
-          <button
-            type="button"
-            data-testid="image-btn"
-            aria-label="添加图片"
-            title="添加图片（可粘贴截图）"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
-          >
-            <ImagePlus className="size-5" />
-          </button>
-          {/* 常用语锚定下拉入口（docs08-r3 A1）；「查看全部」进旧弹框 */}
-          <button
-            type="button"
-            data-testid="snippet-btn"
-            aria-label="常用语"
-            title="常用语"
-            aria-expanded={snippetDropdownOpen}
-            onClick={(e) => {
-              setSnippetAnchor(e.currentTarget);
-              setSnippetDropdownOpen((v) => !v);
-            }}
-            className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
-              snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
-            }`}
-          >
-            <MessageSquareText className="size-5" />
-          </button>
-        </div>
+        <div className="flex shrink-0 items-center gap-1">{toolButtons}</div>
         {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐 */}
         <div className="ml-auto flex min-w-0 items-center gap-1">
           <ThinkingChip />
@@ -853,79 +1026,11 @@ export function Composer({
           </button>
         </div>
       </div>
-      {error && (
-        <p className="text-xs text-destructive" data-testid="composer-error">
-          {error}
-        </p>
-      )}
-      {picker?.open && project && (
-        <FilePickerDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setPicker(null);
-          }}
-          project={project}
-          onPick={onPickFile}
-        />
-      )}
-      {slashOpen && slashAnchor && (
-        <SlashHints
-          anchor={slashAnchor}
-          groups={slashGroups}
-          highlight={safeHighlight}
-          onSelect={selectSlashItem}
-          onClose={closeSlashHints}
-        />
-      )}
-      {snippetDropdownOpen && snippetAnchor && (
-        <SnippetDropdown
-          anchor={snippetAnchor}
-          onClose={closeSnippetDropdown}
-          project={project}
-          busy={busy}
-          sending={sending}
-          // 插入：先收下拉再走草稿链路；rAF 焦点回输入框（排队晚于 insertSnippetText
-          // 的 caret 落位 rAF，focus() 保留 selection）
-          onInsert={(content) => {
-            closeSnippetDropdown();
-            insertSnippetText(content);
-            requestAnimationFrame(() => textareaRef.current?.focus());
-          }}
-          // 直发：收下拉后走 sendText(clearInputs:false)，不动既有草稿/图片/历史
-          onSendNow={(content) => {
-            closeSnippetDropdown();
-            sendSnippetNow(content);
-          }}
-          onViewAll={() => {
-            closeSnippetDropdown();
-            setSnippetOpen(true);
-          }}
-        />
-      )}
-      {snippetOpen && (
-        <SnippetPanelDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setSnippetOpen(false);
-          }}
-          project={project}
-          actionDisabled={snippetActionDisabled(busy, sending)}
-          onInsert={(content) => {
-            insertSnippetText(content);
-            setSnippetOpen(false);
-          }}
-          onSendNow={(content) => {
-            setSnippetOpen(false);
-            sendSnippetNow(content);
-          }}
-          // 关闭后焦点回输入框（radix 默认回触发钮）；插入光标已在 insertSnippetText
-          // 的 rAF 中落位，focus() 保留现有 selection
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            textareaRef.current?.focus();
-          }}
-        />
-      )}
+      {errorLine}
+      {filePickerNode}
+      {slashHintsNode}
+      {snippetDropdownNode}
+      {snippetPanelNode}
     </div>
   );
 }

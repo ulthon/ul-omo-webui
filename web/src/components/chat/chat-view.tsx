@@ -197,7 +197,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     <div className="flex h-full flex-col">
       <MessageList items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
       <PermissionQueue sessionId={sessionId} />
-      <div className="shrink-0 border-t p-3">
+      {/* docs08-r4 任务 7：手机档容器贴边（左右 12px，底部安全区由 Composer 自带 pb 承担），
+          桌面档 sm+ 保持 p-3 原样 */}
+      <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           <CommandBar sessionId={sessionId} busy={composerLocked} />
           <Composer
