@@ -12,9 +12,10 @@
 // 统计为静态 StatPanel（组件轻、无重依赖）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
 import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ListTodo } from "lucide-react";
+import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
+import { useUiStore } from "@/stores/ui";
 
 const ChangesView = lazy(() =>
   import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
@@ -42,6 +43,50 @@ const TAB_CLASS = (active: boolean) =>
   `min-h-11 flex-1 rounded-lg px-2 py-1.5 text-sm transition-colors lg:min-h-9 ${
     active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
   }`;
+
+/** 手机触控目标外链按钮（44px；与 shell 桌面第二层行同尺寸。A6 迁移：手机档外链
+ * 入口自第二层行迁入本抽屉头部，配置键（external-git-url/external-files-url）与
+ * 打开方式不变） */
+const RAIL_EXTERNAL_LINK_CLASS =
+  "flex size-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
+
+/** 手机抽屉头部外链行（A6）：gitUrl/filesUrl 均未配置时整行不渲染 */
+function DrawerExternalLinks() {
+  const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
+  const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
+  if (!gitUrl && !filesUrl) return null;
+  return (
+    <div
+      className="flex shrink-0 items-center justify-end gap-1 border-b px-2 py-1"
+      data-testid="right-rail-drawer-external-links"
+    >
+      {gitUrl && (
+        <a
+          href={gitUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="打开 Git 外链"
+          title={`Git 外链：${gitUrl}`}
+          className={RAIL_EXTERNAL_LINK_CLASS}
+        >
+          <GitBranch className="size-5" />
+        </a>
+      )}
+      {filesUrl && (
+        <a
+          href={filesUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="打开文件管理外链"
+          title={`文件管理外链：${filesUrl}`}
+          className={RAIL_EXTERNAL_LINK_CLASS}
+        >
+          <FolderOpen className="size-5" />
+        </a>
+      )}
+    </div>
+  );
+}
 
 /** 宽度记忆读取：无记录返回默认；手写异常值（9999/0/非数值等）落回默认 384 */
 export function readRailWidthPreference(): number {
@@ -227,7 +272,8 @@ export function RightRail({
       )}
 
       {/* 手机（<lg）：固定右缘抽屉，镜像左栏模式（inset-y-0 维持——iOS 软键盘收缩会
-          截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于 toast z-50（沿用 W5-15 结论） */}
+          截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于 toast z-50（沿用 W5-15 结论）。
+          A6：头部承载自第二层行迁入的 git/files 外链（桌面折叠条不受影响） */}
       <aside
         aria-label="右栏"
         data-testid="right-rail-drawer"
@@ -235,6 +281,7 @@ export function RightRail({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <DrawerExternalLinks />
         <RailTabBar tab={tab} onSwitch={switchTab} />
         <div className="min-h-0 flex-1">
           <RailBody tab={tab} sessionId={sessionId} notesDirtyRef={notesDirtyRef} onClose={onToggle} />

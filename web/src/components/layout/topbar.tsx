@@ -2,12 +2,17 @@
 // 模型切换下拉（todo 22：选择落 meta_project 偏好，防抖 PATCH；agentsList=false 降级已定——
 // 不渲染 agent 下拉，"当前 provider/model"语义由模型下拉承担）、设置入口（todo 26：外链
 // 地址 kv 配置）、连接状态点。
+// A3+A6（docs08-r4 任务 6）手机档（<lg）单层重排：[汉堡 | 会话标题+项目名小字（可点开
+// 项目菜单） | 上下文水位环 | 右栏入口钮 | 设置+连接点]，模型下拉手机档退役（经任务 7
+// "更多"ModelChip 到达）；桌面（lg+）布局不动（项目/模型下拉原位）。手机档按 useIsMobile
+// 条件渲染（DOM 不存在，非 CSS 隐藏）。
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Check, ChevronDown, FolderPlus, Menu, Settings } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, ListTodo, Menu, Settings } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 import {
@@ -16,6 +21,7 @@ import {
   type ProjectSortMode,
 } from "@/components/session-list/global-list-data";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
+import { ContextWaterRing } from "@/components/layout/context-ring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -567,16 +573,66 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-export function Topbar() {
-  const connection = useUiStore((s) => s.connection);
+/** 项目下拉菜单内容：桌面项目下拉与手机档会话身份区共用（任务 6）。
+ * openProject（当前项目 + 偏好 + lastOpenedAt + 聚合口径刷新）与
+ * locateProjectInSidebar（展开分组滚动置顶）逻辑自原顶栏下拉零改动迁移。 */
+function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
   const projects = useUiStore((s) => s.projects);
+  const currentProject = useUiStore((s) => s.currentProject);
+  return (
+    <>
+      <DropdownMenuLabel>项目</DropdownMenuLabel>
+      {projects.length === 0 && (
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">尚无项目，先添加一个</div>
+      )}
+      {projects.map((p) => (
+        <DropdownMenuItem
+          key={p.projectPath}
+          onSelect={() => {
+            // "定位 + 切换"（todo 10）：仍走 openProject（当前项目 + 偏好 + lastOpenedAt +
+            // 聚合口径刷新），叠加侧栏动作展开该组并滚动置顶；侧栏保持全局平铺不切单项目视图
+            if (p.projectPath !== currentProject) void openProject(p.projectPath);
+            locateProjectInSidebar(p.projectPath);
+          }}
+        >
+          <Check
+            className={`size-4 shrink-0 ${p.projectPath === currentProject ? "opacity-100" : "opacity-0"}`}
+          />
+          <span className="ml-2 truncate" title={p.projectPath}>
+            {basename(p.projectPath)}
+          </span>
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onAddProject}>
+        <FolderPlus className="mr-2 size-4" />
+        添加项目…
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void }) {
+  const connection = useUiStore((s) => s.connection);
   const currentProject = useUiStore((s) => s.currentProject);
   const models = useUiStore((s) => s.models);
   const modelsLoaded = useUiStore((s) => s.modelsLoaded);
   const selectedModel = useUiStore((s) => s.selectedModel);
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
+  const isMobile = useIsMobile();
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 会话身份（A3 手机档）：选中会话自 byProject 反查（id 唯一，命中即返回原引用，
+  // 选择器引用稳定）。标题显示服务端合并值 title（renamedTitle ?? name ?? firstMessage）。
+  const selectedSession = useSessionsStore((s) => {
+    if (!s.selectedId) return null;
+    for (const list of Object.values(s.byProject)) {
+      const hit = list.find((item) => item.id === s.selectedId);
+      if (hit) return hit;
+    }
+    return null;
+  });
 
   // 过滤决策（todo 22 决策点）：GET /api/models 无活跃会话时返回全 provider 超集（todo 9 降级
   // 直读 models-store.json）。选择"全列展示、按 provider 分组"而非按当前会话 provider 过滤：
@@ -609,99 +665,144 @@ export function Topbar() {
         <Menu className="size-5" />
       </Button>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          {/* 窄屏 max-w 收敛（todo 26 走查修复：390 顶栏溢出 scrollWidth=430；sm 起保持原桌面宽度） */}
-          <Button variant="ghost" className="max-w-[32vw] gap-1.5 px-2 sm:max-w-xs">
-            <span className="truncate font-medium">
-              {currentProject ? basename(currentProject) : "选择项目"}
-            </span>
-            <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel>项目</DropdownMenuLabel>
-          {projects.length === 0 && (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">尚无项目，先添加一个</div>
-          )}
-          {projects.map((p) => (
-            <DropdownMenuItem
-              key={p.projectPath}
-              onSelect={() => {
-                // "定位 + 切换"（todo 10）：仍走 openProject（当前项目 + 偏好 + lastOpenedAt +
-                // 聚合口径刷新），叠加侧栏动作展开该组并滚动置顶；侧栏保持全局平铺不切单项目视图
-                if (p.projectPath !== currentProject) void openProject(p.projectPath);
-                locateProjectInSidebar(p.projectPath);
-              }}
-            >
-              <Check
-                className={`size-4 shrink-0 ${p.projectPath === currentProject ? "opacity-100" : "opacity-0"}`}
-              />
-              <span className="ml-2 truncate" title={p.projectPath}>
-                {basename(p.projectPath)}
-              </span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setAddOpen(true)}>
-            <FolderPlus className="mr-2 size-4" />
-            添加项目…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <div className="ml-auto flex items-center gap-1">
+      {isMobile ? (
+        /* 手机档会话身份区（A3）：标题+项目名两行堆叠 truncate；点按弹项目菜单
+           （内容复用桌面项目下拉，openProject/locateProjectInSidebar 零改动） */
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              data-testid="model-switch"
-              disabled={noModels}
-              className="max-w-[26vw] gap-1.5 px-2 sm:max-w-[240px]"
-              title={noModels ? "引擎未提供可用模型，发送已禁用" : (selectedModel ?? undefined)}
+            <button
+              type="button"
+              data-testid="mobile-session-identity"
+              aria-label="会话与项目，点按切换项目"
+              className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              <span className={`truncate text-xs ${noModels ? "text-muted-foreground" : ""}`}>{modelLabel}</span>
-              {!noModels && <ChevronDown className="size-4 shrink-0 text-muted-foreground" />}
-            </Button>
+              {selectedSession && (
+                <span
+                  data-testid="topbar-session-title"
+                  title={selectedSession.title}
+                  className="block w-full truncate text-sm font-medium leading-tight"
+                >
+                  {selectedSession.title}
+                </span>
+              )}
+              <span
+                data-testid="topbar-project-name"
+                className="flex w-full min-w-0 items-center gap-0.5 text-[11px] leading-tight text-muted-foreground"
+              >
+                <span className="min-w-0 truncate">
+                  {currentProject ? basename(currentProject) : "选择项目"}
+                </span>
+                <ChevronDown className="size-3 shrink-0" aria-hidden />
+              </span>
+            </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="max-h-96 w-72 overflow-y-auto">
-            <DropdownMenuLabel>模型</DropdownMenuLabel>
-            {providerGroups.map(([provider, list]) => (
-              <div key={provider}>
-                <div className="px-2 py-1 text-[11px] text-muted-foreground" title={provider}>
-                  {provider}
-                </div>
-                {list.map((m) => {
-                  const value = `${m.provider}/${m.id}`;
-                  return (
-                    <DropdownMenuItem key={value} onSelect={() => selectModel(value)}>
-                      <Check className={`size-4 shrink-0 ${selectedModel === value ? "opacity-100" : "opacity-0"}`} />
-                      <span className="ml-2 truncate" title={value}>
-                        {m.id}
-                      </span>
-                    </DropdownMenuItem>
-                  );
-                })}
-              </div>
-            ))}
+          <DropdownMenuContent align="start" className="w-72">
+            <ProjectMenuItems onAddProject={() => setAddOpen(true)} />
           </DropdownMenuContent>
         </DropdownMenu>
-        {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-11"
-          aria-label="设置"
-          data-testid="settings-button"
-          onClick={() => setSettingsOpen(true)}
-        >
-          <Settings className="size-5" />
-        </Button>
-        <span
-          className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
-          title={connection === "online" ? "已连接" : "重连中"}
-        />
-      </div>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            {/* 窄屏 max-w 收敛（todo 26 走查修复：390 顶栏溢出 scrollWidth=430；sm 起保持原桌面宽度） */}
+            <Button variant="ghost" className="max-w-[32vw] gap-1.5 px-2 sm:max-w-xs">
+              <span className="truncate font-medium">
+                {currentProject ? basename(currentProject) : "选择项目"}
+              </span>
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72">
+            <ProjectMenuItems onAddProject={() => setAddOpen(true)} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {isMobile ? (
+        /* 手机档右簇（A3+A6）：水位环（无会话/无数据不挂载）→ 右栏入口 → 设置+连接点。
+           模型下拉手机档退役（任务 7 "更多"ModelChip 承接，中间态无模型切换入口为
+           计划内顺序状态） */
+        <div className="flex shrink-0 items-center gap-0.5">
+          {selectedSession && <ContextWaterRing sessionId={selectedSession.id} />}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label="打开任务面板"
+            data-testid="todo-panel-toggle"
+            onClick={onToggleTodoPanel}
+          >
+            <ListTodo className="size-5" />
+          </Button>
+          {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label="设置"
+            data-testid="settings-button"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings className="size-5" />
+          </Button>
+          <span
+            className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
+            title={connection === "online" ? "已连接" : "重连中"}
+          />
+        </div>
+      ) : (
+        <div className="ml-auto flex items-center gap-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                data-testid="model-switch"
+                disabled={noModels}
+                className="max-w-[26vw] gap-1.5 px-2 sm:max-w-[240px]"
+                title={noModels ? "引擎未提供可用模型，发送已禁用" : (selectedModel ?? undefined)}
+              >
+                <span className={`truncate text-xs ${noModels ? "text-muted-foreground" : ""}`}>{modelLabel}</span>
+                {!noModels && <ChevronDown className="size-4 shrink-0 text-muted-foreground" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-96 w-72 overflow-y-auto">
+              <DropdownMenuLabel>模型</DropdownMenuLabel>
+              {providerGroups.map(([provider, list]) => (
+                <div key={provider}>
+                  <div className="px-2 py-1 text-[11px] text-muted-foreground" title={provider}>
+                    {provider}
+                  </div>
+                  {list.map((m) => {
+                    const value = `${m.provider}/${m.id}`;
+                    return (
+                      <DropdownMenuItem key={value} onSelect={() => selectModel(value)}>
+                        <Check className={`size-4 shrink-0 ${selectedModel === value ? "opacity-100" : "opacity-0"}`} />
+                        <span className="ml-2 truncate" title={value}>
+                          {m.id}
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label="设置"
+            data-testid="settings-button"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings className="size-5" />
+          </Button>
+          <span
+            className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
+            title={connection === "online" ? "已连接" : "重连中"}
+          />
+        </div>
+      )}
 
       <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

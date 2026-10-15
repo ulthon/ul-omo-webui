@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
 import { api, setPromptGate } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
@@ -53,6 +54,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const hasStreamingMessage = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
+  // A6（docs08-r4 任务 6）：手机档 StatusBar 退役（信息上收顶栏水位环），条件渲染——
+  // DOM 不存在（非 CSS 隐藏）；桌面（lg+）现状保留。
+  const isMobile = useIsMobile();
 
   // 输入锁：流式中或权限未决都阻塞回合（P0-2 实证：挂起权限回合不结束）。
   // 权限锁不依赖 agent_start 时序（个别回合该帧缺失，todo 16 QA 第 3 轮实证）。
@@ -204,7 +208,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           />
         </div>
       </div>
-      <StatusBar sessionId={sessionId} />
+      {!isMobile && <StatusBar sessionId={sessionId} />}
     </div>
   );
 }

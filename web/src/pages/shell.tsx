@@ -2,7 +2,8 @@
 // 初始引导：落到 last_opened_at 最新的项目（lib/bootstrap）。
 // C15（docs08-r3 任务 3）：主区永久为对话（ChatPlaceholder），任务/变更/笔记/统计四页签
 // 收敛到右栏 RightRail（components/layout/right-rail），原主区"变更/笔记"页签移除。
-// todo 26：主区顶栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）与手机右栏抽屉触发钮；
+// todo 26：主区顶栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；A6（docs08-r4 任务 6）
+// 手机档第二层行退役——右栏抽屉触发钮迁入顶栏、外链迁入右栏抽屉头部，桌面第二层行保留；
 // visualViewport 高度同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
 // W5-15 右栏开合：lg 常驻（展开 / 折叠窄条），<lg 镜像左栏 fixed 抽屉（inset-y-0，勿套
 // --app-height，否则软键盘收缩截断抽屉底）；双抽屉互斥（开其一时自动关另一，经 ui store
@@ -12,7 +13,7 @@
 // oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
+import { FolderOpen, GitBranch } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
@@ -25,6 +26,7 @@ import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
 import { Button } from "@/components/ui/button";
 import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 import { RightRail } from "@/components/layout/right-rail";
+import { useIsMobile } from "@/lib/use-is-mobile";
 
 /** 手机触控目标外链按钮（44px；desktop 同尺寸不碍事） */
 const EXTERNAL_LINK_CLASS =
@@ -145,13 +147,18 @@ export function AppShell() {
 
   useCtrlPModelPicker();
 
+  // A6（docs08-r4 任务 6）：手机档第二层整行退役——右栏触发钮迁入顶栏（topbar 手机档
+  // 右簇），git/files 外链手机档迁入右栏抽屉头部（right-rail.tsx）；桌面（lg+）第二层
+  // 行保留原样（外链入口不动）。条件渲染（useIsMobile），非 CSS 隐藏——手机档 DOM 不存在。
+  const isMobile = useIsMobile();
+
   const retry = () => {
     setBootFailed(false);
     setRetrying((n) => n + 1);
   };
   return (
     <div className="flex flex-col bg-background" style={{ height: "var(--app-height, 100svh)" }}>
-      <Topbar />
+      <Topbar onToggleTodoPanel={toggleTodoPanel} />
       <div className="relative flex min-h-0 flex-1">
         {/* 抽屉遮罩（lg 以下）：左右抽屉共用（互斥下至多一个开启；z-30 镜像左栏） */}
         {(drawerOpen || todoPanelOpen) && (
@@ -175,46 +182,39 @@ export function AppShell() {
           <Sidebar />
         </aside>
 
-        {/* 主区：永久对话（C15）+ todo 26 外链入口（kv 配置，未配置隐藏）与手机右栏抽屉触发 */}
+        {/* 主区：永久对话（C15）。A6：手机档第二层行退役（右栏触发钮在顶栏、外链在右栏
+            抽屉头部）；桌面行保留——git/files 外链入口原位（kv 配置，未配置隐藏） */}
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
-            <div className="ml-auto flex items-center gap-1">
-              {/* W5-15 手机右栏抽屉触发（44px 触控目标，lg 以上隐藏——桌面走常驻 aside 折叠条） */}
-              <button
-                type="button"
-                aria-label="打开任务面板"
-                data-testid="todo-panel-toggle"
-                onClick={toggleTodoPanel}
-                className={`${EXTERNAL_LINK_CLASS} lg:hidden`}
-              >
-                <ListTodo className="size-5" />
-              </button>
-              {gitUrl && (
-                <a
-                  href={gitUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="打开 Git 外链"
-                  title={`Git 外链：${gitUrl}`}
-                  className={EXTERNAL_LINK_CLASS}
-                >
-                  <GitBranch className="size-5" />
-                </a>
-              )}
-              {filesUrl && (
-                <a
-                  href={filesUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="打开文件管理外链"
-                  title={`文件管理外链：${filesUrl}`}
-                  className={EXTERNAL_LINK_CLASS}
-                >
-                  <FolderOpen className="size-5" />
-                </a>
-              )}
+          {!isMobile && (
+            <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5" data-testid="layout-second-row">
+              <div className="ml-auto flex items-center gap-1">
+                {gitUrl && (
+                  <a
+                    href={gitUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="打开 Git 外链"
+                    title={`Git 外链：${gitUrl}`}
+                    className={EXTERNAL_LINK_CLASS}
+                  >
+                    <GitBranch className="size-5" />
+                  </a>
+                )}
+                {filesUrl && (
+                  <a
+                    href={filesUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="打开文件管理外链"
+                    title={`文件管理外链：${filesUrl}`}
+                    className={EXTERNAL_LINK_CLASS}
+                  >
+                    <FolderOpen className="size-5" />
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           <div className="min-h-0 flex-1">
             {!booted ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
