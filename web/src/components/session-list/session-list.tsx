@@ -557,8 +557,10 @@ export function SessionList() {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 工具条：新建 + 全局搜索 + 批量/归档/标签（搜索模式下隐藏后者）。
           触控目标（todo 26 走查修复）：手机 ≥44px（lg 保持桌面紧凑尺寸）。
-          "新建会话"固定在 currentProject 创建（分组头 "+" 才是跨项目落点）。 */}
-      <div className="shrink-0 space-y-2 border-b px-2 py-2">
+          A1（docs08-r4 任务 5）：手机档容器内边距与纵向节奏收紧（p/space 1.5），
+          lg 档维持原 p-2/space-y-2；"新建会话"固定在 currentProject 创建
+          （分组头 "+" 才是跨项目落点）。 */}
+      <div className="shrink-0 space-y-1.5 border-b px-1.5 py-1.5 lg:space-y-2 lg:px-2 lg:py-2">
         {/* 点击时刻实时读 currentProject：跨项目点击后 300ms 内 React 提交可能未完成，
             render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
         <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession(useUiStore.getState().currentProject)}>
@@ -585,7 +587,7 @@ export function SessionList() {
           )}
         </div>
         {searchResults === null && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 lg:gap-1.5">
             {/* 批量/归档/标签（W3 todo 10：分段控件已删，单列表唯一口径）。
                 whitespace-nowrap + shrink-0 保 390px 窄视口下工具条单行不折行。 */}
             <Button
@@ -674,7 +676,7 @@ export function SessionList() {
 
       {/* 批量操作条（todo 25）：勾选集合上的归档/删除（删除走确认弹窗）+ 全选 + 进度 */}
       {batchMode && (
-        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5 text-xs" data-testid="batch-bar">
+        <div className="flex shrink-0 items-center gap-1 border-b px-1.5 py-1.5 text-xs lg:px-2" data-testid="batch-bar">
           <span className="text-muted-foreground">已选 {selectedIds.size}</span>
           <Button variant="ghost" size="sm" className="h-11 px-1.5 text-xs lg:h-6" disabled={batchBusy} onClick={selectAllVisible}>
             全选
@@ -724,8 +726,9 @@ export function SessionList() {
         </div>
       )}
 
-      {/* 列表主体（滚动容器）：最近会话区 + 全部项目分组 */}
-      <div ref={listBodyRef} data-testid="session-scroll" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+      {/* 列表主体（滚动容器）：最近会话区 + 全部项目分组
+          （A1 docs08-r4 任务 5：手机档 p-1，lg 档维持 p-1.5） */}
+      <div ref={listBodyRef} data-testid="session-scroll" className="min-h-0 flex-1 overflow-y-auto p-1 lg:p-1.5">
         {searchResults !== null ? (
           searching && searchResults.length === 0 ? (
             <div className="px-2 py-6 text-center text-sm text-muted-foreground">搜索中…</div>
@@ -756,7 +759,7 @@ export function SessionList() {
                   type="button"
                   data-testid="recent-toggle"
                   aria-expanded={recentOpen}
-                  className="flex min-h-11 w-full items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7"
+                  className="flex min-h-11 w-full items-center gap-1 rounded-md px-1 text-xs font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7 lg:px-1.5"
                   onClick={() => setRecentOpen((v) => !v)}
                 >
                   <ChevronDown className={`size-3 shrink-0 transition-transform ${recentOpen ? "" : "-rotate-90"}`} />
@@ -844,7 +847,7 @@ export function SessionList() {
                       type="button"
                       data-testid="group-toggle"
                       aria-expanded={expanded}
-                      className={`flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7 ${manual ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      className={`flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7 lg:px-1.5 ${manual ? "cursor-grab active:cursor-grabbing" : ""}`}
                       onClick={() => toggleGroup(projectPath)}
                     >
                       <ChevronDown className={`size-3 shrink-0 transition-transform ${expanded ? "" : "-rotate-90"}`} />

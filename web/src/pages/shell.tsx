@@ -168,7 +168,7 @@ export function AppShell() {
 
         {/* 侧栏：lg 以上常驻，以下抽屉 */}
         <aside
-          className={`fixed inset-y-0 left-0 z-40 w-72 border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:translate-x-0 ${
+          className={`fixed inset-y-0 left-0 z-40 w-full border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:w-72 lg:translate-x-0 ${
             drawerOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
