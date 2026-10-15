@@ -1,16 +1,17 @@
-// 工具调用卡片（todo 17）：名称 + 参数摘要（折叠 JSON）+ 运行状态（转圈/完成/失败）
-// + 结果折叠展示（长结果截断 + "展开全部"）。
+// 工具调用卡片（todo 17）：名称 + 语义摘要（docs08-r4 任务 9：主标+副标按工具结构化，
+// 状态徽标独立成右端 pill）+ 运行状态（转圈/完成/失败）+ 结果折叠展示（长结果截断 + "展开全部"）。
 // 数据面：toolRuns[toolCallId]（tool_execution_start/end 事件驱动，todo 13 建）提供运行态与 args；
 // entries 中 role=toolResult 的配对消息（content[].text + isError，message_start/end 定格）提供结果——
 // 历史会话（GET messages 载入、无 toolRuns）与流式会话同一数据通路。
 // omo todo 工具的 details.phases 结构化渲染归 todo 23，本组件只按通用卡片展示文本摘要；
 // diff 视图（todo 19）：编辑类工具结果文本含 unified diff（```diff 围栏 / git diff 头 /
 // @@ hunk 头启发式识别）时默认切 diff 渲染，可切回纯文本；解析不出结构的误判自动回退文本。
-// 未知工具类型（未登记的 toolName / 异形 args / 无结果）一律走通用兜底，不崩。
+// 代码类工具（eval/bash）展开态直读原始代码/命令文本而非 JSON 包裹（codeTextOf，实样字段），
+// 缺字段回落 prettyJson；未知工具类型（未登记的 toolName / 异形 args / 无结果）一律走通用兜底，不崩。
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
-import { RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeArgs } from "./tool-card-data";
+import { codeTextOf, RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeToolCall } from "./tool-card-data";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
 
 // W5-27 首屏拆分：diff 视图（react-diff-view）按需加载，未展开过 diff 的会话不下载该模块
@@ -59,7 +60,10 @@ export function ToolCard({
   const hasResult = resultText.length > 0;
   // 运行中：有在途 run 或 live 且尚无任何结果；历史消息无结果也按完成处理（不空转）
   const running = !isError && !hasResult && (run?.status === "running" || live);
-  const argsSummary = summarizeArgs(args);
+  // 语义摘要（docs08-r4 任务 9）：primary/secondary/kind 按工具结构化；result 供 task_id 与变更概要
+  const summary = useMemo(() => summarizeToolCall(name, args, resultMessage), [name, args, resultMessage]);
+  // 代码类展开态直读原始代码/命令文本（eval.code / bash.command），缺字段回落 prettyJson
+  const codeText = summary.kind === "code" ? codeTextOf(args) : "";
   const argsPretty = args == null ? "" : prettyJson(args);
   const clipped = !showFull && resultText.length > RESULT_PREVIEW_CHARS;
   // 结果含可解析的 unified diff 时默认切 diff 渲染（todo 19）：
@@ -83,15 +87,21 @@ export function ToolCard({
       >
         <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 font-mono text-xs font-medium">{name}</span>
-        {argsSummary ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{argsSummary}</span>
-        ) : (
-          <span className="min-w-0 flex-1" />
+        {summary.chip && (
+          <span className="shrink-0 rounded border bg-muted/40 px-1 py-px font-mono text-[10px] leading-4 text-muted-foreground">
+            {summary.chip}
+          </span>
         )}
+        {/* 摘要区（docs08-r4 任务 9）：主标正常字重 + 副标 muted 小字，纵向堆叠、各自截断 */}
+        <span className="min-w-0 flex-1">
+          {summary.primary && <span className="block truncate text-xs text-foreground/90">{summary.primary}</span>}
+          {summary.secondary && <span className="block truncate text-[11px] text-muted-foreground">{summary.secondary}</span>}
+        </span>
+        {/* 状态徽标独立：右端 pill，运行中/失败/完成语义不变（docs08-r4 任务 9 视觉分组） */}
         <span
-          className={`flex shrink-0 items-center gap-1 text-xs ${
-            isError ? "text-destructive" : running ? "animate-pulse text-muted-foreground" : "text-muted-foreground"
-          }`}
+          className={`flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs ${
+            isError ? "border-destructive/30 text-destructive" : "border-border text-muted-foreground"
+          } ${running ? "animate-pulse" : ""}`}
         >
           {running ? (
             <Loader2 className="size-3 shrink-0 animate-spin" />
@@ -108,11 +118,11 @@ export function ToolCard({
       </button>
       {open && (
         <div className="space-y-2 border-t px-3 py-2">
-          {argsPretty ? (
+          {argsPretty || codeText ? (
             <section>
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground/80">参数</div>
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground/80">{codeText ? "代码" : "参数"}</div>
               <pre className="max-h-40 overflow-y-auto rounded-md bg-muted/40 px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-                {argsPretty}
+                {codeText || argsPretty}
               </pre>
             </section>
           ) : null}

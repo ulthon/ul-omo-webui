@@ -11,9 +11,18 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { ToolCard } = await import("../tool-card");
-const { summarizeArgs, prettyJson, resultTextOf, diffTextOf, RESULT_PREVIEW_CHARS, ARGS_SUMMARY_CHARS } = await import(
-  "../tool-card-data"
-);
+const {
+  summarizeArgs,
+  summarizeToolCall,
+  changeSummaryOf,
+  codeTextOf,
+  prettyJson,
+  resultTextOf,
+  diffTextOf,
+  RESULT_PREVIEW_CHARS,
+  ARGS_SUMMARY_CHARS,
+  PRIMARY_CHARS,
+} = await import("../tool-card-data");
 const { useMessagesStore } = await import("@/stores/messages");
 const {
   TODO_START,
@@ -107,6 +116,148 @@ describe("tool-card 纯助手函数", () => {
     expect(resultTextOf(null, { ok: true })).toBe('{\n  "ok": true\n}');
     expect(resultTextOf(null, null)).toBe("");
     expect(resultTextOf(null, undefined)).toBe("");
+  });
+});
+
+// ---- docs08-r4 任务 9：summarizeToolCall 语义摘要（夹具全部来自真实会话 JSONL 抽样原文，
+// 字段名经实证：eval={code,language,summary} bash={command} write/edit={path} read={path}
+// glob/grep={pattern} task={prompt,task_summary,category}；task_id 仅出现在结果文本中） ----
+describe("summarizeToolCall 工具语义摘要（docs08-r4 任务 9）", () => {
+  // 真实抽样原文（/root/.pi/agent/sessions 只读拷贝，字段未改动）
+  const TASK_ARGS = {
+    prompt:
+      "List the file names (not directories' contents) in the /tmp/opencode directory. Use glob or a shell ls. Return the complete list of names as plain text, nothing else.",
+    task_summary: "列出 /tmp/opencode 目录文件名",
+    run_in_background: false,
+    category: "quick",
+  };
+  const EVAL_ARGS = {
+    action: "run",
+    language: "py",
+    code: "for i in range(1, 61):\n    print(i)",
+    summary: "Print numbers from 1 to 60, one per line",
+    timeout: 10,
+  };
+  const BASH_ARGS = {
+    command:
+      'ls -la /data/projects/pool-business-demo/docker && echo "---PARENT---" && ls -la /data/projects/pool-business-demo',
+  };
+  const WRITE_ARGS = {
+    path: "/tmp/acme_test_server.py",
+    content: '#!/usr/bin/env python3\n"""临时最小 HTTP 服务。"""\nfrom http.server import BaseHTTPRequestHandler, HTTPServer',
+  };
+  const EDIT_ARGS = { path: "index.html", edits: [{ oldText: "<p>Display content will appear here...</p>", newText: "<p>Updated</p>" }] };
+  const READ_ARGS = { path: "/data/projects/pool-business-demo/docker/docker-compose.prod.yaml" };
+  const GLOB_ARGS = { pattern: "**/*.{js,ts,jsx,tsx,html,css,md}" };
+
+  test("task：primary=task_summary、secondary=category（task_id 优先 details 结构化字段，兜底结果文本）", () => {
+    const noResult = summarizeToolCall("task", TASK_ARGS);
+    expect(noResult).toEqual({ primary: "列出 /tmp/opencode 目录文件名", secondary: "quick", kind: "task" });
+    // 实测形态：task 结果 details 携带结构化 task_id（值形如 "st_01a13b2f"）
+    const structured = summarizeToolCall("task", TASK_ARGS, {
+      role: "toolResult",
+      details: { task_id: "st_01a13b2f", category: "unspecified-high", status: "completed" },
+    } as never);
+    expect(structured.secondary).toBe("quick · st_01a13b2f");
+    // 老会话兜底：结果文本含 task_id 实样形态 "Started task … (st_01a13225, running)"
+    const fromText = summarizeToolCall("task", TASK_ARGS, {
+      role: "toolResult",
+      content: [{ type: "text", text: "Started task 列出 /tmp/opencode 前5个文件名 (st_01a13225, running). Completion is automatically delivered." }],
+    } as never);
+    expect(fromText.secondary).toBe("quick · st_01a13225");
+  });
+
+  test("task 无 task_summary：prompt 首行截断（PRIMARY_CHARS）；task 结果无 id 时 secondary 省略", () => {
+    const s = summarizeToolCall("task", { prompt: "First line of the prompt\nsecond line", category: "quick" });
+    expect(s.primary).toBe("First line of the prompt");
+    expect(s.secondary).toBe("quick");
+    const long = summarizeToolCall("task", { prompt: "x".repeat(200) });
+    expect(long.primary.length).toBe(PRIMARY_CHARS + 1); // 截断 + 尾部省略号
+    expect(long.primary.endsWith("…")).toBe(true);
+    expect(summarizeToolCall("task", { prompt: "only prompt" }).secondary).toBeUndefined();
+  });
+
+  test("eval：primary=code 首行、secondary=summary、chip=language、kind=code", () => {
+    expect(summarizeToolCall("eval", EVAL_ARGS)).toEqual({
+      primary: "for i in range(1, 61):",
+      secondary: "Print numbers from 1 to 60, one per line",
+      kind: "code",
+      chip: "py",
+    });
+  });
+
+  test("bash：primary=command 首行截断、chip=sh、kind=code", () => {
+    const s = summarizeToolCall("bash", BASH_ARGS);
+    expect(s.kind).toBe("code");
+    expect(s.chip).toBe("sh");
+    expect(s.secondary).toBeUndefined();
+    expect(s.primary.startsWith("ls -la /data/projects/pool-business-demo/docker")).toBe(true);
+    expect(s.primary.endsWith("…")).toBe(true);
+    expect(s.primary.length).toBe(PRIMARY_CHARS + 1);
+  });
+
+  test("write/edit：primary=path、secondary=+N/-M（details.patch 实样统计）", () => {
+    // write 实样：details.patch 为全新文件 unified diff（--- /dev/null 头不计删行）
+    const writePatch =
+      '--- /dev/null\n+++ /tmp/acme_test_server.py\n@@ -0,0 +1,3 @@\n+#!/usr/bin/env python3\n+from http.server import BaseHTTPRequestHandler, HTTPServer\n+HTTPServer(("127.0.0.1", 8080), None).serve_forever()';
+    const writeRes = { role: "toolResult", details: { patch: writePatch } } as never;
+    expect(summarizeToolCall("write", WRITE_ARGS, writeRes)).toEqual({
+      primary: "/tmp/acme_test_server.py",
+      secondary: "+3/-0 行",
+      kind: "path",
+    });
+    // edit 实样形态：---/+++ 头与上下文行不计，-/+ 体行计数
+    const editPatch =
+      '--- index.html\n+++ index.html\n@@ -80,8 +80,23 @@\n     <div class="display-area" id="displayArea">\n-        <p>Display content will appear here...</p>\n+        <p>Updated display</p>\n+        <div id="disconnectWindow"></div>';
+    const editRes = { role: "toolResult", details: { patch: editPatch } } as never;
+    expect(summarizeToolCall("edit", EDIT_ARGS, editRes).secondary).toBe("+2/-1 行");
+  });
+
+  test("write 变更概要兜底：无 details.patch 时走结果文本 diff 启发式；无结果只显路径", () => {
+    const fenced = {
+      role: "toolResult",
+      content: [{ type: "text", text: "改动如下\n```diff\n--- a/f.ts\n+++ b/f.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n```" }],
+    } as never;
+    expect(summarizeToolCall("edit", EDIT_ARGS, fenced).secondary).toBe("+1/-1 行");
+    expect(summarizeToolCall("write", WRITE_ARGS, null).secondary).toBeUndefined();
+    expect(summarizeToolCall("write", WRITE_ARGS, null).kind).toBe("path");
+    expect(changeSummaryOf({ role: "toolResult", content: [{ type: "text", text: "no diff here" }] } as never)).toBeNull();
+  });
+
+  test("read/glob：primary=路径/模式、kind=path、无 secondary", () => {
+    expect(summarizeToolCall("read", READ_ARGS)).toEqual({ primary: READ_ARGS.path, kind: "path" });
+    expect(summarizeToolCall("glob", GLOB_ARGS)).toEqual({ primary: GLOB_ARGS.pattern, kind: "path" });
+  });
+
+  test("未知工具回落 summarizeArgs（generic）", () => {
+    expect(summarizeToolCall("memory", { command: "str_replace", file_path: "a.md" })).toEqual({
+      primary: '{"command":"str_replace","file_path":"a.md"}',
+      kind: "generic",
+    });
+    expect(summarizeToolCall("mystery_tool", "raw-string-args-not-object")).toEqual({
+      primary: "raw-string-args-not-object",
+      kind: "generic",
+    });
+  });
+
+  test("畸形 args 不崩：null / 数字 / 数组 / 缺字段对象 / 空字段 → generic 回落", () => {
+    expect(summarizeToolCall("eval", null)).toEqual({ primary: "", kind: "generic" });
+    expect(summarizeToolCall("bash", 42)).toEqual({ primary: "42", kind: "generic" });
+    expect(summarizeToolCall("task", ["array"])).toEqual({ primary: '["array"]', kind: "generic" });
+    expect(summarizeToolCall("task", {})).toEqual({ primary: "", kind: "generic" }); // prompt/task_summary 全缺
+    expect(summarizeToolCall("eval", { language: "py" }).kind).toBe("generic"); // 缺 code
+    expect(summarizeToolCall("bash", { command: "" }).kind).toBe("generic"); // 空命令视为缺失
+    expect(summarizeToolCall("write", { path: "  " }).kind).toBe("generic"); // 纯空白视为缺失
+    expect(summarizeToolCall("task", null, { role: "toolResult", content: [{ type: "text", text: "(st_id1, running)" }] } as never).kind).toBe("generic");
+  });
+
+  test("codeTextOf：eval.code / bash.command 直读，非对象/缺字段返回空串（prettyJson 兜底入口）", () => {
+    expect(codeTextOf(EVAL_ARGS)).toBe(EVAL_ARGS.code);
+    expect(codeTextOf(BASH_ARGS)).toBe(BASH_ARGS.command);
+    expect(codeTextOf(WRITE_ARGS)).toBe(""); // write 是 path 类，不直读 content
+    expect(codeTextOf(null)).toBe("");
+    expect(codeTextOf("raw")).toBe("");
+    expect(codeTextOf({ code: 123 })).toBe("");
   });
 });
 

@@ -1,6 +1,9 @@
 // 工具卡片数据助手（todo 17）：参数/结果的摘要与文本提取，tool-card.tsx 与单测共用。
 // 独立成文件是为了 react-refresh 约束（组件文件只导出组件）。
 // todo 19 增补：diff 视图数据源判定 diffTextOf（details.patch 优先，文本启发式兜底）。
+// docs08-r4 任务 9 增补：summarizeToolCall 按工具语义结构化摘要（字段名经真实会话 JSONL 抽样核对：
+//   eval={code,language,summary} bash={command} write/edit={path,...} read={path}
+//   glob/grep={pattern} task={prompt,task_summary,category}——task_id 仅出现在结果文本 "(st_xxx, running)"）。
 import type { WireMessage, WirePart } from "@/lib/api";
 import { extractParseableDiff } from "@/components/diff/diff-utils";
 
@@ -135,4 +138,138 @@ export function diffTextOf(message: WireMessage | null, resultText: string): str
     if (fromPatch) return fromPatch;
   }
   return extractParseableDiff(resultText);
+}
+
+// ---- docs08-r4 任务 9：按工具语义结构化摘要（纯函数，真实 args 字段经会话 JSONL 抽样核对） ----
+
+/** 头部主标截断长度（字符） */
+export const PRIMARY_CHARS = 80;
+
+export type ToolSummaryKind = "code" | "path" | "task" | "generic";
+
+export interface ToolCallSummary {
+  primary: string;
+  secondary?: string;
+  kind: ToolSummaryKind;
+  /** kind=code 的头部语言/类型小标（eval→language 字段、bash→"sh"） */
+  chip?: string;
+}
+
+/** args → 对象形态窄化（非普通对象一律 null，走 generic 兜底） */
+function argsRecord(args: unknown): Record<string, unknown> | null {
+  if (args == null || typeof args !== "object" || Array.isArray(args)) return null;
+  return args as Record<string, unknown>;
+}
+
+/** 非空字符串窄化（空串/纯空白视为缺失） */
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/** 首行截断（多行命令/代码/提示词取首行，超长以 … 收尾） */
+function firstLine(text: string, max: number): string {
+  const line = (text.split("\n", 1)[0] ?? "").trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
+/** task 结果文本中的 task_id（实样形态 "Started task … (st_01a13225, running)"，老会话无结构化字段时兜底） */
+const TASK_ID_RE = /\bst_[A-Za-z0-9]+\b/;
+
+/** task_id 取值：优先 result.details.task_id（QA 实证结构化字段，值形如 "st_01a13b2f"），
+ *  兜底结果文本 st_ 形态正则（老会话/流式中间态）；都无返回 undefined。 */
+function taskIdOf(result?: WireMessage | null): string | undefined {
+  const details = result?.details as { task_id?: unknown } | undefined;
+  if (typeof details?.task_id === "string" && details.task_id.trim()) return details.task_id;
+  const text = textsOfContent(result?.content);
+  return TASK_ID_RE.exec(text)?.[0];
+}
+
+/** write/edit 变更概要 "+N/-M 行"：优先 result.details.patch 统计，次选结果文本 diff 启发式；
+ *  无 diff 形态或增删全零（解析不出可计数行）返回 null（头部只显路径）。 */
+export function changeSummaryOf(result?: WireMessage | null): string | null {
+  if (!result) return null;
+  const details = result.details as { patch?: unknown } | undefined;
+  const patch = typeof details?.patch === "string" && details.patch.trim() ? details.patch : null;
+  const diff = patch ?? extractParseableDiff(textsOfContent(result.content));
+  if (!diff) return null;
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added++;
+    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  if (added === 0 && removed === 0) return null;
+  return `+${added}/-${removed} 行`;
+}
+
+/**
+ * 按工具语义结构化摘要（docs08-r4 任务 9）：
+ *   task → primary=task_summary ?? prompt 首行截断、secondary=`${category} · ${task_id}`（缺者省略）、kind=task；
+ *   eval → primary=code 首行截断、secondary=summary、chip=language、kind=code；
+ *   bash/sh → primary=command 首行截断、chip="sh"、kind=code；
+ *   write/edit/multi_edit → primary=path、secondary=+N/-M 变更概要（changeSummaryOf）、kind=path；
+ *   read/ls → primary=path、glob/grep → primary=pattern、kind=path；
+ *   其余（含异形 args：缺失字段/非对象/数组）→ 回落 summarizeArgs、kind=generic。
+ * result（toolResult 消息）可选，仅用于 task_id 与变更概要；运行中无结果时相应 secondary 缺省。
+ */
+export function summarizeToolCall(name: string, args: unknown, result?: WireMessage | null): ToolCallSummary {
+  const a = argsRecord(args);
+  if (a != null) {
+    switch (name) {
+      case "task": {
+        const prompt = nonEmpty(a.prompt);
+        const primary = nonEmpty(a.task_summary) ?? (prompt ? firstLine(prompt, PRIMARY_CHARS) : "");
+        if (!primary) break;
+        const secondary = [nonEmpty(a.category), taskIdOf(result)].filter(Boolean).join(" · ") || undefined;
+        return { primary, secondary, kind: "task" };
+      }
+      case "eval": {
+        const code = nonEmpty(a.code);
+        if (!code) break;
+        return {
+          primary: firstLine(code, PRIMARY_CHARS),
+          secondary: nonEmpty(a.summary),
+          kind: "code",
+          chip: nonEmpty(a.language) ?? "code",
+        };
+      }
+      case "bash":
+      case "sh": {
+        const command = nonEmpty(a.command);
+        if (!command) break;
+        return { primary: firstLine(command, PRIMARY_CHARS), kind: "code", chip: "sh" };
+      }
+      case "write":
+      case "edit":
+      case "multi_edit": {
+        const path = nonEmpty(a.path);
+        if (!path) break;
+        return { primary: path, secondary: changeSummaryOf(result) ?? undefined, kind: "path" };
+      }
+      case "read":
+      case "ls": {
+        const path = nonEmpty(a.path);
+        if (!path) break;
+        return { primary: path, kind: "path" };
+      }
+      case "glob":
+      case "grep": {
+        const pattern = nonEmpty(a.pattern);
+        if (!pattern) break;
+        return { primary: pattern, kind: "path" };
+      }
+      default:
+        break;
+    }
+  }
+  return { primary: summarizeArgs(args), kind: "generic" };
+}
+
+/** 代码类工具的原始代码/命令文本（eval.code / bash.command 实样字段直读），非代码类或缺字段返回空串 */
+export function codeTextOf(args: unknown): string {
+  const a = argsRecord(args);
+  if (!a) return "";
+  if (typeof a.code === "string") return a.code;
+  if (typeof a.command === "string") return a.command;
+  return "";
 }
