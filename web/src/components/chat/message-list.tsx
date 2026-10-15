@@ -1,12 +1,16 @@
 // 虚拟化消息列表（todo 16）：TanStack Virtual 动态测量（measureElement + ResizeObserver），
 // 长会话手机端只挂载可视区。自动滚底不经 React：直接订阅 store，在底部时 rAF 跟随滚动；
 // 用户上滚即暂停跟随并浮出"回到底部"。顶部触顶触发增量同步（游标分页钩子，ChatView 提供）。
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+// 记忆标记（docs08-r4 任务 13）：entries 中白名单 memory 条目经 mergeMemoryItems 并入 items，
+// 标记块随虚拟化正常测量渲染。
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Bell, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
+import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
-import type { ChatListItem } from "./message-items";
+import { mergeMemoryItems, type ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
 
@@ -21,9 +25,54 @@ export const ModelDivider = memo(function ModelDivider({ model }: { model: strin
   );
 });
 
+/** 记忆标记块（docs08-r4 任务 13）：图标 + 一句话摘要 + 点击展开原文；折叠时不渲染原文
+ *  （惰性展开，不影响消息流渲染）。样式与 thinking 块同族更轻（无边框细行）；权重分级：
+ *  weak 弱标记 / weakest 极弱（projection-pin）/ notice 提示卡（kibitzer/memorian/notice）。 */
+const MARKER_ICONS: Record<MemoryMarkerKind, LucideIcon> = {
+  sessionBinding: Database,
+  acceptedTurns: BookCheck,
+  projectionPin: Pin,
+  kibitzerNudged: Lightbulb,
+  memorianNudged: Lightbulb,
+  memoryNotice: Bell,
+};
+
+const MARKER_TONE: Record<MemoryMarker["weight"], string> = {
+  weak: "text-xs text-muted-foreground",
+  weakest: "text-[11px] text-muted-foreground/60",
+  notice: "text-xs text-foreground/80",
+};
+
+export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { marker: MemoryMarker }) {
+  const [open, setOpen] = useState(false);
+  const Icon = MARKER_ICONS[marker.kind];
+  return (
+    <div data-testid="memory-marker" data-kind={marker.kind} data-weight={marker.weight} className="my-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted lg:min-h-0 ${MARKER_TONE[marker.weight]}`}
+      >
+        <Icon className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{marker.summary}</span>
+        {marker.detail !== "" && (
+          <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+        )}
+      </button>
+      {open && marker.detail !== "" && (
+        <div className="mt-0.5 max-h-48 overflow-y-auto rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">
+          {marker.detail}
+        </div>
+      )}
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "modelDivider") return <ModelDivider model={item.model} />;
+  if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
 });
 
@@ -45,12 +94,17 @@ export function MessageList({
   const followRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
+  // 白名单 memory 条目并入 items（docs08-r4 任务 13）：entries 引用不变（流式 delta 只动
+  // streamingMessage）时 memo 不重算，无标记会话 mergeMemoryItems 原样返回不建数组
+  const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
+  const mergedItems = useMemo(() => mergeMemoryItems(items, entries ?? []), [items, entries]);
+
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count: mergedItems.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 120,
     overscan: 6,
-    getItemKey: (index) => items[index].key,
+    getItemKey: (index) => mergedItems[index].key,
   });
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -86,7 +140,7 @@ export function MessageList({
   }, [scrollToBottom]);
 
   // 打开会话 / 从空到有内容：定位到底部（测量异步完成，两段式补齐）
-  const hasItems = items.length > 0;
+  const hasItems = mergedItems.length > 0;
   useEffect(() => {
     if (!hasItems) return;
     const raf = requestAnimationFrame(() => {
@@ -104,7 +158,7 @@ export function MessageList({
         data-testid="chat-scroll"
         className="h-full overflow-y-auto overscroll-contain px-3 py-4 sm:px-4"
       >
-        {items.length === 0 ? (
+        {mergedItems.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             暂无消息，发送第一条消息开始对话
           </div>
@@ -114,7 +168,7 @@ export function MessageList({
               <div
                 key={vi.key}
                 data-index={vi.index}
-                data-entry-key={items[vi.index].key}
+                data-entry-key={mergedItems[vi.index].key}
                 ref={virtualizer.measureElement}
                 className="w-full pb-3"
                 style={{
@@ -124,14 +178,14 @@ export function MessageList({
                   transform: `translateY(${vi.start}px)`,
                 }}
               >
-                <Row item={items[vi.index]} sessionId={sessionId} />
+                <Row item={mergedItems[vi.index]} sessionId={sessionId} />
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <NavRail items={items} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
+      <NavRail items={mergedItems} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
 
       {syncing && (
         <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
@@ -139,7 +193,7 @@ export function MessageList({
         </div>
       )}
 
-      {showJump && items.length > 0 && (
+      {showJump && mergedItems.length > 0 && (
         <Button
           size="sm"
           variant="outline"

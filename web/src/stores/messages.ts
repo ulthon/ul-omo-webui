@@ -5,6 +5,7 @@
 // 流式 assistant 消息独立存放（streamingMessage），delta 只更新单个对象；定格时并入 entries。
 import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
+import { isMemoryAppendedEntry } from "@/lib/memory-entries";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -375,7 +376,26 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           break;
         }
 
-        // 未知 / 噪音事件（tool_hook_status、extension_ui_request、entry_appended、
+        case "entry_appended": {
+          // 记忆标记条目增量（docs08-r4 任务 13）：引擎记忆相关 custom/custom_message 条目
+          // 经 entry_appended 到达（隔离实例实测 wire 形态 {entry:{type,id,customType,...}}，
+          // custom_message 携 id 早于同义的无 id message_start/end 帧），仅白名单 customType
+          // 入列（渲染层派生标记块，历史 GET messages 同形天然同构）；其余（pi-rules.scan、
+          // senpi.hooks.stop-state、type:"message" 的消息条目等）保持不渲染。
+          const appended = event.entry;
+          if (appended === null || typeof appended !== "object") break;
+          const entry = appended as WireEntry;
+          if (!isMemoryAppendedEntry(entry)) break;
+          set((s) => {
+            const cur = s.bySession[sessionId] ?? emptySessionMessages();
+            return {
+              bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+            };
+          });
+          break;
+        }
+
+        // 未知 / 噪音事件（tool_hook_status、extension_ui_request、
         // settings_source_selected、loaded_surfaces_changed、session_closed...）：
         // 容错忽略，不崩。
         default:
