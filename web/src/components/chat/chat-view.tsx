@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
 import { api, setPromptGate } from "@/lib/api";
+import { readSessionUrl } from "@/lib/session-url";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
@@ -208,13 +209,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** ChatView 入口：选中会话（store）优先，?session= 参数兜底（深链 / QA 用） */
+/** ChatView 入口：选中会话（store）优先，?session= 参数兜底（深链 / QA 用）。
+ * B1：读取统一走 lib/session-url 助手（shell.tsx 同源收敛）；AppShell 引导完成后已按
+ * URL 参数显式 select，此兜底仅覆盖引导完成前的窗口，保持原安全链不删。 */
 export function ChatView() {
   const selectedId = useSessionsStore((s) => s.selectedId);
-  const urlSession = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("session");
-  }, []);
+  const urlSession = useMemo(() => readSessionUrl(), []);
   const sessionId = selectedId ?? urlSession;
   if (!sessionId) return <EmptyHint />;
   return <ChatSession key={sessionId} sessionId={sessionId} />;

@@ -2,9 +2,12 @@
 // 数据写入来自 GET /api/sessions（组件层触发）与 SSE 元数据事件（todo 14/15 消费）。
 // allMode（todo 9）：跨项目聚合视图——refreshSessions 走聚合端点，结果按 project 分组写入。
 // 旧 human/all 双视图已移除（W3 todo 9 数据层 + 遗留清理）：列表固定含 fork 会话。
+// B1：选中态以 ?session= 参数为 URL 载体（lib/session-url，replaceState），别名 id
+// （createSession 回执的未落盘占位会话）不入 URL——选中即清参。
 import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
+import { writeSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
 
 export type ArchivedFilter = "true" | "false" | "all";
@@ -38,6 +41,10 @@ interface SessionsState {
   tagFilter: string[];
   /** 当前选中会话 id */
   selectedId: string | null;
+  /** createSession 回执 id（未落盘占位会话）集合：客户端无法从 id 本身区分别名与真实 id
+   * （local- 前缀仅消息条目，messages.ts:110），选中这类会话时 URL 必须清参——刷新命中
+   * 占位 id 只会落 listMessages 错误态。adoptSessionId 换真实 id 时移除旧 id。 */
+  aliasIds: Record<string, true>;
   loading: boolean;
 
   setQ(q: string): void;
@@ -74,6 +81,8 @@ interface SessionsState {
   /** 未落盘占位行采用真实 id（首条消息落盘后服务端回执带回，缺陷修复：新会话首条
    *  消息不显示）：行 id、当前选中、运行态点一并迁移 */
   adoptSessionId(oldId: string, newId: string): void;
+  /** createSession 回执 id 记入别名集合（session-list 新建会话路径调用，先于 select） */
+  markAliasId(id: string): void;
 }
 
 function replaceIn(list: SessionListItem[], session: SessionListItem): SessionListItem[] {
@@ -95,13 +104,20 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   allMode: false,
   tagFilter: [],
   selectedId: null,
+  aliasIds: {},
   loading: false,
 
   setQ: (q) => set({ q }),
   setArchived: (archived) => set({ archived }),
   setAllMode: (allMode) => set({ allMode }),
   setTagFilter: (tagFilter) => set({ tagFilter }),
-  select: (id) => set({ selectedId: id }),
+  // B1 URL 同步：选中即 replaceState 写 ?session=；别名 id（未落盘占位会话）不入 URL，
+  // 清参而非留陈旧选中（N2：宁缺勿错，避免 URL 指向刷新必错的占位 id）
+  select: (id) => {
+    const isAlias = id !== null && useSessionsStore.getState().aliasIds[id] === true;
+    set({ selectedId: id });
+    writeSessionUrl(isAlias ? null : id);
+  },
   setLoading: (loading) => set({ loading }),
 
   setSessions: (project, sessions) =>
@@ -164,7 +180,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return changed ? { byProject } : s;
     }),
 
-  removeSession: (id) =>
+  removeSession: (id) => {
+    const wasSelected = useSessionsStore.getState().selectedId === id;
     set((s) => {
       let changed = false;
       const byProject: Record<string, SessionListItem[]> = {};
@@ -174,8 +191,17 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         byProject[project] = filtered;
       }
       const selectedId = s.selectedId === id ? null : s.selectedId;
-      return changed || selectedId !== s.selectedId ? { byProject, selectedId } : s;
-    }),
+      let aliasIds = s.aliasIds;
+      if (id in s.aliasIds) {
+        aliasIds = { ...s.aliasIds };
+        delete aliasIds[id];
+        changed = true;
+      }
+      return changed || selectedId !== s.selectedId ? { byProject, selectedId, aliasIds } : s;
+    });
+    // 删除的是当前选中会话：URL 同步清参回空态
+    if (wasSelected) writeSessionUrl(null);
+  },
 
   bumpUnread: (id) =>
     set((s) => {
@@ -235,7 +261,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return next === null ? s : { runStates: next };
     }),
 
-  adoptSessionId: (oldId, newId) =>
+  adoptSessionId: (oldId, newId) => {
+    const wasSelected = useSessionsStore.getState().selectedId === oldId;
     set((s) => {
       if (oldId === newId) return s;
       let changed = false;
@@ -264,8 +291,20 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
           delete runStateAt[oldId];
         }
       }
-      return changed || selectedId !== s.selectedId || runStates !== s.runStates
-        ? { byProject, selectedId, runStates, runStateAt }
+      // 别名集合随换 key 移除旧 id（新 id 是真实落盘 id，不入集合）
+      let aliasIds = s.aliasIds;
+      if (oldId in s.aliasIds) {
+        aliasIds = { ...s.aliasIds };
+        delete aliasIds[oldId];
+      }
+      return changed || selectedId !== s.selectedId || runStates !== s.runStates || aliasIds !== s.aliasIds
+        ? { byProject, selectedId, runStates, runStateAt, aliasIds }
         : s;
-    }),
+    });
+    // 选中态换 key：URL 同步换写真实 id（URL 里若是别名 id，此处原地纠正）
+    if (wasSelected && oldId !== newId) writeSessionUrl(newId);
+  },
+
+  markAliasId: (id) =>
+    set((s) => (id in s.aliasIds ? s : { aliasIds: { ...s.aliasIds, [id]: true } })),
 }));

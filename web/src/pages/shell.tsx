@@ -16,6 +16,7 @@ import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
+import { readSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 import { Topbar } from "@/components/layout/topbar";
@@ -80,12 +81,11 @@ export function AppShell() {
   const [booted, setBooted] = useState(false);
   const [bootFailed, setBootFailed] = useState(false);
   const [retrying, setRetrying] = useState(0);
-  // W5-15 右栏：当前会话（与会话视图同源派生：选中优先、?session= 深链兜底）
+  // W5-15 右栏：当前会话（与会话视图同源派生：选中优先、?session= 深链兜底）。
+  // B1：读取统一走 lib/session-url（与 chat-view 同一助手，避免漂移）；挂载引导完成后
+  // 按 URL 参数显式 select（见 bootstrap effect），本兜底仅覆盖引导完成前的窗口。
   const selectedSessionId = useSessionsStore((s) => s.selectedId);
-  const urlSessionId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("session");
-  }, []);
+  const urlSessionId = useMemo(() => readSessionUrl(), []);
   const todoSessionId = selectedSessionId ?? urlSessionId;
   // 折叠态：无 localStorage 记忆时按视口取默认（lg 展开 / <lg 关闭）；一经交互记忆为准
   const [todoPanelOpen, setTodoPanelOpen] = useState(() => {
@@ -117,6 +117,14 @@ export function AppShell() {
   useEffect(() => {
     let cancelled = false;
     bootstrap()
+      .then(() => {
+        // B1 显式恢复：引导完成后按 URL 参数选中会话，store 与 URL 一致（非仅视图兜底）。
+        // bootstrap 先行完毕才恢复——openProject 的 refreshSessions 不写 selectedId，
+        // 恢复动作不会被引导流程覆盖；select 内部会原地把同一 id 写回 URL（无害幂等）。
+        if (cancelled) return;
+        const urlId = readSessionUrl();
+        if (urlId) useSessionsStore.getState().select(urlId);
+      })
       .catch((err: unknown) => {
         // 401 已由 api client 跳登录页；其余错误显示重试
         if (!cancelled && !(err instanceof ApiError && err.status === 401)) setBootFailed(true);

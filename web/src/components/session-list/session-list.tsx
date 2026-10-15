@@ -253,6 +253,11 @@ export function SessionList() {
         lastRead: null,
         active: null,
       });
+      // B1：仅 durable=false 的回执 id 是未落盘别名（客户端无法从 id 本身区分，local-
+      // 前缀仅消息条目）——记入别名集合，select 时清 ?session= 参数（刷新命中占位 id
+      // 必落错误态）。durable=true 的回执 id 即磁盘真实 id，选中即写入 URL；此后首条
+      // 发送不会换 key（adoptSessionId 只服务 durable=false 路径）。
+      if (!res.session.durable) useSessionsStore.getState().markAliasId(res.session.id);
       useSessionsStore.getState().select(res.session.id);
       useUiStore.getState().showToast("会话已创建，发送首条消息后保存");
     } catch (err) {
