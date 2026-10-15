@@ -15,6 +15,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { memo, useDeferredValue, useEffect, isValidElement, useRef, useState, type ReactNode } from "react";
 import { toJsxRuntime, type Options as ToJsxOptions } from "hast-util-to-jsx-runtime";
 import { urlAttributes } from "html-url-attributes";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { visit } from "unist-util-visit";
@@ -121,7 +122,9 @@ const markdownComponents: ToJsxOptions["components"] = {
 
 // ---- 渲染管线（react-markdown v10 同步路径复刻）----
 
-const processor = unified().use(remarkParse).use(remarkRehype, { allowDangerousHtml: true });
+// remark-gfm：表格/删除线/任务列表/自动链接（react-markdown 默认带 GFM；W5 复刻管线时
+// 漏接导致表格渲染成纯文本——2026-10-15 用户实测发现，回归测试 tests/markdown-gfm.test.ts）
+const processor = unified().use(remarkParse).use(remarkGfm).use(remarkRehype, { allowDangerousHtml: true });
 
 // 与 react-markdown defaultUrlTransform 一致：仅放行安全协议，其余 URL 置空
 const safeProtocol = /^(https?|ircs?|mailto|xmpp)$/i;
