@@ -259,6 +259,9 @@ export function SessionList() {
       // 发送不会换 key（adoptSessionId 只服务 durable=false 路径）。
       if (!res.session.durable) useSessionsStore.getState().markAliasId(res.session.id);
       useSessionsStore.getState().select(res.session.id);
+      // F-1（docs08-r4 验证波 F3）：手机档抽屉内新建会话后自动收起（与 selectSession 同一
+      // 关闭路径；桌面侧栏常驻，drawerOpen 无视觉效果，写 false 无害且与现状一致）
+      ui.setDrawerOpen(false);
       useUiStore.getState().showToast("会话已创建，发送首条消息后保存");
     } catch (err) {
       useUiStore.getState().showToast(err instanceof ApiError ? err.message : "创建失败", "error");
