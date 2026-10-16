@@ -1,5 +1,5 @@
 {
-  "name": "senpi-webui",
+  "name": "ul-omo-webui",
   "private": true,
   "workspaces": [
     "server",

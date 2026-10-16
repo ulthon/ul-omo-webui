@@ -2,7 +2,7 @@
  * W6 todo 29：单二进制发行包构建脚本。
  *
  * 产物结构（dist/）：
- *   senpi-webui                    单二进制（内嵌 web 静态资产 + 宿主全量 JS）
+ *   ul-omo-webui                    单二进制（内嵌 web 静态资产 + 宿主全量 JS）
  *   engine/node_modules/           引擎运行时闭包（spawn 用，node 从 PATH 提供）
  *     omo-ai/                      omo 包本体（plugin/、bin/omo.js）
  *     @code-yeongyu/senpi/         官配 senpi 引擎（package.json 锁 2026.9.28-7，
@@ -22,7 +22,7 @@ import { join, relative } from "node:path";
 const REPO_ROOT = realpathSync(join(import.meta.dir, ".."));
 const WEB_DIST = join(REPO_ROOT, "web", "dist");
 const DIST = join(REPO_ROOT, "dist");
-const OUT_BIN = join(DIST, "senpi-webui");
+const OUT_BIN = join(DIST, "ul-omo-webui");
 const GENERATED_TS = join(REPO_ROOT, "server", "src", "static-assets.generated.ts");
 
 function die(message: string): never {
@@ -114,6 +114,6 @@ function dirSize(dir: string): number {
 }
 const mb = (n: number): string => `${(n / 1024 / 1024).toFixed(1)} MB`;
 console.log(`==> 产物清单（${relative(REPO_ROOT, DIST)}/）`);
-console.log(`    senpi-webui        ${mb(statSync(OUT_BIN).size)}`);
+console.log(`    ul-omo-webui        ${mb(statSync(OUT_BIN).size)}`);
 console.log(`    engine/node_modules ${mb(dirSize(join(DIST, "engine")))}`);
 console.log("构建完成。运行要求：PATH 上有 node；数据目录缺省落可执行文件旁 data/。");
