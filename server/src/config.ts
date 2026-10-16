@@ -43,10 +43,13 @@ export function engineRegistryPath(): string {
   return resolve(DATA_DIR, "engine-processes.json");
 }
 
-/** 引擎 agent 目录（W2 spawn 规范：显式 OMO_CODING_AGENT_DIR，缺省 ~/.pi/agent）。
- * spawn 与 SDK 侧路径推导（models-store 直读、会话库 sessionDir）必须同源。 */
+/** 引擎 agent 目录（缺省 ~/.omo/agent——2026-10-15 由 ~/.pi/agent 改锚：与命令行版 omo
+ * 同一份数据面（凭证 / models.json 自定义模型 / 会话库），修复模型下拉缺自定义模型；
+ * W1 阶段借 pi 目录属零拷贝权宜。显式 SENPI_WEBUI_AGENT_DIR 可覆盖（QA 隔离实例必注入
+ * 临时目录，防测试会话写进真实 omo 会话库）。spawn 与 SDK 侧路径推导（models-store
+ * 直读、会话库 sessionDir）必须同源。 */
 export function agentDir(): string {
-  return process.env.SENPI_WEBUI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+  return process.env.SENPI_WEBUI_AGENT_DIR ?? join(homedir(), ".omo", "agent");
 }
 
 /** SSE 链路诊断日志开关（D18 排查）：SENPI_WEBUI_DEBUG_SSE truthy 时服务端 stdout 输出

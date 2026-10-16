@@ -1881,9 +1881,9 @@ describe("config 路径装配", () => {
     expect(engineRegistryPath()).toBe(resolve(DATA_DIR, "engine-processes.json"));
   });
 
-  test("(a) agentDir 缺省 ~/.pi/agent，env 覆盖生效", () => {
+  test("(a) agentDir 缺省 ~/.omo/agent（2026-10-15 改锚与命令行版同库），env 覆盖生效", () => {
     delete process.env.SENPI_WEBUI_AGENT_DIR;
-    expect(configAgentDir()).toBe(join(homedir(), ".pi", "agent"));
+    expect(configAgentDir()).toBe(join(homedir(), ".omo", "agent"));
     process.env.SENPI_WEBUI_AGENT_DIR = "/tmp/fake-agent";
     expect(configAgentDir()).toBe("/tmp/fake-agent");
   });

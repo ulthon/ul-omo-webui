@@ -27,7 +27,8 @@
  * spawn 规范（docs/verification/01/03 实证）：cli 本体 realpath 解析（bun isolated
  * 布局经 .bun/omo-ai@<ver>/node_modules/ 取官配对，不走提升解析）、
  * `--extension <omo-ai>/plugin --multi-session`、env 显式 OMO_CODING_AGENT_DIR/
- * SENPI_CODING_AGENT_DIR（launcher 迁移陷阱：不带它跑引擎会整目录复制 ~/.pi/agent）、
+ * SENPI_CODING_AGENT_DIR（指向 config.agentDir()——2026-10-15 起缺省 ~/.omo/agent，
+ * 与命令行版 omo 同库；显式注入纪律保留：不带它跑引擎会按引擎自家缺省整目录迁移）、
  * HOME 与其余环境变量经 RpcClient 的 {...process.env} 自然继承透传，cwd=项目目录。
  */
 
@@ -68,7 +69,7 @@ export type EngineState =
 export interface EngineManagerOptions {
   /** 创建 RpcClient 的工厂（测试注入 fake）。 */
   clientFactory?: EngineClientFactory
-  /** 引擎 agent 目录（W1 spawn 规范：显式 OMO_CODING_AGENT_DIR，默认 ~/.pi/agent）。 */
+  /** 引擎 agent 目录（spawn 规范：显式 OMO_CODING_AGENT_DIR；缺省见 config.agentDir()，2026-10-15 起 ~/.omo/agent）。 */
   agentDir?: string
   /** spawn 时的默认 provider/model（成对生效；多会话模式下 open_session 可逐会话覆盖）。 */
   defaultProvider?: string
@@ -381,8 +382,8 @@ export class EngineProcessManager {
   private buildSpawnOptions(engine: ProjectEngine): RpcClientOptions {
     const { cliPath, pluginDir } = resolveEnginePaths()
     const env: Record<string, string> = {
-      // launcher 迁移陷阱（verification/04 第 7 节）：不带 OMO_CODING_AGENT_DIR
-      // 跑引擎会把 ~/.pi/agent 整目录复制到 ~/.omo/agent，两套 store 立即分叉
+      // 显式注入 agentDir（缺省 ~/.omo/agent，与命令行版 omo 同库）：不注入时引擎按
+      // 自家缺省做整目录迁移（verification/04 第 7 节陷阱——改锚后前提已变，纪律保留）
       OMO_CODING_AGENT_DIR: this.agentDir,
       SENPI_CODING_AGENT_DIR: this.agentDir,
       OMO_NATIVE: "1",
