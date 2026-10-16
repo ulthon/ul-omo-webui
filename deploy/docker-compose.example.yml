@@ -1,6 +1,6 @@
-# senpi-webui 外链工具编排参考（cgit + filebrowser）
+# ul-omo-webui 外链工具编排参考（cgit + filebrowser）
 #
-# 定位：参考件，不承担编排验收。docs/02 部署形态约定：主服务（senpi-webui
+# 定位：参考件，不承担编排验收。docs/02 部署形态约定：主服务（ul-omo-webui
 # 单二进制）不进容器、直接跑在宿主机；只有外链工具用 docker 编排。
 # 路径分发由 Caddy 完成（见 Caddyfile.example），本文件只负责把两个外链
 # 工具跑起来并接入同一 compose 网络。
@@ -48,5 +48,5 @@ networks:
 #   （Caddyfile.example 里写的是服务名 cgit:8080 / filebrowser:80）。
 #   若 Caddy 不在本 compose 网络里，把这两个端口映射到宿主回环再由 Caddy
 #   反代（如 "127.0.0.1:8081:8080"），并同步修改 Caddyfile 上游地址。
-# - senpi-webui 主服务不在此文件中：它是单二进制直接跑（见 README 快速开始），
+# - ul-omo-webui 主服务不在此文件中：它是单二进制直接跑（见 README 快速开始），
 #   数据备份口径见 deploy/备份.md。
