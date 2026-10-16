@@ -42,9 +42,10 @@ export async function refreshSessions(): Promise<void> {
  * 无选中模型时回落列表首项仅作展示默认（不回写 meta，避免把默认值冒充用户选择） */
 export async function loadProjectModels(path: string): Promise<void> {
   try {
-    const { models } = await api.listModels(path);
+    const { models, favorites } = await api.listModels(path);
     const cur = useUiStore.getState();
     cur.setModels(models);
+    cur.setFavoriteModels(favorites ?? []);
     if (!cur.selectedModel && models.length > 0) {
       cur.setSelectedModel(`${models[0].provider}/${models[0].id}`);
     }

@@ -1,0 +1,131 @@
+/** 模型降级数据与 CLI 收藏解析单测（"下拉只显示套餐目录"缺陷修复的支撑面）：
+ * - readModelsFallback：models-store.json 目录缓存 + models.json 自定义合并（同 provider/id 自定义覆盖）
+ * - readFavoriteModels：settings.json favoriteModels 归一（剥思考档后缀、去重保序、跳过非法条目）
+ */
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readFavoriteModels, readModelsFallback } from "../src/api/engine-runtime";
+
+describe("readModelsFallback", () => {
+  test("目录缓存与自定义合并：同 id 自定义覆盖、独有项各自并入", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fallback-"));
+    try {
+      writeFileSync(
+        join(dir, "models-store.json"),
+        JSON.stringify({
+          "zai-coding-cn": {
+            models: [
+              { id: "glm-5.3", reasoning: true, contextWindow: 200000 },
+              { id: "glm-4.7", reasoning: true },
+            ],
+          },
+        }),
+      );
+      writeFileSync(
+        join(dir, "models.json"),
+        JSON.stringify({
+          providers: {
+            "zai-coding-cn": {
+              models: [
+                {
+                  id: "glm-5.3",
+                  reasoning: true,
+                  contextWindow: 400000,
+                  thinkingLevelMap: { off: null, max: "max" },
+                },
+                { id: "glm-5.3-4k", reasoning: true, contextWindow: 400000 },
+              ],
+            },
+            commandcode: {
+              models: [{ id: "deepseek/deepseek-v4.1-flash", reasoning: true, contextWindow: 1000000 }],
+            },
+          },
+        }),
+      );
+      const out = readModelsFallback(dir);
+      const byKey = new Map(out.map((m) => [`${m.provider}/${m.id}`, m]));
+      // 覆盖：目录 glm-5.3 被自定义覆盖（contextWindow 与 thinkingLevelMap 生效）
+      expect(byKey.get("zai-coding-cn/glm-5.3")?.contextWindow).toBe(400000);
+      expect(byKey.get("zai-coding-cn/glm-5.3")?.supportedThinkingLevels).toEqual(["off", "max"]);
+      // 并入：自定义独有模型（含新 provider）
+      expect(byKey.get("zai-coding-cn/glm-5.3-4k")?.contextWindow).toBe(400000);
+      expect(byKey.has("commandcode/deepseek/deepseek-v4.1-flash")).toBe(true);
+      // 保留：目录独有模型
+      expect(byKey.has("zai-coding-cn/glm-4.7")).toBe(true);
+      expect(out).toHaveLength(4);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("仅目录缓存（无 models.json）：原样返回", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fallback-"));
+    try {
+      writeFileSync(
+        join(dir, "models-store.json"),
+        JSON.stringify({ "zai-coding-cn": { models: [{ id: "glm-5.3" }] } }),
+      );
+      const out = readModelsFallback(dir);
+      expect(out).toHaveLength(1);
+      expect(out[0]?.id).toBe("glm-5.3");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("文件缺失/畸形：空列表不抛", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fallback-"));
+    try {
+      expect(readModelsFallback(dir)).toEqual([]);
+      writeFileSync(join(dir, "models-store.json"), "{broken");
+      writeFileSync(join(dir, "models.json"), "{broken");
+      expect(readModelsFallback(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readFavoriteModels", () => {
+  test("剥思考档后缀归一 + 去重保序 + 跳过非法条目", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fav-"));
+    try {
+      writeFileSync(
+        join(dir, "settings.json"),
+        JSON.stringify({
+          favoriteModels: [
+            "zai-coding-cn/glm-5.3:max",
+            "zai-coding-cn/glm-5.3-flash",
+            "zai-coding-cn/glm-5.3:max",
+            "no-slash-entry",
+            42,
+            "commandcode/deepseek/deepseek-v4.1-flash:low",
+          ],
+          defaultModel: "zai-coding-cn/glm-5.3",
+        }),
+      );
+      expect(readFavoriteModels(dir)).toEqual([
+        "zai-coding-cn/glm-5.3",
+        "zai-coding-cn/glm-5.3-flash",
+        "commandcode/deepseek/deepseek-v4.1-flash",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("文件缺失/favoriteModels 非数组：空列表不抛", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fav-"));
+    try {
+      expect(readFavoriteModels(dir)).toEqual([]);
+      writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultModel: "x/y" }));
+      expect(readFavoriteModels(dir)).toEqual([]);
+      writeFileSync(join(dir, "settings.json"), "{broken");
+      expect(readFavoriteModels(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

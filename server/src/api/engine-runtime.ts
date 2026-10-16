@@ -83,6 +83,9 @@ export interface EngineGateway {
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
   usage(sessionId: string): Promise<EngineUsageStats>;
   modelsList(project: string): Promise<EngineModelInfo[]>;
+  /** CLI 收藏（settings.json favoriteModels，归一 "provider/model"）。可选面：
+   * 真实注册表实现直读 agent 目录；测试 fake 可省略（路由层降级空数组）。 */
+  favoriteModels?(): string[];
   /**
    * 斜杠命令三段枚举（docs08-r3 任务 19）：引擎就绪且有活跃会话时返回按 source
    * 分组的命令行（extension/skill/prompt）；引擎未就绪（不为此触发 spawn）或无
@@ -216,6 +219,79 @@ function readModelsStore(agentDir: string): EngineModelInfo[] {
         }
         out.push(info);
       }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** models.json 自定义模型直读（{providers:{name:{models:[{id,reasoning,contextWindow,thinkingLevelMap,...}]}}}；
+ * 读取失败返回空列表）。 */
+function readCustomModels(agentDir: string): EngineModelInfo[] {
+  const file = join(agentDir, "models.json");
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      providers?: Record<string, { models?: unknown }>;
+    };
+    const out: EngineModelInfo[] = [];
+    for (const [provider, entry] of Object.entries(parsed.providers ?? {})) {
+      if (!entry || !Array.isArray(entry.models)) continue;
+      for (const model of entry.models) {
+        const m = model as {
+          id?: unknown;
+          reasoning?: unknown;
+          contextWindow?: unknown;
+          thinkingLevelMap?: unknown;
+        };
+        const info: EngineModelInfo = { provider, id: String(m.id ?? "") };
+        if (!info.id) continue;
+        if (typeof m.contextWindow === "number") info.contextWindow = m.contextWindow;
+        if (typeof m.reasoning === "boolean") info.reasoning = m.reasoning;
+        if (m.thinkingLevelMap && typeof m.thinkingLevelMap === "object") {
+          info.supportedThinkingLevels = Object.keys(m.thinkingLevelMap);
+        }
+        out.push(info);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** 模型降级数据 = models-store.json 目录缓存 + models.json 自定义（同 provider/id
+ * 自定义覆盖目录项，与引擎合并语义一致：自定义是显式用户配置）。导出供单测。 */
+export function readModelsFallback(agentDir: string): EngineModelInfo[] {
+  const catalog = readModelsStore(agentDir);
+  const customs = readCustomModels(agentDir);
+  if (customs.length === 0) return catalog;
+  const keyed = new Map(catalog.map((m) => [`${m.provider}/${m.id}`, m]));
+  for (const m of customs) keyed.set(`${m.provider}/${m.id}`, m);
+  return [...keyed.values()];
+}
+
+/** settings.json favoriteModels 直读（CLI 收藏）。条目形如 "provider/model:thinkingLevel"
+ * （":max" 是收藏时的思考档，webui 选择态独立管理不消费——剥除后归一为 "provider/model"），
+ * 去重保序；文件缺失/格式异常返回空列表。导出供单测。 */
+export function readFavoriteModels(agentDir: string): string[] {
+  const file = join(agentDir, "settings.json");
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { favoriteModels?: unknown };
+    if (!Array.isArray(parsed.favoriteModels)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of parsed.favoriteModels) {
+      if (typeof raw !== "string") continue;
+      const slash = raw.indexOf("/");
+      if (slash <= 0) continue;
+      const colon = raw.lastIndexOf(":");
+      const value = colon > slash ? raw.slice(0, colon) : raw;
+      if (seen.has(value)) continue;
+      seen.add(value);
+      out.push(value);
     }
     return out;
   } catch {
@@ -881,14 +957,17 @@ class ProjectRuntime {
 
   async modelsList(): Promise<EngineModelInfo[]> {
     // 引擎未就绪时不为模型列表触发冷启动 spawn，直接走模型目录降级
-    if (!this.isReady()) return readModelsStore(this.opts.agentDir ?? defaultAgentDir());
+    //（models-store.json 目录缓存 + models.json 自定义，同 id 自定义覆盖——
+    // 自定义模型不依赖引擎拉起即可见，修复"下拉只显示套餐目录"缺陷）
+    if (!this.isReady()) return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
     const adapter = this.requireAdapter();
     if (adapter.getActiveSession()) return adapter.modelsList();
     // 无活跃会话时协议面报 missing_session_id（多会话模式命令需会话路由）。
     // 降级：直读引擎同一份模型目录 models-store.json（W0 实证格式
-    // {provider:{models:[{id,reasoning,cost,contextWindow,thinkingLevelMap,...}]}}）。
+    // {provider:{models:[{id,reasoning,cost,contextWindow,thinkingLevelMap,...}]}}）
+    // 并入 models.json 自定义（同 id 覆盖）。
     // 与协议面的差异：协议面按当前 provider 过滤，此处为全 provider 超集。
-    return readModelsStore(this.opts.agentDir ?? defaultAgentDir());
+    return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
   }
 
   async commandsList(): Promise<EngineCommandInfo[] | null> {
@@ -1140,6 +1219,10 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   async modelsList(project: string): Promise<EngineModelInfo[]> {
     return this.runtimeFor(project).modelsList();
+  }
+
+  favoriteModels(): string[] {
+    return readFavoriteModels(this.opts.agentDir ?? defaultAgentDir());
   }
 
   async commandsList(project: string): Promise<EngineCommandInfo[] | null> {

@@ -31,6 +31,9 @@ interface UiState {
   /** 列表是否已完成过一次加载（空列表也是有效的"确认为空"结果；初始/加载失败为 false）。
    * 发送防呆只在 true 且列表为空时拦截——加载失败是"未知"而非"确认为空"，不误伤发送。 */
   modelsLoaded: boolean;
+  /** CLI 收藏（GET /api/models favorites，"provider/model" 归一）；
+   * 模型弹层顶部收藏组数据源（webui 侧收藏管理暂缺，只读展示 CLI 侧收藏）。 */
+  favoriteModels: string[];
   /** 当前选中模型 "provider/model"（项目切换时应用该项目 preferred_model 偏好） */
   selectedModel: string | null;
   /** 当前选中思考档（W2 todo 8）：项目切换时应用该项目 preferredThinkingLevel 偏好；
@@ -56,6 +59,7 @@ interface UiState {
   setProjects(projects: ProjectMeta[]): void;
   setCurrentProject(path: string | null): void;
   setModels(models: ModelInfo[]): void;
+  setFavoriteModels(models: string[]): void;
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
   resetModels(): void;
   setSelectedModel(model: string | null): void;
@@ -78,6 +82,7 @@ export const useUiStore = create<UiState>()((set) => ({
   projects: [],
   models: [],
   modelsLoaded: false,
+  favoriteModels: [],
   selectedModel: null,
   selectedThinkingLevel: null,
   modelPickerOpen: false,
@@ -92,7 +97,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setProjects: (projects) => set({ projects }),
   setCurrentProject: (path) => set({ currentProject: path }),
   setModels: (models) => set({ models, modelsLoaded: true }),
-  resetModels: () => set({ models: [], modelsLoaded: false }),
+  setFavoriteModels: (favoriteModels) => set({ favoriteModels }),
+  resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [] }),
   setSelectedModel: (model) => set({ selectedModel: model }),
   setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),

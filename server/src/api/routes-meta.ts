@@ -26,7 +26,10 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
       throw new ApiError(400, "no_project", "尚无已知项目：请先 POST /api/projects 或传 project 参数");
     }
     const models = await deps.engines.modelsList(project);
-    return c.json({ project, capabilities: { modelsList: true }, models });
+    // CLI 收藏（settings.json favoriteModels 归一 "provider/model"）：引擎无关的
+    // agent 级设置，测试 fake 未实现可选面时降级空数组。
+    const favorites = deps.engines.favoriteModels?.() ?? [];
+    return c.json({ project, capabilities: { modelsList: true }, models, favorites });
   }));
 
   // 输入历史（去重上限 200 条由存储层保证）

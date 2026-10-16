@@ -6,7 +6,7 @@
 // （lib/thinking-level）；模型未下发该字段时整个 chip 不渲染（非禁用）。选择即写
 // selectedThinkingLevel + 防抖 PATCH preferredThinkingLevel（latest-wins）。
 import { useEffect, useMemo, useState } from "react";
-import { Brain, Check, ChevronDown, Cpu } from "lucide-react";
+import { Brain, Check, ChevronDown, Cpu, Star } from "lucide-react";
 import type { ModelInfo } from "@/lib/api";
 import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
@@ -40,10 +40,17 @@ function matchQuery(m: ModelInfo, query: string): boolean {
 /** 模型选择弹层面板（ModelChip 与 CapsuleModelTag 共用）：搜索 + provider 分组列表 */
 function ModelPickerBody({ close }: { close: () => void }) {
   const models = useUiStore((s) => s.models);
+  const favoriteModels = useUiStore((s) => s.favoriteModels);
   const selectedModel = useUiStore((s) => s.selectedModel);
   const [query, setQuery] = useState("");
 
   const groups = useMemo(() => groupByProvider(models.filter((m) => matchQuery(m, query))), [models, query]);
+  // 收藏组：CLI settings.json 收藏置顶（"provider/model" 归一值直渲染，不在 models
+  // 列表也照常展示——自定义模型未同步时仍可选中）；命中搜索词时按整串过滤
+  const favList = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle ? favoriteModels.filter((v) => v.toLowerCase().includes(needle)) : favoriteModels;
+  }, [favoriteModels, query]);
 
   const selectModel = (value: string) => {
     if (useUiStore.getState().selectedModel === value) return;
@@ -63,10 +70,37 @@ function ModelPickerBody({ close }: { close: () => void }) {
         />
       </div>
       <div className="max-h-72 overflow-y-auto">
-        {groups.length === 0 && (
+        {groups.length === 0 && favList.length === 0 && (
           <p className="px-2 py-3 text-center text-xs text-muted-foreground" data-testid="model-chip-empty">
             无匹配模型
           </p>
+        )}
+        {favList.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-muted-foreground">
+              <Star className="size-3" />
+              收藏
+            </div>
+            {favList.map((value) => (
+              <button
+                key={`fav-${value}`}
+                type="button"
+                data-testid="model-chip-fav-item"
+                data-value={value}
+                title={value}
+                onClick={() => {
+                  selectModel(value);
+                  close();
+                }}
+                className="flex min-h-9 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-none transition-colors hover:bg-accent"
+              >
+                <Check
+                  className={`size-4 shrink-0 ${selectedModel === value ? "opacity-100" : "opacity-0"}`}
+                />
+                <span className="ml-1 truncate">{value.slice(value.indexOf("/") + 1)}</span>
+              </button>
+            ))}
+          </div>
         )}
         {groups.map(([provider, list]) => (
           <div key={provider}>

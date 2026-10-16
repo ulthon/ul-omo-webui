@@ -175,6 +175,9 @@ export interface ModelInfo {
 export interface ModelsResponse {
   project: string | null;
   models: ModelInfo[];
+  /** CLI 收藏（服务端读 settings.json favoriteModels 归一 "provider/model"）；
+   * 旧服务端未下发时缺省（undefined → 空） */
+  favorites?: string[];
 }
 
 export interface InputHistoryItem {

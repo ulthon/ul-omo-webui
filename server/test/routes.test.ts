@@ -1246,6 +1246,29 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("models favorites：fake 未实现可选面降级空数组；实现则透传", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-fav-"));
+    try {
+      // FakeGateway 未实现 favoriteModels（接口可选面）→ 路由层降级空数组
+      const { app: appPlain, meta: metaPlain } = buildApp(new FakeGateway());
+      metaPlain.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+      const degraded = await (await req(appPlain, "/api/models")).json();
+      expect(degraded.favorites).toEqual([]);
+
+      class FavGateway extends FakeGateway {
+        favoriteModels(): string[] {
+          return ["zai-coding-cn/glm-5.3", "zai-coding-cn/glm-5.3-4k"];
+        }
+      }
+      const { app: appFav, meta: metaFav } = buildApp(new FavGateway());
+      metaFav.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+      const passed = await (await req(appFav, "/api/models")).json();
+      expect(passed.favorites).toEqual(["zai-coding-cn/glm-5.3", "zai-coding-cn/glm-5.3-4k"]);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
   test("git status/diff：非仓库 409、仓库解析 porcelain 条目", async () => {
     const nonRepo = mkdtempSync(join(tmpdir(), "routes-git-"));
     const repo = mkdtempSync(join(tmpdir(), "routes-git-"));
