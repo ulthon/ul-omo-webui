@@ -280,21 +280,34 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               settle(sessionId, msg);
             }
           } else {
-            // user / toolResult 等直接入列（wire 原样）。user 消息先吸收等价的本地
-            // 乐观占位（发送成功后即时入列的 local-* 条目）——以服务端真值替换，防双列。
-            // 入列归一为 {type:"message", id, message}（settle 定格同构）：事件对象本身
-            // （type:"message_start"/"message_end"）不是可渲染条目——渲染层 isMessageEntry
-            // 只认 type:"message"，按事件原样入列会被过滤成不可见，而本地占位已被吸收，
-            // 净效果 = 用户消息闪现即消失（2026-10-15 实测复现；真条目的 entry_appended
-            // 帧另被记忆白名单丢弃，message 通道是 user 消息唯一可见入列路径）。
-            // id 缺失回落确定性合成 id：start/end 双帧同消息按 id 幂等去重。
+            // 仅 user 消息走归一入列（2026-10-15 缺陷修复的收窄）。非 assistant 的
+            // 其他角色（custom / toolResult 等）不入列：首回合引导 custom 消息的
+            // content 是字符串（senpi-task.usage / environment-context 等，
+            // 2026-10-16 帧级实测），入列会在渲染层 PartsView(message.content) 上崩
+            // （e.map is not a function 白屏，首条消息必现）；白名单记忆标记另经
+            // entry_appended 携真 id 入列，message 通道的 role:"custom" 帧是同义的
+            // 无 id 帧，双通道入列会双列；toolResult 的可见呈现由 ToolCard 按
+            // toolCallId 关联承担，消息帧本身无需入列。
+            if (msg.role !== "user") break;
+            // user：先吸收等价的本地乐观占位（发送成功后即时入列的 local-* 条目）
+            // ——以服务端真值替换，防双列。入列归一为 {type:"message", id, message}
+            // （settle 定格同构）：事件对象本身（type:"message_start"/"message_end"）
+            // 不是可渲染条目——渲染层 isMessageEntry 只认 type:"message"，按事件原样
+            // 入列会被过滤成不可见，而本地占位已被吸收，净效果 = 用户消息闪现即消失
+            // （2026-10-15 实测复现；真条目的 entry_appended 帧另被记忆白名单丢弃，
+            // message 通道是 user 消息唯一可见入列路径）。
+            // id 缺失回落确定性合成 id：start/end 双帧同消息按 id 幂等去重；end 帧
+            // 携真 id 而 start 帧无 id 的混合形态下，入列真 id 条目前先移除 start 帧
+            // 落下的合成 id 孪生，防同一条消息双列（2026-10-16 实测用户消息双列）。
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
-              const base = msg.role === "user" ? absorbLocalUserEntries(cur.entries, msg) : cur.entries;
-              const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : syntheticId(msg);
+              const base = absorbLocalUserEntries(cur.entries, msg);
+              const sid = syntheticId(msg);
+              const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : sid;
               const stored: WireEntry = { ...entry, type: "message", id };
+              const list = id === sid ? base : base.filter((e) => e.id !== sid);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(base, stored) } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(list, stored) } },
               };
             });
           }
@@ -475,6 +488,19 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         const content: WirePart[] = [];
         if (text) content.push({ type: "text", text });
         for (const img of images ?? []) content.push({ type: "image", data: img.data, mimeType: img.mimeType });
+        // [2026-10-16 双列修复] 直发的服务端 user echo 帧可能先于 POST 回执到达（本机
+        // 实测 SSE 先至）——彼时等价用户消息已按合成 id 入列，回执后再补乐观占位已无
+        // 后续帧可吸收，成永久双列。入列前等价甄别：槽内已存在同首文本的**服务端**
+        // 用户消息则跳过占位（local 占位不触发——同文本排队项各自独立、互不坍缩，
+        // spike (b)-7；与 absorbLocalUserEntries 口径一致，纯图消息无文本锚点不甄别）。
+        if (text) {
+          const dup = cur.entries.some((e) => {
+            if (typeof e.id === "string" && e.id.startsWith(LOCAL_ENTRY_PREFIX)) return false;
+            const m = e.message as WireMessage | undefined;
+            return Boolean(m && m.role === "user" && firstTextOf(m) === text);
+          });
+          if (dup) return s;
+        }
         const entry: WireEntry = {
           type: "message",
           id: `${LOCAL_ENTRY_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,

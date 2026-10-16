@@ -125,6 +125,57 @@ describe("缺陷修复：新会话首条用户消息", () => {
     expect(asLocal(slot.entries[0]).id).toMatch(/^h[0-9a-z]+-\d+$/);
   });
 
+  // 缺陷回归（2026-10-16 首条消息白屏：e.map is not a function）：
+  // 引擎首回合经 message 通道注入引导 custom 消息（senpi-task.usage / environment-context
+  // 等，帧级实测 content 为字符串、无帧 id）。归一化分支曾把所有非 assistant 角色入列
+  // 成 type:"message"，渲染层 PartsView(message.content) 收到字符串即崩（白屏）。
+  // 修复口径：非 assistant 分支只放行 user——custom 不入列（记忆标记走 entry_appended
+  // 白名单携真 id，message 通道是同义无 id 帧）；toolResult 同口径不入列（结果由
+  // ToolCard 按 toolCallId 关联展示）。
+  test("custom 字符串 content / toolResult 消息帧不入列（防 PartsView 崩溃白屏）", () => {
+    useMessagesStore.getState().applyWireEvent("d-4", {
+      type: "message_start",
+      message: { role: "custom", customType: "senpi-task.usage", content: "<omo-senpi-task>背景任务…</omo-senpi-task>" },
+    });
+    useMessagesStore.getState().applyWireEvent("d-4", {
+      type: "message_end",
+      message: { role: "custom", customType: "senpi-task.usage", content: "<omo-senpi-task>背景任务…</omo-senpi-task>" },
+    });
+    useMessagesStore.getState().applyWireEvent("d-4", {
+      type: "message_end",
+      id: "srv-tr1",
+      message: { role: "toolResult", content: [{ type: "text", text: "工具结果" }] },
+    });
+    const slot = useMessagesStore.getState().bySession["d-4"];
+    expect(slot?.entries.length ?? 0).toBe(0);
+  });
+
+  // 缺陷回归（2026-10-16 用户消息双列）：直发的 SSE echo 帧可能先于 POST 回执到达
+  // （本机实测）——彼时等价用户消息已按合成 id 入列，回执后再补乐观占位已无后续帧
+  // 可吸收，成永久双列。修复：appendLocalUserEntry 入列前等价甄别，槽内已存在同首
+  // 文本用户消息则跳过占位（与 absorbLocalUserEntries 口径一致）。
+  test("echo 帧先于回执到达时，乐观占位等价跳过（防双列）", () => {
+    const msg = { role: "user", content: [{ type: "text", text: "竞态消息" }] };
+    useMessagesStore.getState().applyWireEvent("d-5", { type: "message_start", message: msg });
+    useMessagesStore.getState().applyWireEvent("d-5", { type: "message_end", message: msg });
+    useMessagesStore.getState().appendLocalUserEntry("d-5", "竞态消息");
+    const slot = useMessagesStore.getState().bySession["d-5"];
+    expect(slot.entries.length).toBe(1);
+    expect(asLocal(slot.entries[0]).id).toMatch(/^h[0-9a-z]+-\d+$/);
+    expect(asLocal(slot.entries[0]).message?.role).toBe("user");
+  });
+
+  // 双帧混合 id 形态（2026-10-16 双列加固）：start 无 id（合成 id 入列）、end 携真 id
+  // ——入列真 id 条目前先移除合成 id 孪生，防同一条消息双列。
+  test("start 无 id / end 携真 id 混合形态：合成孪生被移除（防双列）", () => {
+    const msg = { role: "user", content: [{ type: "text", text: "混合形态" }] };
+    useMessagesStore.getState().applyWireEvent("d-6", { type: "message_start", message: msg });
+    useMessagesStore.getState().applyWireEvent("d-6", { type: "message_end", id: "srv-real", message: msg });
+    const slot = useMessagesStore.getState().bySession["d-6"];
+    expect(slot.entries.length).toBe(1);
+    expect(asLocal(slot.entries[0]).id).toBe("srv-real");
+  });
+
   test("同文本双条排队：服务端事件逐条吸收，一次事件只吞一条占位（spike (b)-7 去重键加固）", () => {
     // 两条同文本排队占位（引擎不去重，磁盘四行——两条独立 user 条目 + 各自回复）
     useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");
