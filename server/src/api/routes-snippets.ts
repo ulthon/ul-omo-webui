@@ -1,5 +1,5 @@
 // 常用语 REST 路由（todo 4）：两源读取（全局 snippets.json + 项目
-// .senpi-webui.json）与按 scope 整替写入。读写行为全部下沉 config-store
+// .ul-omo-webui.json）与按 scope 整替写入。读写行为全部下沉 config-store
 // （todo 1：mtime 缓存、原子落盘、损坏显式报错），本层只做 HTTP 语义：
 // 输入校验（空串/超限/形状）、已注册项目校验、整替后回显免前端二次 GET。
 // 配置文件损坏按 Scope 决策 10a：显式写与管理端点严格 500（route 包装

@@ -1,7 +1,7 @@
 // 常用语端点单测（todo 4）：聚焦 HTTP 语义层（两源聚合、整替幂等、输入校验、
 // 项目注册校验、损坏文件 500 带路径）——config-store 读写行为已由
 // config-store.test.ts 锁定，此处不重复。
-// 全部用 mkdtemp 隔离目录，绝不触碰真实 ~/.config 与仓库 .senpi-webui.json。
+// 全部用 mkdtemp 隔离目录，绝不触碰真实 ~/.config 与仓库 .ul-omo-webui.json。
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -242,7 +242,7 @@ describe("PUT /api/snippets project scope", () => {
     expect((await res.json()).error.code).toBe("project_not_found");
   });
 
-  test("已注册项目整替成功写入 .senpi-webui.json，GET 回读", async () => {
+  test("已注册项目整替成功写入 .ul-omo-webui.json，GET 回读", async () => {
     const { app, projectDir, register } = setup();
     register(projectDir);
     const res = await app.request("/api/snippets", {

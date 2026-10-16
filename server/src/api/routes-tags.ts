@@ -1,5 +1,5 @@
 // 标签定义与挂载 REST 路由（todo 3）：定义两源在 config-store 文件
-// （全局 tags.json + 项目 .senpi-webui.json tags 字段），挂载关系在
+// （全局 tags.json + 项目 .ul-omo-webui.json tags 字段），挂载关系在
 // meta_session_tag。挂载与定义解耦：自由挂载不要求定义已存在，孤儿关联
 // （定义已删）在 GET 时如实返回，前端灰样式展示。
 // 配置文件损坏按 Scope 决策 10a：显式写与管理端点严格 500（route 包装

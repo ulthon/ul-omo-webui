@@ -30,11 +30,11 @@ export const MANUAL_TIMEOUT_MS = 10_000;
 const THINKING_DISABLED = { type: "disabled" } as const;
 
 export function titleBaseUrl(): string {
-  return process.env.SENPI_WEBUI_TITLE_BASEURL || DEFAULT_TITLE_BASEURL;
+  return process.env.UL_OMO_WEBUI_TITLE_BASEURL || DEFAULT_TITLE_BASEURL;
 }
 
 export function titleModel(): string {
-  return process.env.SENPI_WEBUI_TITLE_MODEL || DEFAULT_TITLE_MODEL;
+  return process.env.UL_OMO_WEBUI_TITLE_MODEL || DEFAULT_TITLE_MODEL;
 }
 
 /** "provider/model" → 取 provider（凭证键）与裸 id（HTTP model 参数）。

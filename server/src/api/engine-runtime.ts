@@ -191,7 +191,7 @@ export const PERMISSION_PRESET_NAMES: readonly string[] = [
  * 项目权限预设 → 引擎 spawn 附加参数（--permission-preset <值>）。
  * 无预设返回空数组，spawn 行为与从前完全一致。
  * 预设是 spawn 参数级：变更需让项目引擎重启（服务重启或 POST /api/projects/restart）。
- * todo 6 起取值来源 = 项目 .senpi-webui.json（合并读取与迁移过渡态见 config-migration.ts）。
+ * todo 6 起取值来源 = 项目 .ul-omo-webui.json（合并读取与迁移过渡态见 config-migration.ts）。
  */
 export function permissionPresetArgs(preset: string | null | undefined): string[] {
   const value = preset?.trim();
@@ -1028,7 +1028,7 @@ class ProjectRuntime {
       projectDir: this.projectPath,
       agentDir: this.opts.agentDir ?? defaultAgentDir(),
     });
-    const tmp = join(tmpdir(), `senpi-webui-export-${randomUUID()}.html`);
+    const tmp = join(tmpdir(), `ul-omo-webui-export-${randomUUID()}.html`);
     try {
       await adapter.exportHtml(row.path, tmp);
       return { html: readFileSync(tmp, "utf8"), row };

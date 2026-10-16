@@ -25,22 +25,22 @@ function dataSecret(dataDir: string): Buffer {
 }
 
 describe("resolvePassword", () => {
-  const savedEnv = process.env.SENPI_WEBUI_PASSWORD;
+  const savedEnv = process.env.UL_OMO_WEBUI_PASSWORD;
   let dataDir: string;
 
   beforeEach(() => {
-    delete process.env.SENPI_WEBUI_PASSWORD;
+    delete process.env.UL_OMO_WEBUI_PASSWORD;
     dataDir = mkdtempSync(join(tmpdir(), "senpi-auth-test-"));
   });
 
   afterEach(() => {
-    if (savedEnv !== undefined) process.env.SENPI_WEBUI_PASSWORD = savedEnv;
-    else delete process.env.SENPI_WEBUI_PASSWORD;
+    if (savedEnv !== undefined) process.env.UL_OMO_WEBUI_PASSWORD = savedEnv;
+    else delete process.env.UL_OMO_WEBUI_PASSWORD;
     rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("环境变量优先，不写密码文件", () => {
-    process.env.SENPI_WEBUI_PASSWORD = "env-pass";
+    process.env.UL_OMO_WEBUI_PASSWORD = "env-pass";
     expect(resolvePassword(dataDir)).toBe("env-pass");
     expect(existsSync(join(dataDir, "password"))).toBe(false);
   });
@@ -60,20 +60,20 @@ describe("resolvePassword", () => {
 });
 
 describe("auth 中间件与登录端点", () => {
-  const savedEnv = process.env.SENPI_WEBUI_PASSWORD;
+  const savedEnv = process.env.UL_OMO_WEBUI_PASSWORD;
   const password = "test-pass-123";
   let dataDir: string;
   let app: Hono;
 
   beforeEach(() => {
-    delete process.env.SENPI_WEBUI_PASSWORD;
+    delete process.env.UL_OMO_WEBUI_PASSWORD;
     dataDir = mkdtempSync(join(tmpdir(), "senpi-auth-test-"));
     app = buildApp(dataDir, password);
   });
 
   afterEach(() => {
-    if (savedEnv !== undefined) process.env.SENPI_WEBUI_PASSWORD = savedEnv;
-    else delete process.env.SENPI_WEBUI_PASSWORD;
+    if (savedEnv !== undefined) process.env.UL_OMO_WEBUI_PASSWORD = savedEnv;
+    else delete process.env.UL_OMO_WEBUI_PASSWORD;
     rmSync(dataDir, { recursive: true, force: true });
   });
 

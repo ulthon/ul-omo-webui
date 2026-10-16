@@ -1,6 +1,6 @@
 // 项目 REST 路由（todo 9 + todo 6 + W2 todo 7）：注册/列表/偏好更新。
 // todo 6 起项目偏好（preferredModel/permissionPreset；todo 7 增 preferredThinkingLevel）
-// 以项目根 .senpi-webui.json 为权威源：PATCH 落文件（损坏 500 带路径，决策 10a）；
+// 以项目根 .ul-omo-webui.json 为权威源：PATCH 落文件（损坏 500 带路径，决策 10a）；
 // GET/POST/PATCH 响应合并两源——过渡态
 // （文件缺字段且库值未迁清）以库值为准；文件损坏时合并读按项目降级 null + configError
 // 标志（决策 10b，单项目损坏不炸整页）。meta_kv permission-preset:<project> 为迁移前

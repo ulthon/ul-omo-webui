@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
-export const COOKIE_NAME = "senpi_session";
+export const COOKIE_NAME = "ul_omo_session";
 // 30 天，秒
 export const COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
 
@@ -22,7 +22,7 @@ function safeEqual(a: string, b: string): boolean {
 
 // ---- 密码解析：env 优先；缺省时读 data/password；首次生成随机密码落盘并打印 ----
 export function resolvePassword(dataDir: string): string {
-  const fromEnv = process.env.SENPI_WEBUI_PASSWORD;
+  const fromEnv = process.env.UL_OMO_WEBUI_PASSWORD;
   if (fromEnv) return fromEnv;
 
   mkdirSync(dataDir, { recursive: true });
@@ -34,7 +34,7 @@ export function resolvePassword(dataDir: string): string {
 
   const generated = randomBytes(18).toString("base64url");
   writeFileSync(file, `${generated}\n`, { mode: 0o600 });
-  console.log(`SENPI_WEBUI_PASSWORD 未设置，已生成随机密码：${generated}`);
+  console.log(`UL_OMO_WEBUI_PASSWORD 未设置，已生成随机密码：${generated}`);
   console.log(`（已写入 ${file}，后续启动直接读取该文件）`);
   return generated;
 }

@@ -107,7 +107,7 @@ export interface SessionTagRef {
 }
 
 export interface OpenMetaDbOptions {
-  /** 库文件路径；缺省依次取 SENPI_WEBUI_META_DB 环境变量、server/data/meta.db */
+  /** 库文件路径；缺省依次取 UL_OMO_WEBUI_META_DB 环境变量、server/data/meta.db */
   path?: string;
   /** 写锁等待毫秒数，超时抛 SQLITE_BUSY；默认 5000 */
   busyTimeoutMs?: number;
@@ -116,7 +116,7 @@ export interface OpenMetaDbOptions {
 export const DEFAULT_INPUT_HISTORY_LIMIT = 200;
 
 export function defaultMetaDbPath(): string {
-  return process.env.SENPI_WEBUI_META_DB ?? join(import.meta.dir, "..", "..", "data", "meta.db");
+  return process.env.UL_OMO_WEBUI_META_DB ?? join(import.meta.dir, "..", "..", "data", "meta.db");
 }
 
 function nowIso(): string {

@@ -32,7 +32,7 @@ import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 
 // 组合根装配（todo 9）：元数据库 → 引擎子进程管理器单例 → 按项目懒加载运行时 → 注入各路由
-// meta 库默认 <DATA_DIR>/meta.db（显式 SENPI_WEBUI_META_DB 仍最高优先）；
+// meta 库默认 <DATA_DIR>/meta.db（显式 UL_OMO_WEBUI_META_DB 仍最高优先）；
 // PID 登记表同属运行数据目录——隔离部署（覆盖 DATA_DIR）三者随行，互不共享。
 const meta = openMetaDb({ path: metaDbPath() });
 // 配置存储（todo 4/6）：全局目录实例 + 按项目根派生解析器（组合根创建一次全链共用，
@@ -44,7 +44,7 @@ const manager = new EngineProcessManager({
   agentDir: agentDir(),
   // PID 登记表（孤儿清扫记录）随运行数据目录
   registryPath: engineRegistryPath(),
-  // 按项目权限预设（todo 6：来源 = 项目 .senpi-webui.json 的 permissionPreset 合并读取，
+  // 按项目权限预设（todo 6：来源 = 项目 .ul-omo-webui.json 的 permissionPreset 合并读取，
   // 迁移过渡期库值未迁清仍生效、文件损坏降级无参数；meta_kv permission-preset:<projectPath>
   // 仅作存量过渡来源不再写入）：spawn 参数级，变更后经 POST /api/projects/restart
   // 让项目引擎重建生效
@@ -140,7 +140,7 @@ app.use("/api/*", auth.middleware);
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
-// configs（todo 4）：全局目录取 SENPI_WEBUI_CONFIG_DIR / ~/.config/senpi-webui/；
+// configs（todo 4）：全局目录取 UL_OMO_WEBUI_CONFIG_DIR / ~/.config/ul-omo-webui/；
 // 项目 scope 配置经 projectConfigs 按注册项目派生（todo 6 合并读取与迁移共用）。
 const deps = { meta, engines, configs, projectConfigs, titleGen };
 app.route("/", createSessionRoutes(deps));
@@ -259,7 +259,7 @@ process.on("SIGTERM", () => void shutdown());
 
 try {
   const server = Bun.serve({ fetch: app.fetch, hostname: HOST, port: PORT });
-  console.log(`senpi-webui listening on http://${server.hostname}:${server.port}`);
+  console.log(`ul-omo-webui listening on http://${server.hostname}:${server.port}`);
   // 存量项目偏好迁移（todo 6）：监听就绪后 fire-and-forget——per-project 失败仅
   // console.warn 并保留库值（幂等下次补迁），allSettled 隔离单项目只读目录/挂死
   // （网络盘语义）不拖累其余项目，更不阻塞监听与请求
@@ -283,7 +283,7 @@ try {
     message.includes("in use")
   ) {
     console.error(
-      `启动失败：地址 ${HOST}:${PORT} 已被占用。按部署约定不静默换端口，请释放端口或改用 SENPI_WEBUI_PORT 指定其他端口。`,
+      `启动失败：地址 ${HOST}:${PORT} 已被占用。按部署约定不静默换端口，请释放端口或改用 UL_OMO_WEBUI_PORT 指定其他端口。`,
     );
   } else {
     console.error(`启动失败：${message}`);

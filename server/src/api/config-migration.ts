@@ -1,7 +1,7 @@
 // 存量项目偏好迁移与合并读取（W1 todo 6，Scope 决策 8/10）。
 //
 // 迁移（组合根在 Bun.serve 监听就绪后 fire-and-forget 调用）：对全部注册项目逐项执行——
-// .senpi-webui.json 无 preferredModel 字段而 meta_project.preferred_model 有值 → 写文件
+// .ul-omo-webui.json 无 preferredModel 字段而 meta_project.preferred_model 有值 → 写文件
 // 成功后 UPDATE 置 NULL；meta_kv permission-preset:<path> 同理迁为文件 permissionPreset
 // 后删 kv。两步（写文件成功后才清库）保证中断安全：任一步失败/中断，下次启动按同一
 // 判定补迁。文件已有字段（含显式 null）= 文件为准，库值丢弃。

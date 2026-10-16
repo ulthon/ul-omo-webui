@@ -70,7 +70,7 @@ describe("config-store readProjectRaw（原文键存在性，加法只读）", (
     const c = setup();
     try {
       expect(c.stores(c.project).readProjectRaw()).toBeNull();
-      writeFileSync(join(c.project, ".senpi-webui.json"), "{}\n");
+      writeFileSync(join(c.project, ".ul-omo-webui.json"), "{}\n");
       expect(c.stores(c.project).readProjectRaw()).toEqual({});
     } finally {
       cleanup(c);
@@ -81,7 +81,7 @@ describe("config-store readProjectRaw（原文键存在性，加法只读）", (
     const c = setup();
     try {
       writeFileSync(
-        join(c.project, ".senpi-webui.json"),
+        join(c.project, ".ul-omo-webui.json"),
         JSON.stringify({ version: 1, preferredModel: null }),
       );
       const raw = c.stores(c.project).readProjectRaw();
@@ -96,9 +96,9 @@ describe("config-store readProjectRaw（原文键存在性，加法只读）", (
   test("损坏 JSON 抛错且 message 含文件路径；非对象同样抛错", () => {
     const c = setup();
     try {
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       writeFileSync(file, "{broken");
-      expect(() => c.stores(c.project).readProjectRaw()).toThrow(/\.senpi-webui\.json/);
+      expect(() => c.stores(c.project).readProjectRaw()).toThrow(/\.ul-omo-webui\.json/);
       writeFileSync(file, "[1,2]");
       expect(() => c.stores(c.project).readProjectRaw()).toThrow(/JSON 对象/);
     } finally {
@@ -149,7 +149,7 @@ describe("readProjectPreferences 合并读取", () => {
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
       writeFileSync(
-        join(c.project, ".senpi-webui.json"),
+        join(c.project, ".ul-omo-webui.json"),
         JSON.stringify({ version: 1, preferredModel: "zai-coding-cn/glm-5.3-flash" }),
       );
       const view = readProjectPreferences(c.stores, c.meta, c.project);
@@ -165,7 +165,7 @@ describe("readProjectPreferences 合并读取", () => {
     const c = setup();
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
-      writeFileSync(join(c.project, ".senpi-webui.json"), "{broken");
+      writeFileSync(join(c.project, ".ul-omo-webui.json"), "{broken");
       const view = readProjectPreferences(c.stores, c.meta, c.project);
       expect(view).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true });
     } finally {
@@ -176,7 +176,7 @@ describe("readProjectPreferences 合并读取", () => {
   test("preferredThinkingLevel 文件值直读；非法档位同损坏降级（W2 todo 7，无库源）", () => {
     const c = setup();
     try {
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       writeFileSync(file, JSON.stringify({ version: 1, preferredThinkingLevel: "max" }));
       utimesSync(file, new Date(2000), new Date(2000));
       const ok = readProjectPreferences(c.stores, c.meta, c.project);
@@ -221,14 +221,14 @@ describe("permissionPresetArgs 纯函数与 spawn 参数适配", () => {
     const c = setup();
     try {
       writeFileSync(
-        join(c.project, ".senpi-webui.json"),
+        join(c.project, ".ul-omo-webui.json"),
         JSON.stringify({ version: 1, permissionPreset: "read-only" }),
       );
       expect(permissionPresetSpawnArgs(c.stores, c.meta, c.project)).toEqual([
         "--permission-preset",
         "read-only",
       ]);
-      writeFileSync(join(c.project, ".senpi-webui.json"), "{broken");
+      writeFileSync(join(c.project, ".ul-omo-webui.json"), "{broken");
       expect(permissionPresetSpawnArgs(c.stores, c.meta, c.project)).toEqual([]);
     } finally {
       cleanup(c);
@@ -246,7 +246,7 @@ describe("migrateProjectPreferences 迁移", () => {
       const summary = await migrateProjectPreferences(c.stores, c.meta);
       expect(summary).toEqual({ migrated: 1, failed: 0 });
 
-      const doc = JSON.parse(readFileSync(join(c.project, ".senpi-webui.json"), "utf8"));
+      const doc = JSON.parse(readFileSync(join(c.project, ".ul-omo-webui.json"), "utf8"));
       expect(doc.preferredModel).toBe("zai-coding-cn/glm-5.3");
       expect(doc.permissionPreset).toBe("read-only");
 
@@ -267,7 +267,7 @@ describe("migrateProjectPreferences 迁移", () => {
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
       await migrateProjectPreferences(c.stores, c.meta);
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       const first = { bytes: readFileSync(file, "utf8"), mtimeMs: statSync(file).mtimeMs };
 
       const second = await migrateProjectPreferences(c.stores, c.meta);
@@ -286,7 +286,7 @@ describe("migrateProjectPreferences 迁移", () => {
     try {
       // 预设无 kv 存量：隔离出纯「文件为准、库值丢弃」路径（预设迁入见下一用例）
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", null);
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       writeFileSync(file, JSON.stringify({ version: 1, preferredModel: "user/file-model" }) + "\n");
 
       const summary = await migrateProjectPreferences(c.stores, c.meta);
@@ -304,7 +304,7 @@ describe("migrateProjectPreferences 迁移", () => {
     const c = setup();
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       writeFileSync(file, JSON.stringify({ version: 1, preferredModel: "user/file-model" }) + "\n");
 
       // 第一轮：模型分支清库、预设分支迁入文件
@@ -344,7 +344,7 @@ describe("migrateProjectPreferences 迁移", () => {
     const c = setup();
     try {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", null);
-      const file = join(c.project, ".senpi-webui.json");
+      const file = join(c.project, ".ul-omo-webui.json");
       writeFileSync(file, "{broken");
       const summary = await migrateProjectPreferences(c.stores, c.meta, { warn: () => {} });
       expect(summary).toEqual({ migrated: 0, failed: 1 });
@@ -366,7 +366,7 @@ describe("migrateProjectPreferences 迁移", () => {
       registerLegacy(c, bad, "zai-coding-cn/glm-5.3-flash", null);
       const summary = await migrateProjectPreferences(c.stores, c.meta, { warn: () => {} });
       expect(summary).toEqual({ migrated: 1, failed: 1 });
-      expect(JSON.parse(readFileSync(join(good, ".senpi-webui.json"), "utf8")).preferredModel).toBe(
+      expect(JSON.parse(readFileSync(join(good, ".ul-omo-webui.json"), "utf8")).preferredModel).toBe(
         "zai-coding-cn/glm-5.3",
       );
       expect(c.meta.getProjectMeta(good)?.preferredModel).toBeNull();
@@ -393,7 +393,7 @@ describe("migrateProjectPreferences 迁移", () => {
       const other = join(c.root, "other");
       mkdirSync(other, { recursive: true });
       await migrateProjectPreferences(c.stores, c.meta);
-      expect(existsSync(join(other, ".senpi-webui.json"))).toBe(false);
+      expect(existsSync(join(other, ".ul-omo-webui.json"))).toBe(false);
     } finally {
       cleanup(c);
     }

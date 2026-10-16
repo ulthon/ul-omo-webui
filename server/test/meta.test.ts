@@ -469,18 +469,18 @@ describe("WAL 与并发写", () => {
 });
 
 describe("库路径解析", () => {
-  test("SENPI_WEBUI_META_DB 环境变量覆盖默认路径", () => {
+  test("UL_OMO_WEBUI_META_DB 环境变量覆盖默认路径", () => {
     const envPath = dbFile("env-override");
-    const prev = process.env.SENPI_WEBUI_META_DB;
-    process.env.SENPI_WEBUI_META_DB = envPath;
+    const prev = process.env.UL_OMO_WEBUI_META_DB;
+    process.env.UL_OMO_WEBUI_META_DB = envPath;
     try {
       const db = openMetaDb();
       expect(db.path).toBe(envPath);
       db.setKv("k", "v");
       db.close();
     } finally {
-      if (prev === undefined) delete process.env.SENPI_WEBUI_META_DB;
-      else process.env.SENPI_WEBUI_META_DB = prev;
+      if (prev === undefined) delete process.env.UL_OMO_WEBUI_META_DB;
+      else process.env.UL_OMO_WEBUI_META_DB = prev;
     }
   });
 });

@@ -1,5 +1,5 @@
 // 配置文件读写层（W1 todo 1）：全局配置目录的 tags.json / snippets.json 与
-// 项目根 .senpi-webui.json 两类 JSON 源（schema version=1）。
+// 项目根 .ul-omo-webui.json 两类 JSON 源（schema version=1）。
 // 读：mtime+size 缓存失效——外部改文件（含 git pull）后下一次读即生效，无需重启；
 //     JSON 解析失败抛带文件路径的明确错误，绝不静默吞损坏文件。
 // 写：进程内 per-file promise 链串行化；tmp+rename 原子写（写前清同目录同前缀的
@@ -71,16 +71,16 @@ export interface ProjectConfigPatch {
 }
 
 export interface OpenConfigStoreOptions {
-  /** 全局配置目录；缺省依次取 SENPI_WEBUI_CONFIG_DIR 环境变量、~/.config/senpi-webui/ */
+  /** 全局配置目录；缺省依次取 UL_OMO_WEBUI_CONFIG_DIR 环境变量、~/.config/ul-omo-webui/ */
   globalDir?: string;
-  /** 项目根目录（其下读写 .senpi-webui.json）；缺省为宿主仓库根 */
+  /** 项目根目录（其下读写 .ul-omo-webui.json）；缺省为宿主仓库根 */
   projectRoot?: string;
 }
 
 export const CONFIG_SCHEMA_VERSION = 1;
 
 export function defaultGlobalDir(): string {
-  return process.env.SENPI_WEBUI_CONFIG_DIR ?? join(homedir(), ".config", "senpi-webui");
+  return process.env.UL_OMO_WEBUI_CONFIG_DIR ?? join(homedir(), ".config", "ul-omo-webui");
 }
 
 function defaultProjectRoot(): string {
@@ -236,7 +236,7 @@ function isEnoent(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/** tmp 文件命名前缀：.tags.json.tmp-* / .snippets.json.tmp-* / .senpi-webui.json.tmp-* */
+/** tmp 文件命名前缀：.tags.json.tmp-* / .snippets.json.tmp-* / .ul-omo-webui.json.tmp-* */
 function tmpPrefix(filePath: string): string {
   return `.${basename(filePath)}.tmp-`;
 }
@@ -353,7 +353,7 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
     emptySnippetsFile,
     normalizeSnippetsFile,
   );
-  const projectConfigPath = join(projectRoot, ".senpi-webui.json");
+  const projectConfigPath = join(projectRoot, ".ul-omo-webui.json");
   const projectLayer = makeFileLayer(
     projectConfigPath,
     emptyProjectConfig,

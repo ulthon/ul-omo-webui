@@ -57,7 +57,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, type BridgeEvent } from "../engine/events"
 import { DEBUG_SSE } from "../config"
 
-/** D18 诊断日志（SENPI_WEBUI_DEBUG_SSE 开关，默认关）：连接/帧/durableLookup 观测，
+/** D18 诊断日志（UL_OMO_WEBUI_DEBUG_SSE 开关，默认关）：连接/帧/durableLookup 观测，
  * 关闭时零输出、生产行为零改动。 */
 function dlog(line: string): void {
   if (DEBUG_SSE) console.log(`[sse-debug] ${line}`)

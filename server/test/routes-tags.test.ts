@@ -254,7 +254,7 @@ describe("PUT /api/tags project scope", () => {
     const { app, projectDir, register } = setup();
     register(projectDir);
     // 预置项目配置：preferredModel + snippets + 旧 tags，验证 tags 整替是部分更新
-    const configPath = join(projectDir, ".senpi-webui.json");
+    const configPath = join(projectDir, ".ul-omo-webui.json");
     writeFileSync(
       configPath,
       JSON.stringify({

@@ -993,7 +993,7 @@ describe("项目与元数据杂项路由", () => {
   test("permissionPreset 预设：PATCH 校验合法档位、null 清除、列表与 meta 回显（todo 6 起写项目文件）", async () => {
     const proj = mkdtempSync(join(tmpdir(), "routes-preset-"));
     const { app, meta } = buildApp(new FakeGateway());
-    const configFile = join(proj, ".senpi-webui.json");
+    const configFile = join(proj, ".ul-omo-webui.json");
     try {
       meta.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
 
@@ -1054,7 +1054,7 @@ describe("项目与元数据杂项路由", () => {
       expect(project.permissionPreset).toBe("read-only");
       expect(project.lastOpenedAt).toBe("2026-02-02T00:00:00.000Z");
       // 文件源与库源各自落位
-      const doc = JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8"));
+      const doc = JSON.parse(readFileSync(join(proj, ".ul-omo-webui.json"), "utf8"));
       expect(doc.preferredModel).toBe("zai-coding-cn/glm-5.3");
       expect(doc.permissionPreset).toBe("read-only");
       expect(meta.getProjectMeta(proj)?.preferredModel).toBeNull();
@@ -1079,7 +1079,7 @@ describe("项目与元数据杂项路由", () => {
       expect(patch.status).toBe(200);
       const project = (await patch.json()).project;
       expect(project.preferredThinkingLevel).toBe("high");
-      const doc = JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8"));
+      const doc = JSON.parse(readFileSync(join(proj, ".ul-omo-webui.json"), "utf8"));
       expect(doc.preferredThinkingLevel).toBe("high");
 
       // GET 列表合并读同值
@@ -1094,7 +1094,7 @@ describe("项目与元数据杂项路由", () => {
       });
       expect(clear.status).toBe(200);
       expect((await clear.json()).project.preferredThinkingLevel).toBeNull();
-      expect(JSON.parse(readFileSync(join(proj, ".senpi-webui.json"), "utf8")).preferredThinkingLevel).toBeNull();
+      expect(JSON.parse(readFileSync(join(proj, ".ul-omo-webui.json"), "utf8")).preferredThinkingLevel).toBeNull();
 
       // 档位外取值 400；与 preferredModel 同时 PATCH 各自落位
       const bad = await req(app, "/api/projects/meta", {
@@ -1128,7 +1128,7 @@ describe("项目与元数据杂项路由", () => {
       meta.updateProjectMeta(proj, { preferredModel: "zai-coding-cn/glm-5.3" });
       meta.setKv(permissionPresetKey(proj), "read-only");
       // 文件存在但无偏好字段（如已被 tags/snippets 写过的旧文件）
-      writeFileSync(join(proj, ".senpi-webui.json"), JSON.stringify({ version: 1, tags: [] }));
+      writeFileSync(join(proj, ".ul-omo-webui.json"), JSON.stringify({ version: 1, tags: [] }));
 
       const list = await (await req(app, "/api/projects")).json();
       expect(list.projects[0].preferredModel).toBe("zai-coding-cn/glm-5.3");
@@ -1154,7 +1154,7 @@ describe("项目与元数据杂项路由", () => {
     const { app, meta } = buildApp(engines);
     try {
       meta.updateProjectMeta(proj, { preferredModel: "zai-coding-cn/glm-5.3" });
-      writeFileSync(join(proj, ".senpi-webui.json"), "{broken");
+      writeFileSync(join(proj, ".ul-omo-webui.json"), "{broken");
 
       // 单项目损坏：列表整体 200，该项目字段降级 null + configError 标志
       const list = await req(app, "/api/projects");
@@ -1183,7 +1183,7 @@ describe("项目与元数据杂项路由", () => {
         body: JSON.stringify({ path: proj, preferredModel: "zai-coding-cn/glm-5.3-flash" }),
       });
       expect(strict.status).toBe(500);
-      expect((await strict.json()).error.message).toContain(".senpi-webui.json");
+      expect((await strict.json()).error.message).toContain(".ul-omo-webui.json");
       expect(meta.getProjectMeta(proj)?.preferredModel).toBe("zai-coding-cn/glm-5.3");
 
       // 建会话模型缺省损坏降级 null = 引擎默认（不 500）
@@ -1855,7 +1855,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const withPreset = mk(projWith, extra);
     const withoutPreset = mk(projWithout, extra);
     try {
-      writeFileSync(join(projWith, ".senpi-webui.json"), JSON.stringify({ version: 1, permissionPreset: "read-only" }));
+      writeFileSync(join(projWith, ".ul-omo-webui.json"), JSON.stringify({ version: 1, permissionPreset: "read-only" }));
       await withPreset.m.ensureRunning(projWith);
       await withoutPreset.m.ensureRunning(projWithout);
       expect(withPreset.client.spawnOpts.args).toContain("--permission-preset");
@@ -1863,9 +1863,9 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
       expect(withoutPreset.client.spawnOpts.args).not.toContain("--permission-preset");
 
       // 文件损坏 → spawn 参数降级为空（不炸 spawn）；修复后恢复
-      writeFileSync(join(projWith, ".senpi-webui.json"), "{broken");
+      writeFileSync(join(projWith, ".ul-omo-webui.json"), "{broken");
       expect(extra(projWith)).toEqual([]);
-      writeFileSync(join(projWith, ".senpi-webui.json"), JSON.stringify({ version: 1, permissionPreset: "  read-only  " }));
+      writeFileSync(join(projWith, ".ul-omo-webui.json"), JSON.stringify({ version: 1, permissionPreset: "  read-only  " }));
       expect(extra(projWith)).toEqual(["--permission-preset", "read-only"]);
       // helper 直测：值去空白、无值空数组
       expect(permissionPresetArgs("  read-only  ")).toEqual(["--permission-preset", "read-only"]);
@@ -1885,29 +1885,29 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
 
 describe("config 路径装配", () => {
   const saved = {
-    metaDb: process.env.SENPI_WEBUI_META_DB,
-    agentDirEnv: process.env.SENPI_WEBUI_AGENT_DIR,
+    metaDb: process.env.UL_OMO_WEBUI_META_DB,
+    agentDirEnv: process.env.UL_OMO_WEBUI_AGENT_DIR,
   };
   afterEach(() => {
-    if (saved.metaDb !== undefined) process.env.SENPI_WEBUI_META_DB = saved.metaDb;
-    else delete process.env.SENPI_WEBUI_META_DB;
-    if (saved.agentDirEnv !== undefined) process.env.SENPI_WEBUI_AGENT_DIR = saved.agentDirEnv;
-    else delete process.env.SENPI_WEBUI_AGENT_DIR;
+    if (saved.metaDb !== undefined) process.env.UL_OMO_WEBUI_META_DB = saved.metaDb;
+    else delete process.env.UL_OMO_WEBUI_META_DB;
+    if (saved.agentDirEnv !== undefined) process.env.UL_OMO_WEBUI_AGENT_DIR = saved.agentDirEnv;
+    else delete process.env.UL_OMO_WEBUI_AGENT_DIR;
   });
 
   test("(b) meta 库默认随 DATA_DIR，显式 META_DB 仍最高优先", () => {
-    delete process.env.SENPI_WEBUI_META_DB;
+    delete process.env.UL_OMO_WEBUI_META_DB;
     expect(metaDbPath()).toBe(resolve(DATA_DIR, "meta.db"));
-    process.env.SENPI_WEBUI_META_DB = "/tmp/explicit-meta.db";
+    process.env.UL_OMO_WEBUI_META_DB = "/tmp/explicit-meta.db";
     expect(metaDbPath()).toBe("/tmp/explicit-meta.db");
     // PID 登记表同属运行数据目录
     expect(engineRegistryPath()).toBe(resolve(DATA_DIR, "engine-processes.json"));
   });
 
   test("(a) agentDir 缺省 ~/.omo/agent（2026-10-15 改锚与命令行版同库），env 覆盖生效", () => {
-    delete process.env.SENPI_WEBUI_AGENT_DIR;
+    delete process.env.UL_OMO_WEBUI_AGENT_DIR;
     expect(configAgentDir()).toBe(join(homedir(), ".omo", "agent"));
-    process.env.SENPI_WEBUI_AGENT_DIR = "/tmp/fake-agent";
+    process.env.UL_OMO_WEBUI_AGENT_DIR = "/tmp/fake-agent";
     expect(configAgentDir()).toBe("/tmp/fake-agent");
   });
 });
