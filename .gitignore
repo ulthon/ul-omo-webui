@@ -10,6 +10,12 @@ server/src/static-assets.generated.ts
 # 运行数据（壳层元数据库与密码文件）
 server/data/
 
+# 工作区与会话产物（本产品运行/开发工具状态，不入库）
+.omo/
+.senpi/
+.ul-omo-webui.json
+.codegraph/
+
 # QA 证据不入库
 .omo/qa/
 
