@@ -196,7 +196,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const sessionId = durableSessionId ?? wireSessionId;
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
 
-  // D18 诊断（senpi_debug_sse 开关）：帧到达 + 分发目标键 + 与选中键的错配信号。
+  // D18 诊断（ul_omo_debug_sse 开关）：帧到达 + 分发目标键 + 与选中键的错配信号。
   // route ≠ selected 且为消息类帧 = "消息写进不可见槽"（durableLookup miss 键错配嫌疑）的直接证据。
   if (sseDebugEnabled()) {
     const selected = useSessionsStore.getState().selectedId;

@@ -15,7 +15,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { findToolResultMessage, parseTodoSnapshot, type TodoPhase, type TodoStatus } from "./todo-list-data";
 
 /** 折叠记忆 localStorage 键（"1"=开 / "0"=关；无记录=未交互过，由调用方按视口取默认值） */
-const PANEL_PREF_KEY = "senpi-webui:todo-panel-open";
+const PANEL_PREF_KEY = "ul-omo-webui:todo-panel-open";
 
 /** 折叠记忆读取：无记录或 storage 不可用（隐私模式 / 非浏览器环境）返回 null */
 export function readPanelOpenPreference(): boolean | null {

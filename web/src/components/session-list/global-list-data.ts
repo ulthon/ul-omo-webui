@@ -7,10 +7,10 @@ import type { SessionListItem } from "@/lib/api";
 export const RECENT_LIMIT = 8;
 
 /** 折叠记忆 localStorage key 前缀（完整 key = 前缀 + 项目绝对路径） */
-export const COLLAPSE_PREFIX = "senpi-webui:collapse:";
+export const COLLAPSE_PREFIX = "ul-omo-webui:collapse:";
 
 /** 侧栏定位事件（topbar 项目切换器 → session-list 展开该组并滚动置顶） */
-export const LOCATE_EVENT = "senpi-webui:locate-project";
+export const LOCATE_EVENT = "ul-omo-webui:locate-project";
 
 /** 项目偏好最小形状（ui.projects 的子集，便于单测构造） */
 export interface ProjectPreference {

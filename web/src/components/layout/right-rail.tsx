@@ -1,10 +1,10 @@
 // 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计/记忆五页签收敛到右栏。
 // 三处宿主由本组件统一渲染：桌面展开（lg 常驻，带拖宽分隔条）、桌面折叠窄条（w-10）、
 // 手机固定右缘抽屉（<lg，勿套 --app-height，镜像左栏模式）；开合状态与记忆
-// （senpi-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
+// （ul-omo-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
 // 宽度（桌面展开档）：默认 384、可拖 320-560——主区与右栏间指针拖拽分隔条
 // （pointerdown/move/up + setPointerCapture），拖动中实时钳制，pointerup 才写
-// localStorage senpi-webui:right-rail-width；读取时缺失/非数值/越界一律落回默认
+// localStorage ul-omo-webui:right-rail-width；读取时缺失/非数值/越界一律落回默认
 // 384（钳制兜底：渲染层永远拿不到范围外宽度）。
 // dirty 契约（原 shell 页签切换 guard 迁入）：NotesView 经 dirtyRef 上报编辑未保存，
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
@@ -38,7 +38,7 @@ const TABS: { id: RightRailTab; label: string }[] = [
 ];
 
 /** 宽度记忆 localStorage 键与拖宽边界（px） */
-const RAIL_WIDTH_KEY = "senpi-webui:right-rail-width";
+const RAIL_WIDTH_KEY = "ul-omo-webui:right-rail-width";
 const RAIL_WIDTH_MIN = 320;
 const RAIL_WIDTH_MAX = 560;
 const RAIL_WIDTH_DEFAULT = 384;
@@ -167,7 +167,7 @@ function RailBody({
   );
 }
 
-/** 右栏容器：open/onToggle 由宿主传入（折叠记忆 senpi-webui:todo-panel-open 的既有机制不变）。
+/** 右栏容器：open/onToggle 由宿主传入（折叠记忆 ul-omo-webui:todo-panel-open 的既有机制不变）。
  *  sessionId 与会话视图同源派生；无选中会话时 todo/统计各自显示空态，
  *  变更/笔记按项目维度自带空态（原样挂载不改）。 */
 export function RightRail({

@@ -45,7 +45,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-svh items-center justify-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">senpi webui</h1>
+        <h1 className="text-xl font-semibold tracking-tight">ul-omo webui</h1>
         <p className="mt-1 text-sm text-muted-foreground">输入访问密码登录</p>
         <div className="mt-6 space-y-3">
           <Input

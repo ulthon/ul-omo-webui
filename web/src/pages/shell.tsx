@@ -7,7 +7,7 @@
 // visualViewport 高度同步（--app-height）解决手机软键盘弹出遮挡输入区（iOS svh 不随键盘收缩）。
 // W5-15 右栏开合：lg 常驻（展开 / 折叠窄条），<lg 镜像左栏 fixed 抽屉（inset-y-0，勿套
 // --app-height，否则软键盘收缩截断抽屉底）；双抽屉互斥（开其一时自动关另一，经 ui store
-// subscribe 实现左→右方向）；z 序与折叠记忆（senpi-webui:todo-panel-open）机制不变。
+// subscribe 实现左→右方向）；z 序与折叠记忆（ul-omo-webui:todo-panel-open）机制不变。
 // W2 todo 8：useCtrlPModelPicker 导出供单测挂最小探针验证（避免 mock.module 进程级
 // 粘滞污染同进程后跑的测试文件）。
 // oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的

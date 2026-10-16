@@ -1,4 +1,4 @@
-// 类型化 REST client：覆盖 server 全部端点（shape 见 .omo/notepads/senpi-webui/learnings.md W2 todo 9）。
+// 类型化 REST client：覆盖 server 全部端点（shape 见 .omo/notepads/ul-omo-webui/learnings.md W2 todo 9）。
 // 统一错误形状 {error:{code,message}} 解析；401（未登录/过期）统一跳登录页。
 // prompt 的模型防呆/偏好注入读 ui store（ui.ts 对 api.ts 仅类型引用，无运行时环）。
 import { useUiStore } from "@/stores/ui";
@@ -16,7 +16,7 @@ export interface ProjectMeta {
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
    * 变更需项目引擎重启（restartProject）后生效。 */
   permissionPreset?: string | null;
-  /** 思考档偏好（W2 todo 8，写项目 .senpi-webui.json；服务端仅接受 low/high/max/null） */
+  /** 思考档偏好（W2 todo 8，写项目 .ul-omo-webui.json；服务端仅接受 low/high/max/null） */
   preferredThinkingLevel?: string | null;
   /** 死项目守卫（W1 #2）：仅路径已不存在/不再是目录的条目携带 missing:true，
    * 可解析条目省略该字段；bootstrap 自动恢复据此静默跳过。 */

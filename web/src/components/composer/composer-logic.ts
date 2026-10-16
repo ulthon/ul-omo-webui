@@ -15,7 +15,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** 单条 prompt 图片数上限（与服务端 parseImages 上限一致，routes-session.ts） */
 export const MAX_IMAGES = 8;
 
-const DRAFT_KEY_PREFIX = "senpi-webui:draft:";
+const DRAFT_KEY_PREFIX = "ul-omo-webui:draft:";
 
 export interface LocalDraft {
   content: string;

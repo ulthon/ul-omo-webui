@@ -12,7 +12,7 @@
 //   2. fetch 流（降级路径）——fetch('/api/events', {headers: Last-Event-ID}) + ReadableStream
 //      手写 SSE 帧解析（event/data/id 行、多行 data 合并、心跳注释行跳过、chunk 边界缓冲），
 //      断线走同一套指数退避，重连请求自带 Last-Event-ID 头（游标取自分发层记账）。
-//   QA 强制开关：localStorage senpi_sse_transport=fetch 或 URL ?transport=fetch（生产用户无感）。
+//   QA 强制开关：localStorage ul_omo_sse_transport=fetch 或 URL ?transport=fetch（生产用户无感）。
 //
 // 服务端契约（server/src/api/sse.ts）：event 行 = wire type（心跳为具名 hb 帧，占用 id
 // 流水：重放透传、Last-Event-ID 序列参与、游标跟随）；data 行 =
@@ -82,26 +82,26 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(timer);
 };
 
-/** QA/自救开关：localStorage senpi_sse_transport=fetch 或 URL ?transport=fetch 强制 fetch 流。
+/** QA/自救开关：localStorage ul_omo_sse_transport=fetch 或 URL ?transport=fetch 强制 fetch 流。
  * bun test 无 window/localStorage，guard 返回 false。 */
 function resolveForceFetchTransport(): boolean {
   try {
     if (typeof window === "undefined" || typeof localStorage === "undefined") return false;
     if (new URLSearchParams(window.location.search).get("transport") === "fetch") return true;
-    return localStorage.getItem("senpi_sse_transport") === "fetch";
+    return localStorage.getItem("ul_omo_sse_transport") === "fetch";
   } catch {
     return false;
   }
 }
 
-/** D18 诊断开关：localStorage senpi_debug_sse=1 或 URL ?debugSse=1 时，连接状态迁移与
- * 帧到达经 console.debug 输出（与服务端 SENPI_WEBUI_DEBUG_SSE 互相独立；QA 时两端同开）。
+/** D18 诊断开关：localStorage ul_omo_debug_sse=1 或 URL ?debugSse=1 时，连接状态迁移与
+ * 帧到达经 console.debug 输出（与服务端 UL_OMO_WEBUI_DEBUG_SSE 互相独立；QA 时两端同开）。
  * function 声明保证 event-dispatch 循环 import 场景下的提升绑定。 */
 export function sseDebugEnabled(): boolean {
   try {
     if (typeof window === "undefined" || typeof localStorage === "undefined") return false;
     if (new URLSearchParams(window.location.search).has("debugSse")) return true;
-    return localStorage.getItem("senpi_debug_sse") === "1";
+    return localStorage.getItem("ul_omo_debug_sse") === "1";
   } catch {
     return false;
   }

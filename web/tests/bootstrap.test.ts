@@ -94,7 +94,7 @@ describe("bootstrap 死项目守卫", () => {
     expect(useUiStore.getState().projects).toHaveLength(1);
     // 静默跳过仅留一条 console.info，含指定前缀与路径
     expect(infos).toHaveLength(1);
-    expect(infos[0][0]).toBe("[senpi-webui] 上次项目路径已不存在，跳过自动打开:");
+    expect(infos[0][0]).toBe("[ul-omo-webui] 上次项目路径已不存在，跳过自动打开:");
     expect(infos[0][1]).toBe(DEAD);
   });
 

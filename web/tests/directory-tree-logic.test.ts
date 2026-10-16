@@ -353,7 +353,7 @@ describe("DirectoryTree 懒加载", () => {
             : path === "/data"
               ? [entry("..", "/"), entry("projects", "/data/projects")]
               : path === "/data/projects"
-                ? [entry("..", "/data"), entry("senpi-webui", "/data/projects/senpi-webui")]
+                ? [entry("..", "/data"), entry("ul-omo-webui", "/data/projects/ul-omo-webui")]
                 : [],
       });
     };
@@ -364,7 +364,7 @@ describe("DirectoryTree 懒加载", () => {
           selectedPath: null,
           onSelect: () => {},
           fetchDir: fetcher,
-          registeredPaths: new Set(["/data/projects/senpi-webui"]),
+          registeredPaths: new Set(["/data/projects/ul-omo-webui"]),
         }),
       );
     });
@@ -374,7 +374,7 @@ describe("DirectoryTree 懒加载", () => {
     // /data/projects 下的 ".."（path=/data，与已展开的 data 行同键）必须保持折叠
     const parentAliasRow = container.querySelectorAll('[data-testid="dir-row-/data"]')[1];
     expect(parentAliasRow?.getAttribute("aria-expanded")).toBeNull();
-    expect(row("/data/projects/senpi-webui")).toBeTruthy();
+    expect(row("/data/projects/ul-omo-webui")).toBeTruthy();
     expect(calls).toEqual(["(root)", "/data", "/data/projects"]);
     await act(async () => {
       root.unmount();
