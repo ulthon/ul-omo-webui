@@ -15,6 +15,7 @@ server/data/
 .senpi/
 .ul-omo-webui.json
 .codegraph/
+docs/verification/
 
 # QA 证据不入库
 .omo/qa/
