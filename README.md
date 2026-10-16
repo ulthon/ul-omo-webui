@@ -1,8 +1,8 @@
-# senpi-webui
+# ul-omo-webui
 
 给 senpi/omo 引擎做的 web 工作台：功能集对标 opencode v1 TUI，兼容手机浏览器，自托管单用户。
 
-自用阶段内部也可称 omo-webui；若将来开源发布，建议保持 senpi-webui（引擎层 senpi 是 MIT，名字无归属风险；omo 是 code-yeongyu 的项目名，官方自己有 senpi-desktop 桌面版，冒名易混淆）。
+原名 senpi-webui，2026-10-16 为开源发布改名 ul-omo-webui（`ul-` 前缀区分于生态名：引擎层 senpi 是 MIT；omo 是 code-yeongyu 的项目名，官方另有 senpi-desktop 桌面版）。改名同时环境变量前缀 `SENPI_WEBUI_*` 改为 `UL_OMO_WEBUI_*`、全局配置目录改为 `~/.config/ul-omo-webui/`、项目配置文件改为 `.ul-omo-webui.json`（当时零外部用户，硬切无迁移负担）。
 
 ## 三条核心理念
 
@@ -37,7 +37,7 @@
 
 ### 快速开始
 
-构建（需要 bun；产出 `dist/senpi-webui` 单二进制 + `dist/engine/` 引擎闭包目录）：
+构建（需要 bun；产出 `dist/ul-omo-webui` 单二进制 + `dist/engine/` 引擎闭包目录）：
 
 ```
 bun run build:binary
@@ -47,10 +47,10 @@ bun run build:binary
 
 ```
 cd dist
-./senpi-webui
+./ul-omo-webui
 ```
 
-首次启动自动生成随机密码打印在 stdout 并写入 `data/password`，之后每次启动直接读取该文件。浏览器打开 `http://<主机>:7788` 登录（缺省监听 `0.0.0.0:7788`，`SENPI_WEBUI_HOST`/`SENPI_WEBUI_PORT` 可改）。命令行验证登录：
+首次启动自动生成随机密码打印在 stdout 并写入 `data/password`，之后每次启动直接读取该文件。浏览器打开 `http://<主机>:7788` 登录（缺省监听 `0.0.0.0:7788`，`UL_OMO_WEBUI_HOST`/`UL_OMO_WEBUI_PORT` 可改）。命令行验证登录：
 
 ```
 curl -X POST http://127.0.0.1:7788/api/auth/login \
@@ -58,18 +58,18 @@ curl -X POST http://127.0.0.1:7788/api/auth/login \
   -d '{"password":"<你的密码>"}'
 ```
 
-环境变量一览（详见 `server/src/config.ts` 与 `deploy/备份.md`）：`SENPI_WEBUI_HOST`/`PORT`/`DATA_DIR`/`META_DB`/`AGENT_DIR`/`STATIC_DIR`/`PASSWORD`；另有 `SENPI_WEBUI_CONFIG_DIR`（全局配置目录，见下节）与标题生成的 `SENPI_WEBUI_TITLE_BASEURL`/`SENPI_WEBUI_TITLE_MODEL`（见 `server/src/title-gen.ts`）。
+环境变量一览（详见 `server/src/config.ts` 与 `deploy/备份.md`）：`UL_OMO_WEBUI_HOST`/`PORT`/`DATA_DIR`/`META_DB`/`AGENT_DIR`/`STATIC_DIR`/`PASSWORD`；另有 `UL_OMO_WEBUI_CONFIG_DIR`（全局配置目录，见下节）与标题生成的 `UL_OMO_WEBUI_TITLE_BASEURL`/`UL_OMO_WEBUI_TITLE_MODEL`（见 `server/src/title-gen.ts`）。
 
 ### 配置文件与多机同步
 
 标签与常用语的定义以文本文件形态存在，git 管理即备份与多机同步：
 
-- 全局：`~/.config/senpi-webui/`（`tags.json` 全局标签集、`snippets.json` 全局常用语集）。把它放进你的 dotfiles git 仓库，新机器 clone 后配置即就位；目录位置可用 `SENPI_WEBUI_CONFIG_DIR` 覆盖。文件是外部改动（如 git pull）后下一次读取自动生效，无需重启。
-- 项目级：项目根下 `.senpi-webui.json`（项目级标签、常用语、preferredModel、permissionPreset），随项目仓库走。存量 meta 库里的项目偏好与权限预设会在服务启动时自动迁入该文件（写成功才清库，失败保留库值下次补迁）。
+- 全局：`~/.config/ul-omo-webui/`（`tags.json` 全局标签集、`snippets.json` 全局常用语集）。把它放进你的 dotfiles git 仓库，新机器 clone 后配置即就位；目录位置可用 `UL_OMO_WEBUI_CONFIG_DIR` 覆盖。文件是外部改动（如 git pull）后下一次读取自动生效，无需重启。
+- 项目级：项目根下 `.ul-omo-webui.json`（项目级标签、常用语、preferredModel、permissionPreset），随项目仓库走。存量 meta 库里的项目偏好与权限预设会在服务启动时自动迁入该文件（写成功才清库，失败保留库值下次补迁）。
 
-标题生成是服务端对模型 API 的独立调用（与引擎同源凭证，读引擎 agent 目录的 auth.json），缺省走 zai coding 端点 + glm-5.3-flash，可用 `SENPI_WEBUI_TITLE_BASEURL` 与 `SENPI_WEBUI_TITLE_MODEL` 换端点或模型。
+标题生成是服务端对模型 API 的独立调用（与引擎同源凭证，读引擎 agent 目录的 auth.json），缺省走 zai coding 端点 + glm-5.3-flash，可用 `UL_OMO_WEBUI_TITLE_BASEURL` 与 `UL_OMO_WEBUI_TITLE_MODEL` 换端点或模型。
 
-注意：迁移后 `.senpi-webui.json` 在提交之前会以未跟踪文件出现在各项目的 `git status` 与本产品"未提交变更"页签里，属预期行为。提交它才能获得多机同步；把它加进 `.gitignore` 会静默破坏同步（项目级标签与常用语的改动不再随仓库走）。
+注意：迁移后 `.ul-omo-webui.json` 在提交之前会以未跟踪文件出现在各项目的 `git status` 与本产品"未提交变更"页签里，属预期行为。提交它才能获得多机同步；把它加进 `.gitignore` 会静默破坏同步（项目级标签与常用语的改动不再随仓库走）。
 
 ### 部署参考件
 
@@ -82,4 +82,4 @@ curl -X POST http://127.0.0.1:7788/api/auth/login \
 - 应用为**纯 HTTP**——登录口令与会话 cookie 明文传输，局域网内可被嗅探。
 - server 持有**可执行任意命令的引擎凭证**（引擎以你的用户身份跑 agent，能读写文件、执行命令），拿到登录态等于拿到这个能力。
 
-因此：**仅在信任的局域网内使用**（家庭/个人内网）。需要暴露到更强对抗环境时，自行把 `SENPI_WEBUI_HOST=127.0.0.1` 绑定回环，再由反代做 TLS 终结对外（见 `deploy/Caddyfile.example`）。
+因此：**仅在信任的局域网内使用**（家庭/个人内网）。需要暴露到更强对抗环境时，自行把 `UL_OMO_WEBUI_HOST=127.0.0.1` 绑定回环，再由反代做 TLS 终结对外（见 `deploy/Caddyfile.example`）。
