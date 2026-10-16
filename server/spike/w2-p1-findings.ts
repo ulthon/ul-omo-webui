@@ -12,7 +12,7 @@
  *   P1-7 --export HTML 可用性（omo CLI 侧，零 token）
  *   P2-11 并发锁语义（同一活动会话被两个引擎进程同时 open）
  *
- * 运行：cd /data/projects/senpi-webui && bun run server/spike/w2-p1-findings.ts
+ * 运行：cd /data/projects/ul-omo-webui && bun run server/spike/w2-p1-findings.ts
  * 模型：zai-coding-cn/glm-5.3-flash，thinking low，短 prompt（token 预算规则）。
  * fixture 导出：/tmp/opencode/w2-7-proj/p1-fixtures.json（供 server/test/ 单测使用，零 token）。
  */
@@ -25,7 +25,7 @@ import { RpcClient, SessionManager } from "@code-yeongyu/senpi"
 
 // ---- 常量（全部来自 W1 实证规范） ----
 
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const AGENT_DIR = "/root/.pi/agent"
 const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"

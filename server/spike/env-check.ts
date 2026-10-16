@@ -76,7 +76,7 @@ function readModelsStore(path: string): { providerModels: Record<string, ModelIn
 
 function main(): void {
   const home = homedir()
-  console.log("=== senpi-webui 环境确认（todo 2，全只读） ===")
+  console.log("=== ul-omo-webui 环境确认（todo 2，全只读） ===")
   console.log(`HOME:        ${home}`)
   console.log(`bun:         ${process.versions.bun ?? "n/a"}`)
   console.log(`omo-ai 引擎 agent 目录（launcher 语义解析）: ${canonicalAgentDir()}`)

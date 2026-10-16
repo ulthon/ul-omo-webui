@@ -20,7 +20,7 @@ if (!existsSync(cliPath) || !existsSync(pluginDir)) {
 
 const client = new RpcClient({
   cliPath,
-  cwd: process.env.SENPI_WEBUI_SMOKE_CWD ?? process.cwd(),
+  cwd: process.env.UL_OMO_WEBUI_SMOKE_CWD ?? process.cwd(),
   args: ["--extension", pluginDir, "--multi-session"],
   env: {
     OMO_CODING_AGENT_DIR: "/root/.pi/agent",

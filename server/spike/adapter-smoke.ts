@@ -1,6 +1,6 @@
 /**
  * SenpiAdapter 真实引擎冒烟（todo 7 QA）：sessions.list + messages + prompt + abort。
- * 运行：cd /data/projects/senpi-webui && bun run server/spike/adapter-smoke.ts
+ * 运行：cd /data/projects/ul-omo-webui && bun run server/spike/adapter-smoke.ts
  * 证据：.omo/qa/W2/adapter-smoke.log
  */
 import { mkdirSync, writeFileSync } from "node:fs"
@@ -10,7 +10,7 @@ import type { EngineEvent } from "../src/adapter/engine-adapter"
 
 const AGENT_DIR = "/root/.pi/agent"
 const PROJ_DIR = "/tmp/opencode/w2-7-proj"
-const LOG_PATH = "/data/projects/senpi-webui/.omo/qa/W2/adapter-smoke.log"
+const LOG_PATH = "/data/projects/ul-omo-webui/.omo/qa/W2/adapter-smoke.log"
 
 const lines: string[] = []
 function log(s: string): void {
@@ -117,13 +117,13 @@ async function main(): Promise<number> {
 
 main()
   .then((code) => {
-    mkdirSync("/data/projects/senpi-webui/.omo/qa/W2", { recursive: true })
+    mkdirSync("/data/projects/ul-omo-webui/.omo/qa/W2", { recursive: true })
     writeFileSync(LOG_PATH, lines.join("\n") + "\n")
     process.exit(code)
   })
   .catch((e) => {
     log(`SMOKE FAILED: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`)
-    mkdirSync("/data/projects/senpi-webui/.omo/qa/W2", { recursive: true })
+    mkdirSync("/data/projects/ul-omo-webui/.omo/qa/W2", { recursive: true })
     writeFileSync(LOG_PATH, lines.join("\n") + "\n")
     process.exit(2)
   })

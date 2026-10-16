@@ -4,7 +4,7 @@
  * 场景：
  *   阶段 1（运行中）：A open 新会话并流式长任务 → B open 同一 sessionPath → B prompt → 观测双方事件
  *   阶段 2（空闲）  ：A 保持 open（已 settled）→ B 再 prompt 同一会话 → 观测
- * 运行：cd /data/projects/senpi-webui && bun run server/spike/w2-p11-lock.ts
+ * 运行：cd /data/projects/ul-omo-webui && bun run server/spike/w2-p11-lock.ts
  */
 
 import { spawnSync } from "node:child_process"
@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync } from "node:fs"
 import { join } from "node:path"
 import { RpcClient } from "@code-yeongyu/senpi"
 
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const AGENT_DIR = "/root/.pi/agent"
 const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"

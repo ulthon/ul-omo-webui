@@ -7,7 +7,7 @@
  *   C  同文本双条排队 ：去重边界 + getSteering/getFollowUp 队列查询
  *   D  撤销           ：clearQueue 撤单实测；abort 是否连带取消已排队消息
  *   F  409 边界       ：跨进程带 streamingBehavior 是否仍并发驾驶（P2-11 对照）
- * 运行：cd /data/projects/senpi-webui && bun run server/spike/r4-b2-queue.ts
+ * 运行：cd /data/projects/ul-omo-webui && bun run server/spike/r4-b2-queue.ts
  */
 
 import { spawnSync } from "node:child_process"
@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync } from "node:fs"
 import { join } from "node:path"
 import { RpcClient } from "@code-yeongyu/senpi"
 
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const AGENT_DIR = "/root/.pi/agent"
 const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"

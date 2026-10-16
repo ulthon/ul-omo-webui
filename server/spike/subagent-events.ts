@@ -32,7 +32,7 @@ const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"
 const THINKING = "low"
 const PROJ_DIR = "/tmp/opencode/w4-11-subagent-proj"
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const LOG_PATH = join(REPO, ".omo/qa/W4/subagent-spike.log")
 const SELF_PID = process.pid
 

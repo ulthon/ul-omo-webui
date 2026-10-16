@@ -66,7 +66,7 @@ async function main() {
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  await context.addCookies([{ name: "senpi_session", value: cookie.split("=")[1], domain: "localhost", path: "/" }]);
+  await context.addCookies([{ name: "ul_omo_session", value: cookie.split("=")[1], domain: "localhost", path: "/" }]);
   // hook 传输路径证据：EventSource 生命周期 + /api/events fetch 请求
   await context.addInitScript(`
     window.__esLog = [];

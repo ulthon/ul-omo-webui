@@ -92,7 +92,7 @@ async function main() {
   });
   const setCookie = loginRes.headers.get("set-cookie") ?? "";
   cookie = setCookie.split(";")[0];
-  if (!cookie.includes("senpi_session=")) throw new Error("登录失败");
+  if (!cookie.includes("ul_omo_session=")) throw new Error("登录失败");
   log("REST 登录成功");
 
   const created = await api("POST", "/api/sessions", {
@@ -115,7 +115,7 @@ async function main() {
   // 预注入登录 cookie（绕过登录页，深链直达）
   const domain = "localhost";
   await context.addCookies([
-    { name: "senpi_session", value: cookie.split("=")[1], domain, path: "/" },
+    { name: "ul_omo_session", value: cookie.split("=")[1], domain, path: "/" },
   ]);
   page = await context.newPage();
   page.on("console", (msg: any) => {

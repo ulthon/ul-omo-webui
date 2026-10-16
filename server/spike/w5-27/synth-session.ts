@@ -2,7 +2,7 @@
 // 方法：只读扫描真实会话库 ~/.pi/agent/sessions（原库零写入），按 type=message 条目数
 // 挑最大会话作素材；把其条目按原顺序复制 N 遍（id/parentId/timestamp 重生成，线性链），
 // 并穿插"大 markdown 消息"（正文取自本仓库真实文档与源码，重组为 markdown/代码块），
-// 写入隔离 agent 目录（SENPI_WEBUI_AGENT_DIR 指向的副本）的测试项目 sessions 目录。
+// 写入隔离 agent 目录（UL_OMO_WEBUI_AGENT_DIR 指向的副本）的测试项目 sessions 目录。
 // 真实性标注：结构与小文本条目 = 真实会话原样复制（仅换 id/时间）；大 markdown 正文 =
 // 本仓库真实文件内容重组，非模型生成。全部合成痕迹见 .omo/qa/W5/perf/ 报告。
 //
@@ -127,7 +127,7 @@ function buildBigTexts(repoRoot: string, count: number): string[] {
 
 function main() {
   const { agentDir, project, repeat, big, limit } = parseArgs();
-  const repoRoot = "/data/projects/senpi-webui";
+  const repoRoot = "/data/projects/ul-omo-webui";
   const sessionsRoot = join(agentDir, "sessions");
 
   console.log(`[synth] 扫描隔离库 ${sessionsRoot} ...`);

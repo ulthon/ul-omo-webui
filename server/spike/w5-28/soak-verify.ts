@@ -72,7 +72,7 @@ async function main() {
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  await context.addCookies([{ name: "senpi_session", value: cookie.split("=")[1], domain: "localhost", path: "/" }]);
+  await context.addCookies([{ name: "ul_omo_session", value: cookie.split("=")[1], domain: "localhost", path: "/" }]);
   const page = await context.newPage();
   await page.goto(`${BASE}/?session=${SID}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(5000);

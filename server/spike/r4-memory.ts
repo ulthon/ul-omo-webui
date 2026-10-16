@@ -7,7 +7,7 @@
  *                     Phase2 隔离 webui（临时 DATA_DIR、17902）注册同目录跑一轮，核对同一库目录
  *   C  标记条目     ：两阶段父会话 JSONL 枚举 memory 相关 customType + SSE 抓包核对到达形态
  *   D  数据源排查   ：root-94a6b447 的 receipts/final.json/notices/sidecar 键集合（只读）
- * 运行：cd /data/projects/senpi-webui && bun run server/spike/r4-memory.ts
+ * 运行：cd /data/projects/ul-omo-webui && bun run server/spike/r4-memory.ts
  */
 
 import { spawn, spawnSync } from "node:child_process"
@@ -17,7 +17,7 @@ import { basename, join, resolve } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import { RpcClient } from "@code-yeongyu/senpi"
 
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const AGENT_DIR = "/root/.pi/agent"
 const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"
@@ -118,7 +118,7 @@ function predictLibId(cwd: string): { id: string; hash: string; slug: string } {
 
 function partA(): Record<string, unknown> {
   section("Part A：库路径 hash 推算核对")
-  const cands = ["/root", "/", "/data/projects/senpi-webui", PROJ_DIR]
+  const cands = ["/root", "/", "/data/projects/ul-omo-webui", PROJ_DIR]
   const out: Record<string, unknown> = {}
   for (const cwd of cands) {
     const pred = predictLibId(cwd)
@@ -262,10 +262,10 @@ async function startWebui(): Promise<{ child: ReturnType<typeof spawn>; cookie: 
     cwd: join(REPO, "server"),
     env: {
       ...process.env,
-      SENPI_WEBUI_DATA_DIR: WEBUI_DIR,
-      SENPI_WEBUI_PORT: String(WEBUI_PORT),
-      SENPI_WEBUI_HOST: "127.0.0.1",
-      SENPI_WEBUI_PASSWORD: WEBUI_PASSWORD,
+      UL_OMO_WEBUI_DATA_DIR: WEBUI_DIR,
+      UL_OMO_WEBUI_PORT: String(WEBUI_PORT),
+      UL_OMO_WEBUI_HOST: "127.0.0.1",
+      UL_OMO_WEBUI_PASSWORD: WEBUI_PASSWORD,
     },
     stdio: ["ignore", "pipe", "pipe"],
   })

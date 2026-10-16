@@ -29,7 +29,7 @@ const SELF_PID = process.pid
 // 候选入口，按序试（计划指定顺序）：omo-ai 包 bin `omo`；其内 senpi bin `senpi --mode rpc`。
 function embeddedSenpiCli(): string | null {
   // bun isolated installs：omo-ai 5.1.0 内嵌 @code-yeongyu/senpi 2026.9.28-7，位于根 .bun 目录
-  const base = "/data/projects/senpi-webui/node_modules/.bun"
+  const base = "/data/projects/ul-omo-webui/node_modules/.bun"
   if (!existsSync(base)) return null
   for (const dir of readdirSync(base)) {
     if (!dir.startsWith("@code-yeongyu+senpi@2026.9.28-7")) continue
@@ -43,7 +43,7 @@ const senpiCli = embeddedSenpiCli()
 const CANDIDATES: Array<{ name: string; cliPath: string }> = [
   {
     name: "omo-ai 包 bin `omo`（launcher 注入 omo 扩展与品牌 env）",
-    cliPath: "/data/projects/senpi-webui/server/node_modules/omo-ai/bin/omo.js",
+    cliPath: "/data/projects/ul-omo-webui/server/node_modules/omo-ai/bin/omo.js",
   },
 ]
 if (senpiCli) {
@@ -81,7 +81,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 function prepareProject(): void {
   mkdirSync(PROJ_DIR, { recursive: true })
   const readme = join(PROJ_DIR, "README.md")
-  if (!existsSync(readme)) writeFileSync(readme, "# P0-1 RPC 测试项目\n\nsenpi-webui spike 隔离测试目录。\n")
+  if (!existsSync(readme)) writeFileSync(readme, "# P0-1 RPC 测试项目\n\nul-omo-webui spike 隔离测试目录。\n")
 }
 
 interface EngineProc {

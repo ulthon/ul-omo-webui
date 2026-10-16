@@ -33,11 +33,11 @@ import { RpcClient } from "@code-yeongyu/senpi"
 
 // ---- 常量 ----
 
-const REPO = "/data/projects/senpi-webui"
-// agent 目录解析：尊重隔离测试覆盖（SENPI_WEBUI_AGENT_DIR 为 server 侧语义，
+const REPO = "/data/projects/ul-omo-webui"
+// agent 目录解析：尊重隔离测试覆盖（UL_OMO_WEBUI_AGENT_DIR 为 server 侧语义，
 // OMO_CODING_AGENT_DIR 为引擎 launcher 语义），缺省 ~/.pi/agent
 const AGENT_DIR =
-  process.env.SENPI_WEBUI_AGENT_DIR ??
+  process.env.UL_OMO_WEBUI_AGENT_DIR ??
   process.env.OMO_CODING_AGENT_DIR ??
   join(homedir(), ".pi", "agent")
 const SESSION_DIR = "/tmp/opencode/w18-sessions" // PI_CODING_AGENT_SESSION_DIR（引擎会话写盘隔离）

@@ -4,7 +4,7 @@
 
 ## 运行前置
 
-- 服务：`SENPI_WEBUI_PORT=17962 SENPI_WEBUI_DATA_DIR=/tmp/opencode/w5-28-data SENPI_WEBUI_PASSWORD=w5soak-qa`（隔离 DATA_DIR，后台 setsid 起）
+- 服务：`UL_OMO_WEBUI_PORT=17962 UL_OMO_WEBUI_DATA_DIR=/tmp/opencode/w5-28-data UL_OMO_WEBUI_PASSWORD=w5soak-qa`（隔离 DATA_DIR，后台 setsid 起）
 - 项目：`/tmp/opencode/w5-28-proj`（git init 的隔离目录）
 - 模型：`zai-coding-cn/glm-5.3-flash` thinking low
 - playwright-core 不在依赖清单（docs/02）内：脚本运行目录需临时提供可解析的 playwright-core（QA 惯例：临时目录 node_modules 链接，或 `bun --cwd <有 playwright-core 的目录> run <脚本>`），不进入任何 package.json

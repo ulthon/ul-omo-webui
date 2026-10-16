@@ -22,7 +22,7 @@ const PROVIDER = "zai-coding-cn"
 const MODEL = "glm-5.3-flash"
 const THINKING = "low"
 const PROJ_DIR = "/tmp/opencode/w4-24-proj"
-const REPO = "/data/projects/senpi-webui"
+const REPO = "/data/projects/ul-omo-webui"
 const SELF_PID = process.pid
 const PROBES = ["/undo", "/clear", "/new", "/compact", "/xyz-unknown"] as const
 
