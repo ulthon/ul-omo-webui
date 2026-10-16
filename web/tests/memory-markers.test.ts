@@ -188,12 +188,11 @@ describe("mergeMemoryItems 流内归并", () => {
     expect(merged.map((i) => (i.kind === "memoryMarker" ? i.marker.entryId : "?"))).toEqual(["b1", "b3"]);
   });
 
-  test("divider 锚点从 key 前缀还原，保持在其条目之前", () => {
+  test("streaming 项无锚点排最后（divider 锚点逻辑已随 B11 退役）", () => {
     const assistantB = { type: "message", id: "a2", message: { role: "assistant", content: [] } };
     const items: ChatListItem[] = [
       { key: "u1", kind: "entry", entryId: "u1", interrupted: false },
-      { key: "model-a1", kind: "modelDivider", model: "m-1" },
-      { key: "a1", kind: "entry", entryId: "a1", interrupted: false },
+      { key: "__streaming", kind: "streaming" },
     ];
     const merged = mergeMemoryItems(items, [
       user,
@@ -201,7 +200,7 @@ describe("mergeMemoryItems 流内归并", () => {
       { type: "custom", id: "c1", customType: "omo-memory:accepted-turns", data: {} },
       assistantB,
     ]);
-    expect(merged.map((i) => i.key)).toEqual(["u1", "model-a1", "a1", "memory-c1"]);
+    expect(merged.map((i) => i.key)).toEqual(["u1", "memory-c1", "__streaming"]);
   });
 });
 

@@ -14,17 +14,6 @@ import { mergeMemoryItems, type ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
 
-/** 模型切换点标记（B11）：居中细分隔线 + muted 模型名；仅在 assistant 段 model 变化处出现 */
-export const ModelDivider = memo(function ModelDivider({ model }: { model: string }) {
-  return (
-    <div data-testid="model-divider" data-model={model} aria-label={`模型 ${model}`} className="flex items-center gap-3 py-0.5">
-      <span className="h-px min-w-0 flex-1 bg-border" aria-hidden />
-      <span className="shrink-0 text-xs text-muted-foreground">{model}</span>
-      <span className="h-px min-w-0 flex-1 bg-border" aria-hidden />
-    </div>
-  );
-});
-
 /** 记忆标记块（docs08-r4 任务 13）：图标 + 一句话摘要 + 点击展开原文；折叠时不渲染原文
  *  （惰性展开，不影响消息流渲染）。样式与 thinking 块同族更轻（无边框细行）；权重分级：
  *  weak 弱标记 / weakest 极弱（projection-pin）/ notice 提示卡（kibitzer/memorian/notice）。 */
@@ -71,7 +60,6 @@ export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { m
 
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
-  if (item.kind === "modelDivider") return <ModelDivider model={item.model} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
 });

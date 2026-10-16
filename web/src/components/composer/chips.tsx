@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Brain, Check, ChevronDown, Cpu } from "lucide-react";
 import type { ModelInfo } from "@/lib/api";
+import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
 import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
 import { useUiStore } from "@/stores/ui";
@@ -36,21 +37,12 @@ function matchQuery(m: ModelInfo, query: string): boolean {
   return `${m.provider}/${m.id}`.toLowerCase().includes(needle);
 }
 
-export function ModelChip() {
+/** 模型选择弹层面板（ModelChip 与 CapsuleModelTag 共用）：搜索 + provider 分组列表 */
+function ModelPickerBody({ close }: { close: () => void }) {
   const models = useUiStore((s) => s.models);
-  const modelsLoaded = useUiStore((s) => s.modelsLoaded);
   const selectedModel = useUiStore((s) => s.selectedModel);
-  const open = useUiStore((s) => s.modelPickerOpen);
-  const setOpen = useUiStore((s) => s.setModelPickerOpen);
   const [query, setQuery] = useState("");
 
-  // 卸载即复位打开态：切走「对话」页签等场景下 Ctrl+P 置位的残留不在回页时突然弹出
-  useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
-
-  const noModels = modelsLoaded && models.length === 0;
-  const label = noModels
-    ? "无可用模型"
-    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : "加载中…"));
   const groups = useMemo(() => groupByProvider(models.filter((m) => matchQuery(m, query))), [models, query]);
 
   const selectModel = (value: string) => {
@@ -60,11 +52,76 @@ export function ModelChip() {
   };
 
   return (
+    <>
+      <div className="border-b p-1">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索模型…"
+          data-testid="model-chip-search"
+          className="h-8 text-sm"
+        />
+      </div>
+      <div className="max-h-72 overflow-y-auto">
+        {groups.length === 0 && (
+          <p className="px-2 py-3 text-center text-xs text-muted-foreground" data-testid="model-chip-empty">
+            无匹配模型
+          </p>
+        )}
+        {groups.map(([provider, list]) => (
+          <div key={provider}>
+            <div className="px-2 py-1 text-[11px] text-muted-foreground" title={provider}>
+              {provider}
+            </div>
+            {list.map((m) => {
+              const value = `${m.provider}/${m.id}`;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid="model-chip-item"
+                  data-value={value}
+                  title={value}
+                  onClick={() => {
+                    selectModel(value);
+                    close();
+                  }}
+                  className="flex min-h-9 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-none transition-colors hover:bg-accent"
+                >
+                  <Check
+                    className={`size-4 shrink-0 ${selectedModel === value ? "opacity-100" : "opacity-0"}`}
+                  />
+                  <span className="ml-1 truncate">{m.id}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+export function ModelChip() {
+  const models = useUiStore((s) => s.models);
+  const modelsLoaded = useUiStore((s) => s.modelsLoaded);
+  const selectedModel = useUiStore((s) => s.selectedModel);
+  const open = useUiStore((s) => s.modelPickerOpen);
+  const setOpen = useUiStore((s) => s.setModelPickerOpen);
+
+  // 卸载即复位打开态：切走「对话」页签等场景下 Ctrl+P 置位的残留不在回页时突然弹出
+  useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
+
+  const noModels = modelsLoaded && models.length === 0;
+  const label = noModels
+    ? "无可用模型"
+    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : "加载中…"));
+
+  return (
     <Popover
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setQuery("");
       }}
     >
       <PopoverTrigger asChild>
@@ -81,51 +138,53 @@ export function ModelChip() {
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-0" data-testid="model-picker-popover">
-        <div className="border-b p-1">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索模型…"
-            data-testid="model-chip-search"
-            className="h-8 text-sm"
-          />
-        </div>
-        <div className="max-h-72 overflow-y-auto">
-          {groups.length === 0 && (
-            <p className="px-2 py-3 text-center text-xs text-muted-foreground" data-testid="model-chip-empty">
-              无匹配模型
-            </p>
-          )}
-          {groups.map(([provider, list]) => (
-            <div key={provider}>
-              <div className="px-2 py-1 text-[11px] text-muted-foreground" title={provider}>
-                {provider}
-              </div>
-              {list.map((m) => {
-                const value = `${m.provider}/${m.id}`;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    data-testid="model-chip-item"
-                    data-value={value}
-                    title={value}
-                    onClick={() => {
-                      selectModel(value);
-                      setOpen(false);
-                    }}
-                    className="flex min-h-9 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-none transition-colors hover:bg-accent"
-                  >
-                    <Check
-                      className={`size-4 shrink-0 ${selectedModel === value ? "opacity-100" : "opacity-0"}`}
-                    />
-                    <span className="ml-1 truncate">{m.id}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        <ModelPickerBody close={() => setOpen(false)} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** 手机胶囊模型浮签（docs08 2026-10-15 手机端模型可见性缺口 ①③）：常驻于胶囊右上角的
+ * 小徽标，显示当前模型短名，点开直达选择弹层（与 ModelChip 共用 modelPickerOpen——
+ * 两触发器按断点互斥挂载：手机档 ModelChip 不上工具行，弹层永不双开）。替代原
+ * "+"展开行里的 ModelChip（聚焦自动收起导致收起态全界面无模型信息）。 */
+export function CapsuleModelTag() {
+  const models = useUiStore((s) => s.models);
+  const modelsLoaded = useUiStore((s) => s.modelsLoaded);
+  const selectedModel = useUiStore((s) => s.selectedModel);
+  const open = useUiStore((s) => s.modelPickerOpen);
+  const setOpen = useUiStore((s) => s.setModelPickerOpen);
+
+  // 卸载即复位（与 ModelChip 同款；桌面↔手机断点切换时防残留打开态）
+  useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
+
+  const noModels = modelsLoaded && models.length === 0;
+  const full = selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : null);
+  const label = noModels ? "无模型" : full !== null ? shortModelName(full) : "…";
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="capsule-model-tag"
+          disabled={noModels}
+          aria-label={`当前模型 ${full ?? ""}，点击切换`}
+          title={full ?? undefined}
+          className="flex max-w-[38vw] items-center gap-0.5 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] leading-none text-muted-foreground shadow-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        >
+          <Cpu className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">{label}</span>
+          <ChevronDown className="size-2.5 shrink-0" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 p-0" data-testid="model-picker-popover">
+        <ModelPickerBody close={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   );

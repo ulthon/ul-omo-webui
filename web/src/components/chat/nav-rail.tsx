@@ -57,7 +57,7 @@ export function NavRail({
     const list: NavTick[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.kind !== "entry") continue; // streaming / modelDivider 不刻画度
+      if (item.kind !== "entry") continue; // streaming / memoryMarker 不刻画度
       const msg = byId.get(item.entryId);
       if (!msg || msg.role !== "user") continue; // assistant / toolResult 不刻画度
       const title = previewText(msg);

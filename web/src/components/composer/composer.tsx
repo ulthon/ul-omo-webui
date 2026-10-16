@@ -24,7 +24,7 @@ import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
 import { SlashHints } from "@/components/composer/slash-hints";
-import { ModelChip, ThinkingChip } from "@/components/composer/chips";
+import { CapsuleModelTag, ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -1027,15 +1027,20 @@ export function Composer({
             {toolButtons}
             <div className="ml-auto flex items-center gap-1">
               <ThinkingChip />
-              <ModelChip />
             </div>
           </div>
         )}
         <div className="flex items-end gap-1.5">
           <div
             data-testid="composer-capsule"
-            className="flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+            className="relative flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
           >
+            {/* 模型浮签（2026-10-15 可见性缺口 ①③）：胶囊右上角常驻当前模型短名，点开
+                直达选择弹层；替代 "+" 工具行的 ModelChip（聚焦自动收起 → 收起态全界面
+                无模型信息）。取式样浮签不占行宽，textarea 宽度不受影响。 */}
+            <div className="absolute -top-2.5 right-2 z-10">
+              <CapsuleModelTag />
+            </div>
             <button
               type="button"
               data-testid="composer-more-btn"

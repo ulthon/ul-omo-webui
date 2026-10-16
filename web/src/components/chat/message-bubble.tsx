@@ -3,7 +3,7 @@
 // 消息级操作（todo 25）：user/assistant 定格气泡挂 MessageActions（复制原文/重试 fork）。
 import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
-import type { WireMessage, WireEntry } from "@/lib/api";
+import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
@@ -15,9 +15,10 @@ function formatTime(timestamp: string | null): string | null {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function BubbleShell({
+export function BubbleShell({
   role,
   timestamp,
+  model,
   interrupted,
   live,
   queued,
@@ -26,6 +27,8 @@ function BubbleShell({
 }: {
   role: "user" | "assistant";
   timestamp: string | null;
+  /** assistant 消息的模型名（消息级 model 字段，B11 同源）；头部行常驻短名显示 */
+  model?: string | null;
   interrupted?: boolean;
   live?: boolean;
   queued?: boolean;
@@ -56,6 +59,9 @@ function BubbleShell({
     <div className="group w-full" data-streaming={live ? "true" : undefined}>
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <span>{live ? "正在回复" : "助手"}</span>
+        {/* 模型短名常驻（2026-10-15 可见性缺口 ②）：逐条可知由哪只模型作答，替代 B11
+            切换点分隔线（连续同模型段零标记的盲区）；muted 小字，密度代价数个字符 */}
+        {model && !live && <span className="max-w-[40vw] truncate opacity-70">{shortModelName(model)}</span>}
         {live && <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />}
         {time && <span>{time}</span>}
         {interrupted && (
@@ -128,6 +134,7 @@ export const EntryBubble = memo(function EntryBubble({
     <BubbleShell
       role={role}
       timestamp={typeof entry.timestamp === "string" ? entry.timestamp : null}
+      model={role === "assistant" ? messageModel(entry) : undefined}
       interrupted={role === "assistant" ? interrupted : undefined}
       queued={queued}
       actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
@@ -149,8 +156,16 @@ export function StreamingBubble({ sessionId }: { sessionId: string }) {
   const present = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
   if (!present) return null;
   return (
-    <BubbleShell role="assistant" timestamp={null} live>
+    <BubbleShell role="assistant" timestamp={null} model={streamingModelOf(sessionId)} live>
       <StreamingParts sessionId={sessionId} />
     </BubbleShell>
   );
+}
+
+/** 流式消息的模型字段（message_start 载荷透传；无则 undefined——头部 live 态本就不显示短名，预留） */
+function streamingModelOf(sessionId: string): string | null {
+  const msg = useMessagesStore.getState().bySession[sessionId]?.streamingMessage;
+  if (!msg) return null;
+  const model = (msg as { model?: unknown }).model;
+  return typeof model === "string" && model !== "" ? model : null;
 }

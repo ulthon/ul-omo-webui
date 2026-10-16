@@ -70,6 +70,13 @@ export function messageModel(entry: WireEntry): string | null {
   return typeof model === "string" && model !== "" ? model : null;
 }
 
+/** 模型短名（"provider/model" 取首个 "/" 后段；无斜杠原样）——气泡头部常驻短名与
+ *  胶囊模型浮签共用（2026-10-15 模型可见性：逐条可知作答模型） */
+export function shortModelName(value: string): string {
+  const idx = value.indexOf("/");
+  return idx >= 0 ? value.slice(idx + 1) : value;
+}
+
 export interface WirePart {
   type: string;
   [key: string]: unknown;
