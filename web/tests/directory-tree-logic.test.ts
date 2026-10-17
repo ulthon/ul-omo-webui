@@ -381,3 +381,60 @@ describe("DirectoryTree 懒加载", () => {
     });
   });
 });
+
+// ---------- Windows 路径形态（跨平台兼容：客户端不知服务端平台，两种绝对路径形态都放行） ----------
+
+describe("isAbsoluteInput（绝对路径形态判定）", () => {
+  test("POSIX / Windows 盘符 / UNC 均为绝对路径（分隔符 / 与 \\ 皆认）", () => {
+    expect(logic.isAbsoluteInput("/home/u")).toBe(true);
+    expect(logic.isAbsoluteInput("D:\\projects\\x")).toBe(true);
+    expect(logic.isAbsoluteInput("d:/projects/x")).toBe(true);
+    expect(logic.isAbsoluteInput("\\\\server\\share\\x")).toBe(true);
+  });
+
+  test("相对路径、裸盘符、空串 → false（裸 D: 是盘相对路径，不算绝对）", () => {
+    expect(logic.isAbsoluteInput("home/u")).toBe(false);
+    expect(logic.isAbsoluteInput("D:")).toBe(false);
+    expect(logic.isAbsoluteInput("")).toBe(false);
+    expect(logic.isAbsoluteInput("relative\\win")).toBe(false);
+  });
+});
+
+describe("suggestDirOf（Windows 形态目录部分提取）", () => {
+  test("反斜杠/正斜杠盘符路径取最后分隔符及之前", () => {
+    expect(logic.suggestDirOf("D:\\projects\\my")).toBe("D:\\projects\\");
+    expect(logic.suggestDirOf("D:/projects/my")).toBe("D:/projects/");
+    expect(logic.suggestDirOf("D:\\projects\\")).toBe("D:\\projects\\");
+    expect(logic.suggestDirOf("D:\\p")).toBe("D:\\");
+  });
+
+  test("盘根输入（D:\\）目录部分为盘根本身；UNC 取最后分隔符", () => {
+    expect(logic.suggestDirOf("D:\\")).toBe("D:\\");
+    expect(logic.suggestDirOf("\\\\srv\\share\\di")).toBe("\\\\srv\\share\\");
+  });
+});
+
+describe("normalizeBrowsePath（Windows 形态判重键）", () => {
+  test("盘根三形态统一为 D:\\（去尾会退化成盘相对路径 D:，必须保形）", () => {
+    expect(logic.normalizeBrowsePath("D:\\")).toBe("D:\\");
+    expect(logic.normalizeBrowsePath("D:")).toBe("D:\\");
+    expect(logic.normalizeBrowsePath("D:/")).toBe("D:/");
+  });
+
+  test("盘内路径去尾分隔符；POSIX 行为不回归", () => {
+    expect(logic.normalizeBrowsePath("D:\\projects\\x\\")).toBe("D:\\projects\\x");
+    expect(logic.normalizeBrowsePath("D:\\projects\\x/")).toBe("D:\\projects\\x");
+    expect(logic.normalizeBrowsePath("/home//u/")).toBe("/home/u");
+    expect(logic.normalizeBrowsePath("/")).toBe("/");
+    expect(logic.normalizeBrowsePath("")).toBe("");
+  });
+});
+
+describe("suggestionBackfill（按路径分隔符形态补尾）", () => {
+  test("win 形态补 \\，POSIX 形态补 /，盘根与 POSIX 根保形", () => {
+    expect(logic.suggestionBackfill(entry("x", "D:\\projects\\x"))).toBe("D:\\projects\\x\\");
+    expect(logic.suggestionBackfill(entry("x", "/home/x"))).toBe("/home/x/");
+    expect(logic.suggestionBackfill(entry("C:\\", "C:\\"))).toBe("C:\\");
+    expect(logic.suggestionBackfill(entry("/", "/"))).toBe("/");
+  });
+});

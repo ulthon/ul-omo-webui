@@ -14,14 +14,23 @@ export const PICKER_DEBOUNCE_MS = 300;
 export const SUGGEST_LIMIT = 30;
 
 /**
- * 输入框文本中"已输入目录部分"（最后一个 / 及其之前）。
- * 非绝对路径（缺省 / 前缀）、空串 → null（静默不建议）。
+ * 绝对路径形态判定（客户端不知服务端平台，两种形态都放行，最终裁判在服务端）：
+ * POSIX（/…）、Windows 盘符（D:\… / D:/…，裸 "D:" 不算——win32 语义是"该盘当前目录"）、UNC（\\server\share）。
+ */
+export function isAbsoluteInput(raw: string): boolean {
+  return raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\");
+}
+
+/**
+ * 输入框文本中"已输入目录部分"（最后一个路径分隔符及其之前；/ 与 \ 皆认）。
+ * 非绝对路径（isAbsoluteInput 不通过）、空串 → null（静默不建议）。
  * W5 todo 14：不再拒绝含 .. 的输入（服务端 resolve 归一后仍在 base 内即放行）。
  */
 export function suggestDirOf(raw: string): string | null {
-  if (!raw.startsWith("/")) return null;
-  const i = raw.lastIndexOf("/");
-  return i <= 0 ? "/" : raw.slice(0, i + 1);
+  if (!isAbsoluteInput(raw)) return null;
+  const i = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+  if (i <= 0) return "/";
+  return raw.slice(0, i + 1);
 }
 
 /**
@@ -59,19 +68,25 @@ export function pickSuggestions(raw: string, entries: FsBrowseEntry[]): FsBrowse
     .slice(0, SUGGEST_LIMIT);
 }
 
-/** 点选建议后的回填值：建议目录完整路径 + 尾随 /（可继续下钻输入） */
+/** 点选建议后的回填值：建议目录完整路径 + 尾随分隔符（按路径自身分隔符形态选 / 或 \；盘根/POSIX 根保形不加） */
 export function suggestionBackfill(entry: FsBrowseEntry): string {
-  return `${entry.path}/`;
+  if (/[\\/]$/.test(entry.path)) return entry.path;
+  return `${entry.path}${entry.path.includes("\\") ? "\\" : "/"}`;
 }
 
 /**
- * 浏览判重键（docs08-r3 任务 20 联动）：合并连续斜杠、去尾斜杠（根 "/" 保留）。
+ * 浏览判重键（docs08-r3 任务 20 联动）：合并连续正斜杠、去尾分隔符（POSIX 根 "/" 与
+ * win32 盘根 "D:\" 保形——去尾会退化成盘相对路径 "D:"，语义不同）。
  * 不展开 .. 与 .（交服务端 resolve）——仅用于跳过同形输入的重复请求，多一次请求无害。
  */
 export function normalizeBrowsePath(raw: string): string {
+  // 盘符根三形态（D:\、D:/、裸 D:）统一为 "D:\"
+  if (/^[A-Za-z]:[\\/]{0,1}$/.test(raw)) return raw.length === 3 ? raw : `${raw}\\`;
   const merged = raw.replace(/\/{2,}/g, "/");
   if (merged.length <= 1) return merged;
-  return merged.replace(/\/+$/, "") || "/";
+  const stripped = merged.replace(/[\\/]+$/, "");
+  if (stripped.length === 0) return merged;
+  return stripped;
 }
 
 // ---------- DirectoryTree 状态转移（纯函数，状态三件套整体替换触发渲染） ----------

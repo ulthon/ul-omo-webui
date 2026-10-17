@@ -1,9 +1,24 @@
 // 路径校验（todo 9 验收硬条件）：项目路径与项目内子路径。
 // 规则（计划 185 行）：resolve 后必须仍在允许范围内；覆盖 ../ 逃逸、绝对路径注入、
 // 符号链接逃逸（realpath 复核）。
+// Windows 支持：绝对性判定用 node:path isAbsolute（平台正确——win32 接受 D:\ 与 \\\\UNC，
+// posix 只认 / 开头，跨平台伪绝对形态在 Linux 上仍被拒）；包含性判定用平台分隔符，
+// win32 下大小写不敏感（用户输入大小写与 realpath 规范形态不一致时不得误判逃逸）。
 import { accessSync, constants, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { ApiError } from "./http";
+
+const IS_WIN = process.platform === "win32";
+
+/**
+ * 包含性判定：target 等于 base 或位于 base 之下（含盘根 base：D:\ 本身以分隔符结尾不再补）。
+ * win32 大小写不敏感；posix 精确匹配。base="/" 与盘根 "D:\\" 均为天然前缀。
+ */
+export function insideBase(base: string, target: string): boolean {
+  if (target === base) return true;
+  const prefix = base.endsWith(sep) ? base : base + sep;
+  return IS_WIN ? target.toLowerCase().startsWith(prefix.toLowerCase()) : target.startsWith(prefix);
+}
 
 /**
  * 校验用户提供的项目目录：必须是存在的绝对路径目录，返回 realpath 规范形态。
@@ -13,7 +28,7 @@ export function validateProjectInput(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ApiError(400, "invalid_project", "project 必须是绝对目录路径");
   }
-  if (!raw.startsWith("/")) {
+  if (!isAbsolute(raw)) {
     throw new ApiError(400, "invalid_project", `project 必须是绝对路径：${raw}`);
   }
   let real: string;
@@ -42,7 +57,7 @@ export function createProjectInput(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ApiError(400, "invalid_project", "project 必须是绝对目录路径");
   }
-  if (!raw.startsWith("/")) {
+  if (!isAbsolute(raw)) {
     throw new ApiError(400, "invalid_project", `project 必须是绝对路径：${raw}`);
   }
   if (raw.includes("\0")) {
@@ -69,7 +84,9 @@ export function createProjectInput(raw: unknown): string {
     try {
       stat = statSync(parent);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT" && parent !== "/") {
+      // 上溯到 dirname 不再变化（POSIX 根 "/" 或 win32 盘根 "D:\"）仍不可达即放弃：
+      // 原判据 parent !== "/" 在 win32 缺失盘符（如 E:\xx 而 E 盘不存在）下会死循环
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" && dirname(parent) !== parent) {
         parent = dirname(parent);
         continue;
       }
@@ -110,7 +127,7 @@ export function resolveInsideProject(
   }
   // "./" 前缀把绝对路径注入（/etc/passwd）中和为项目内相对路径
   const target = resolve(projectRoot, `./${subPath}`);
-  if (target !== projectRoot && !target.startsWith(projectRoot + "/")) {
+  if (!insideBase(projectRoot, target)) {
     throw new ApiError(403, "path_escape", `路径逃逸被拒绝：${subPath}`);
   }
   let real: string | null = null;
@@ -119,7 +136,7 @@ export function resolveInsideProject(
   } catch {
     return { path: target, real: null };
   }
-  if (real !== projectRoot && !real.startsWith(projectRoot + "/")) {
+  if (!insideBase(projectRoot, real)) {
     throw new ApiError(403, "path_escape", `符号链接逃逸被拒绝：${subPath}`);
   }
   return { path: target, real };

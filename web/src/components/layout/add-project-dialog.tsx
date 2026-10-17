@@ -151,7 +151,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
       <DialogHeader>
         <DialogTitle>添加项目</DialogTitle>
         <DialogDescription>
-          输入服务器上的项目目录绝对路径，服务端校验存在性与合法性。输入 / 开头路径可自动补全目录。
+          输入服务器上的项目目录绝对路径，服务端校验存在性与合法性。绝对路径（/… 或 Windows 盘符 D:\…）可自动补全目录。
         </DialogDescription>
       </DialogHeader>
       <div className="mt-4 space-y-2">
@@ -165,7 +165,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
                 setHighlight(0);
               }}
               onKeyDown={onInputKeyDown}
-              placeholder="/home/user/my-project"
+              placeholder="如 /home/user/my-project 或 D:\projects\my-project"
               className="h-11"
               data-testid="add-project-input"
               autoFocus

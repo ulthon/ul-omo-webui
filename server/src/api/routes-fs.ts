@@ -6,7 +6,7 @@
 // 非根目录列表头部合成 ".." 父目录项供树上行导航。
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { ApiError, route } from "./http";
 import type { ApiDeps } from "./deps";
@@ -19,6 +19,29 @@ type DirentLike = {
   isFile(): boolean;
   isSymbolicLink(): boolean;
 };
+
+/** win32 盘根形态：D:\ 或 D:/（realpath 归一后为反斜杠形态） */
+const WIN_DRIVE_ROOT = /^[A-Za-z]:[\\/]$/;
+
+/** 盘符探测的最小 stat 面（statSync 结构兼容；单测可注入伪造盘） */
+type DriveStat = (path: string) => { isDirectory(): boolean };
+
+/**
+ * win32 盘符枚举（A:-Z: 逐个 statSync 探测，无更优纯 Node 手段）。
+ * stat 可注入（单测伪造盘）；不存在/无介质（ENOENT、EIO 等）一律跳过。
+ */
+export function listWinDrives(stat: DriveStat = statSync): Array<{ name: string; path: string; hidden: boolean }> {
+  const out: Array<{ name: string; path: string; hidden: boolean }> = [];
+  for (let code = 65; code <= 90; code++) {
+    const drive = `${String.fromCharCode(code)}:\\`;
+    try {
+      if (stat(drive).isDirectory()) out.push({ name: drive, path: drive, hidden: false });
+    } catch {
+      // 无此盘 / 无介质：跳过
+    }
+  }
+  return out;
+}
 
 /** fs 错误 → EACCES 标注（目录不可读时端点返回 200 + error 字段而非 500） */
 export function fsErrorCode(err: unknown): "eacces" | null {
@@ -109,6 +132,8 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
   //    base="/" 时前缀即 "/" 本身：直接写 base + "/" 会得到 "//" 使 startsWith 恒假（除根外全 403），
   //    故根特例 prefix = "/"。
   // 2. 单次 realpathSync 复核（一次调用解析全部符号链接，出界 → 403）。
+  // win32 分支（见路由体首段）：缺省根为盘符列表，盘内不再做前缀越界检查（每个盘各自成根，
+  // 与 POSIX base="/" 的"全文件系统即边界"语义等价）；盘根 ".." 回盘符列表。
   // 目录不可读（EACCES）→ 200 {entries:[], error:"eacces"} 而非 500；
   // 单 entry 失败跳过：仅按 dirent 类型收录目录，悬空/不可 stat 条目天然不入选；
   // 非根目录列表头部合成 ".."（path = 父目录），根目录列表不含。
@@ -116,6 +141,47 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
     const raw = c.req.query("path") ?? "";
     if (raw.includes("\0")) throw new ApiError(400, "invalid_path", "path 不能包含 NUL 字节");
     if (raw.length > 4096) throw new ApiError(400, "invalid_path", "path 过长");
+
+    // win32 缺省根（未注入 browseHome）：POSIX 单根 "/" 对应 win32 的"盘符列表"。
+    // 越界检查跳过——POSIX base="/" 的前缀检查本就覆盖全文件系统，win32 语义等价
+    // （每个盘各自成根，不存在统一 prefix；realpath 结果必然仍在某个盘内）。
+    if (process.platform === "win32" && browseHome === undefined) {
+      if (raw === "" || raw === "/") return c.json({ entries: listWinDrives() });
+      const target = resolve(raw);
+      let real: string;
+      try {
+        real = realpathSync(target);
+      } catch (err) {
+        if (fsErrorCode(err)) return c.json({ entries: [], error: "eacces" });
+        throw new ApiError(404, "not_found", `路径不存在：${target}`);
+      }
+      let dirents: DirentLike[];
+      try {
+        if (!statSync(real).isDirectory()) {
+          throw new ApiError(400, "not_a_directory", `路径不是目录：${target}`);
+        }
+        dirents = readdirSync(real, { withFileTypes: true }) as unknown as DirentLike[];
+      } catch (err) {
+        if (err instanceof ApiError) throw err;
+        if (fsErrorCode(err)) return c.json({ entries: [], error: "eacces" });
+        throw err;
+      }
+      const entries = dirents
+        .filter((d) => d.isDirectory())
+        .map((d) => {
+          const name = (d as unknown as { name: string }).name;
+          return { name, path: join(real, name), hidden: name.startsWith(".") };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      // 盘根的 ".." 回到盘符列表（"/"），盘内其余层级 ".." = 父目录
+      entries.unshift({
+        name: "..",
+        path: WIN_DRIVE_ROOT.test(real) ? "/" : dirname(real),
+        hidden: false,
+      });
+      return c.json({ entries });
+    }
+
     const base = realpathSync(browseHome ?? "/");
     const prefix = base === "/" ? "/" : base + "/";
     const target = resolve(base, raw);

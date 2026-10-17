@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { createFsRoutes, fsErrorCode } from "../src/api/routes-fs";
+import { createFsRoutes, fsErrorCode, listWinDrives } from "../src/api/routes-fs";
 import type { ApiDeps } from "../src/api/deps";
 
 // browse 端点不触 meta/engines（纯文件系统只读）：类型面要求的空依赖占位
@@ -198,6 +198,21 @@ describe("GET /api/fs/browse", () => {
     expect(fsErrorCode(enoent)).toBeNull();
     expect(fsErrorCode(new Error("plain"))).toBeNull();
     expect(fsErrorCode("not an error object")).toBeNull();
+  });
+
+  // ---------- win32 盘符枚举（stat 注入伪造盘；真实 Windows 行为走端到端 QA） ----------
+
+  test("listWinDrives：存在的盘收录（A:\ 形态）、不存在/无介质/非目录跳过", () => {
+    const present = new Set(["A:\\", "C:\\", "D:\\", "Z:\\"]);
+    const fakeStat = (p: string): { isDirectory(): boolean } => {
+      if (present.has(p)) return { isDirectory: () => true };
+      if (p === "E:\\") return { isDirectory: () => false }; // 比如 BitLocker 挂载点之类非目录
+      if (p === "F:\\") throw Object.assign(new Error("no media"), { code: "EIO" }); // 无介质光驱
+      throw Object.assign(new Error("no such drive"), { code: "ENOENT" });
+    };
+    const drives = listWinDrives(fakeStat);
+    expect(drives.map((d) => d.name)).toEqual(["A:\\", "C:\\", "D:\\", "Z:\\"]);
+    expect(drives[1]).toEqual({ name: "C:\\", path: "C:\\", hidden: false });
   });
 
   test("malformed：NUL 字节 400", async () => {

@@ -20,6 +20,7 @@ import { api, ApiError, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/
 import { useUiStore } from "@/stores/ui";
 import {
   initialDirTree,
+  isAbsoluteInput,
   normalizeBrowsePath,
   PICKER_DEBOUNCE_MS,
   treeCollapse,
@@ -298,11 +299,11 @@ function PickerBody({
         setNotFound(false);
         return;
       }
-      if (!target.startsWith("/")) {
+      if (!isAbsoluteInput(target)) {
         seqRef.current += 1;
         inFlightRef.current = null;
         setBrowsing(false);
-        setListError("路径必须以 / 开头");
+        setListError("路径必须是绝对路径（如 /home/user/proj 或 D:\\projects\\proj）");
         setNotFound(false);
         return;
       }
@@ -408,7 +409,7 @@ function PickerBody({
           setCreateError(null);
         }}
         onKeyDown={onPathKeyDown}
-        placeholder="/home/user/my-project"
+        placeholder="如 /home/user/my-project 或 D:\projects\my-project"
         className="shrink-0 font-mono text-sm"
         data-testid="dir-picker-path"
         aria-label="目录路径"
