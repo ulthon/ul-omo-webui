@@ -2,8 +2,6 @@
 
 senpi/omo 引擎的 web 工作台：功能集对标 opencode v1 TUI，兼容手机浏览器，自托管单用户。
 
-原名 senpi-webui，2026-10-16 为开源发布改名 ul-omo-webui（`ul-` 前缀区分于生态名：引擎层 senpi 是 MIT；omo 是 code-yeongyu 的项目名，官方另有 senpi-desktop 桌面版）。
-
 ## 三条核心理念
 
 1. **同一引擎的第二前端**。web 版不是独立产品，而是 senpi 引擎的第二个 UI。会话数据、agent 配置、凭证、工作产出与命令行版完全同一份（关键保证：宿主 spawn 引擎子进程时继承相同的 HOME 与项目 cwd）。终端 TUI 聊到一半，手机浏览器打开同一个会话接着聊，零迁移。
