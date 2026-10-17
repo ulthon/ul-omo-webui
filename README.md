@@ -35,20 +35,16 @@ senpi/omo 引擎的 web 工作台：功能集对标 opencode v1 TUI，兼容手�
 
 ## 快速开始
 
-构建（需要 bun；产出 `dist/ul-omo-webui` 单二进制 + `dist/engine/` 引擎闭包目录）：
+### 安装（npm，要求 node >= 24）
 
 ```
-bun run build:binary
+npm install -g ul-omo-webui
+ul-omo-webui
 ```
 
-运行（要求 PATH 上有 node；数据目录缺省落在可执行文件旁 `data/`）：
+首次启动自动生成随机密码打印在 stdout 并写入数据目录的 `password` 文件，之后每次启动直接读取该文件。浏览器打开 `http://<主机>:7788` 登录（缺省监听 `0.0.0.0:7788`）。
 
-```
-cd dist
-./ul-omo-webui
-```
-
-首次启动自动生成随机密码打印在 stdout 并写入 `data/password`，之后每次启动直接读取该文件。浏览器打开 `http://<主机>:7788` 登录（缺省监听 `0.0.0.0:7788`）。命令行验证登录：
+数据目录缺省（npm 安装形态）：Linux `~/.local/share/ul-omo-webui/`、macOS `~/Library/Application Support/ul-omo-webui/`、Windows `%APPDATA%\ul-omo-webui\`；`UL_OMO_WEBUI_DATA_DIR` 可覆盖。命令行验证登录：
 
 ```
 curl -X POST http://127.0.0.1:7788/api/auth/login \
@@ -56,13 +52,25 @@ curl -X POST http://127.0.0.1:7788/api/auth/login \
   -d '{"password":"<你的密码>"}'
 ```
 
+### 从源码构建（开发）
+
+```
+git clone https://github.com/ulthon/ul-omo-webui.git
+cd ul-omo-webui
+npm install
+npm run build      # web 构建 + 内嵌资产 + esbuild 打包 -> server/dist/index.js
+node server/dist/index.js
+```
+
+测试：`npm test`（server 368 用例 + web 425 用例，vitest）。
+
 ### 环境变量
 
 | 变量 | 作用 | 缺省 |
 |---|---|---|
 | `UL_OMO_WEBUI_HOST` | 监听地址 | `0.0.0.0` |
 | `UL_OMO_WEBUI_PORT` | 监听端口 | `7788` |
-| `UL_OMO_WEBUI_DATA_DIR` | 运行数据目录 | 可执行文件旁 `data/` |
+| `UL_OMO_WEBUI_DATA_DIR` | 运行数据目录 | npm 安装形态：平台数据目录；源码形态：`server/data/` |
 | `UL_OMO_WEBUI_META_DB` | 元数据库路径 | `<DATA_DIR>/meta.db` |
 | `UL_OMO_WEBUI_AGENT_DIR` | 引擎 agent 目录 | `~/.omo/agent` |
 | `UL_OMO_WEBUI_STATIC_DIR` | 磁盘静态目录（逃生口） | 内嵌资产 |
