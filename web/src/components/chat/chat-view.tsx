@@ -11,6 +11,7 @@ import { readSessionUrl } from "@/lib/session-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
+import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
@@ -20,6 +21,7 @@ import { commandGate } from "./commands";
 import { MessageList } from "./message-list";
 import { buildMessageItems, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
+import { QuestionQueue } from "./question-queue";
 import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
 
@@ -121,6 +123,23 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         void api.markRead(sessionId).catch(() => {});
         // 预取前端 auto-allow 列表（kv，命中时权限 select 自动放行不弹卡）
         usePermissionsStore.getState().refreshAutoAllow(sessionId);
+        // 未决提问对账（q1 提问卡片；增量走 SSE question 帧，此处覆盖服务端重启/
+        // 环形缓冲淘汰场景，与 getQueue 同口径）
+        api
+          .getQuestions(sessionId)
+          .then(({ questions }) => {
+            if (cancelled) return;
+            for (const frame of questions) {
+              useQuestionsStore.getState().pushRequest(sessionId, {
+                id: frame.id,
+                waitForAnswer: frame.waitForAnswer === true,
+                questions: frame.questions,
+                deadlineAtMs: frame.deadlineAtMs,
+                timeout: frame.timeout,
+              });
+            }
+          })
+          .catch(() => {});
         // 排队快照对账（docs08-r4 任务 11，初次渲染拉一次；增量走 queue_update 事件）
         api
           .getQueue(sessionId)
@@ -205,6 +224,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     <div className="flex h-full flex-col">
       <MessageList items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
       <PermissionQueue sessionId={sessionId} />
+      <QuestionQueue sessionId={sessionId} />
       {/* docs08-r4 任务 7：手机档容器贴边（左右 12px，底部安全区由 Composer 自带 pb 承担），
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">

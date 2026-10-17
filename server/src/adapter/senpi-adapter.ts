@@ -39,6 +39,7 @@ import {
   type EnginePermissionReply,
   type EnginePromptInput,
   type EngineQueueSnapshot,
+  type EngineQuestionFrame,
   type EngineSessionSummary,
   type EngineThinkingLevel,
   type EngineTodoState,
@@ -115,6 +116,8 @@ export interface SenpiRpcClient {
   getFollowUpMessages(): Promise<string[]>
   onEvent(listener: (event: EngineEvent) => void): () => void
   sendExtensionUIResponse(response: Record<string, unknown>): Promise<void>
+  /** 会话状态快照（get_state；pendingQuestions 为未决提问数组，q1 提问卡片对账源） */
+  getState(): Promise<Record<string, unknown>>
   getAvailableModels(): Promise<Array<Record<string, unknown>>>
   getAvailableThinkingLevels(): Promise<string[]>
   /** 斜杠命令面（get_commands，宿主 RpcClient 已解包 data.commands；需活跃会话） */
@@ -295,6 +298,12 @@ export class SenpiAdapter implements EngineAdapter {
         OMO_CODING_AGENT_DIR: this.options.agentDir,
         SENPI_CODING_AGENT_DIR: this.options.agentDir,
         OMO_NATIVE: "1",
+        // stdio 宿主的客户端能力通道（rpc-mode.js:130，逗号分隔）：set_client_info
+        // 对 stdio 连接是静默空操作（session-command-router 无 currentConnection），
+        // 能力必须经 env 下发。question（q1 提问卡片）使 ask-user 走结构化
+        // method:"question" 帧；不声明则引擎 degradeQuestion 降级为 select/input
+        // 对话框链（multiSelect 与逐问自由文本在降级中丢失）。
+        SENPI_RPC_CLIENT_CAPABILITIES: "extension_events,question",
       },
       provider: this.options.provider,
       model: this.options.modelId,
@@ -317,7 +326,11 @@ export class SenpiAdapter implements EngineAdapter {
     this.starting = (async () => {
       const client = this.createClient()
       await withTimeout(client.start(), START_TIMEOUT_MS, "引擎启动")
-      await withTimeout(client.setClientInfo(80, ["extension_events"]), 20000, "set_client_info")
+      // 能力协商（q1 提问卡片）：声明 "question" 后 ask-user 工具走结构化
+      // method:"question" 帧（waitForAnswer/questions/deadline 一体下发）；
+      // 不声明则引擎 degradeQuestion 降级为 select/input 对话框链（multiSelect
+      // 与逐问自由文本在降级中丢失）。前端 QuestionCard 与本能力必须同版本上线。
+      await withTimeout(client.setClientInfo(80, ["extension_events", "question"]), 20000, "set_client_info")
       // 冷启动就绪轮询（docs/verification/03 坑 1）：get_protocol_info 成功才算就绪
       // send 是 RpcClient 内部方法，spike 已实证此用法（verification/03）。
       const send = (client as unknown as { send: (m: unknown) => Promise<{ success: boolean }> }).send.bind(client)
@@ -463,6 +476,22 @@ export class SenpiAdapter implements EngineAdapter {
   async permissionRespond(requestId: string, reply: EnginePermissionReply): Promise<void> {
     // 请求必须从事件流接收（extension_ui_request）；prompt 响应不是同步点（verification/02）
     await this.rpc().sendExtensionUIResponse(buildPermissionResponse(requestId, reply))
+  }
+
+  /** 未决提问快照（get_state.pendingQuestions，q1 对账：REST 拉取口径同 queue）。
+   *  引擎从宽甄别：仅收窄为 question 帧（method=question + string id），异形跳过。 */
+  async pendingQuestions(): Promise<EngineQuestionFrame[]> {
+    this.requireActive()
+    const state = await this.rpc().getState()
+    const raw = (state as { pendingQuestions?: unknown }).pendingQuestions
+    if (!Array.isArray(raw)) return []
+    return raw.filter(
+      (f): f is EngineQuestionFrame =>
+        typeof f === "object" &&
+        f !== null &&
+        (f as { method?: unknown }).method === "question" &&
+        typeof (f as { id?: unknown }).id === "string",
+    )
   }
 
   async agentsList(): Promise<Array<{ name: string; description?: string }>> {

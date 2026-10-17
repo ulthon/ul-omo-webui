@@ -280,3 +280,87 @@ describe("SSE 重放过滤（W1 #4 陈旧权限请求）", () => {
     expect(tombstone.event).toEqual({ type: ENGINE_PERMISSIONS_INVALIDATED, projectPath: PROJ })
   })
 })
+
+// ---- q1 提问卡片：question 帧语义（waitForAnswer=false 跨回合存活）----
+
+/** question 型请求帧（waitForAnswer 语义与四型对话框不同） */
+function questionFrame(sessionId: string, id: string, waitForAnswer: boolean): Record<string, unknown> {
+  return {
+    type: "extension_ui_request",
+    sessionId,
+    method: "question",
+    id,
+    waitForAnswer,
+    questions: [{ id: "q1", header: "Deploy", question: "环境?", options: [{ label: "staging" }], multiSelect: false }],
+    timeout: 1800000,
+    deadlineAtMs: Date.now() + 1800000,
+  }
+}
+
+function questionResolved(id: string, outcome = "answered"): Record<string, unknown> {
+  return { type: "question_resolved", sessionId: "handle-s1", id, outcome }
+}
+
+describe("SSE 重放过滤（q1 question 帧）", () => {
+  test("(q-a) waitForAnswer=true + 其后收尾帧 → 丢弃（阻塞型与四型同规则）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-1", true)) // id 1
+    pub(bus, agentEnd("handle-s1")) // id 2：回合落定（阻塞型问题必已落定）
+    const frames = await replayFrom(bus, app, "0", 1)
+    expect(frames.map((f) => f.id)).toEqual(["2"])
+    expect(frames[0].event).toBe("agent_end")
+  })
+
+  test("(q-b) waitForAnswer=false + 其后收尾帧 → 重放（跨回合存活，settle 不杀）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-2", false)) // id 1
+    pub(bus, agentEnd("handle-s1")) // id 2：回合落定但问题仍开着
+    const frames = await replayFrom(bus, app, "0", 2)
+    expect(frames.map((f) => f.event)).toEqual(["extension_ui_request", "agent_end"])
+    expect(JSON.parse(frames[0].data!).event.id).toBe("q-2")
+    expect(JSON.parse(frames[0].data!).event.waitForAnswer).toBe(false)
+  })
+
+  test("(q-c) waitForAnswer=false + 其后 question_resolved → 丢弃（真墓碑）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-3", false)) // id 1
+    pub(bus, questionResolved("q-3", "timed_out")) // id 2：引擎侧超时落定
+    const frames = await replayFrom(bus, app, "0", 1)
+    expect(frames.map((f) => f.event)).toEqual(["question_resolved"])
+    expect(JSON.parse(frames[0].data!).event.id).toBe("q-3")
+  })
+
+  test("(q-d) question_resolved 墓碑不误杀其他在途问题（按 id 定向）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-4", false)) // id 1
+    pub(bus, questionFrame("handle-s1", "q-5", true)) // id 2
+    pub(bus, questionResolved("q-4", "cancelled")) // id 3：只落定 q-4
+    const frames = await replayFrom(bus, app, "0", 2)
+    expect(frames.map((f) => f.event)).toEqual(["extension_ui_request", "question_resolved"])
+    expect(JSON.parse(frames[0].data!).event.id).toBe("q-5")
+  })
+
+  test("(q-e) 引擎不在运行 → question 帧恒丢弃（含 waitForAnswer=false）", async () => {
+    const { bus, app } = makeHarness({ running: false })
+    pub(bus, questionFrame("handle-s1", "q-6", false)) // id 1
+    pub(bus, messageUpdate("handle-s1", 1)) // id 2：普通帧不受影响
+    const frames = await replayFrom(bus, app, "0", 1)
+    expect(frames.map((f) => f.id)).toEqual(["2"])
+  })
+
+  test("(q-f) question_updated 照常透传（截止刷新，无过滤语义）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-7", false)) // id 1
+    pub(bus, { type: "question_updated", sessionId: "handle-s1", id: "q-7", deadlineAtMs: 2, remainingMs: 1 }) // id 2
+    const frames = await replayFrom(bus, app, "0", 2)
+    expect(frames.map((f) => f.event)).toEqual(["extension_ui_request", "question_updated"])
+  })
+
+  test("(q-g) waitForAnswer=false + 墓碑（引擎重启）→ 丢弃（提问随进程死亡）", async () => {
+    const { bus, app } = makeHarness({ running: true })
+    pub(bus, questionFrame("handle-s1", "q-8", false)) // id 1
+    pub(bus, { type: ENGINE_PERMISSIONS_INVALIDATED, projectPath: PROJ }) // id 2
+    const frames = await replayFrom(bus, app, "0", 1)
+    expect(frames.map((f) => f.event)).toEqual([ENGINE_PERMISSIONS_INVALIDATED])
+  })
+})

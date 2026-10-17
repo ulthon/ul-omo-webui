@@ -12,6 +12,7 @@ import type {
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
+  EngineQuestionFrame,
   EnginePromptInput,
   EngineQueueSnapshot,
   EngineSessionSummary,
@@ -48,6 +49,9 @@ class FakeEngines implements EngineGateway {
     throw new Error("memory routes must not touch queue");
   }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
+  async questionsList(_id: string): Promise<EngineQuestionFrame[]> {
+    return [];
+  }
   async usage(): Promise<EngineUsageStats> {
     throw new Error("memory routes must not read usage");
   }

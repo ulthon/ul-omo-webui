@@ -127,8 +127,11 @@ export type EngineManagerEvent =
 /** 上层在进程 ready 后可注入的会话级预热钩子（如预 open 一个空闲会话）。 */
 export type WarmupHook = (projectPath: string, client: RpcClient) => void | Promise<void>
 
-/** 四型对话框请求（verification/02）；notify/setStatus/setWidget/setTitle 为 fire-and-forget 型不计。 */
-const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor"])
+/** 四型对话框请求（verification/02）+ question（q1 提问卡片）；
+ * notify/setStatus/setWidget/setTitle 为 fire-and-forget 型不计。
+ * question 的落定有双通道：客户端应答走 reportPermissionAnswered（与其他型同），
+ * 引擎侧超时/取消走 question_resolved 事件（trackWireEvent 清除）。 */
+const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor", "question"])
 
 const DEFAULTS = {
   idleTimeoutMs: 30 * 60 * 1000,
@@ -728,6 +731,10 @@ export class EngineProcessManager {
         if (anyE.method && DIALOG_UI_METHODS.has(anyE.method) && typeof anyE.id === "string") {
           engine.pendingPermissions.add(anyE.id)
         }
+        break
+      case "question_resolved":
+        // 引擎侧落定（超时/取消/异端应答）：清忙记账，防止挂死空闲回收判定
+        if (typeof anyE.id === "string") engine.pendingPermissions.delete(anyE.id)
         break
     }
     this.emit({ type: "engine_event", projectPath: engine.projectPath, event })

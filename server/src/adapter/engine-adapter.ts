@@ -179,11 +179,49 @@ export interface EngineTodoState {
 /** 权限/表单应答（verification/02）：
  * - select → value=选项原文精确匹配；confirm → confirmed:boolean；
  * - input/editor → value=文本；任意型可 cancelled:true 取消。
+ * - question（q1 提问卡片）→ answers: Record<questionId, {selected: label[]}>，
+ *   可附 comment 自由文本；引擎侧 settledQuestionStatus 校验应答完整性。
  * "Deny with feedback" 会链出第二个 input 请求，调用方按事件流继续处理。 */
+export interface EngineQuestionAnswer {
+  selected: string[]
+  text?: string
+}
+
 export interface EnginePermissionReply {
   value?: string
   confirmed?: boolean
   cancelled?: boolean
+  /** question 型应答（wire 形态对齐引擎 RpcQuestionAnswers） */
+  answers?: Record<string, EngineQuestionAnswer>
+  /** question 型自由文本补充 */
+  comment?: string
+}
+
+/** question 型 UI 请求的单问规格（wire 原样：RpcQuestionSpec） */
+export interface EngineQuestionSpec {
+  id: string
+  header: string
+  question: string
+  options: Array<{ label: string; description?: string }>
+  multiSelect: boolean
+}
+
+/** question 型 UI 请求帧（wire 原样：RpcQuestionUiRequest，get_state 快照与事件流同构）。
+ *  事件流帧经 tagSessionRecord 带 sessionId；get_state 快照帧不带（per-session 存储），
+ *  runtime 层对账时注入。 */
+export interface EngineQuestionFrame {
+  type: "extension_ui_request"
+  method: "question"
+  id: string
+  sessionId?: string
+  requestId: string
+  toolCallId: string
+  waitForAnswer: boolean
+  questions: EngineQuestionSpec[]
+  timeout: number
+  askedAtMs: number
+  deadlineAtMs: number
+  remainingMs: number
 }
 
 /** adapter 能力声明：不支持的界面按 docs/01 预案降级（隐藏/明示），禁止静默砍 */
@@ -275,6 +313,9 @@ export interface EngineAdapter {
 
   /** 应答权限/表单请求（请求经 events() 的 extension_ui_request 到达） */
   permissionRespond(requestId: string, reply: EnginePermissionReply): Promise<void>
+
+  /** 当前活跃会话未决提问快照（get_state.pendingQuestions；对账用，REST 拉取口径同 queue） */
+  pendingQuestions(): Promise<EngineQuestionFrame[]>
 
   /** agent 枚举（无协议面：capabilities.agentsList=false 时抛 EngineAdapterError） */
   agentsList(): Promise<Array<{ name: string; description?: string }>>

@@ -11,6 +11,7 @@ import type {
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
+  EngineQuestionFrame,
   EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
@@ -47,6 +48,9 @@ class NoEngines implements EngineGateway {
     throw new Error("queue routes must not be touched here");
   }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
+  async questionsList(_id: string): Promise<EngineQuestionFrame[]> {
+    return [];
+  }
   async usage(): Promise<EngineUsageStats> {
     throw new Error("snippets routes must not read usage");
   }

@@ -135,6 +135,11 @@ class FakeRpcClient implements SenpiRpcClient {
     this.sentResponses.push(response)
   }
 
+  /** q1 提问卡片对账源（get_state.pendingQuestions）；本测试无未决提问场景，恒空 */
+  async getState(): Promise<Record<string, unknown>> {
+    return { pendingQuestions: [] }
+  }
+
   async getAvailableModels(): Promise<Array<Record<string, unknown>>> {
     return modelsFixture
   }

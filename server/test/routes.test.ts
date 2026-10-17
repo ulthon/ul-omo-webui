@@ -35,6 +35,7 @@ import type {
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
+  EngineQuestionFrame,
   EnginePromptInput,
   EngineQueueSnapshot,
   EngineSessionSummary,
@@ -136,7 +137,16 @@ class FakeGateway implements EngineGateway {
     return this.queueClearResult;
   }
   async abort(): Promise<void> {}
-  async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
+  permissionReplies: Array<{ id: string; requestId: string; reply: EnginePermissionReply }> = [];
+  async permissionRespond(id: string, requestId: string, reply: EnginePermissionReply): Promise<void> {
+    this.permissionReplies.push({ id, requestId, reply });
+  }
+  questionsResult: EngineQuestionFrame[] = [];
+  questionsCalls: string[] = [];
+  async questionsList(id: string): Promise<EngineQuestionFrame[]> {
+    this.questionsCalls.push(id);
+    return this.questionsResult;
+  }
   async usage(): Promise<EngineUsageStats> {
     return fakeUsage();
   }
@@ -664,6 +674,64 @@ describe("会话操作路由", () => {
       body: JSON.stringify({ requestId: "r1" }),
     });
     expect(badPerm.status).toBe(400);
+  });
+
+  test("question 应答与快照端点（q1 提问卡片）", async () => {
+    const engines = new FakeGateway();
+    const { app } = buildApp(engines);
+
+    // answers + comment 形态透传（select/confirm 语义之外的 question 型）
+    const answer = await req(app, "/api/sessions/s1/permission", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requestId: "q-req-1",
+        answers: { q1: { selected: ["staging"], text: "若可选灰度" } },
+        comment: "尽快部署",
+      }),
+    });
+    expect(answer.status).toBe(200);
+    expect(engines.permissionReplies).toEqual([
+      {
+        id: "s1",
+        requestId: "q-req-1",
+        reply: { answers: { q1: { selected: ["staging"], text: "若可选灰度" } }, comment: "尽快部署" },
+      },
+    ]);
+
+    // 异形 answers（selected 非字符串数组）被拒且不算有效应答项 → 400
+    const badAnswers = await req(app, "/api/sessions/s1/permission", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestId: "q-req-2", answers: { q1: { selected: "staging" } } }),
+    });
+    expect(badAnswers.status).toBe(400);
+
+    // GET questions：快照原样透出（含注入的 sessionId）
+    engines.questionsResult = [
+      {
+        type: "extension_ui_request",
+        method: "question",
+        id: "q-req-1",
+        sessionId: "s1",
+        requestId: "call_x",
+        toolCallId: "call_x",
+        waitForAnswer: true,
+        questions: [
+          { id: "q1", header: "Deploy", question: "环境?", options: [{ label: "staging" }], multiSelect: false },
+        ],
+        timeout: 1800000,
+        askedAtMs: 1,
+        deadlineAtMs: 2,
+        remainingMs: 3,
+      },
+    ];
+    const qs = await (await req(app, "/api/sessions/s1/questions")).json();
+    expect(engines.questionsCalls).toEqual(["s1"]);
+    expect(qs.sessionId).toBe("s1");
+    expect(qs.questions).toHaveLength(1);
+    expect(qs.questions[0].id).toBe("q-req-1");
+    expect(qs.questions[0].questions[0].multiSelect).toBe(false);
   });
 });
 

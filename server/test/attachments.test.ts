@@ -30,6 +30,7 @@ import type {
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
+  EngineQuestionFrame,
   EngineSessionSummary,
   EngineThinkingLevel,
   EngineUsageStats,
@@ -70,6 +71,9 @@ class FakeGateway implements EngineGateway {
     return { steering: [], followUp: [], ordered: [] };
   }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
+  async questionsList(_id: string): Promise<EngineQuestionFrame[]> {
+    return [];
+  }
   async usage(): Promise<EngineUsageStats> {
     throw new Error("not used");
   }

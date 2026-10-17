@@ -33,6 +33,7 @@ import {
   type EngineModelInfo,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
+  type EngineQuestionFrame,
   type EnginePromptInput,
   type EngineQueueSnapshot,
   type EngineSessionSummary,
@@ -81,6 +82,8 @@ export interface EngineGateway {
   queueClear(sessionId: string): Promise<EngineQueueSnapshot>;
   abort(sessionId: string): Promise<void>;
   permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void>;
+  /** 未决提问对账快照（q1；get_state.pendingQuestions 注入会话 id 后返回） */
+  questionsList(sessionId: string): Promise<EngineQuestionFrame[]>;
   usage(sessionId: string): Promise<EngineUsageStats>;
   modelsList(project: string): Promise<EngineModelInfo[]>;
   /** CLI 收藏（settings.json favoriteModels，归一 "provider/model"）。可选面：
@@ -914,6 +917,19 @@ class ProjectRuntime {
     });
   }
 
+  /** 未决提问对账快照（q1 提问卡片；同 queue 口径——前端会话打开时拉一次，
+   *  增量走 SSE 的 question 帧透传；get_state 快照无 sessionId，此处注入本会话 id） */
+  async questionsList(sessionId: string): Promise<EngineQuestionFrame[]> {
+    await this.ensure();
+    return this.runExclusive(async () => {
+      await this.switchTo(sessionId);
+      const frames = await this.requireAdapter().pendingQuestions();
+      // 快照帧不带会话归属（引擎侧 per-session 存储，出队即知归属）——注入当前
+      // 请求的会话 id（REST 层的 :id 即 durable/别名，前端 store 键口径一致）
+      return frames.map((f) => ({ ...f, sessionId }));
+    });
+  }
+
   /** adapter 无模型切换面（接口未含 setModel）；直接走协议命令，仅作用于当前活跃会话 */
   private async switchModel(model: string): Promise<void> {
     const slash = model.indexOf("/");
@@ -1210,6 +1226,11 @@ export class EngineRuntimeRegistry implements EngineGateway {
   async permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.permissionRespond(sessionId, requestId, reply);
+  }
+
+  async questionsList(sessionId: string): Promise<EngineQuestionFrame[]> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.questionsList(sessionId);
   }
 
   async usage(sessionId: string): Promise<EngineUsageStats> {

@@ -11,6 +11,7 @@ import type {
   EngineMessagesPage,
   EngineModelInfo,
   EnginePermissionReply,
+  EngineQuestionFrame,
   EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
@@ -79,6 +80,9 @@ class FakeProjectGateway implements EngineGateway {
     return { steering: [], followUp: [], ordered: [] };
   }
   async permissionRespond(_id: string, _requestId: string, _reply: EnginePermissionReply): Promise<void> {}
+  async questionsList(_id: string): Promise<EngineQuestionFrame[]> {
+    return [];
+  }
   async usage(): Promise<EngineUsageStats> {
     throw new ApiError(500, "internal", "not canned in this test file");
   }

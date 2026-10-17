@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
+import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -52,8 +53,35 @@ export function isRunStateSweepArmed(): boolean {
 }
 
 /** 四型对话框 UI method（verification/02）；extension_ui_request 其余 method
- * （omo 扩展的 setStatus/notify 等噪音）不计入"等待权限"。 */
+ *  （omo 扩展的 setStatus/notify 等噪音）不计入"等待权限"。
+ *  question（q1 提问卡片）单独分支处理——结构化载荷（questions 数组）与四型的
+ *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。 */
 const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
+
+/** question 帧的 questions 数组窄化（wire 从宽甄别：异形条目跳过，全空则不入队） */
+function narrowQuestionSpecs(raw: unknown): QuestionSpec[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: QuestionSpec[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const q = item as Record<string, unknown>;
+    if (typeof q.id !== "string" || typeof q.question !== "string") continue;
+    const options = Array.isArray(q.options)
+      ? q.options.filter(
+          (o): o is { label: string; description?: string } =>
+            typeof o === "object" && o !== null && typeof (o as { label?: unknown }).label === "string",
+        )
+      : [];
+    out.push({
+      id: q.id,
+      header: typeof q.header === "string" ? q.header : "",
+      question: q.question,
+      options,
+      multiSelect: q.multiSelect === true,
+    });
+  }
+  return out.length > 0 ? out : null;
+}
 
 /** 页面可见性（bun 单测环境无 document，按可见兜底） */
 function pageVisible(): boolean {
@@ -230,7 +258,21 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     }
   } else if (wire.type === "extension_ui_request") {
     const method = typeof wire.method === "string" ? wire.method : null;
-    if (method !== null && DIALOG_UI_METHODS.has(method)) {
+    if (method === "question") {
+      // q1 提问卡片：结构化问题帧（waitForAnswer=true 阻塞回合 → waiting）
+      const questions = narrowQuestionSpecs(wire.questions);
+      if (typeof wire.id === "string" && wire.id && questions) {
+        if (wire.waitForAnswer === true) sessions.setRunState(sessionId, "waiting");
+        const request: QuestionRequest = {
+          id: wire.id,
+          waitForAnswer: wire.waitForAnswer === true,
+          questions,
+          deadlineAtMs: typeof wire.deadlineAtMs === "number" ? wire.deadlineAtMs : Date.now() + 30 * 60_000,
+          timeout: typeof wire.timeout === "number" ? wire.timeout : 30 * 60_000,
+        };
+        useQuestionsStore.getState().pushRequest(sessionId, request);
+      }
+    } else if (method !== null && DIALOG_UI_METHODS.has(method)) {
       sessions.setRunState(sessionId, "waiting");
       // 四型载荷入权限队列（todo 18）：无 toolCallId，按会话内未决请求建模
       const request = wire as unknown as PermissionRequest & { id?: unknown; method?: unknown };
@@ -267,10 +309,19 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
 
   // 排队列表增量（docs08-r4 任务 11，spike (b)-2）：queue_update 载荷
   // {steering[], followUp[], ordered:[{text,mode,enqueueOrder}]}，ordered 为引擎侧
-  // 全量真相（入队与出队宣布都发）。主通道 applyWireEvent 对未知类型静默忽略，此处分流。
+  // 全量真相（入队与出队都宣布）。主通道 applyWireEvent 对未知类型静默忽略，此处分流。
   if (wire.type === "queue_update") {
     const ordered = Array.isArray(wire.ordered) ? (wire.ordered as Array<Record<string, unknown>>) : [];
     useQueueStore.getState().applyUpdate(sessionId, ordered);
+  }
+
+  // 提问卡片生命周期（q1）：updated 刷截止；resolved 终局出队（超时/取消/异端应答）
+  if (wire.type === "question_updated" && typeof wire.id === "string") {
+    if (typeof wire.deadlineAtMs === "number") {
+      useQuestionsStore.getState().updateDeadline(sessionId, wire.id, wire.deadlineAtMs);
+    }
+  } else if (wire.type === "question_resolved" && typeof wire.id === "string") {
+    useQuestionsStore.getState().removeRequest(sessionId, wire.id);
   }
 
   // 消息主通道（未知类型在 store 内静默忽略）

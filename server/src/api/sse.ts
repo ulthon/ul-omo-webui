@@ -178,20 +178,31 @@ function isUiRequestFrame(e: BridgeEvent): boolean {
   return (e.event as { type?: unknown }).type === "extension_ui_request"
 }
 
+/** question 型 UI 请求帧（q1 提问卡片；method 区分于四型对话框）。 */
+function isQuestionFrame(e: BridgeEvent): boolean {
+  const ev = e.event as { type?: unknown; method?: unknown }
+  return ev.type === "extension_ui_request" && ev.method === "question"
+}
+
 /** 会话身份归一化键（原样比对回退口径用；\n 不出现在路径与 id 里，作分隔安全）。 */
 function rawKey(projectPath: string, sessionId: string): string {
   return `${projectPath}\n${sessionId}`
 }
 
 /**
- * 重放路径专用过滤：丢弃陈旧的 extension_ui_request 权限请求帧。请求帧保留当且
- * 仅当三条全过（任一不过即陈旧——旧进程的挂起请求永不会被应答，重放它们会让
+ * 重放路径专用过滤：丢弃陈旧的 extension_ui_request 请求帧。请求帧保留当且
+ * 仅当以下全过（任一不过即陈旧——旧进程的挂起请求永不会被应答，重放它们会让
  * 前端输入区永久锁死）：
  *   (a) 其后（id 更大）缓冲内没有同项目收尾帧落定其会话（agent_end /
- *       agent_settled 含 synthetic / session_closed）；
+ *       agent_settled 含 synthetic / session_closed）——question 型例外：
+ *       waitForAnswer=false 的提问跨回合存活（回合落定后问题仍开着等答案），
+ *       settle 不杀它，只有 question_resolved 墓碑才杀；
  *   (b) 其后没有同项目的权限失效墓碑（engine_permissions_invalidated，
- *       崩溃 / 空闲回收 / 显式停止时由组合根发布）；
- *   (c) 重放时刻该项目引擎进程在运行（不在运行的引擎应答不了任何请求）。
+ *       崩溃 / 空闲回收 / 显式停止时由组合根发布；引擎重启后提问随之死亡，
+ *       ask-user 注册表跨进程不恢复）；
+ *   (c) 重放时刻该项目引擎进程在运行（不在运行的引擎应答不了任何请求）；
+ *   (d) question 型：其后没有 question_resolved 落定同 id（引擎侧超时/取消/
+ *       异端应答的广播帧，id 为全局 uuid 无需会话限定）。
  *
  * 会话身份归一化（Scope 决策 1）：请求帧 sessionId 是 routing handle，合成收尾
  * 帧 sessionId 是 durable id，原样比对在 watchdog 场景永远错配。两侧各自经
@@ -216,12 +227,20 @@ function filterStaleUiRequests(
   const settledDurables = new Set<string>()
   /** 原样比对回退口径的收尾会话集合（每帧必入，含 lookup 未命中的）。 */
   const settledRaw = new Set<string>()
+  /** question_resolved 落定的请求 id 集合（uuid 全局唯一，无需会话限定）。 */
+  const resolvedQuestions = new Set<string>()
   const kept: BridgeEvent[] = []
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
     const type = (e.event as { type?: unknown }).type
     if (type === ENGINE_PERMISSIONS_INVALIDATED) {
       tombstonedProjects.add(e.projectPath)
+      kept.push(e)
+      continue
+    }
+    if (type === "question_resolved") {
+      const qid = (e.event as { id?: unknown }).id
+      if (typeof qid === "string") resolvedQuestions.add(qid)
       kept.push(e)
       continue
     }
@@ -242,6 +261,19 @@ function filterStaleUiRequests(
         handle !== undefined &&
         ((reqDurable !== undefined && settledDurables.has(rawKey(e.projectPath, reqDurable))) ||
           settledRaw.has(rawKey(e.projectPath, handle)))
+      if (isQuestionFrame(e)) {
+        // waitForAnswer=false 跨回合存活：settle 不杀；只有墓碑/停机/已落定才陈旧
+        const waitForAnswer = (e.event as { waitForAnswer?: unknown }).waitForAnswer
+        const qid = (e.event as { id?: unknown }).id
+        const resolved = typeof qid === "string" && resolvedQuestions.has(qid)
+        const stale =
+          !engineRunning(e.projectPath) ||
+          tombstonedProjects.has(e.projectPath) ||
+          resolved ||
+          (waitForAnswer !== false && settled)
+        if (!stale) kept.push(e)
+        continue
+      }
       const stale = !engineRunning(e.projectPath) || tombstonedProjects.has(e.projectPath) || settled
       if (!stale) kept.push(e)
       continue

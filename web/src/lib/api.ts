@@ -133,6 +133,27 @@ export interface QueueSnapshot {
   ordered: Array<{ text: string; mode: string; enqueueOrder: number }>;
 }
 
+/** question 型 UI 请求帧（q1 提问卡片；wire 原样，GET questions 对账与 SSE 帧同构） */
+export interface QuestionWireFrame {
+  type: "extension_ui_request";
+  method: "question";
+  id: string;
+  requestId: string;
+  toolCallId: string;
+  waitForAnswer: boolean;
+  questions: Array<{
+    id: string;
+    header: string;
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+    multiSelect: boolean;
+  }>;
+  timeout: number;
+  askedAtMs: number;
+  deadlineAtMs: number;
+  remainingMs: number;
+}
+
 export interface SessionMetaInfo {
   sessionId: string;
   pinned: boolean;
@@ -405,9 +426,22 @@ export const api = {
   },
   async respondPermission(
     sessionId: string,
-    body: { requestId: string; value?: unknown; confirmed?: boolean; cancelled?: boolean },
+    body: {
+      requestId: string;
+      value?: unknown;
+      confirmed?: boolean;
+      cancelled?: boolean;
+      /** question 型应答（q1 提问卡片）：键为 question.id，selected 为选项 label 数组 */
+      answers?: Record<string, { selected: string[]; text?: string }>;
+      /** question 型自由文本补充（非空即落定 comment-submitted） */
+      comment?: string;
+    },
   ): Promise<{ ok: boolean; sessionId: string; requestId: string }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/permission`, jsonInit("POST", body));
+  },
+  /** 未决提问对账快照（q1 提问卡片；打开会话拉一次，增量走 SSE question 帧） */
+  async getQuestions(sessionId: string): Promise<{ sessionId: string; questions: QuestionWireFrame[] }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/questions`);
   },
   async getDraft(sessionId: string): Promise<{ sessionId: string; draft: DraftInfo | null }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/draft`);

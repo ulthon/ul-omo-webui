@@ -64,6 +64,21 @@ function parseImages(raw: unknown): Array<{ type: "image"; data: string; mimeTyp
   });
 }
 
+/** question 型应答甄别（q1 提问卡片）：Record<questionId, {selected: label[]; text?}>。
+ *  从宽收窄——非对象/空对象/条目异形返回 false（由"至少一项"总校验兜底报 400）。 */
+function isQuestionAnswers(raw: unknown): raw is Record<string, { selected: string[]; text?: string }> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
+  const entries = Object.values(raw as Record<string, unknown>);
+  if (entries.length === 0) return false;
+  return entries.every(
+    (v) =>
+      typeof v === "object" &&
+      v !== null &&
+      Array.isArray((v as { selected?: unknown }).selected) &&
+      (v as { selected: unknown[] }).selected.every((s) => typeof s === "string"),
+  );
+}
+
 /** 标题回退链（决策 9f，列表与 export 文件名两处共用）：
  * `renamedTitle > name > generatedTitle > firstMessage 截断 80 字 > emptyFallback`。
  * name 非恒空（终端 `omo -p --name` 建的会话带 name）；emptyFallback 列表用
@@ -344,22 +359,31 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     return c.json({ sessionId: id, ...snapshot });
   }));
 
-  // 权限/表单应答（verification/02 四型）：value|confirmed|cancelled 至少一项
+  // 权限/表单/提问应答（verification/02 四型 + q1 question）：value|confirmed|cancelled|answers 至少一项
   app.post("/api/sessions/:id/permission", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const body = await parseJsonBody(c);
     if (typeof body.requestId !== "string" || !body.requestId) {
       throw new ApiError(400, "invalid_request", "requestId 必填");
     }
-    const reply: { value?: string; confirmed?: boolean; cancelled?: boolean } = {};
+    const reply: { value?: string; confirmed?: boolean; cancelled?: boolean; answers?: Record<string, { selected: string[]; text?: string }>; comment?: string } = {};
     if (typeof body.value === "string") reply.value = body.value;
     if (typeof body.confirmed === "boolean") reply.confirmed = body.confirmed;
     if (body.cancelled === true) reply.cancelled = true;
+    if (isQuestionAnswers(body.answers)) reply.answers = body.answers;
+    if (typeof body.comment === "string" && body.comment) reply.comment = body.comment;
     if (Object.keys(reply).length === 0) {
-      throw new ApiError(400, "invalid_request", "需要 value/confirmed/cancelled 之一");
+      throw new ApiError(400, "invalid_request", "需要 value/confirmed/cancelled/answers 之一");
     }
     await deps.engines.permissionRespond(id, body.requestId, reply);
     return c.json({ ok: true, sessionId: id, requestId: body.requestId });
+  }));
+
+  // 未决提问对账快照（q1 提问卡片；同 queue 口径——前端打开会话时拉一次，增量走 SSE）
+  app.get("/api/sessions/:id/questions", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const questions = await deps.engines.questionsList(id);
+    return c.json({ sessionId: id, questions });
   }));
 
   // 服务端草稿（纯元数据，不触引擎）
