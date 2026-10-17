@@ -5,6 +5,7 @@
 // W5 todo 14：base 从 realpath(home) 放开到文件系统根 /（可注入替换 base 供测试），
 // 非根目录列表头部合成 ".." 父目录项供树上行导航。
 import { readdirSync, realpathSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { ApiError, route } from "./http";
@@ -72,9 +73,17 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
       throw new ApiError(400, "not_a_file", `路径不是常规文件：${path}`);
     }
     const truncated = stat.size > FILE_MAX_BYTES;
-    const buf = Bun.file(real);
-    const slice = truncated ? await buf.slice(0, FILE_MAX_BYTES).arrayBuffer() : await buf.arrayBuffer();
-    const bytes = new Uint8Array(slice);
+    // 按需读（截断时只读前 FILE_MAX_BYTES 字节，不整载大文件）
+    const readLen = truncated ? FILE_MAX_BYTES : stat.size;
+    const bytes = new Uint8Array(readLen);
+    if (readLen > 0) {
+      const fh = await open(real, "r");
+      try {
+        await fh.read(bytes, 0, readLen, 0);
+      } finally {
+        await fh.close();
+      }
+    }
     let binary = false;
     for (let i = 0; i < Math.min(bytes.length, 8000); i++) {
       if (bytes[i] === 0) {

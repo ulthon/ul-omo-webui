@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { relative } from "node:path";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
 import { loadEmbeddedStatic, embeddedRelPath } from "./embedded-static";
@@ -258,35 +259,41 @@ process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
 try {
-  const server = Bun.serve({ fetch: app.fetch, hostname: HOST, port: PORT });
-  console.log(`ul-omo-webui listening on http://${server.hostname}:${server.port}`);
-  // 存量项目偏好迁移（todo 6）：监听就绪后 fire-and-forget——per-project 失败仅
-  // console.warn 并保留库值（幂等下次补迁），allSettled 隔离单项目只读目录/挂死
-  // （网络盘语义）不拖累其余项目，更不阻塞监听与请求
-  void migrateProjectPreferences(projectConfigs, meta).catch((err: unknown) => {
-    console.warn(`项目偏好迁移异常中断（下次启动补迁）：${err instanceof Error ? err.message : String(err)}`);
+  const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT, overrideGlobalObjects: false });
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    const message = err?.message ?? String(err);
+    if (err?.code === "EADDRINUSE" || message.includes("in use")) {
+      console.error(
+        `启动失败：地址 ${HOST}:${PORT} 已被占用。按部署约定不静默换端口，请释放端口或改用 UL_OMO_WEBUI_PORT 指定其他端口。`,
+      );
+    } else {
+      console.error(`启动失败：${message}`);
+    }
+    process.exit(1);
   });
-  // 附件临时区按龄清理（docs08-r3 任务 17）：启动时扫 DATA_DIR/attachments/*/ 下
-  // mtime>48h 的文件删除。发送成功后附件文件刻意留存（prompt 只带路径行，引擎
-  // 随时按需读取），用户显式移除才即时删——此处是唯一的过期兜底，不是常规删除路径。
-  try {
-    const purged = purgeStaleAttachments(attachmentsRoot());
-    if (purged > 0) console.log(`附件临时区清理：${purged} 个过期文件（>48h）`);
-  } catch (err) {
-    console.warn(`附件临时区清理失败：${err instanceof Error ? err.message : String(err)}`);
-  }
+  const onListening = () => {
+    console.log(`ul-omo-webui listening on http://${HOST}:${PORT}`);
+    // 存量项目偏好迁移（todo 6）：监听就绪后 fire-and-forget——per-project 失败仅
+    // console.warn 并保留库值（幂等下次补迁），allSettled 隔离单项目只读目录/挂死
+    // （网络盘语义）不拖累其余项目，更不阻塞监听与请求
+    void migrateProjectPreferences(projectConfigs, meta).catch((err: unknown) => {
+      console.warn(`项目偏好迁移异常中断（下次启动补迁）：${err instanceof Error ? err.message : String(err)}`);
+    });
+    // 附件临时区按龄清理（docs08-r3 任务 17）：启动时扫 DATA_DIR/attachments/*/ 下
+    // mtime>48h 的文件删除。发送成功后附件文件刻意留存（prompt 只带路径行，引擎
+    // 随时按需读取），用户显式移除才即时删——此处是唯一的过期兜底，不是常规删除路径。
+    try {
+      const purged = purgeStaleAttachments(attachmentsRoot());
+      if (purged > 0) console.log(`附件临时区清理：${purged} 个过期文件（>48h）`);
+    } catch (err) {
+      console.warn(`附件临时区清理失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  // node-server 的 serve() 返回时可能已在监听（事件已发过），双保险挂接
+  if (server.listening) onListening();
+  else server.on("listening", onListening);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
-  if (
-    message.includes("EADDRINUSE") ||
-    message.includes("Address already in use") ||
-    message.includes("in use")
-  ) {
-    console.error(
-      `启动失败：地址 ${HOST}:${PORT} 已被占用。按部署约定不静默换端口，请释放端口或改用 UL_OMO_WEBUI_PORT 指定其他端口。`,
-    );
-  } else {
-    console.error(`启动失败：${message}`);
-  }
+  console.error(`启动失败：${message}`);
   process.exit(1);
 }
