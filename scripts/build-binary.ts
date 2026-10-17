@@ -1,4 +1,10 @@
 /**
+ * 【已退役 2026-10-16】历史单二进制发行构建（bun compile 形态）。
+ *
+ * 当前发布走 npm 包：`npm run build`（scripts/build-package.mjs，esbuild 单文件），
+ * 本脚本保留作历史参考与应急备胎——运行仍需 bun，且引擎闭包按 .bun isolated
+ * 布局解析，在 npm 安装布局的仓库里需要先 `bun install` 才能跑通。
+ *
  * W6 todo 29：单二进制发行包构建脚本。
  *
  * 产物结构（dist/）：

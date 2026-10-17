@@ -1,11 +1,38 @@
 {
   "name": "ul-omo-webui",
-  "private": true,
+  "version": "0.1.0",
+  "description": "senpi/omo 引擎的 web 工作台：自托管单用户，功能集对标 opencode v1 TUI，兼容手机浏览器",
+  "license": "MIT",
+  "type": "module",
   "workspaces": [
     "server",
     "web"
   ],
+  "bin": {
+    "ul-omo-webui": "server/dist/index.js"
+  },
+  "files": [
+    "server/dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build:binary": "bun scripts/build-binary.ts"
+    "build": "node scripts/build-package.mjs",
+    "prepack": "node scripts/build-package.mjs",
+    "test": "npm test --workspaces --if-present"
+  },
+  "dependencies": {
+    "@code-yeongyu/senpi": "2026.10.10",
+    "@hono/node-server": "2.1.5",
+    "hono": "4.13.13",
+    "omo-ai": "5.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "vitest": "^5.0.5"
   }
 }

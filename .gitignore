@@ -4,6 +4,9 @@ dist/
 build/
 *.log
 
+# esbuild 单文件产物（scripts/build-package.mjs 生成）
+server/dist/
+
 # 单二进制构建的内嵌资产模块（scripts/build-binary.ts 生成）
 server/src/static-assets.generated.ts
 
