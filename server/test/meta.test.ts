@@ -1,7 +1,7 @@
 // 元数据 sqlite 存储单测：五张表 CRUD 往返、input_history 去重与 200 条裁剪、
 // 双连接并发写（WAL 下不死锁，冲突返回明确错误而非损坏）。
-import { afterAll, describe, expect, test } from "bun:test";
-import { Database, SQLiteError } from "bun:sqlite";
+import { afterAll, describe, expect, test } from "vitest";
+import { Database, SQLiteError } from "../src/db/sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

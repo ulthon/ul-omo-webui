@@ -2,8 +2,8 @@
 // 与级联硬删除、meta_session_tag 整替幂等、meta_session.generated_title 读写、
 // 老库（无新列旧 schema）经 ensureSchema 平滑升级。
 // 排序断言一律用显式时间戳/集合断言，不依赖同毫秒时钟。
-import { afterAll, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { afterAll, describe, expect, test } from "vitest";
+import { Database } from "../src/db/sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

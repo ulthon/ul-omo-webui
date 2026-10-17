@@ -3,7 +3,7 @@
 // meta_kv 存外链地址、权限"总是允许"记忆等壳层配置。
 // meta_note.tags 为 JSON 数组字符串（存标签名）；meta_note_version 随 note 硬删除在事务里级联清理。
 // meta_session_tag 无外键：会话元数据生命周期独立管理（与 meta_draft 同理）。
-import type { Database } from "bun:sqlite";
+import type { Database } from "./sqlite";
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta_session (

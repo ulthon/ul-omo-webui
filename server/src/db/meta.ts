@@ -1,10 +1,12 @@
-// 元数据 sqlite 存储层（bun:sqlite，WAL 模式）。
-// 单进程多连接安全：WAL + busy_timeout，写冲突时抛 SqliteError（明确错误而非损坏/死锁）。
+// 元数据 sqlite 存储层（node:sqlite 经 ./sqlite 适配层，WAL 模式）。
+// 单进程多连接安全：WAL + busy_timeout，写冲突时抛 SQLiteError（明确错误而非损坏/死锁）。
 // REST 层（todo 9）按这里的签名调用；本文件不 import 引擎与 adapter，纯本地。
-import { Database, SQLiteError, type SQLQueryBindings } from "bun:sqlite";
+import { Database, SQLiteError, type SQLQueryBindings } from "./sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureSchema } from "./schema";
+import { selfDir } from "../runtime-paths";
 
 export { SQLiteError };
 
@@ -116,7 +118,7 @@ export interface OpenMetaDbOptions {
 export const DEFAULT_INPUT_HISTORY_LIMIT = 200;
 
 export function defaultMetaDbPath(): string {
-  return process.env.UL_OMO_WEBUI_META_DB ?? join(import.meta.dir, "..", "..", "data", "meta.db");
+  return process.env.UL_OMO_WEBUI_META_DB ?? join(selfDir(), "..", "..", "data", "meta.db");
 }
 
 function nowIso(): string {
