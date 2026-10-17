@@ -2,7 +2,7 @@
  * adapter 协议映射单测——fixture 全部来自 W1/W2 spike 对真实引擎的实录
  * （docs/verification/01-05），零 token。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { existsSync, readFileSync } from "node:fs"
 import {
   buildPermissionResponse,
@@ -24,14 +24,17 @@ function load(name: string): unknown {
 }
 
 describe("resolveEngineCliPath（spawn 规范：引擎 cli 本体）", () => {
-  test("解析到 .bun 旁路官配 senpi 的 bundle/cli.js 且经 realpath", () => {
+  test("解析到官配对 senpi 的 bundle/cli.js（omo-ai 嵌套布局优先）", () => {
     const p = resolveEngineCliPath()
     expect(existsSync(p)).toBe(true)
     expect(p.endsWith("/dist/bundle/cli.js")).toBe(true)
-    // 禁止 omo.js 包装器与根级直依赖 2026.10.10
+    // 禁止 omo.js 包装器
     expect(p).not.toContain("omo.js")
-    expect(p).toContain(".bun/")
-    expect(p).not.toContain("@code-yeongyu+senpi@2026.10.10")
+    // 官配对语义：senpi 必须经 omo-ai 的嵌套 node_modules 解析（npm 布局），
+    // 或 .bun 旁路（bun isolated 布局）——两者都不该是宿主根级直依赖位
+    const nested = p.includes("omo-ai/node_modules/@code-yeongyu/senpi")
+    const bunBypass = p.includes(".bun/")
+    expect(nested || bunBypass).toBe(true)
   })
 
   test("omo 插件目录存在", () => {

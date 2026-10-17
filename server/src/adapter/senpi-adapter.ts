@@ -17,9 +17,10 @@
  * 引擎无跨进程排他锁（双驾驶会交错写同一 JSONL），单驱动纪律由上层强制。
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, statSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { isCompiledBinary, releaseRoot } from "../runtime-paths"
+import { resolveEnginePaths } from "../engine/process-manager"
 import { RpcClient, SessionManager } from "@code-yeongyu/senpi"
 import type { SessionInfo } from "@code-yeongyu/senpi"
 import {
@@ -122,41 +123,16 @@ export interface SenpiRpcClient {
   getMedia(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }>
 }
 
-/** 官配引擎 cli 解析：编译态取发行包 engine/；源码态 .bun 旁路精确路径 -> .bun 扫描 ->
- * 嵌套布局，全部 realpath（verification/03 坑 2） */
-export function resolveEngineCliPath(omoAiVersion = "5.1.0"): string {
-  if (isCompiledBinary()) {
-    const bundled = join(releaseRoot(), "engine", "node_modules", "@code-yeongyu", "senpi", "dist", "bundle", "cli.js")
-    if (existsSync(bundled)) return realpathSync(bundled)
-    throw new EngineAdapterError(
-      "engine_cli_not_found",
-      `发行包缺少引擎运行时（期望 ${bundled}），请用 scripts/build-binary.ts 重新构建发行包`,
-    )
-  }
-  const bunDir = join(REPO_ROOT, "node_modules", ".bun")
-  const candidates: string[] = []
-  const rel = "node_modules/@code-yeongyu/senpi/dist/bundle/cli.js"
-  candidates.push(join(bunDir, `omo-ai@${omoAiVersion}`, rel))
-  if (existsSync(bunDir)) {
-    for (const dir of readdirSync(bunDir)) {
-      if (dir.startsWith("omo-ai@")) candidates.push(join(bunDir, dir, rel))
-    }
-  }
-  candidates.push(join(REPO_ROOT, "server", "node_modules", "omo-ai", "node_modules", "@code-yeongyu", "senpi", "dist", "bundle", "cli.js"))
-  candidates.push(join(REPO_ROOT, "node_modules", "omo-ai", "node_modules", "@code-yeongyu", "senpi", "dist", "bundle", "cli.js"))
-  for (const c of candidates) {
-    if (existsSync(c)) return realpathSync(c)
-  }
-  throw new EngineAdapterError("engine_cli_not_found", `引擎 cli 本体未找到（ tried ${candidates.length} 个候选路径）`)
+/** 官配引擎 cli 解析：统一委托 process-manager 的三形态解析
+ * （npm 安装 require.resolve 首选 / .bun 旁路 / 嵌套布局候选，详见其注释）。
+ * 参数保留仅为兼容旧签名，实际忽略——官配对由解析顺序保证。 */
+export function resolveEngineCliPath(_omoAiVersion = "5.1.0"): string {
+  return resolveEnginePaths().cliPath
 }
 
-/** omo 扩展插件目录：编译态取发行包 engine/；源码态 server workspace 直依赖 */
+/** omo 扩展插件目录：同 resolveEngineCliPath，随引擎路径一并解析 */
 export function resolvePluginDir(): string {
-  const p = isCompiledBinary()
-    ? join(releaseRoot(), "engine", "node_modules", "omo-ai", "plugin")
-    : join(REPO_ROOT, "server", "node_modules", "omo-ai", "plugin")
-  if (!existsSync(p)) throw new EngineAdapterError("plugin_dir_not_found", `omo 插件目录不存在: ${p}`)
-  return p
+  return resolveEnginePaths().pluginDir
 }
 
 /** cwd -> 会话库目录编码（verification/04 实测：去前导 /，/ 换 -，包 --...--） */
@@ -540,9 +516,10 @@ export class SenpiAdapter implements EngineAdapter {
 
   async exportHtml(sessionPath: string, outPath: string): Promise<number> {
     // 实证命令（docs/verification/05 P1-7）：node omo.js --export <in> <out>，env 必须带品牌目录
+    // omo-ai 锚点随引擎解析（pluginDir 的上级即 omo-ai 包根）
     const omoBin = isCompiledBinary()
       ? join(releaseRoot(), "engine", "node_modules", "omo-ai", "bin", "omo.js")
-      : join(REPO_ROOT, "server", "node_modules", "omo-ai", "bin", "omo.js")
+      : join(dirname(resolveEnginePaths().pluginDir), "bin", "omo.js")
     if (!existsSync(omoBin)) throw new EngineAdapterError("export_failed", `omo cli 不存在: ${omoBin}`)
     const r = spawnSync("node", [omoBin, "--export", sessionPath, outPath], {
       encoding: "utf8",

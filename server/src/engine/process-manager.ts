@@ -33,10 +33,11 @@
  */
 
 import { RpcClient } from "@code-yeongyu/senpi"
+import { createRequire } from "node:module"
 import { existsSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
-import { isCompiledBinary, releaseRoot } from "../runtime-paths"
+import { dirname, join } from "node:path"
+import { isCompiledBinary, releaseRoot, selfDir } from "../runtime-paths"
 import { PidRegistry } from "./pid-registry"
 import {
   linuxProcProbe,
@@ -163,12 +164,17 @@ interface ProjectEngine {
  * realpath 解析 omo-ai：bun isolated 布局下官配 senpi 在 .bun/omo-ai@<ver>/node_modules/
  * 旁路，直接从 omo-ai 包 createRequire 会被解析到宿主直依赖（04 号文档路径解析坑）。
  *
- * 双形态（W6 todo 29）：
- * - 编译形态：发行包随附 engine/node_modules/（scripts/build-binary.ts 部署，
- *   布局 = 官配 senpi + omo-ai 官配对的平铺 node_modules），锚定可执行文件目录
- * - 源码形态：仓库 node_modules（bun isolated 旁路布局），锚定仓库根
+ * 三形态：
+ * - npm 安装形态：esbuild 单文件 bundle 内 import.meta 位置推导失效，从自身
+ *   require.resolve 解析 omo-ai；官配 senpi 在 omo-ai 的嵌套 node_modules 里
+ *   （顶层被宿主直依赖 senpi 占位时 npm 自动嵌套，版本即官配对）
+ * - 编译形态（历史，已退役）：发行包随附 engine/node_modules/，锚定可执行文件目录
+ * - 源码形态：仓库 node_modules（bun isolated 旁路布局或 npm 提升布局均可走
+ *   realpath/嵌套两级候选），锚定仓库根
  */
 let resolvedEnginePaths: { cliPath: string; pluginDir: string } | null = null
+
+const pkgRequire = createRequire(import.meta.url)
 
 export function resolveEnginePaths(): { cliPath: string; pluginDir: string } {
   if (resolvedEnginePaths) return resolvedEnginePaths
@@ -180,11 +186,20 @@ export function resolveEnginePaths(): { cliPath: string; pluginDir: string } {
     pluginDir = join(engineNm, "omo-ai", "plugin")
     candidates.push(join(engineNm, "@code-yeongyu", "senpi", "dist", "bundle", "cli.js"))
   } else {
-    // src/engine/ -> server 根的 node_modules/omo-ai
-    const omoRoot = join(import.meta.dir, "..", "..", "node_modules", "omo-ai")
+    // omo-ai 锚点：优先 require.resolve（npm 安装 bundle 形态唯一可行路径；
+    // 源码形态下也可解析，失败退回源码相对推导）
+    let omoRoot: string
+    try {
+      omoRoot = dirname(pkgRequire.resolve("omo-ai/package.json"))
+    } catch {
+      omoRoot = join(selfDir(), "..", "..", "node_modules", "omo-ai")
+    }
     pluginDir = join(omoRoot, "plugin")
     try {
       const omoReal = realpathSync(omoRoot)
+      // npm 布局：官配 senpi 嵌套在 omo-ai 自己的 node_modules 里（首选——版本即官配对）
+      candidates.push(join(omoReal, "node_modules", "@code-yeongyu", "senpi", "dist", "bundle", "cli.js"))
+      // bun isolated 布局：官配 senpi 是 omo-ai 的 .bun 旁路兄弟目录
       candidates.push(join(omoReal, "..", "@code-yeongyu", "senpi", "dist", "bundle", "cli.js"))
     } catch {
       // omo-ai 符号链接不可解析时退回常规布局
@@ -263,7 +278,7 @@ export class EngineProcessManager {
     // 缺省锚点：源码态 server/data；编译态发行包 data/（组合根恒显式传入，此处兜底）
     const defaultRegistryPath = isCompiledBinary()
       ? join(releaseRoot(), "data", "engine-processes.json")
-      : join(import.meta.dir, "..", "..", "data", "engine-processes.json")
+      : join(selfDir(), "..", "..", "data", "engine-processes.json")
     this.registry = new PidRegistry(options.registryPath ?? defaultRegistryPath)
   }
 

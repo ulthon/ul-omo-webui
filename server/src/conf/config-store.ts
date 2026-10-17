@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { selfDir } from "../runtime-paths";
 
 // ---------- 领域类型（camelCase，供 REST 层直接序列化） ----------
 
@@ -84,8 +85,8 @@ export function defaultGlobalDir(): string {
 }
 
 function defaultProjectRoot(): string {
-  // 与 meta.ts 同锚点：src 下模块相对仓库根；bun compile 后指向可执行文件所在目录
-  return join(import.meta.dir, "..", "..");
+  // 与 meta.ts 同锚点：src 下模块相对仓库根；编译/打包后指向发行根
+  return join(selfDir(), "..", "..");
 }
 
 export interface ConfigStore {
