@@ -7,7 +7,7 @@
  * 场景走真实组件（happy-dom + react-dom/client）；radix Dialog 原语 mock 为透传容器，
  * api 层 mock fetch（按现有测试风格）。
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { SessionListItem } from "@/lib/api";
 
@@ -19,7 +19,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // radix Dialog 原语透传化：Dialog 按 open 条件渲染 children，其余原语为普通容器。
 // SessionDialogs 的状态机（busy/effect/submit 守卫）不依赖 radix 语义。
-mock.module("@/components/ui/dialog", () => {
+vi.mock("@/components/ui/dialog", () => {
   const Passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
   const Conditional = ({
     open,

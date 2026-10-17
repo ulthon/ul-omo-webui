@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 describe("workspace smoke", () => {
   test("bun test 运行环境可用", () => {

@@ -3,7 +3,7 @@
 // 过滤（单项目 + 聚合两模式）、孤儿挂载如实返回、自由挂载。config-store
 // 读写与 meta sessionTag 行为已由 config-store.test.ts / meta-notes-tags.test.ts
 // 锁定，此处不重复。全部 mkdtemp 隔离，绝不触碰真实配置与库。
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -3,7 +3,7 @@
 // 请求、currentProject 不变、无 toast），仅 console.info 记录；可解析项目照常恢复
 // （请求序列与既有行为一致）。
 // W2 todo 8 追加：openProject 应用项目 preferredThinkingLevel 偏好（无偏好项目重置为 null）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { bootstrap } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";

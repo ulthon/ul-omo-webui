@@ -5,7 +5,7 @@
  * 全部走 app.request() 内存流，零真实引擎、零端口。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { Hono } from "hono"
 import { EventBus, attachEventBus } from "../src/engine/events"
 import { SSE_HEARTBEAT_TYPE, sseRoutes, setEventBus } from "../src/api/sse"

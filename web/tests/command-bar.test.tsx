@@ -3,7 +3,7 @@
 // 直接翻转真实 CHAT_COMMANDS 条目的 supported 字段模拟混合支持表，afterEach 还原。
 // 现状四命令全不支持（实证 docs/verification/05）→ 组件整条不渲染；
 // 翻转任一命令 supported=true → 组件回归可见且仅支持项可点（数据驱动）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 // bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错

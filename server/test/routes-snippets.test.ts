@@ -2,7 +2,7 @@
 // 项目注册校验、损坏文件 500 带路径）——config-store 读写行为已由
 // config-store.test.ts 锁定，此处不重复。
 // 全部用 mkdtemp 隔离目录，绝不触碰真实 ~/.config 与仓库 .ul-omo-webui.json。
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

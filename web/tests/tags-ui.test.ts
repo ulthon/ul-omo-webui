@@ -4,7 +4,7 @@
 // - nextSessionTags 选择器勾选 → 整替载荷生成
 // - mergeTagOptions 过滤 chips 选项合并去重（全局 + 项目级，跨 scope 同名去重）
 // - 管理弹层整替列表生成（新增/重命名/删除/上移下移）
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   TAG_BADGE_LIMIT,
   appendTagEntry,

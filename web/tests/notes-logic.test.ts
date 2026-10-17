@@ -1,5 +1,5 @@
 // 笔记页签纯逻辑单测（todo 15）：列表过滤、标签解析（逗号分隔）、chips 聚合、相对时间。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { collectTags, filterNotesByTag, parseTagInput, relTime, tagsToInput } from "@/components/notes/notes-logic";
 
 describe("parseTagInput（编辑态逗号分隔标签解析）", () => {

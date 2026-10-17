@@ -3,7 +3,8 @@
 // - 错误统一形状 {error:{code,message}}
 // - 会话列表合并/过滤（fork 会话、archived、q、置顶排序、元数据合并）
 // - 单驱动约束：回合中再次 prompt 409（真实 EngineProcessManager + fake 引擎连接）
-import { describe, expect, test, afterEach } from "bun:test";
+import { describe, expect, test, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
@@ -42,6 +43,8 @@ import type {
 } from "../src/adapter/engine-adapter";
 import { ApiError } from "../src/api/http";
 import { agentDir as configAgentDir, engineRegistryPath, metaDbPath } from "../src/config";
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- fake gateway
 
@@ -1278,7 +1281,7 @@ describe("项目与元数据杂项路由", () => {
       expect(notRepo.status).toBe(409);
       expect((await notRepo.json()).error.code).toBe("not_a_git_repo");
 
-      const run = (args: string[]) => Bun.spawnSync(args, { cwd: repo, stdout: "pipe", stderr: "pipe" });
+      const run = (args: string[]) => spawnSync(args[0], args.slice(1), { cwd: repo });
       run(["git", "init", "-q"]);
       run(["git", "config", "user.email", "t@t"]);
       run(["git", "config", "user.name", "t"]);
@@ -1550,7 +1553,7 @@ class StaticProbe implements ProcProbe {
     this.pids.delete(pid);
   }
   async sleep(ms: number): Promise<void> {
-    await Bun.sleep(Math.min(ms, 5));
+    await sleep(Math.min(ms, 5));
   }
 }
 
@@ -1655,8 +1658,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const removed = await registry.deleteSession(created.id);
     expect(removed.fileExisted).toBe(true);
     expect(removed.sessionPath).toBe(sessionFile);
-    const exists = await Bun.file(sessionFile).exists();
-    expect(exists).toBe(false);
+    expect(existsSync(sessionFile)).toBe(false);
     expect(existsSync(artifactsDir)).toBe(false);
     expect(client.closed).toBeGreaterThanOrEqual(1);
   });
@@ -1682,7 +1684,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     // 真实收尾事件：清位且不触发合成
     client.emit({ type: "agent_end", sessionId: "routing-1" });
     expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
-    await Bun.sleep(200); // 越过轮询+宽限窗口
+    await sleep(200); // 越过轮询+宽限窗口
     expect(syntheticEvents).toEqual([]);
   });
 
@@ -1695,7 +1697,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     // 轮询 30ms + 宽限 80ms，留裕量
     const deadline = Date.now() + 2000;
     while (Date.now() < deadline && syntheticEvents.length === 0) {
-      await Bun.sleep(20);
+      await sleep(20);
     }
     expect(syntheticEvents).toHaveLength(1);
     const { projectPath, event } = syntheticEvents[0];
@@ -1711,7 +1713,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const c2 = await registry.createSession(proj, {});
     await registry.prompt(c2.id, { text: "第二问" });
     client.fakeStreaming = true;
-    await Bun.sleep(250);
+    await sleep(250);
     expect(syntheticEvents).toHaveLength(0);
   });
 
@@ -1752,7 +1754,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     probe.pids.delete(client.process.pid);
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline && syntheticEvents.length === 0) {
-      await Bun.sleep(10);
+      await sleep(10);
     }
     expect(syntheticEvents).toHaveLength(1);
     const { projectPath, event } = syntheticEvents[0];
@@ -1964,7 +1966,7 @@ describe("SSE data 帧 durableSessionId 注入", () => {
     let text = "";
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline && !(text.includes("routing-1") && text.includes("routing-9"))) {
-      const chunk = await Promise.race([reader.read(), Bun.sleep(50).then(() => null)]);
+      const chunk = await Promise.race([reader.read(), sleep(50).then(() => null)]);
       if (!chunk) continue;
       if (chunk.done) break;
       text += decoder.decode(chunk.value, { stream: true });
@@ -1999,7 +2001,7 @@ describe("SSE data 帧 durableSessionId 注入", () => {
     let text = "";
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline && !text.includes("routing-2")) {
-      const chunk = await Promise.race([reader.read(), Bun.sleep(50).then(() => null)]);
+      const chunk = await Promise.race([reader.read(), sleep(50).then(() => null)]);
       if (!chunk) continue;
       if (chunk.done) break;
       text += decoder.decode(chunk.value, { stream: true });

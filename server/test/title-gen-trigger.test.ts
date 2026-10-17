@@ -4,7 +4,7 @@
 // - 端点级：POST generate-title 成功写 renamedTitle（含被 name 压住的会话）/ 502 带原因
 // - 链序：resolveSessionTitle 五层 + export 文件名同链
 // - engine-runtime 接线：事件路径归属校验、合成 watchdog 触发、crashSettle 排除
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

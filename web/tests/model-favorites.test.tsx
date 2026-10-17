@@ -4,7 +4,7 @@
  * 无收藏不渲染；空态判定 = 普通分组与收藏组全空。
  * radix Popover mock 同 model-thinking-chips.test.tsx（受控透传，modelPickerOpen 置位即开）。
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { createContext, useContext, type ReactNode } from "react";
 import type { ModelInfo } from "@/lib/api";
@@ -17,7 +17,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // radix Popover 透传化：Root 下发 open 上下文，Content 按上下文条件渲染（未受控 = 恒开）
 const OpenContext = createContext(true);
-mock.module("@/components/ui/popover", () => {
+vi.mock("@/components/ui/popover", () => {
   const Passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
   const Popover = ({ open, children }: { open?: boolean; children?: ReactNode }) => (
     <OpenContext.Provider value={open ?? true}>{children}</OpenContext.Provider>

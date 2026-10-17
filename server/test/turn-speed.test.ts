@@ -5,7 +5,7 @@
  * fixtures 同一形态：{type, id, sessionId, message:{role, usage}}），断言 usage() 附加的
  * turnSpeed 快照。断言只锁样本数、有限性与单调量级，不锁具体 tok/s 数值（flaky 对抗）。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -144,7 +144,7 @@ describe("A5 回合速度环（engine-runtime message_start/end 挂点）", () =
       expect(usage.turnSpeed?.turns.length).toBe(1)
       const sample = usage.turnSpeed?.turns[0]
       // 只锁量级不锁数值：output 100 / 25ms → 数千 tok/s 量级，限界宽松防 flaky
-      expect(sample?.tokPerSec).toBeFinite()
+      expect(Number.isFinite(sample?.tokPerSec)).toBe(true)
       expect(sample!.tokPerSec).toBeGreaterThan(0)
       expect(sample!.tokPerSec).toBeLessThan(1_000_000)
       expect(Number.isNaN(new Date(sample!.endedAt).getTime())).toBe(false)
@@ -223,9 +223,11 @@ describe("A5 回合速度环（engine-runtime message_start/end 挂点）", () =
       const turns = usage.turnSpeed?.turns ?? []
       expect(turns.length).toBe(20)
       for (const t of turns) {
-        expect(t.tokPerSec).toBeFinite()
+        expect(Number.isFinite(t.tokPerSec)).toBe(true)
         expect(t.tokPerSec).toBeGreaterThan(0)
-        expect(t.tokPerSec).toBeLessThan(100_000) // 999999/0.001=1e9 顶破，被挤出即通过
+        // 常规对 output=100、elapsed≥1ms → ≤100000（Date.now 截断可到 1ms 整）；
+        // 首条标记对 ~5e8 量级，若未被挤出必然顶破此界（相差三个数量级，判据稳定）
+        expect(t.tokPerSec).toBeLessThanOrEqual(100_000)
       }
       // 多样本均值 ≠ 单样本：证明环内是 20 条而非 1 条（misleading success 对抗）
       const avg = usage.turnSpeed?.averageTokPerSec ?? 0

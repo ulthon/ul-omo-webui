@@ -5,7 +5,7 @@
 //   data-presentation="sheet"、底缘 calc(100vh - var(--app-height)) 贴根容器、
 //   60vh 上限与复用方 maxHeight 取小、复用方 w-80 被 w-full 覆盖、顶部拖拽条在场
 // 外点/Esc 关闭与三复用方完整交互走浏览器 QA（.omo/evidence/docs08-r4/task-8-sheet-qa.md）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 // bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错

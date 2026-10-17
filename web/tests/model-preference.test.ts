@@ -1,7 +1,7 @@
 // 模型偏好单测（todo 22）：api.prompt 的空模型防呆（客户端拦截不发请求）、
 // 顶栏当前偏好随下一条 prompt 注入、调用方显式 model 优先、加载未完成不误伤（fail-open）。
 // W2 todo 8 追加：思考档随 prompt 注入（模型支持门控、显式传值优先、未选不注入）。
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { ApiError, api } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 

@@ -3,7 +3,7 @@
 // facts 解析（front-matter 跳过/bullet 拆条/续行并入/原文不截断）、空库/库不存在
 // 诚实空态、未注册项目 403、符号链接逃逸 403、非法身份串降级重算。
 // 全部用 mkdtemp 隔离目录 + 注入 memoryHome，不触引擎、不碰真实 ~/.omo/memory。
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

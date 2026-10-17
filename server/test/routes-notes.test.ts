@@ -2,7 +2,7 @@
 // 版本追加去重、purge 前置条件、软删/恢复、tag 过滤、排序、项目注册校验）——
 // meta 层 note 读写行为已由 meta.test.ts 锁定，此处不重复。
 // 全部用 mkdtemp 隔离目录，不触引擎。
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

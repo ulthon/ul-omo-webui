@@ -3,7 +3,7 @@
 // SSR 段说明（同 chat/__tests__/tool-card.test.tsx）：renderToStaticMarkup 锁定
 // SnippetEntryList 在 actionDisabled 两态下的 disabled 属性（「直发 busy/sending 禁用」
 // 的展示契约；完整交互走浏览器 QA .omo/qa/W4/snippets.md）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { InputHistoryItem } from "@/lib/api";
 import {

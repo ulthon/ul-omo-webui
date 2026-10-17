@@ -3,7 +3,7 @@
 // - applyWireEvent user 分支：服务端 user 消息事件吸收等价本地占位（防双列）
 // - adoptDurableId：消息槽换 key（直接搬家 / 空壳合并 / 事件先到真值优先 + 占位防丢）
 // - adoptSessionId：会话行 id、selectedId、runStates 一并迁移
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 import type { SessionListItem, WireEntry } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";

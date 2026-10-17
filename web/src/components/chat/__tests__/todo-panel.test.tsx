@@ -5,7 +5,7 @@
 // fixture 全部按真实 wire 形态构造（W5-15 验收红线）：assistant 消息的 toolCall part
 //（{type:"toolCall", id, name:"todo"}——工具名只在 part 上）+ role=toolResult 结果消息
 //（本体无 name，按 toolCallId 关联），复用 todo-evolution 实录样本。
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 // bun 无 localStorage：折叠记忆助手走 window.localStorage，测试注入最小 shim

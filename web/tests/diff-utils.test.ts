@@ -1,6 +1,6 @@
 // diff-utils 单测（todo 19）：工具结果 diff 提取启发式、porcelain 状态码解读与
 // path 清洗、全量 diff 前端切分与按路径匹配。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   cleanStatusPath,
   extractDiffText,

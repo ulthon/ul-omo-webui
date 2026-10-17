@@ -1,6 +1,6 @@
 // 斜杠输入提示纯逻辑单测（docs08-r3 任务 19）：触发判定、三段过滤（含四不支持命令
 // 排除）、扁平序、首 token 替换。UI 行为（开合/Esc 回退/键盘导航）走浏览器 QA。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { CommandsResponse } from "@/lib/api";
 import {
   EMPTY_SLASH_GROUPS,

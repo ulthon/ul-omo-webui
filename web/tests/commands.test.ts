@@ -1,7 +1,7 @@
 // 命令解析与拦截门单测（todo 24）。
 // 命令支持度实证：docs/verification/05「/compact /clear /new /undo 命令支持度实证」——
 // 四命令引擎侧均不支持（getCommands 83 条无命中，prompt 直发被模型当普通消息并伪造已执行）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { ApiError, setPromptGate, api } from "@/lib/api";
 import {
   CHAT_COMMANDS,

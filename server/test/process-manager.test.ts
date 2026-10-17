@@ -4,7 +4,7 @@
  * （含挂起权限/运行会话的忙判定）、优雅关停与兜底强杀、warmup 钩子、事件订阅面。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { rmSync } from "node:fs"
 import { EngineProcessManager, resolveEnginePaths, type EngineManagerEvent } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
@@ -297,7 +297,7 @@ describe("状态机：崩溃与重启退避", () => {
 
     await m.ensureRunning(PROJ) // 第一次失败 → 连续失败 1 → backoff
     expect(m.getStatus(PROJ)?.state).toBe("backoff")
-    await sleep(120) // 退避两次（失败 2、失败 3 → 触顶）
+    await sleep(300) // 退避两次（失败 2、失败 3 → 触顶）；vitest 下事件循环节奏更慢，留足裕量
     const snap = m.getStatus(PROJ)
     expect(snap?.state).toBe("unavailable")
     expect(snap?.consecutiveRestarts).toBe(3)

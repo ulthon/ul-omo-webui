@@ -5,7 +5,7 @@
 // - migrateProjectPreferences：两步中断安全（写文件成功后才清库）、幂等、失败保留库值、
 //   逐项目隔离（单项目失败不影响其余项目、整体 promise 不 reject）
 // - permissionPresetSpawnArgs：文件来源 + 损坏降级
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

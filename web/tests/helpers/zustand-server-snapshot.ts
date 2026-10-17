@@ -4,7 +4,7 @@
 // react-dom/server 下断言"事件写入 store 后的渲染结果"，会永远读到空初始态。
 // 此 shim 把 vanilla api.getInitialState 对齐为 getState（服务端快照 = 实时状态），
 // 仅测试进程生效，应用代码零改动。非 React 渲染的单测（events/session-runstate）不受影响。
-import { mock } from "bun:test";
+import { vi } from "vitest";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
 
@@ -21,4 +21,4 @@ function createPatched(arg) {
   return (initializer) => createImpl(initializer);
 }
 
-mock.module("zustand", () => ({ create: createPatched }));
+vi.mock("zustand", () => ({ create: createPatched }));

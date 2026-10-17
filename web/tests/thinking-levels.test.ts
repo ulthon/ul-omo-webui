@@ -1,6 +1,6 @@
 // 思考档纯助手单测（W2 todo 8）：thinkingLevelOptions 的缺席隐藏 / 过滤 / 去重 / 保序，
 // effectiveThinkingLevel 的 prompt 注入门控（模型未下发字段时注入 undefined）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { ModelInfo } from "@/lib/api";
 import { effectiveThinkingLevel, thinkingLevelOptions } from "@/lib/thinking-level";
 

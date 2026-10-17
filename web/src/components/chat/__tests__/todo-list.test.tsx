@@ -2,7 +2,7 @@
 // todo 渲染与图片 part 单测（todo 23）。环境说明同 tool-card.test.tsx：
 //   @ts-nocheck（bun:test 类型包仅在 server 工作区）+ preload 对齐 zustand 服务端快照，
 //   被测模块一律动态 import（保证单独运行时晚于 preload mock 生效）。
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { TodoList } = await import("../todo-list");

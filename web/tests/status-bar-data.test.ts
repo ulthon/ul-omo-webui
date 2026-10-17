@@ -1,6 +1,6 @@
 // 状态条纯助手单测（todo 24）：usage 形态容错、消息级增量累加、显示格式化。
 // A5 追加：turnSpeed 速度环快照容错解析（parseTurnSpeed）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   addMessageUsage,
   formatCost,

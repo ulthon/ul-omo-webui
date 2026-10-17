@@ -4,7 +4,7 @@
 // - buildMessageItems：不再产出 modelDivider 项（退役回归 pin）、条目保序、
 //   流式项恒在末尾、interrupted 只标最后一条 assistant（保留回归 pin）
 // - BubbleShell 助手头部行渲染模型短名（DOM 断言，非目测）
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 // bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错

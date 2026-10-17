@@ -2,7 +2,7 @@
  * SenpiAdapter 流程单测——fake RpcClient 全部以真实引擎实录 fixture 应答（零 token）。
  * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { readFileSync } from "node:fs"
 import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
@@ -182,7 +182,8 @@ describe("SenpiAdapter 未启动错误路径", () => {
       () => adapter.usage(),
       () => adapter.todoState(),
     ]) {
-      expect(fn).toThrow(EngineAdapterError)
+      // 方法为 async：同步 toThrow 捕不到，须走 rejects（bun:test 两者兼容，vitest 只认后者）
+      await expect(fn()).rejects.toThrow(EngineAdapterError)
     }
     let err: unknown
     try {

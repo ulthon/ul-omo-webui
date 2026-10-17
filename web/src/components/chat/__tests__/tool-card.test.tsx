@@ -7,7 +7,7 @@
 //      preload 把其对齐为实时状态。因此本文件的被测模块必须在动态 import 中加载——若直接静态 import，
 //      它们会被提升到 preload 之外的模块图里按普通顺序解析（preload 先于一切测试模块执行，此处
 //      动态加载是防御性写法，保证单独运行本文件时被测模块晚于 mock 生效）。
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { ToolCard } = await import("../tool-card");
@@ -74,7 +74,7 @@ describe("tool-card 纯助手函数", () => {
       },
       isError: false,
     } as never;
-    expect(diffTextOf(editLike, "Successfully replaced 1 block(s) in README.md.")).toStartWith("--- README.md");
+    expect(diffTextOf(editLike, "Successfully replaced 1 block(s) in README.md.")?.startsWith("--- README.md")).toBe(true);
     // ```diff 围栏文本兜底（无 details.patch）
     expect(diffTextOf(null, "改动如下\n```diff\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-a\n+b\n```")).toContain(
       "--- a/f.ts",

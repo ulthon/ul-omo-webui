@@ -5,7 +5,7 @@
  * prompt 调用实际收到 per-prompt thinkingLevel（缺省时为 undefined，不猜档位）。
  * 两个会话各发一条：单驱动 409 只拦同会话并发回合，跨会话不触发。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

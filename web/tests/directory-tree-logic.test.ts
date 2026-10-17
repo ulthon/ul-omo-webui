@@ -2,7 +2,7 @@
 // 补全触发判定/防抖目录变化/建议生成走纯函数；树懒加载走真实组件（happy-dom +
 // react-dom/client）+ 注入 fetchDir（不触网）。端到端交互走浏览器 QA
 //（.omo/qa/W5/add-project-browse.md）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { FsBrowseEntry } from "@/lib/api";
 import type { DirTreeFetcher } from "@/components/file-tree/directory-tree";

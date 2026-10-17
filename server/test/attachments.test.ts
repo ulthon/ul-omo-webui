@@ -3,7 +3,7 @@
 // - DELETE 安全矩阵：本项目内 ok、其他项目临时文件 403、临时区外路径 403、
 //   符号链接逃逸 403、不存在 404
 // - 启动清理：49h 删 / 47h 留、非临时区文件不动
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,

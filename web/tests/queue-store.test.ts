@@ -2,7 +2,7 @@
 // - addPending 乐观占位（无序号）→ applyUpdate 按 enqueueOrder/文本匹配转正式项并保留 enqueuedAt
 // - 同 enqueueOrder 保留本地 enqueuedAt；出队宣布（ordered:[]）清空
 // - setSnapshot 对账（steering 在前 + followUp，无序号）；clearSession 清槽
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 import { useQueueStore } from "@/stores/queue";
 
 function reset(): void {

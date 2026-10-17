@@ -1,6 +1,6 @@
 // thinking_level_changed 消费单测（W2 todo 8）：引擎回显仅同步前台选中会话的 chip；
 // 后台会话（SSE 全局多路复用）不得篡改前台选择。显示层同步——零 PATCH、零偏好写入。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";

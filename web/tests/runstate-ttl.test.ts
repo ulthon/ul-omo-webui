@@ -5,7 +5,7 @@
 //   - 游标回退（服务重启强信号）触发 GET /api/sessions 重同步：active 三态
 //     （null 不动 / false→idle / true+队列→waiting / true→running；列表缺席不动）
 // 时刻控制：bun setSystemTime 定格 at 写入，清扫以显式 now 注入（确定性，不依赖真定时器）。
-import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import { dispatchSseEvent, isRunStateSweepArmed, resetDispatchState, SWEEP_INTERVAL_MS } from "@/lib/event-dispatch";
 import { useMessagesStore } from "@/stores/messages";
@@ -47,6 +47,8 @@ function ledger(): Record<string, number> {
 }
 
 beforeEach(() => {
+  // 只冻结 Date（setSystemTime 生效前提），setTimeout 保持真实——tick() 排微任务链依赖它
+  vi.useFakeTimers({ toFake: ["Date"] });
   resetDispatchState();
   useSessionsStore.setState({ byProject: {}, runStates: {}, runStateAt: {}, selectedId: null });
   usePermissionsStore.setState({ bySession: {} });
@@ -55,7 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetDispatchState();
-  setSystemTime(); // 恢复真实时钟，防跨文件泄漏
+  vi.useRealTimers(); // 恢复真实时钟，防跨文件泄漏
   globalThis.fetch = ORIGINAL_FETCH;
   useSessionsStore.setState({ byProject: {}, runStates: {}, runStateAt: {}, selectedId: null });
   usePermissionsStore.setState({ bySession: {} });
@@ -78,20 +80,20 @@ describe("清扫布防（event-dispatch 接线）", () => {
 
 describe("setRunState 活动账本", () => {
   test("写入运行态即写时刻；同态写入只刷新时刻（runStates 引用不变）", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     useSessionsStore.getState().setRunState("d-1", "running");
     expect(useSessionsStore.getState().runStates["d-1"]).toBe("running");
     expect(ledger()["d-1"]).toBe(1000);
-    setSystemTime(2000);
+    vi.setSystemTime(2000);
     useSessionsStore.getState().setRunState("d-1", "running");
     expect(useSessionsStore.getState().runStates["d-1"]).toBe("running");
     expect(ledger()["d-1"]).toBe(2000);
   });
 
   test("clearRunState 连账本一并清；adoptSessionId 连账本一并迁移", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     useSessionsStore.getState().setRunState("d-1", "running");
-    setSystemTime(2000);
+    vi.setSystemTime(2000);
     useSessionsStore.getState().setRunState("d-2", "running");
     useSessionsStore.getState().adoptSessionId("d-1", "d-1x");
     expect(ledger()["d-1"]).toBeUndefined();
@@ -109,7 +111,7 @@ describe("setRunState 活动账本", () => {
 
 describe("无活动超时清扫", () => {
   test("running 无活动 >10min 回落 idle；恰好 10min 不回落", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-1" }, "d-1"), 1);
     const at = ledger()["d-1"]!;
     useSessionsStore.getState().sweepStaleRunStates(at + RUNNING_STALE_MS);
@@ -119,7 +121,7 @@ describe("无活动超时清扫", () => {
   });
 
   test("waiting 无活动 >30min 回落 idle（权限等待从宽）", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent(
       "extension_ui_request",
       frame({ type: "extension_ui_request", method: "confirm", id: "r1", sessionId: "rpc-1" }, "d-1"),
@@ -133,10 +135,10 @@ describe("无活动超时清扫", () => {
   });
 
   test("任何事件刷新防衰减：流式帧触达的活跃 running 永不被清扫周期误杀", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-1" }, "d-1"), 1);
     // 5min 处一帧 message_end（非运行态事件，仅活动记账）——活动基准前推
-    setSystemTime(1000 + 5 * 60_000);
+    vi.setSystemTime(1000 + 5 * 60_000);
     dispatchSseEvent("message_end", frame({ type: "message_end", sessionId: "rpc-1", message: { role: "assistant", content: [] } }, "d-1"), 2);
     expect(ledger()["d-1"]).toBe(1000 + 5 * 60_000);
     // 原始 10min 死线上不回落（若未刷新此刻必已 decay）
@@ -148,9 +150,9 @@ describe("无活动超时清扫", () => {
   });
 
   test("同态 setRunState（重复 agent_start）同样刷新防衰减", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-1" }, "d-1"), 1);
-    setSystemTime(2000);
+    vi.setSystemTime(2000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-1" }, "d-1"), 2);
     expect(ledger()["d-1"]).toBe(2000);
     useSessionsStore.getState().sweepStaleRunStates(2000 + RUNNING_STALE_MS + 1);
@@ -158,7 +160,7 @@ describe("无活动超时清扫", () => {
   });
 
   test("error/idle 不参与清扫；无账本条目（外部直写残留）不判超时", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("engine_event", frame({ type: "session_error", sessionId: "rpc-1" }, "d-err"), 1);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-2" }, "d-idle"), 2);
     dispatchSseEvent("agent_end", frame({ type: "agent_end", sessionId: "rpc-2" }, "d-idle"), 3);
@@ -171,7 +173,7 @@ describe("无活动超时清扫", () => {
   });
 
   test("清扫不改活动账本（回落后的 idle 记录的仍是最后活动时刻）", () => {
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-1" }, "d-1"), 1);
     const at = ledger()["d-1"]!;
     useSessionsStore.getState().sweepStaleRunStates(at + RUNNING_STALE_MS + 1);
@@ -212,7 +214,7 @@ describe("游标回退（服务重启）触发运行态重同步", () => {
       // d-absent 故意缺席：跨端已删等场景
     ];
     const { listUrl } = mockFetchRessync(snapshot);
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     // 状态建立（游标依次推进）
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-a" }, "d-run"), 1);
     dispatchSseEvent(
@@ -263,7 +265,7 @@ describe("游标回退（服务重启）触发运行态重同步", () => {
     globalThis.fetch = (async () => {
       throw new Error("network down");
     }) as typeof fetch;
-    setSystemTime(1000);
+    vi.setSystemTime(1000);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-a" }, "d-1"), 5);
     dispatchSseEvent("message_update", frame({ type: "message_update", sessionId: "rpc-z" }, "d-z"), 1); // 游标回退
     await tick();

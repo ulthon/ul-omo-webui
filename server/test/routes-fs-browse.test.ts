@@ -3,7 +3,7 @@
 // 出界 403、符号链接出界 403、隐藏目录标注、目录级 EACCES 空+标注、
 // entry 级失败跳过（悬空 symlink）、malformed 输入（NUL/不存在/非目录/空串）、
 // 根特例前缀（/data 直达）、非根列表头部合成 ".."（根列表不含）、symlink realpath 归一。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   chmodSync,
   mkdirSync,

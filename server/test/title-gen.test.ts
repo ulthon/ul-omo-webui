@@ -1,6 +1,6 @@
 // 标题生成服务单测（W2 todo 8）：jsonl 直读解析 / prompt 组装 / 标题清洗 /
 // mock HTTP 成功-失败-超时。触发矩阵与手动端点见 title-gen-trigger.test.ts。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildTitlePrompt, parseSessionHead, sanitizeTitle } from "../src/title-gen";
 
 /** 直构 jsonl 样本（w5-27 方法，零 token）：形态照 /root/.pi/agent 真实会话实录 */

@@ -1,7 +1,7 @@
 // 会话列表路由测试（todo 9 聚合扩展）：
 // - 基线特征化（带 project 参数，锁定现有行为做回归锚）：响应形状、排序、q/archived、非法参数
 // - 聚合模式（project 缺省）：全部注册项目并行合并、全局排序、单项目失败隔离（allSettled 语义）
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

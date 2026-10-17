@@ -11,7 +11,7 @@
  * 场景走真实组件（happy-dom + react-dom/client，session-dialogs.test.tsx 同款基建），
  * api 层 mock fetch。
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { SessionListItem } from "@/lib/api";
 

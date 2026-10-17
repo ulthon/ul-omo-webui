@@ -1,7 +1,7 @@
 // 内嵌形态 SPA fallback 路径解析单测（评审建议修复项）：
 // 畸形百分号编码（如 /%zz）原实现 decodeURIComponent 抛 URIError 落 Hono 默认
 // onError 纯文本 500；现统一抛 ApiError 400，由 index.ts fallback handler 就地转 JSON。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { ApiError } from "../src/api/http";
 import { embeddedRelPath } from "../src/embedded-static";
 

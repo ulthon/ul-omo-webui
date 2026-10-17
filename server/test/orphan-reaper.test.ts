@@ -3,7 +3,7 @@
  * 安全判定红线：只有登记 PID（cwd+argv 复核）或 cwd+argv 双因子命中的进程才可杀。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { rmSync } from "node:fs"
 import { PidRegistry } from "../src/engine/pid-registry"
 import { reapOrphanEngines } from "../src/engine/orphan-reaper"

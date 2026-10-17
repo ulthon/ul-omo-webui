@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "test": "bun test"
+    "dev": "node ../scripts/build-package.mjs --server-only && node dist/index.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@code-yeongyu/senpi": "2026.10.10",
     "hono": "4.13.13",
-    "omo-ai": "5.1.0"
+    "omo-ai": "5.1.0",
+    "@hono/node-server": "1.19.10"
   },
   "devDependencies": {
-    "bun-types": "1.4.2"
+    "@types/node": "^24.13.3"
   }
 }

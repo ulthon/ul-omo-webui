@@ -2,7 +2,7 @@
  * - readModelsFallback：models-store.json 目录缓存 + models.json 自定义合并（同 provider/id 自定义覆盖）
  * - readFavoriteModels：settings.json favoriteModels 归一（剥思考档后缀、去重保序、跳过非法条目）
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

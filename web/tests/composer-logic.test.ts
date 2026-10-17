@@ -1,6 +1,6 @@
 // Composer 纯逻辑单测（todo 21）：草稿来源决策、图片校验、输入历史翻页。
 // localStorage 兜底与 FileReader 走浏览器 QA（.omo/qa/W4/composer.md）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { DraftInfo } from "@/lib/api";
 import {
   MAX_IMAGE_BYTES,

@@ -21,7 +21,7 @@
  * 全部内存 mock：环形缓冲种子用 bus.publish 直接构造，零真实引擎、零端口。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { Hono } from "hono"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, publishPermissionsInvalidated } from "../src/engine/events"
 import { sseRoutes, setEventBus } from "../src/api/sse"

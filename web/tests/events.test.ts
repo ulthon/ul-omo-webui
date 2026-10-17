@@ -1,6 +1,6 @@
 // EventsClient 单测（mock EventSource）：重连退避序列、连接状态、事件分发、
 // gap/游标回退触发的全量 refetch、未知事件容错、单例约束、前台唤醒。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { SessionListItem, WireEntry } from "@/lib/api";
 import { dispatchSseEvent, getDispatchCursor, resetDispatchState } from "@/lib/event-dispatch";
 import { connectEvents, disconnectEvents, EventsClient } from "@/lib/events";

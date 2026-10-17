@@ -8,7 +8,7 @@
  * 本测试经 EngineRuntimeRegistry 公共面驱动：fork 后按 fork id 删除，
  * 断言源会话文件仍在、fork 文件被删。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

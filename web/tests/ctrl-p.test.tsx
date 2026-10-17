@@ -4,7 +4,7 @@
  * 被测对象是 shell.tsx 导出的 useCtrlPModelPicker hook——挂最小探针组件验证，
  * 不 mock 模块（bun mock.module 进程级粘滞，会污染同进程后跑的 bootstrap/events 测试）。
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 // bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错

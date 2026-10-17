@@ -1,7 +1,7 @@
 // GFM 表格渲染回归（2026-10-15：用户实测模型回复的 markdown 表格未渲染成表格，
 // 根因 = W5 重写渲染管线时未接 remark-gfm，remarkParse 默认 CommonMark 不含表格）。
 // 结构断言：renderMarkdownCached 输出的 React 元素树应含 table/thead/th/td。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { isValidElement, type ReactNode } from "react";
 import { renderMarkdownCached } from "@/components/chat/markdown";
 

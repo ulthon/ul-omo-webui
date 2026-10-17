@@ -2,7 +2,7 @@
 // 覆盖 event-dispatch 的 SSE → sessions store 链路：
 //   agent_start/end → running → 清除；extension_ui_request 四型 → waiting（setStatus/notify 噪音不算）；
 //   error 尾缀类型 → error；message_end(assistant) 非查看态 → bumpUnread（选中且可见时不计）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 import { useSessionsStore } from "@/stores/sessions";

@@ -1,7 +1,7 @@
 // 配置文件读写层单测：读写回环、mtime+size 缓存失效、tmp+rename 原子写、
 // 损坏文件明确报错不覆盖、进程内写串行化、目录自动创建、tmp 残留清理。
 // 全部用 mkdtemp 隔离目录，绝不触碰真实 ~/.config 与项目根 .ul-omo-webui.json。
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,

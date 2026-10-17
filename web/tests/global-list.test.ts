@@ -3,7 +3,7 @@
 // - recentTop 最近 8 条选取（跨项目按 modified 降序，置顶自然参与）
 // - 折叠记忆（readCollapsed/writeCollapsed 回环 + isGroupExpanded 优先级）
 // - crossProjectDecision 跨项目点击切换判定
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import {
   COLLAPSE_PREFIX,

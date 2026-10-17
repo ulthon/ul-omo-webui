@@ -1,6 +1,6 @@
 // 偏好防抖持久化单测（W2 todo 8）：模型 / 思考档两条 latest-wins PATCH 路径。
 // delayMs 形参注入 1ms，真实定时器下用短 sleep 断言"连续选择只落最后一次"。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   cancelPendingPreferencePersist,
   scheduleModelPreferencePersist,

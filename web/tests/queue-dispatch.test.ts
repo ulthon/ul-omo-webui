@@ -3,7 +3,7 @@
 // 入队与出队宣布都发）；gap 帧触发排队快照对账（resyncQueues，fetch stub 记录调用）；
 // EventsClient 真实路径：queue_update 必须在 HANDLED_EVENT_TYPES（EventSource 具名
 // 事件模型下列表外的类型浏览器不派发——QA 实测漏列即排队条永不清空）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 import { EventsClient, disconnectEvents } from "@/lib/events";
 import { useMessagesStore } from "@/stores/messages";

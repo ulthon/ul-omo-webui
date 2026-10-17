@@ -1,6 +1,6 @@
 // 权限卡片单测（todo 18）：extension_ui_request 四型载荷入队路由、fire-and-forget 不入队、
 // 回合落定清队、队列去重；auto-answer 纯函数（标题解析工具名 / kv 键形态）。
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 import {
   autoAllowKey,

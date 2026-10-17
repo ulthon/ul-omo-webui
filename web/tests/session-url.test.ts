@@ -3,7 +3,7 @@
 // - store 三接入点 URL 同步：select 真实 id 写入、select 别名 id 清参（N2）、
 //   adoptSessionId 选中态换 key 换写真实 id 并移出别名集合、removeSession 选中清参
 // happy-dom 提供 window/history（session-dialogs.test.tsx 同款注册基建）
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { readSessionUrl, writeSessionUrl } from "@/lib/session-url";
 import { useSessionsStore } from "@/stores/sessions";

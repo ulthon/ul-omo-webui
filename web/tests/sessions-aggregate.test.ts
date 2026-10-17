@@ -1,7 +1,7 @@
 // 会话聚合 store 单测（todo 9）：
 // - setAllSessions 按 session.project 分组写入 byProject（整体替换语义，清残留）
 // - allMode 切换 + refreshSessions 分支：allMode 走聚合端点（无 project 参数），否则单项目现状路径
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";

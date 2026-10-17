@@ -3,7 +3,7 @@
 // message_end role=custom）派生同构标记、mergeMemoryItems 流内归并、store 入列白名单、
 // EventsClient 具名帧真实路径（HANDLED_EVENT_TYPES 漏列则 EventSource 不派发，任务 11 教训）。
 // 条目样例取自 spike 隔离实例 GET messages 实拍（r4-mem-proj 会话）。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   isMemoryAppendedEntry,
   isMemoryCustomEntry,

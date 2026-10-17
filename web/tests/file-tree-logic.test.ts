@@ -1,6 +1,6 @@
 // 文件树纯逻辑单测（todo 20）：@ 引用插入、模糊过滤、类型识别、大小格式化。
 // 树导航/预览/弹窗交互与端到端发送走浏览器 QA（.omo/qa/W4/file-tree.md）。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   baseName,
   filterPaths,
