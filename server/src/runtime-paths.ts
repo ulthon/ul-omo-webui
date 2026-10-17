@@ -1,4 +1,4 @@
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -24,8 +24,9 @@ export function isCompiledBinary(): boolean {
 
 /**
  * 当前是否运行在 npm 安装形态（esbuild 打包的 dist/index.js 位于 node_modules 内的包目录下）。
- * 判定：从本文件向上找最近的 package.json，name 为 ul-omo-webui 且其父目录是 node_modules
- * （仓库源码形态的根 package.json 同名，但父目录是普通目录，不会误判）。
+ * 判定：从本文件向上找最近的 package.json，name 为 @ulthon/ul-omo-webui 且其父目录在
+ * node_modules 树内（直接子级，或经 @scope 目录一级——scope 包装在 node_modules/@scope/ 下）。
+ * 仓库源码形态的根 package.json 同名，但父目录是普通目录，不会误判。
  */
 export function isInstalledPackage(): boolean {
   if (isCompiledBinary()) return false;
@@ -35,7 +36,9 @@ export function isInstalledPackage(): boolean {
       const pkgJson = resolve(dir, "package.json");
       if (existsSync(pkgJson)) {
         const name = (JSON.parse(readFileSync(pkgJson, "utf8")) as { name?: string }).name;
-        return name === "ul-omo-webui" && basename(dirname(dir)) === "node_modules";
+        if (name !== "@ulthon/ul-omo-webui") return false;
+        const parent = resolve(dir, "..");
+        return /(^|[\\/])node_modules([\\/]@[^\\/]+)?$/.test(parent);
       }
       const parent = dirname(dir);
       if (parent === dir) return false;

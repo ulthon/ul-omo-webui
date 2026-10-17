@@ -1,5 +1,5 @@
 {
-  "name": "ul-omo-webui",
+  "name": "@ulthon/ul-omo-webui",
   "version": "0.1.0",
   "description": "senpi/omo 引擎的 web 工作台：自托管单用户，功能集对标 opencode v1 TUI，兼容手机浏览器",
   "license": "MIT",

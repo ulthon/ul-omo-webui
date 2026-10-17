@@ -38,7 +38,7 @@ senpi/omo 引擎的 web 工作台：功能集对标 opencode v1 TUI，兼容手�
 ### 安装（npm，要求 node >= 24）
 
 ```
-npm install -g ul-omo-webui
+npm install -g @ulthon/ul-omo-webui
 ul-omo-webui
 ```
 
