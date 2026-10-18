@@ -160,6 +160,21 @@ function absorbLocalUserEntries(list: WireEntry[], serverMsg: WireMessage): Wire
   });
 }
 
+/** 载荷身份收敛（docs08-r5 任务 4，任务 3 诊断定案）：无 id user 帧落合成 id 前，
+ * 槽内是否已有同载荷身份的 user 条目（REST 真实 id 真相——刷新/切回后环形缓冲重放
+ * 会把已落库回显重播一遍，syntheticId 与真实 id 属两个不相交 id 空间，upsertEntry
+ * 无法去重 → 双列且刷新重演）。身份键 = message 全载荷指纹（syntheticId，含引擎端
+ * timestamp——引擎对 user 消息恒带 timestamp: Date.now()，帧 message 与落库条目
+ * message 为同一对象），同文异回合 timestamp 必异、合法各留一条：这是身份收敛，
+ * 不是内容指纹跨回合去重（任务 5 铁律同源约束）。 */
+function hasSamePayloadUserEntry(list: WireEntry[], msg: WireMessage): boolean {
+  const fp = syntheticId(msg);
+  return list.some((e) => {
+    const m = e.message as WireMessage | undefined;
+    return m !== undefined && m.role === "user" && syntheticId(m) === fp;
+  });
+}
+
 function upsertToolRun(
   session: SessionMessages,
   toolCallId: string,
@@ -304,8 +319,16 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               const base = absorbLocalUserEntries(cur.entries, msg);
               const sid = syntheticId(msg);
               const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : sid;
-              const stored: WireEntry = { ...entry, type: "message", id };
               const list = id === sid ? base : base.filter((e) => e.id !== sid);
+              // docs08-r5 任务 4：无 id 帧落合成 id 前，先按载荷身份与槽内 REST 真实 id
+              // 真相收敛（双列根因修复，见 hasSamePayloadUserEntry）；守卫仅在身份信号
+              // （timestamp）完整时启用，缺失不冒进去重、保持既有入列路径由 setEntries
+              // 全量重取兜底。携真 id 帧无需守卫（upsertEntry 按 id 收敛）。占位吸收
+              // 照常生效：守卫跳过入列时净效果 = 槽内真相条目保持唯一。
+              if (id === sid && typeof msg.timestamp === "number" && hasSamePayloadUserEntry(list, msg)) {
+                return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
+              }
+              const stored: WireEntry = { ...entry, type: "message", id };
               return {
                 bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(list, stored) } },
               };
