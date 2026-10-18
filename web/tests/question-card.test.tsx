@@ -234,3 +234,47 @@ describe("QuestionCard 交互", () => {
     await unmount();
   });
 });
+
+// docs08-r5 任务 10 stop 分支定案钉死：待办症状所述「选择自定义输入后卡片切换为
+// 独立输入框形态、无法返回选项列表」与本组件现状不符——自定义输入与选项常驻同屏、
+// 无形态切换状态机（成因排查见 .omo/evidence/docs08-r5/task-10-report.md）。
+// 以下两条把「同屏并存」与「使用自定义输入不排挤选项」的现状契约钉死；
+// 若未来引入形态切换，应有意识地更新而非顺带破坏这两条。
+describe("QuestionCard 自定义输入与选项同屏现状（docs08-r5 任务 10 钉死）", () => {
+  test("渲染即并存：每个问题的选项与自定义输入同屏，无独立输入框形态", async () => {
+    const request = makeRequest();
+    const { container, unmount } = await render(
+      createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
+    );
+    const card = cardEl(container);
+    for (const q of request.questions) {
+      const item = card.querySelector(`[data-testid=question-item-${q.id}]`);
+      expect(item).not.toBeNull();
+      expect(item!.querySelectorAll("[data-testid=question-option]").length).toBe(q.options.length);
+      expect(item!.querySelector(`[data-testid=question-text-${q.id}]`)).not.toBeNull();
+    }
+    await unmount();
+  });
+
+  test("填自定义文本后选项仍可见可选：选项与文本一并入提交载荷", async () => {
+    const request = makeRequest();
+    const { container, unmount } = await render(
+      createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
+    );
+    const card = cardEl(container);
+    const text1 = card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement;
+    await act(async () => {
+      setNativeValue(text1, "prefer canary");
+    });
+    // 自定义输入使用中：选项仍在屏、仍可用、仍可选
+    const options = [...card.querySelectorAll("[data-testid=question-option]")] as HTMLButtonElement[];
+    expect(options[0].disabled).toBe(false);
+    await click(options[0]); // q1: staging（单选）
+    const stillText = card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement;
+    expect(stillText.value).toBe("prefer canary");
+    await click(card.querySelector("[data-testid=question-submit]")!);
+    expect(posted).toHaveLength(1);
+    expect(posted[0].body.answers).toEqual({ q1: { selected: ["staging"], text: "prefer canary" } });
+    await unmount();
+  });
+});
