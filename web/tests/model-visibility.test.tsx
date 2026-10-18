@@ -124,3 +124,119 @@ describe("BubbleShell 助手头部模型短名（DOM 断言）", () => {
     container.remove();
   });
 });
+
+// docs08-r5 任务 12：流式态头部放宽为"正在回复 + 模型短名"（脉冲点保留）；settle 态不变；
+// 无 model 字段（老数据/裸流）不误报。streamingModelOf 整链用 store 种子 + StreamingBubble 真渲染断言。
+describe("流式头部模型短名（docs08-r5 任务 12）", () => {
+  test("BubbleShell live 态：头部显示 正在回复 + 模型短名，脉冲点保留", async () => {
+    const { BubbleShell } = await import("@/components/chat/message-bubble");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          BubbleShell,
+          { role: "assistant", timestamp: null, model: "zai-coding-cn/glm-5.3-4k", live: true },
+          createElement("div", null, "流式内容"),
+        ),
+      );
+    });
+    const header = container.querySelector("div.mb-1");
+    expect(header).not.toBeNull();
+    expect(header?.textContent).toContain("正在回复");
+    expect(header?.textContent).toContain("glm-5.3-4k");
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  test("settle 态回归：标签 助手 + 短名保留，无脉冲点", async () => {
+    const { BubbleShell } = await import("@/components/chat/message-bubble");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          BubbleShell,
+          { role: "assistant", timestamp: null, model: "zai-coding-cn/glm-5.3-4k" },
+          createElement("div", null, "定格内容"),
+        ),
+      );
+    });
+    const header = container.querySelector("div.mb-1");
+    expect(header?.textContent).toContain("助手");
+    expect(header?.textContent).toContain("glm-5.3-4k");
+    expect(header?.textContent).not.toContain("正在回复");
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  /** 种一条流式 assistant 消息进 messages store（model 缺省时不写 model 字段，老数据形态） */
+  async function seedStreaming(sessionId: string, model?: unknown) {
+    const { useMessagesStore } = await import("@/stores/messages");
+    const streamingMessage: Record<string, unknown> = { role: "assistant", content: [] };
+    if (model !== undefined) streamingMessage.model = model;
+    useMessagesStore.setState({
+      bySession: {
+        [sessionId]: {
+          entries: [],
+          cursor: null,
+          leafId: null,
+          loaded: true,
+          streaming: true,
+          streamingMessage,
+          streamingEntryId: null,
+          toolRuns: {},
+        },
+      },
+    });
+    return useMessagesStore;
+  }
+
+  test("store 种子 → StreamingBubble：live 头部透出短名（streamingModelOf 整链）", async () => {
+    const store = await seedStreaming("s-t12", "zai-coding-cn/glm-5.3-4k");
+    const { StreamingBubble } = await import("@/components/chat/message-bubble");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(StreamingBubble, { sessionId: "s-t12" }));
+    });
+    const header = container.querySelector("div.mb-1");
+    expect(header?.textContent).toContain("正在回复");
+    expect(header?.textContent).toContain("glm-5.3-4k");
+    await act(async () => {
+      root.unmount();
+    });
+    store.setState({ bySession: {} });
+    container.remove();
+  });
+
+  test("无 model 流：StreamingBubble 渲染无报错无占位（老数据/裸流）", async () => {
+    const store = await seedStreaming("s-t12-nomodel");
+    const { StreamingBubble } = await import("@/components/chat/message-bubble");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(StreamingBubble, { sessionId: "s-t12-nomodel" }));
+    });
+    expect(container.querySelector("div.mb-1")?.textContent).toContain("正在回复");
+    // 不误报：无短名 span，也无 undefined/null 占位文本泄漏
+    expect(container.querySelector("div.mb-1")?.querySelector(".opacity-70")).toBeNull();
+    expect(container.textContent).not.toContain("undefined");
+    expect(container.textContent).not.toContain("null");
+    await act(async () => {
+      root.unmount();
+    });
+    store.setState({ bySession: {} });
+    container.remove();
+  });
+});

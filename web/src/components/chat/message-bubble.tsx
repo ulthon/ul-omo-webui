@@ -59,9 +59,10 @@ export function BubbleShell({
     <div className="group w-full" data-streaming={live ? "true" : undefined}>
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <span>{live ? "正在回复" : "助手"}</span>
-        {/* 模型短名常驻（2026-10-15 可见性缺口 ②）：逐条可知由哪只模型作答，替代 B11
-            切换点分隔线（连续同模型段零标记的盲区）；muted 小字，密度代价数个字符 */}
-        {model && !live && <span className="max-w-[40vw] truncate opacity-70">{shortModelName(model)}</span>}
+        {/* 模型短名常驻（2026-10-15 可见性缺口 ②；docs08-r5 任务 12 放宽到 live 态）：逐条可知
+            由哪只模型作答，替代 B11 切换点分隔线（连续同模型段零标记的盲区）；流式态与
+            "正在回复"并存，settle 态不变；无 model 字段（老数据/裸流）不渲染不误报 */}
+        {model && <span className="max-w-[40vw] truncate opacity-70">{shortModelName(model)}</span>}
         {live && <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />}
         {time && <span>{time}</span>}
         {interrupted && (
@@ -162,7 +163,7 @@ export function StreamingBubble({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** 流式消息的模型字段（message_start 载荷透传；无则 undefined——头部 live 态本就不显示短名，预留） */
+/** 流式消息的模型字段（message_start 载荷透传；无则 null——老数据/裸流不显示短名，头部不误报） */
 function streamingModelOf(sessionId: string): string | null {
   const msg = useMessagesStore.getState().bySession[sessionId]?.streamingMessage;
   if (!msg) return null;
