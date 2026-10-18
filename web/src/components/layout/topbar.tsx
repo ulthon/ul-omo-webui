@@ -13,7 +13,7 @@ import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { useUiStore } from "@/stores/ui";
+import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
@@ -496,6 +496,51 @@ function SidebarSortSection() {
   );
 }
 
+/** 设置面板"对话"分区（docs08-r5 任务 13）：思考块默认展开开关。
+ * 布尔存 meta_kv chat.thinkingDefaultExpanded（"true"/"false" 字符串，走既有
+ * PUT /api/settings，跨设备一致）；改档即存即生效（ThinkingBlock 挂载时读 ui store
+ * 快照，已挂载块不受影响——展开/折叠仍是会话内瞬态）。导出供单测。 */
+export function ConversationSection() {
+  const thinkingDefaultExpanded = useUiStore((s) => s.thinkingDefaultExpanded);
+  const [saving, setSaving] = useState(false);
+
+  const changeExpanded = async (expanded: boolean) => {
+    if (expanded === thinkingDefaultExpanded || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [THINKING_EXPANDED_KV]: expanded ? "true" : "false" });
+      useUiStore.getState().setThinkingDefaultExpanded(expanded);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存对话设置失败", "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">对话</p>
+        <label className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7" data-testid="thinking-default-expanded-option">
+          <input
+            type="checkbox"
+            checked={thinkingDefaultExpanded}
+            disabled={saving}
+            onChange={(e) => void changeExpanded(e.target.checked)}
+            className="size-4 accent-primary"
+          />
+          思考块默认展开
+        </label>
+        <p className="text-xs text-muted-foreground">
+          开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SettingsForm({ onDone }: { onDone: () => void }) {
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
@@ -569,6 +614,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <ProjectPermissionSection />
       <ProjectManagementSection />
       <SidebarSortSection />
+      <ConversationSection />
     </>
   );
 }

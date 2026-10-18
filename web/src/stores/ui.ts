@@ -18,6 +18,16 @@ export interface ExternalLinks {
   filesUrl: string | null;
 }
 
+/** 思考块默认展开（docs08-r5 任务 13）：meta_kv 键，字符串 "true"/"false" 存储
+ * （PUT /api/settings 只收字符串），缺省 false；bootstrap 读 GET /api/settings 填充，
+ * 设置弹层"对话"分区改档即 PUT，跨设备一致不落 localStorage。 */
+export const THINKING_EXPANDED_KV = "chat.thinkingDefaultExpanded";
+
+/** 仅精确 "true" 视为开启；键缺失/空串/其他任何值回退 false（缺省折叠，与历史行为一致） */
+export function parseThinkingExpanded(raw: string | null | undefined): boolean {
+  return raw === "true";
+}
+
 interface UiState {
   /** SSE 连接状态（todo 14 写入；初始 online） */
   connection: ConnectionStatus;
@@ -51,6 +61,9 @@ interface UiState {
   /** 手动顺序（C16 todo 9）：meta_kv sidebar.projectOrder 的 JSON 路径数组解析结果；
    * 拖拽/上移下移后本地先行更新再异步落 kv。 */
   projectOrder: string[];
+  /** 思考块默认展开（docs08-r5 任务 13）：meta_kv chat.thinkingDefaultExpanded 持久
+   * （缺省 false）；ThinkingBlock 挂载时读快照，改设置不影响已挂载块（瞬态语义）。 */
+  thinkingDefaultExpanded: boolean;
   toast: Toast | null;
 
   setConnection(status: ConnectionStatus): void;
@@ -68,6 +81,7 @@ interface UiState {
   setExternalLinks(links: ExternalLinks): void;
   setProjectSort(sort: ProjectSortMode): void;
   setProjectOrder(order: string[]): void;
+  setThinkingDefaultExpanded(expanded: boolean): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
 }
@@ -89,6 +103,7 @@ export const useUiStore = create<UiState>()((set) => ({
   externalLinks: { gitUrl: null, filesUrl: null },
   projectSort: "activity",
   projectOrder: [],
+  thinkingDefaultExpanded: false,
   toast: null,
 
   setConnection: (status) => set({ connection: status }),
@@ -105,6 +120,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setExternalLinks: (links) => set({ externalLinks: links }),
   setProjectSort: (sort) => set({ projectSort: sort }),
   setProjectOrder: (order) => set({ projectOrder: order }),
+  setThinkingDefaultExpanded: (thinkingDefaultExpanded) => set({ thinkingDefaultExpanded }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;

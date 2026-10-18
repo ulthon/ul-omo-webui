@@ -3,7 +3,7 @@
 import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
-import { useUiStore } from "@/stores/ui";
+import { THINKING_EXPANDED_KV, parseThinkingExpanded, useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 取 last_opened_at 最新的项目（服务端已按 DESC 排序，这里再兜底一次 NULL 排序差异） */
@@ -129,6 +129,8 @@ export async function bootstrap(): Promise<void> {
     ui.setProjectSort(parseProjectSort(settings[PROJECT_SORT_KV]));
     // 手动顺序仅档位为 manual 时消费；kv 缺失/非法 JSON/非数组回退空数组（activity 语义兜底）
     ui.setProjectOrder(parseManualProjectOrder(settings[PROJECT_ORDER_KV]) ?? []);
+    // 思考块默认展开（docs08-r5 任务 13）：键缺失/非 "true" 一律回退 false（缺省折叠）
+    ui.setThinkingDefaultExpanded(parseThinkingExpanded(settings[THINKING_EXPANDED_KV]));
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {
       // 静默：无外链配置时入口不渲染，属预期形态
