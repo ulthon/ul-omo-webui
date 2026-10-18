@@ -1,7 +1,7 @@
 // 应用引导与项目打开：初始加载落到 last_opened_at 最新的项目（docs/01「最近打开/默认项目」），
 // 顶栏切换项目与初始引导共用 openProject。
 import { api, ApiError } from "@/lib/api";
-import type { ProjectMeta } from "@/lib/api";
+import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
@@ -38,18 +38,47 @@ export async function refreshSessions(): Promise<void> {
   }
 }
 
+/** 模型加载请求序号（docs08-r5 任务 2 竞态守卫）：单调递增 token，快速切换项目时
+ * 迟到的旧项目响应（含失败）直接丢弃，不覆盖新项目选中态。 */
+let modelsLoadSeq = 0;
+
+/** 新会话模型回退链后两档（docs08-r5 任务 2）：引擎默认（defaults）> 列表首项；
+ * 返回 null = 无可选（无 defaults 且列表空）。仅作展示选中，不回写 meta
+ * （引擎默认不冒充用户选择）。导出供单测。 */
+export function resolveModelFallback(
+  defaults: EngineDefaultModel | null | undefined,
+  models: ModelInfo[],
+): { model: string; thinkingLevel: string | null } | null {
+  if (defaults) {
+    return { model: `${defaults.provider}/${defaults.model}`, thinkingLevel: defaults.thinkingLevel };
+  }
+  if (models.length > 0) {
+    return { model: `${models[0].provider}/${models[0].id}`, thinkingLevel: null };
+  }
+  return null;
+}
+
 /** 拉取项目模型列表并应用展示回退（openProject 与轻量跨项目切换共用）：
- * 无选中模型时回落列表首项仅作展示默认（不回写 meta，避免把默认值冒充用户选择） */
+ * 无选中模型时按回退链补位——项目偏好（调用方先行置入）> 引擎默认 > 列表首项；
+ * 思考档同链（项目偏好已置入时不覆盖，否则取 defaults.thinkingLevel，缺省 null）。
+ * 仅作展示默认，不回写 meta（避免把默认值冒充用户选择） */
 export async function loadProjectModels(path: string): Promise<void> {
+  const token = ++modelsLoadSeq;
   try {
-    const { models, favorites } = await api.listModels(path);
+    const { models, favorites, defaults } = await api.listModels(path);
+    if (token !== modelsLoadSeq) return; // 迟到响应直接丢弃（竞态守卫）
     const cur = useUiStore.getState();
     cur.setModels(models);
     cur.setFavoriteModels(favorites ?? []);
-    if (!cur.selectedModel && models.length > 0) {
-      cur.setSelectedModel(`${models[0].provider}/${models[0].id}`);
+    if (!cur.selectedModel) {
+      const fallback = resolveModelFallback(defaults, models);
+      if (fallback) cur.setSelectedModel(fallback.model);
+    }
+    if (!cur.selectedThinkingLevel && defaults?.thinkingLevel) {
+      cur.setSelectedThinkingLevel(defaults.thinkingLevel);
     }
   } catch (err) {
+    if (token !== modelsLoadSeq) return; // 迟到的失败同丢弃，不清掉新项目已加载列表
     if (!(err instanceof ApiError && err.status === 401)) {
       // 加载失败是"未知"而非"确认为空"：resetModels 不标记 modelsLoaded，发送防呆不误伤
       useUiStore.getState().resetModels();
@@ -63,8 +92,8 @@ export async function openProject(path: string): Promise<void> {
   ui.setCurrentProject(path);
   ui.setDrawerOpen(false);
   // 偏好先行（todo 22 + W2 todo 8）：项目切换即应用该项目 preferred_model 与
-  // preferredThinkingLevel；无偏好项目先置空，模型列表到达后模型回落列表首项仅作展示
-  // 默认（不回写 meta，避免把默认值冒充用户选择）
+  // preferredThinkingLevel；无偏好项目先置空，等下方 loadProjectModels 解析后按
+  // 引擎默认 > 列表首项回落（docs08-r5 任务 2 回退链；不回写 meta，避免把默认值冒充用户选择）
   const meta = ui.projects.find((p) => p.projectPath === path);
   ui.setSelectedModel(meta?.preferredModel ?? null);
   ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);

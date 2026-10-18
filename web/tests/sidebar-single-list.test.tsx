@@ -302,3 +302,67 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
     expect(container.querySelectorAll("svg.lucide-git-fork").length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("跨项目分组头新建会话（docs08-r5 任务 2）", () => {
+  test("分组头 + 新建：等待目标项目模型解析后再建会话，POST 携带解析所得 model/thinkingLevel", async () => {
+    useUiStore.setState({
+      currentProject: "/p0",
+      projects: [
+        { projectPath: "/p0", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+        { projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-02T00:00:00.000Z" },
+      ],
+    });
+    const posts: Array<Record<string, unknown>> = [];
+    mockFetch(async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.startsWith("/api/sessions")) {
+        return okJson({ project: null, archived: "all", sessions: [] });
+      }
+      if (method === "GET" && url.startsWith("/api/tags")) {
+        return okJson({ global: [], project: [] });
+      }
+      if (method === "GET" && url.startsWith("/api/models")) {
+        return okJson({
+          project: "/p1",
+          models: [
+            { provider: "zai-coding-cn", id: "glm-4.6v", contextWindow: 200000, reasoning: false },
+            { provider: "zai-coding-cn", id: "glm-5.3", contextWindow: 200000, reasoning: true },
+          ],
+          favorites: [],
+          defaults: { provider: "zai-coding-cn", model: "glm-5.3-4k", thinkingLevel: "max" },
+        });
+      }
+      if (method === "POST" && url === "/api/sessions") {
+        posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return okJson({
+          session: {
+            id: "s-new",
+            sessionPath: "/store/s-new.jsonl",
+            durable: false,
+            project: "/p1",
+            provider: "zai-coding-cn",
+            modelId: "glm-5.3-4k",
+          },
+        });
+      }
+      return okJson({ ok: true });
+    });
+    const container = await mount(createElement(SessionList));
+    await act(async () => {
+      await flush();
+    });
+    const btn = container.querySelector('button[data-testid="group-new"][aria-label="在 p1 新建会话"]');
+    if (!btn) throw new Error("分组头新建按钮未渲染");
+    await act(async () => {
+      (btn as HTMLButtonElement).click();
+      await flush();
+      await flush();
+    });
+    // 请求等待模型解析完成后才发出，携带回退链落定的模型与思考档（引擎默认而非列表首项）
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ project: "/p1", model: "zai-coding-cn/glm-5.3-4k", thinkingLevel: "max" });
+    expect(useUiStore.getState().currentProject).toBe("/p1");
+    expect(useUiStore.getState().selectedModel).toBe("zai-coding-cn/glm-5.3-4k");
+  });
+});

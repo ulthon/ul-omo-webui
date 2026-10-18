@@ -1,12 +1,13 @@
-/** 模型降级数据与 CLI 收藏解析单测（"下拉只显示套餐目录"缺陷修复的支撑面）：
+/** 模型降级数据与 settings.json 直读单测（"下拉只显示套餐目录"缺陷修复 + docs08-r5 任务 2 的支撑面）：
  * - readModelsFallback：models-store.json 目录缓存 + models.json 自定义合并（同 provider/id 自定义覆盖）
  * - readFavoriteModels：settings.json favoriteModels 归一（剥思考档后缀、去重保序、跳过非法条目）
+ * - readDefaultModel：settings.json 默认模型三态（缺失/字段全/字段缺 thinkingLevel）
  */
 import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFavoriteModels, readModelsFallback } from "../src/api/engine-runtime";
+import { readDefaultModel, readFavoriteModels, readModelsFallback } from "../src/api/engine-runtime";
 
 describe("readModelsFallback", () => {
   test("目录缓存与自定义合并：同 id 自定义覆盖、独有项各自并入", () => {
@@ -124,6 +125,57 @@ describe("readFavoriteModels", () => {
       expect(readFavoriteModels(dir)).toEqual([]);
       writeFileSync(join(dir, "settings.json"), "{broken");
       expect(readFavoriteModels(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readDefaultModel", () => {
+  test("字段全：provider/model/thinkingLevel 原样透传（docs08 实证配置 zai-coding-cn/glm-5.3-4k + max）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-default-"));
+    try {
+      writeFileSync(
+        join(dir, "settings.json"),
+        JSON.stringify({ defaultProvider: "zai-coding-cn", defaultModel: "glm-5.3-4k", defaultThinkingLevel: "max" }),
+      );
+      expect(readDefaultModel(dir)).toEqual({
+        provider: "zai-coding-cn",
+        model: "glm-5.3-4k",
+        thinkingLevel: "max",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("字段缺 thinkingLevel：模型生效、思考档 null", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-default-"));
+    try {
+      writeFileSync(
+        join(dir, "settings.json"),
+        JSON.stringify({ defaultProvider: "zai-coding-cn", defaultModel: "glm-5.3-4k" }),
+      );
+      expect(readDefaultModel(dir)).toEqual({ provider: "zai-coding-cn", model: "glm-5.3-4k", thinkingLevel: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("文件缺失/JSON 异常/字段缺失或非字符串：一律 null 不抛", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-default-"));
+    try {
+      // 文件缺失
+      expect(readDefaultModel(dir)).toBeNull();
+      // JSON 异常
+      writeFileSync(join(dir, "settings.json"), "{broken");
+      expect(readDefaultModel(dir)).toBeNull();
+      // 缺 defaultModel
+      writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: "p" }));
+      expect(readDefaultModel(dir)).toBeNull();
+      // 字段非字符串
+      writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: 42, defaultModel: "m" }));
+      expect(readDefaultModel(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

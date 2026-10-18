@@ -193,12 +193,23 @@ export interface ModelInfo {
   supportedThinkingLevels?: string[];
 }
 
+/** 引擎 native 默认模型（服务端直读 settings.json defaultProvider/defaultModel/
+ * defaultThinkingLevel；docs08-r5 任务 2） */
+export interface EngineDefaultModel {
+  provider: string;
+  model: string;
+  thinkingLevel: string | null;
+}
+
 export interface ModelsResponse {
   project: string | null;
   models: ModelInfo[];
   /** CLI 收藏（服务端读 settings.json favoriteModels 归一 "provider/model"）；
    * 旧服务端未下发时缺省（undefined → 空） */
   favorites?: string[];
+  /** 引擎 native 默认模型（新会话回退链中位：项目偏好 > defaults > 列表首项）；
+   * 旧服务端未下发或引擎未配置时缺省（undefined/null → 跳过该档） */
+  defaults?: EngineDefaultModel | null;
 }
 
 export interface InputHistoryItem {

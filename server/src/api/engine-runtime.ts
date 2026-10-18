@@ -89,6 +89,10 @@ export interface EngineGateway {
   /** CLI 收藏（settings.json favoriteModels，归一 "provider/model"）。可选面：
    * 真实注册表实现直读 agent 目录；测试 fake 可省略（路由层降级空数组）。 */
   favoriteModels?(): string[];
+  /** 引擎 native 默认模型（settings.json defaultProvider/defaultModel/defaultThinkingLevel，
+   * docs08-r5 任务 2）。可选面：真实注册表实现直读 agent 目录；测试 fake 可省略
+   * （路由层降级 null——前端回退链跳过引擎默认档，与旧服务端未下发字段同口径）。 */
+  defaultModel?(): { provider: string; model: string; thinkingLevel: string | null } | null;
   /**
    * 斜杠命令三段枚举（docs08-r3 任务 19）：引擎就绪且有活跃会话时返回按 source
    * 分组的命令行（extension/skill/prompt）；引擎未就绪（不为此触发 spawn）或无
@@ -299,6 +303,30 @@ export function readFavoriteModels(agentDir: string): string[] {
     return out;
   } catch {
     return [];
+  }
+}
+
+/** settings.json 默认模型直读（引擎 native 配置，docs08-r5 任务 2）：
+ * defaultProvider + defaultModel 组成 "provider/model" 选中值，defaultThinkingLevel 为
+ * 可选思考档。文件缺失/JSON 异常/字段缺失或非字符串一律 null，绝不抛错。导出供单测。 */
+export function readDefaultModel(agentDir: string): { provider: string; model: string; thinkingLevel: string | null } | null {
+  const file = join(agentDir, "settings.json");
+  if (!existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      defaultProvider?: unknown;
+      defaultModel?: unknown;
+      defaultThinkingLevel?: unknown;
+    };
+    if (typeof parsed.defaultProvider !== "string" || parsed.defaultProvider === "") return null;
+    if (typeof parsed.defaultModel !== "string" || parsed.defaultModel === "") return null;
+    return {
+      provider: parsed.defaultProvider,
+      model: parsed.defaultModel,
+      thinkingLevel: typeof parsed.defaultThinkingLevel === "string" ? parsed.defaultThinkingLevel : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -1244,6 +1272,10 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   favoriteModels(): string[] {
     return readFavoriteModels(this.opts.agentDir ?? defaultAgentDir());
+  }
+
+  defaultModel(): { provider: string; model: string; thinkingLevel: string | null } | null {
+    return readDefaultModel(this.opts.agentDir ?? defaultAgentDir());
   }
 
   async commandsList(project: string): Promise<EngineCommandInfo[] | null> {

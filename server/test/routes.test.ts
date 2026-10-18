@@ -1340,6 +1340,29 @@ describe("项目与元数据杂项路由", () => {
     }
   });
 
+  test("models defaults：fake 未实现可选面降级 null；实现则透传（docs08-r5 任务 2）", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "routes-default-"));
+    try {
+      // FakeGateway 未实现 defaultModel（接口可选面）→ 路由层降级 null
+      const { app: appPlain, meta: metaPlain } = buildApp(new FakeGateway());
+      metaPlain.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+      const degraded = await (await req(appPlain, "/api/models")).json();
+      expect(degraded.defaults).toBeNull();
+
+      class DefaultGateway extends FakeGateway {
+        defaultModel() {
+          return { provider: "zai-coding-cn", model: "glm-5.3-4k", thinkingLevel: "max" };
+        }
+      }
+      const { app: appDefault, meta: metaDefault } = buildApp(new DefaultGateway());
+      metaDefault.updateProjectMeta(proj, { lastOpenedAt: new Date().toISOString() });
+      const passed = await (await req(appDefault, "/api/models")).json();
+      expect(passed.defaults).toEqual({ provider: "zai-coding-cn", model: "glm-5.3-4k", thinkingLevel: "max" });
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
   test("git status/diff：非仓库 409、仓库解析 porcelain 条目", async () => {
     const nonRepo = mkdtempSync(join(tmpdir(), "routes-git-"));
     const repo = mkdtempSync(join(tmpdir(), "routes-git-"));

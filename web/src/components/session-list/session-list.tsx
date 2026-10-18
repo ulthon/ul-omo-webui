@@ -227,12 +227,20 @@ export function SessionList() {
       const ui = useUiStore.getState();
       if (ui.currentProject !== project) {
         ui.setCurrentProject(project);
-        const preferred = ui.projects.find((p) => p.projectPath === project)?.preferredModel ?? null;
-        ui.setSelectedModel(preferred);
-        if (ui.models.length === 0) void loadProjectModels(project);
+        const meta = ui.projects.find((p) => p.projectPath === project);
+        // 偏好先行与 openProject 同口径（模型 + 思考档）；随后 await 模型解析完成再建会话
+        // （docs08-r5 任务 2：回退链 项目偏好 > 引擎默认 > 列表首项 落定后才发请求，
+        // 请求携带解析所得 model 与 thinkingLevel——未解析完不建，避免落回引擎隐式默认）
+        ui.setSelectedModel(meta?.preferredModel ?? null);
+        ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
+        await loadProjectModels(project);
       }
-      const { selectedModel } = useUiStore.getState();
-      const res = await api.createSession({ project, model: selectedModel ?? undefined });
+      const { selectedModel, selectedThinkingLevel } = useUiStore.getState();
+      const res = await api.createSession({
+        project,
+        model: selectedModel ?? undefined,
+        thinkingLevel: selectedThinkingLevel ?? undefined,
+      });
       // 空会话不落盘（引擎实证）——先 upsert 占位行，发送首条消息落盘后刷新即以真实数据替换
       const now = new Date().toISOString();
       useSessionsStore.getState().upsertSession(project, {

@@ -29,7 +29,11 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
     // CLI 收藏（settings.json favoriteModels 归一 "provider/model"）：引擎无关的
     // agent 级设置，测试 fake 未实现可选面时降级空数组。
     const favorites = deps.engines.favoriteModels?.() ?? [];
-    return c.json({ project, capabilities: { modelsList: true }, models, favorites });
+    // 引擎 native 默认模型（settings.json defaultProvider/defaultModel/defaultThinkingLevel，
+    // docs08-r5 任务 2）：同为 agent 级设置，测试 fake 未实现可选面时降级 null——
+    // 前端回退链跳过引擎默认档，与旧服务端未下发字段同口径。
+    const defaults = deps.engines.defaultModel?.() ?? null;
+    return c.json({ project, capabilities: { modelsList: true }, models, favorites, defaults });
   }));
 
   // 输入历史（去重上限 200 条由存储层保证）
