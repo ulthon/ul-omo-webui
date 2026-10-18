@@ -31,6 +31,11 @@ const PROJ_B = "/tmp/opencode/w1-replay-filter/proj-b"
 
 // ---- SSE 流读取辅助（重放帧计数确定时按 expect 读，全滤场景按空闲读）----
 
+/** docs08-r5 任务 5：重放窗口信封标记（replay_begin/replay_done）在读取辅助层剥离——
+ * 本文件断言焦点是重放过滤语义（哪些请求帧幸存），标记属连接级包夹元数据，
+ * 专项断言在 sse-replay-markers.test.ts。 */
+const REPLAY_MARKER_EVENTS: ReadonlySet<string> = new Set(["replay_begin", "replay_done"])
+
 interface ParsedFrame {
   comment?: boolean
   event?: string
@@ -60,6 +65,9 @@ async function readFrames(
   const idleMs = opts.idleMs ?? 250
   let pending = ""
   const blocks: string[] = []
+  /** 收到的全部块数（含被剥离的标记）：进度守卫口径——首块可能只有被剥离的标记，
+   * 若按语义块计进展会被误判为无新数据提前退出。 */
+  let receivedTotal = 0
   const readChunk = async (): Promise<boolean> => {
     const timer = new Promise<"idle">((resolve) => setTimeout(() => resolve("idle"), idleMs))
     const result = await Promise.race([reader.read(), timer])
@@ -67,18 +75,21 @@ async function readFrames(
     pending += decoder.decode(result.value, { stream: true })
     let idx: number
     while ((idx = pending.indexOf("\n\n")) !== -1) {
-      blocks.push(pending.slice(0, idx))
+      const block = pending.slice(0, idx)
       pending = pending.slice(idx + 2)
+      receivedTotal++
+      if (REPLAY_MARKER_EVENTS.has(parseBlock(block).event ?? "")) continue
+      blocks.push(block)
     }
     return true
   }
   try {
     let guard = 0
     while (guard++ < 60) {
-      const before = blocks.length
+      const before = receivedTotal
       await readChunk()
       if (opts.expect !== undefined && blocks.length >= opts.expect) break
-      if (blocks.length === before) break
+      if (receivedTotal === before) break
     }
   } finally {
     await reader.cancel().catch(() => {})

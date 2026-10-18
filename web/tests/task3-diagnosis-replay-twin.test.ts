@@ -4,7 +4,8 @@
 // 失败序列对应 .omo/evidence/docs08-r5/task-3-diagnosis.md 症状 A/B 定案（三档：
 // confirmed——帧级实证 + 本测试确定性复现）。
 // 症状 B（用户消息双列）已随任务 4 修复反转为验收断言（恒单条）；症状 A（assistant
-// 末段重播+双列）保持锁定原失败序列，待任务 5 修复后反转为验收断言。
+// 末段重播+双列）已随任务 5 修复反转为验收断言（重播抑制 + entry_appended 身份归一
+// 收敛，重放序列恒单条真实 id）。
 // 实录载荷修正（任务 4 实施时对齐引擎源码事实）：user 消息对象恒携引擎端 timestamp
 // （Date.now()，帧 message 与落库条目 message 同一对象），帧/REST 载荷指纹含之。
 import { beforeEach, describe, expect, test } from "vitest";
@@ -12,7 +13,7 @@ import type { WireEntry } from "@/lib/api";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 
 function resetStores() {
-  useMessagesStore.setState({ bySession: {} });
+  useMessagesStore.setState({ bySession: {}, replayRecovering: false });
 }
 
 const SID = "01a14f75-5cbb-7d44-8cef-b69e11975271";
@@ -123,17 +124,43 @@ describe("docs08-r5 任务 3 诊断：REST+重放双摄入合成孪生（只锁�
     expect(ids.some((i: unknown) => typeof i === "string" && i.startsWith("h") && i.includes("-"))).toBe(false); // 无合成 id 孪生
   });
 
-  test("症状 A：REST 真相载入后重放已完成 assistant 段帧 → 回复双列 + 重播", () => {
+  test("症状 A（任务 5 修复验收）：REST 真相载入后重放已完成 assistant 段 → 无重播重建、恒单条真实 id", () => {
     useMessagesStore.getState().setEntries(SID, restEntries(), "4a6479d9", "4a6479d9");
-    for (const ev of replayedAssistantFrames()) useMessagesStore.getState().applyWireEvent(SID, ev);
+    // SSE 新连接：服务端重放窗口标记（任务 5 新增桥级帧）包夹环形缓冲重放序列
+    useMessagesStore.getState().beginReplayRecovery();
+    // 已落库 user 回显重播 + 其 entry_appended（真实 id，引擎逐条目必发）
+    for (const ev of replayedEchoFrames()) useMessagesStore.getState().applyWireEvent(SID, ev);
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "entry_appended",
+      entry: { type: "message", id: "ee9c0089", message: replayedEchoFrames()[0].message },
+    });
+    // 已落库 assistant 段（4a6479d9）的 start/deltas/end 重播
+    const assistantFrames = replayedAssistantFrames();
+    useMessagesStore.getState().applyWireEvent(SID, assistantFrames[0]);
+    // 重播抑制验收：恢复窗口内已落库段的 start 不重建 streamingMessage（用户看不到
+    // 从头逐字重播），后续 delta 自然 no-op
+    const midSlot = useMessagesStore.getState().bySession[SID];
+    expect(midSlot.streamingMessage).toBeNull();
+    expect(midSlot.streaming).toBe(false);
+    for (const ev of assistantFrames.slice(1)) useMessagesStore.getState().applyWireEvent(SID, ev);
+    // message_end 定格的合成孪生由紧随的 entry_appended 真实身份归一收敛
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "entry_appended",
+      entry: { type: "message", id: "4a6479d9", message: assistantFrames[assistantFrames.length - 1].message },
+    });
+    useMessagesStore.getState().endReplayRecovery();
     const slot = useMessagesStore.getState().bySession[SID];
-    // 重放期间：REST 完整副本 + streamingMessage 重播副本并存（用户看到的"重播一遍"）
+    // 修复验收：assistant 恒单条（REST 真实 id 真相保留，合成孪生被归一收敛），
+    // 无流式残留——重播与双份均不复现
     const assistantTexts: string[] = textsOf(SID).filter((t) => t.startsWith("assistant:"));
-    expect(assistantTexts.length).toBe(2); // 定格后合成孪生追加（upsertEntry 按 id 不可去重）
-    expect(slot.streamingMessage).toBeNull(); // message_end 已 settle
+    expect(assistantTexts.length).toBe(1);
+    expect(slot.streamingMessage).toBeNull();
+    expect(slot.streaming).toBe(false);
     const ids = slot.entries.map((e: { id?: unknown }) => e.id);
     expect(ids).toContain("4a6479d9");
-    expect(ids.length).toBe(3); // user + assistant(真实id) + assistant(合成id)
+    expect(ids).toContain("ee9c0089");
+    expect(ids.length).toBe(2); // user + assistant，各真实 id，无合成孪生
+    expect(ids.some((i: unknown) => typeof i === "string" && /^h[0-9a-z]+-/.test(i))).toBe(false);
   });
 
   test("live 路径不双列（对照组）：占位先入，无 id 回显到达即吸收为单条", () => {

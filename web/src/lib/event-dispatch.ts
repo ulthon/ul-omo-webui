@@ -5,6 +5,8 @@
 // 同步进 sessions store，供 todo 15 状态点消费。
 // gap 帧 / 游标回退（服务端重启游标归零）→ 对已加载会话做全量 refetch（GET messages
 // 先取后换，重取期间界面不清空），替代增量补发——覆盖手机杀后台数分钟的场景。
+// docs08-r5 任务 5：服务端重放窗口标记（replay_begin/replay_done 桥级帧，包夹重放序列）
+// 转译为 messages store 恢复窗口置位/复位，窗口内抑制已落库段的重播重建（语义见 store）。
 // 运行态自愈（W1 缺陷 #3）：服务重启会孤儿化前端 runStates（状态点永卡「运行中」）。
 // 两路修复——(1) 周期清扫：每 60s 把无活动超阈值的 running/waiting 回落 idle（阈值
 // 常量在 stores/sessions.ts），该会话任何 SSE 帧都刷新活动时刻，活跃会话不被误回落；
@@ -211,6 +213,18 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   if (eventType === "gap") {
     refetchLoadedSessions();
     resyncQueues();
+    return;
+  }
+
+  // docs08-r5 任务 5：服务端重放窗口标记（桥级帧，无会话身份，data 为纯元数据非信封）→
+  // store 恢复窗口置位/复位。begin/done 只包夹实际重放的帧，实时扇出路径零改动；
+  // 游标记账已在上方完成（marker id 取重放帧流水，单调不触发回退）。
+  if (eventType === "replay_begin") {
+    useMessagesStore.getState().beginReplayRecovery();
+    return;
+  }
+  if (eventType === "replay_done") {
+    useMessagesStore.getState().endReplayRecovery();
     return;
   }
 

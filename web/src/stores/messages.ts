@@ -3,6 +3,9 @@
 // （message_start/update/end、turn_end、tool_execution_start/end、agent_start/end/settled/idle），
 // 未知事件类型（omo 扩展的 setStatus/setWidget/notify、tool_hook_status 等噪音）一律容错忽略。
 // 流式 assistant 消息独立存放（streamingMessage），delta 只更新单个对象；定格时并入 entries。
+// docs08-r5 任务 5（流式末段重播修复，任务 3 诊断定案）：entry_appended 消息条目消费
+// 真实 id 与槽内合成孪生身份归一（诊断杠杆 1）；服务端重放窗口标记（replay_begin/done）
+// 界定的单次恢复窗口内，已落库段的无 id start 重播抑制流式重建（诊断杠杆 2）。
 import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
@@ -48,6 +51,12 @@ export interface DeltaPatch {
 interface MessagesState {
   bySession: Record<string, SessionMessages>;
 
+  /** 单次恢复窗口（docs08-r5 任务 5）：服务端 SSE 重放路径以 replay_begin/replay_done
+   * 桥级帧包夹重放序列（event-dispatch 转译置位/复位；EventsClient 建连时清陈旧窗口）。
+   * 窗口内对"已落库段的无 id start 重播"抑制流式重建；实时帧恒在窗口外（服务端
+   * 连接路径队列顺序保证：begin/done 只包夹实际重放的帧，订阅后发布的实时帧在 done 后）。 */
+  replayRecovering: boolean;
+
   /** 全量加载 / gap 全量重取 */
   setEntries(sessionId: string, entries: WireEntry[], cursor: string | null, leafId: string | null): void;
   setCursor(sessionId: string, cursor: string | null): void;
@@ -82,6 +91,9 @@ interface MessagesState {
   /** 首条消息落盘后采用服务端回传的真实 id：迁移消息槽（目标槽已有时事件真值优先，
    *  仅补携带本地乐观条目防丢） */
   adoptDurableId(oldId: string, newId: string): void;
+  /** 恢复窗口置位/复位（docs08-r5 任务 5，event-dispatch 由 replay_begin/replay_done 转译） */
+  beginReplayRecovery(): void;
+  endReplayRecovery(): void;
 }
 
 function emptySessionMessages(): SessionMessages {
@@ -175,6 +187,53 @@ function hasSamePayloadUserEntry(list: WireEntry[], msg: WireMessage): boolean {
   });
 }
 
+/** 单个 content part 的流式前缀比对（docs08-r5 任务 5）：text/thinking 按字符串前缀
+ * （流式截断发生在串中段），其余 part 类型字节等价才认（帧与落库条目同对象，无多余形态）。 */
+function isPrefixPart(a: WirePart, b: WirePart): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type === "text" || a.type === "thinking") {
+    const sa = a.type === "text" ? a.text : a.thinking;
+    const sb = b.type === "text" ? b.text : b.thinking;
+    return typeof sa === "string" && typeof sb === "string" && sb.startsWith(sa);
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** start 载荷是否携带正向身份证据：至少一个非空 text/thinking 串。空载荷（content 空
+ * 数组/全空串）与任何定格条目都"前缀匹配"，不构成身份证据，不得据此抑制。 */
+function hasReplayPrefixEvidence(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some((p) => {
+    if (p === null || typeof p !== "object") return false;
+    const t = (p as { text?: unknown }).text;
+    const th = (p as { thinking?: unknown }).thinking;
+    return (typeof t === "string" && t !== "") || (typeof th === "string" && th !== "");
+  });
+}
+
+/** 恢复窗口重播判定（docs08-r5 任务 5，诊断杠杆 2）：start 载荷是槽内某定格 assistant
+ * 条目 content 的逐元素前缀（末段元素按流式截断语义取字符串前缀，其余元素字节等价）。
+ * 这是身份判定不是内容指纹跨回合去重：只在单次恢复窗口内使用（重放帧与 REST 真相的
+ * 同段比对），且只抑制 streamingMessage 重建、永不增删条目——在途新段照常流式，
+ * REST 旧快照与新帧竞态不丢消息。 */
+function isReplayOfSettledAssistant(entries: WireEntry[], start: WireMessage): boolean {
+  if (!hasReplayPrefixEvidence(start.content)) return false;
+  const a = Array.isArray(start.content) ? start.content : [];
+  return entries.some((e) => {
+    const m = e.message as WireMessage | undefined;
+    if (m === undefined || m.role !== "assistant") return false;
+    const b = Array.isArray(m.content) ? m.content : [];
+    if (a.length > b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const pa = a[i];
+      const pb = b[i];
+      if (pa === undefined || pb === undefined) return false;
+      if (!isPrefixPart(pa, pb)) return false;
+    }
+    return true;
+  });
+}
+
 function upsertToolRun(
   session: SessionMessages,
   toolCallId: string,
@@ -243,6 +302,11 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
 
   return {
     bySession: {},
+    replayRecovering: false,
+
+    beginReplayRecovery: () => set({ replayRecovering: true }),
+
+    endReplayRecovery: () => set({ replayRecovering: false }),
 
     setEntries: (sessionId, entries, cursor, leafId) =>
       set((s) => ({
@@ -276,6 +340,20 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           if (!msg || typeof msg.role !== "string") break;
           if (msg.role === "assistant") {
             if (event.type === "message_start") {
+              // docs08-r5 任务 5（恢复窗口重播抑制，诊断杠杆 2）：单次恢复窗口内的
+              // 无 id assistant start，若载荷已是槽内某定格 assistant 条目的内容前缀
+              //（且含非空文本/思考的正向身份证据），判定为"已落库段的整缓冲重播"，
+              // no-op 吸收：不重建 streamingMessage，后续 delta 无流式消息自然 no-op，
+              // message_end 定格的合成孪生由 entry_appended 真实身份归一收敛（净效果
+              // 幂等单条）。窗口外/前缀不匹配（含在途新段与空载荷 start）照常重建——
+              // live 流式零改动。抑制只跳过重建、永不增删条目，REST 旧快照与新帧
+              // 竞态不丢消息。
+              const curNow = get().bySession[sessionId] ?? emptySessionMessages();
+              const suppressed =
+                typeof entry.id !== "string" &&
+                get().replayRecovering &&
+                isReplayOfSettledAssistant(curNow.entries, msg);
+              if (suppressed) break;
               // 进入流式：暂存 streamingMessage（定格时并入 entries）
               set((s) => {
                 const cur = s.bySession[sessionId] ?? emptySessionMessages();
@@ -421,14 +499,40 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         }
 
         case "entry_appended": {
+          const appended = event.entry;
+          if (appended === null || typeof appended !== "object") break;
+          const entry = appended as WireEntry;
+          // docs08-r5 任务 5（身份归一，诊断杠杆 1）：消息条目消费真实 id。引擎对每条
+          // 落库条目发 entry_appended（真实 id = JSONL id = REST id，任务 3 三方一致
+          // 实证）；原白名单只放行记忆标记、type:"message" 一律丢弃，message 通道的
+          // 合成 id 条目因此永不与 REST 真相收敛（重播/双列根因的决定性一环）。现对
+          // user/assistant 消息条目归一：移除同载荷合成孪生（syntheticId 相同；djb2
+          // 合成 id 与引擎真实 id 属不相交空间，只删孪生、绝不触真实条目——两个不同
+          // 回合的同文回复各有真实 id，互不坍缩，反铁律），再按引擎落库行原样 upsert
+          // 真实 id 条目（已存在幂等替换，缺席补入——帧缺失场景不丢条目）。
+          if (entry.type === "message" && typeof entry.id === "string" && entry.id !== "") {
+            const appendedMsg = entry.message as WireMessage | undefined;
+            if (appendedMsg !== undefined && (appendedMsg.role === "user" || appendedMsg.role === "assistant")) {
+              set((s) => {
+                const cur = s.bySession[sessionId] ?? emptySessionMessages();
+                const twinId = syntheticId(appendedMsg);
+                const stored: WireEntry = { ...entry, type: "message", message: appendedMsg };
+                return {
+                  bySession: {
+                    ...s.bySession,
+                    [sessionId]: { ...cur, entries: upsertEntry(cur.entries.filter((e) => e.id !== twinId), stored) },
+                  },
+                };
+              });
+            }
+            break;
+          }
           // 记忆标记条目增量（docs08-r4 任务 13）：引擎记忆相关 custom/custom_message 条目
           // 经 entry_appended 到达（隔离实例实测 wire 形态 {entry:{type,id,customType,...}}，
           // custom_message 携 id 早于同义的无 id message_start/end 帧），仅白名单 customType
           // 入列（渲染层派生标记块，历史 GET messages 同形天然同构）；其余（pi-rules.scan、
-          // senpi.hooks.stop-state、type:"message" 的消息条目等）保持不渲染。
-          const appended = event.entry;
-          if (appended === null || typeof appended !== "object") break;
-          const entry = appended as WireEntry;
+          // senpi.hooks.stop-state 等）保持不渲染（type:"message" 的消息条目已在上方
+          // 按身份归一消费）。
           if (!isMemoryAppendedEntry(entry)) break;
           set((s) => {
             const cur = s.bySession[sessionId] ?? emptySessionMessages();

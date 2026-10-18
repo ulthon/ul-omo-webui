@@ -20,6 +20,7 @@
 // 再从最旧可用续发。分发层据 gap 帧与游标回退做活动会话全量重取兜底；停摆/半死触发的
 // 重连额外强制 refetchLoadedSessions 全量对账（防御纵深，见 dispatch 侧游标回退路径）。
 import { dispatchSseEvent, getDispatchCursor, refetchLoadedSessions } from "@/lib/event-dispatch";
+import { useMessagesStore } from "@/stores/messages";
 import { useUiStore } from "@/stores/ui";
 
 /** 客户端监听的 SSE event: 类型集合。服务端 wire type 是开放集，EventSource 模式下未列出
@@ -43,6 +44,8 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "entry_appended", // 记忆标记条目增量（docs08-r4 任务 13）：customType 白名单过滤在 store 侧
   "engine_event", // 服务端对无 type wire 事件的兜底 event 行名
   "thinking_level_changed", // 引擎落定的思考档回显（W2 todo 8：仅选中会话同步 chip）
+  "replay_begin", // 服务端重放窗口标记（docs08-r5 任务 5）：包夹重放序列，转译恢复窗口置位
+  "replay_done", // 同上：窗口复位；两帧仅出现在重放路径，实时扇出零改动
 ];
 
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */
@@ -215,6 +218,10 @@ export class EventsClient {
       this.online = true;
       this.opened = true;
       useUiStore.getState().setConnection("online");
+      // docs08-r5 任务 5：建连即清陈旧恢复窗口——上一连接若死在重放中途（begin 后
+      // done 前），窗口残留会让后续 live start 被误判重播；新连接的重放序列会由新的
+      // begin/done 重新包夹，此处复位只影响残窗，不影响正常包夹顺序。
+      useMessagesStore.getState().endReplayRecovery();
       this.resetStallWatch(); // OPEN 后布防滚动看门狗第一拍
     };
     es.onerror = () => {
@@ -296,6 +303,8 @@ export class EventsClient {
         this.online = true;
         this.backoffMs = this.baseBackoffMs;
         useUiStore.getState().setConnection("online");
+        // 同 es.onopen：建连清陈旧恢复窗口（docs08-r5 任务 5）
+        useMessagesStore.getState().endReplayRecovery();
         return this.pumpSseStream(res.body);
       })
       .catch((err: unknown) => {

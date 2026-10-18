@@ -15,6 +15,12 @@
  *   - id 行 = 事件桥全局游标（自增，不侵入 wire 事件体）；
  *   - 断点续传：客户端（原生 EventSource）重连自动带 Last-Event-ID 头，服务端
  *     从游标之后续发，不丢不重；
+ *   - 重放窗口标记（docs08-r5 任务 5）：重放序列非空时首尾各发一条桥级帧
+ *     `replay_begin` / `replay_done`（data 为纯元数据非 {projectPath,event} 信封，
+ *     id 取重放帧流水），客户端据其界定"单次恢复窗口"，窗口内抑制已落库段的
+ *     无 id message_start 重播重建（配合 entry_appended 真实 id 消费收敛孪生）。
+ *     实时扇出路径零改动，空重放不发标记，旧客户端未注册该事件类型时浏览器
+ *     不派发、零影响；
  *   - 游标越界（早于服务端环形缓冲起点，或服务端重启后客户端游标超前）：
  *     先发一条 `event: gap`（data `{from, to}`，id = 当前续发基点）再从最旧
  *     可用事件续发——客户端收到 gap 必须对活动会话做全量重取（todo 14）；
@@ -130,6 +136,7 @@ interface Connection {
 
 type OutboundFrame =
   | { kind: "gap"; from: number; to: number; id: number }
+  | { kind: "marker"; marker: "replay_begin" | "replay_done"; id: number; data: string }
   | { kind: "event"; event: BridgeEvent }
 
 /** wire 事件的会话字段（routing handle，见 engine/events.ts 头注释）。 */
@@ -357,10 +364,13 @@ sseRoutes.get("/events", (c) => {
               data: JSON.stringify({ from: frame.from, to: frame.to }),
               id: String(frame.id),
             })
+          } else if (frame.kind === "marker") {
+            dlog(`marker ${frame.marker} id=${frame.id} data=${frame.data}`)
+            await stream.writeSSE({ event: frame.marker, data: frame.data, id: String(frame.id) })
           } else {
             await writeBridgeEvent(stream, frame.event, durableLookup)
           }
-          conn.lastSentId = frame.kind === "gap" ? frame.id : frame.event.id
+          conn.lastSentId = frame.kind === "gap" || frame.kind === "marker" ? frame.id : frame.event.id
         }
       } catch {
         dlog(`close reason=write-error lastSentId=${conn.lastSentId} queue=${conn.queue.length}`)
@@ -400,9 +410,31 @@ sseRoutes.get("/events", (c) => {
           replay.gap ? `${replay.gapFrom}->${replay.gapTo}` : "no"
         }`,
       )
+      // docs08-r5 任务 5：单次恢复窗口界定标记。重放序列首尾各一条桥级帧，客户端在
+      // 窗口内对"已落库段的无 id message_start 重播"抑制流式重建（身份收敛由前端
+      // entry_appended 真实 id 消费承担，见 messages store）。窗口只包夹实际重放的帧：
+      // 空 replay 不发标记；订阅后发布的实时帧恒在 done 之后（队列尾追加顺序保证），
+      // 实时扇出路径零改动。marker id 取重放帧流水（首/末条），Last-Event-ID 单调性
+      // 与 gap 语义不变；无会话身份，不过 matchesFilter（连接级帧，同 gap 口径）。
+      if (replayEvents.length > 0) {
+        conn.queue.push({
+          kind: "marker",
+          marker: "replay_begin",
+          id: replayEvents[0].id,
+          data: JSON.stringify({ after: afterId, buffered: replayEvents.length }),
+        })
+      }
       for (const e of replayEvents) {
         if (!matchesFilter(e)) continue
         conn.queue.push({ kind: "event", event: e })
+      }
+      if (replayEvents.length > 0) {
+        conn.queue.push({
+          kind: "marker",
+          marker: "replay_done",
+          id: replayEvents[replayEvents.length - 1].id,
+          data: JSON.stringify({ count: replayEvents.length }),
+        })
       }
       await flush()
 

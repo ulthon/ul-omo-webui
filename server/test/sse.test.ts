@@ -234,12 +234,21 @@ describe("GET /api/events", () => {
     bus.publish(PROJ, wireEvent("s1", 3))
     bus.publish(PROJ, wireEvent("s1", 4))
 
-    // 重连带 Last-Event-ID: 2 → 只补 3,4，无 1,2 重复
+    // 重连带 Last-Event-ID: 2 → 只补 3,4，无 1,2 重复；重放序列被窗口标记包夹
+    // （docs08-r5 任务 5：replay_begin/done 桥级帧，id 取重放帧首/末条流水）
     const res2 = await app.request("/api/events", { headers: { "Last-Event-ID": "2" } })
-    const blocks2 = await readSseBlocks(res2.body!, 2)
-    const frames = blocks2.map(parseBlock)
+    const blocks2 = await readSseBlocks(res2.body!, 4)
+    const fBegin = parseBlock(blocks2[0])
+    expect(fBegin.event).toBe("replay_begin")
+    expect(fBegin.id).toBe("3")
+    expect(JSON.parse(fBegin.data!)).toEqual({ after: 2, buffered: 2 })
+    const frames = blocks2.slice(1, 3).map(parseBlock)
     expect(frames.map((f) => f.id)).toEqual(["3", "4"])
     expect(frames.some((f) => f.event === "gap")).toBe(false)
+    const fDone = parseBlock(blocks2[3])
+    expect(fDone.event).toBe("replay_done")
+    expect(fDone.id).toBe("4")
+    expect(JSON.parse(fDone.data!)).toEqual({ count: 2 })
   })
 
   test("游标越界重连：先收 gap 标记再从最旧可用续发", async () => {
@@ -247,14 +256,19 @@ describe("GET /api/events", () => {
     for (let i = 1; i <= 5; i++) bus.publish(PROJ, wireEvent("s1", i))
     // 客户端持 id=1（已被淘汰）重连
     const res = await app.request("/api/events", { headers: { "Last-Event-ID": "1" } })
-    const blocks = await readSseBlocks(res.body!, 4)
+    // docs08-r5 任务 5：序列为 [gap][replay_begin][3][4][5][replay_done]
+    const blocks = await readSseBlocks(res.body!, 6)
     const gap = parseBlock(blocks[0])
     expect(gap.event).toBe("gap")
     expect(JSON.parse(gap.data!)).toEqual({ from: 2, to: 2 })
     expect(gap.id).toBe("5")
-    // gap 之后从最旧可用（id 3）续发
-    expect(blocks.slice(1).map((b) => parseBlock(b).id)).toEqual(["3", "4", "5"])
-    expect(blocks.slice(1).every((b) => parseBlock(b).event === "message_update")).toBe(true)
+    // gap 之后从最旧可用（id 3）续发，首尾被窗口标记包夹
+    expect(parseBlock(blocks[1]).event).toBe("replay_begin")
+    expect(parseBlock(blocks[1]).id).toBe("3")
+    expect(blocks.slice(2, 5).map((b) => parseBlock(b).id)).toEqual(["3", "4", "5"])
+    expect(blocks.slice(2, 5).every((b) => parseBlock(b).event === "message_update")).toBe(true)
+    expect(parseBlock(blocks[5]).event).toBe("replay_done")
+    expect(parseBlock(blocks[5]).id).toBe("5")
   })
 
   test("无续发内容的 gap（客户端游标超前）：只发 gap 帧以当前游标为基点", async () => {
@@ -276,9 +290,12 @@ describe("GET /api/events", () => {
     bus.publish(PROJ, wireEvent("s2", 2))
     bus.publish(PROJ, wireEvent("s1", 3))
     const res = await app.request("/api/events?session=s1")
-    // replay：1,3（s2 的 2 被滤掉）
-    const replayBlocks = await readSseBlocks(res.body!, 2)
-    expect(replayBlocks.map((b) => parseBlock(b).id)).toEqual(["1", "3"])
+    // replay：1,3（s2 的 2 被滤掉），被窗口标记包夹（标记为连接级帧，不过 ?session= 过滤，
+    // 同 gap 口径——窗口界定不依赖会话身份）
+    const replayBlocks = await readSseBlocks(res.body!, 4)
+    expect(parseBlock(replayBlocks[0]).event).toBe("replay_begin")
+    expect(replayBlocks.slice(1, 3).map((b) => parseBlock(b).id)).toEqual(["1", "3"])
+    expect(parseBlock(replayBlocks[3]).event).toBe("replay_done")
     // 实时路径：s2 事件不透出
     bus.publish(PROJ, wireEvent("s2", 4))
     bus.publish(PROJ, wireEvent("s1", 5))
@@ -318,14 +335,17 @@ describe("GET /api/events", () => {
     bus.publish("", { type: SSE_HEARTBEAT_TYPE, t: 0 } as never)
     bus.publish(PROJ, wireEvent("s1", 4))
 
-    // 持 id=2 重连：续发 3(hb), 4，无 gap、hb 正常透传（重放过滤只针对权限请求帧）
+    // 持 id=2 重连：续发 3(hb), 4，无 gap、hb 正常透传（重放过滤只针对权限请求帧）；
+    // 序列被窗口标记包夹（docs08-r5 任务 5）
     const res2 = await app.request("/api/events", { headers: { "Last-Event-ID": "2" } })
-    const blocks = await readSseBlocks(res2.body!, 2)
-    const f1 = parseBlock(blocks[0])
+    const blocks = await readSseBlocks(res2.body!, 4)
+    expect(parseBlock(blocks[0]).event).toBe("replay_begin")
+    const f1 = parseBlock(blocks[1])
     expect(f1.event).toBe(SSE_HEARTBEAT_TYPE)
     expect(f1.id).toBe("3")
-    expect(parseBlock(blocks[1]).id).toBe("4")
-    expect(blocks.every((b) => parseBlock(b).event !== "gap")).toBe(true)
+    expect(parseBlock(blocks[2]).id).toBe("4")
+    expect(parseBlock(blocks[3]).event).toBe("replay_done")
+    expect(blocks.slice(1, 3).every((b) => parseBlock(b).event !== "gap")).toBe(true)
     await res2.body!.cancel()
   })
 
@@ -341,10 +361,14 @@ describe("GET /api/events", () => {
     const { bus, app } = makeApp({ capacity: 3 })
     for (let i = 1; i <= 5; i++) bus.publish(PROJ, wireEvent("s1", i))
     const res = await app.request("/api/events", { headers: { "Last-Event-ID": "not-a-number" } })
-    const blocks = await readSseBlocks(res.body!, 4)
+    const blocks = await readSseBlocks(res.body!, 6)
     expect(parseBlock(blocks[0]).event).toBe("gap")
-    // 持 0 重连：缺口 [1,2]，从最旧可用 3 续发
+    // 持 0 重连：缺口 [1,2]，从最旧可用 3 续发，窗口标记包夹
     expect(JSON.parse(parseBlock(blocks[0]).data!)).toEqual({ from: 1, to: 2 })
-    expect(blocks.slice(1).map((b) => parseBlock(b).id)).toEqual(["3", "4", "5"])
+    expect(parseBlock(blocks[1]).event).toBe("replay_begin")
+    expect(parseBlock(blocks[1]).id).toBe("3")
+    expect(blocks.slice(2, 5).map((b) => parseBlock(b).id)).toEqual(["3", "4", "5"])
+    expect(parseBlock(blocks[5]).event).toBe("replay_done")
+    expect(parseBlock(blocks[5]).id).toBe("5")
   })
 })
