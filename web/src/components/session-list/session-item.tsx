@@ -1,9 +1,9 @@
-// oxlint-disable react/only-export-components -- buildForkIndexes 纯函数随组件同文件导出（W3 todo 10 单列表契约，todo-panel 先例）
+// oxlint-disable react/only-export-components -- buildForkIndexes/formatRelative 纯函数随组件同文件导出（W3 todo 10 单列表契约，todo-panel 先例）
 // 会话列表行（W3 todo 10 单列表重构）：状态点（运行中/等待权限/空闲/出错，SSE runStates 优先、
 // 引擎探询 active 兜底）+ 标题（fork 行带「(fork #N)」后缀，编号 = 同父兄弟按 sessionPath 序，
 // 列表加载时由 session-list 经 buildForkIndexes 一次算好传入）+ 来源标识（fork 子会话 GitFork
 // 徽标；人工创建不显标，docs08-r3 C14 紧凑化）+ 标签徽标（todo 11，最多 1 + N、孤儿灰显可清理）
-// + 未读徽标 + 相对时间（桌面显示，<sm 隐藏，docs08-r3 C14）
+// + 未读徽标 + 相对时间（docs08-r5 任务 11 紧凑格式：Ns/Nm/Nh/Nd/M/D，跨年 YY/M/D，对标 OC 不汉化）
 // + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
 // 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
 // + 元数据操作菜单（置顶/重命名/生成标题/归档/复制会话 ID/复制标题/导出 HTML/标签/删除——
@@ -25,17 +25,24 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TagBadges } from "./tag-badge";
 
-function formatRelative(iso: string): string {
+/** 紧凑相对时间（docs08-r5 任务 11 对标 OC：数字+字母不汉化——汉字占宽大）：<60s → Ns；
+ *  <60m → Nm；<24h → Nh；<30d → Nd；≥30d → M/D（跨年 YY/M/D）。未来时间（时钟偏移）
+ *  按 0s 钳制；非法 ISO 返回空串。导出供全档位单测（task-11）。 */
+export function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(diff)) return "";
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "刚刚";
-  if (m < 60) return `${m} 分钟前`;
+  const date = new Date(iso);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${Math.max(s, 0)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
+  if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d} 天前`;
-  return new Date(iso).toLocaleDateString();
+  if (d < 30) return `${d}d`;
+  const year = date.getFullYear();
+  if (year !== new Date().getFullYear()) return `${String(year).slice(-2)}/${date.getMonth() + 1}/${date.getDate()}`;
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function StatusDot({ runState, active }: { runState: SessionRunState | null; active: boolean | null }) {
@@ -234,10 +241,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
 
   return (
     <div>
-      {/* 行密度（2026-10-15 对标 OpenChamber，双端一起压）：手机 = py-1 + 子件 ≤32px → 40px 行；
-          桌面 = lg:py-0.5 → 36px 行；行间距为零（相邻 div 贴排），信息密度以文字为主。 */}
+      {/* 行密度（2026-10-15 对标 OpenChamber，双端一起压；docs08-r5 任务 11 行高保持不变）：
+          手机 = py-1 + 子件 ≤32px → 40px 行；桌面 = lg:py-2 → 36px 行（菜单钮桌面改为绝对定位
+          脱离文档流后，行高改由内边距维持）；行间距为零（相邻 div 贴排），信息密度以文字为主。 */}
       <div
-        className={`group relative flex items-center gap-1 rounded-md px-1.5 py-1 text-sm lg:py-0.5 ${
+        className={`group relative flex items-center gap-1 rounded-md px-1.5 py-1 text-sm lg:py-2 ${
           selected ? "bg-primary/10" : "hover:bg-accent/50"
         }`}
       >
@@ -302,10 +310,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               {projectLabel}
             </span>
           )}
-          {/* 相对时间双端常显（2026-10-15 密度对标反转 C14 的 <sm 隐藏——OC 同款信息量，
-              40px 行内塞得下）；极端挤压（超长标题+徽标+时间同屏）下时间仍作为唯一可收缩项
-              先让位（min-w-0 truncate），未读徽标 shrink-0 优先保住 */}
-          <span className="ml-auto shrink min-w-0 truncate text-[11px] text-muted-foreground/70">{formatRelative(session.modified)}</span>
+          {/* 相对时间（紧凑格式，docs08-r5 任务 11）双端常显；桌面 hover 时隐藏，行尾菜单钮
+              绝对定位叠加到同一槽位（时间隐/菜单显，回收菜单常占宽度）；菜单打开期间
+              （data-state=open）保持隐藏——invisible 保布局零跳版，min-w-0 truncate 收缩
+              防线与未读 shrink-0 保位不变 */}
+          <span className="ml-auto shrink min-w-0 truncate text-[11px] text-muted-foreground/70 lg:group-hover:invisible lg:group-has-[[data-state=open]]:invisible">{formatRelative(session.modified)}</span>
           {session.unreadCount > 0 && (
             <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
               {session.unreadCount > 99 ? "99+" : session.unreadCount}
@@ -316,13 +325,15 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             {/* 手机常显（无 hover 可言）；触控目标 32px（2026-10-15 密度对标由 44px 收窄——
-                选中主目标=整行 40px 全宽，菜单是次要动作，OC 同款量级；行高不再被按钮撑到 52px）；
-                lg 保持桌面紧凑 32px */}
+                选中主目标=整行 40px 全宽，菜单是次要动作，OC 同款量级；行高不再被按钮撑到 52px）。
+                桌面（docs08-r5 任务 11 对标 OC）：absolute 定位到行尾时间同一槽位，group-hover
+                交换显隐（时间隐/菜单显），回收 32px 常占宽度；菜单打开（data-state=open）与
+                键盘 focus-visible 时不随 hover 消失。行高改由 lg:py-2 维持（见行容器注释） */}
             <Button
               ref={menuBtnRef}
               variant="ghost"
               size="icon"
-              className="size-8 shrink-0 opacity-100 transition-opacity data-[state=open]:opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
+              className="size-8 shrink-0 opacity-100 transition-opacity focus-visible:opacity-100 data-[state=open]:opacity-100 lg:absolute lg:right-1.5 lg:top-1/2 lg:-translate-y-1/2 lg:opacity-0 lg:group-hover:opacity-100"
               aria-label="会话操作"
             >
               <MoreVertical className="size-3.5" />
