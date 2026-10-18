@@ -6,7 +6,9 @@
 //（NFKD → 非字母数字折叠 '-' → 截 40，空回退 "agent"）。
 // 安全：realpath 防护——解析出的库目录必须落在 <home>/agents/ 内（home =
 // OMO_MEMORY_HOME 或 ~/.omo/memory，与引擎同 HOME）；身份串形状白名单前置。
-// 绝不写库、不读 runtime/ 管线工件；库不存在/空返回空列表 + 库路径说明字段。
+// 绝不写库；runtime/ 仅读 facts 运行 final.json 的 outcome/finishedAt 两字段（遥测白名单，
+// docs08-r5 任务 14），其余管线工件不读；库不存在/空返回空列表 + 库路径说明字段，
+// 库缺失时 telemetry=null（诚实空态）。
 import { Hono, type Context } from "hono";
 import { createHash } from "node:crypto";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
@@ -140,6 +142,100 @@ function readSystemGroups(dir: string): Array<{ file: string; description: strin
   });
 }
 
+/** 遥测卡（docs08-r5 任务 14，只读）：库存在时的硬数据。字段口径均由 mini-spike 钉死
+ *（.omo/evidence/docs08-r5/task-14-spike.md：committed=outcome 字段、日界线=服务器本地时区、
+ * 损坏 JSON 跳过+warn 计数）。 */
+export interface MemoryTelemetry {
+  /** 当日 committed 记忆运行个数 */
+  todayCount: number;
+  /** facts bullet 条目总数 */
+  totalEntries: number;
+  /** facts + system 的 *.md 文件数 */
+  fileCount: number;
+  /** 最新 facts 文件 mtime（ISO 串；无 facts 文件为 null） */
+  lastEntryAt: string | null;
+  /** repo/system/*.md 磁盘字节和（UI 文案定“system 文件体积”，非注入体积） */
+  systemBytes: number;
+}
+
+/** 服务器本地时区日界线键（YYYY-M-D 本地年月日；刻意不用 UTC 口径，见 mini-spike 结论 2） */
+function localDateKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/** 文件 stat（缺失/非普通文件/不可读一律 null） */
+function statOrNull(path: string): { size: number; mtimeMs: number } | null {
+  try {
+    const st = statSync(path);
+    return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 当日 committed 运行计数（mini-spike 钉死口径）：outcome==="committed" 且 finishedAt
+ * 本地年月日等于 now；损坏 JSON 跳过并 console.warn 汇总计数；无 final.json（进行中/
+ * 中断运行）与日期不可解析静默不计 */
+function countTodayCommittedRuns(runsDir: string, now: Date): number {
+  let names: string[];
+  try {
+    names = readdirSync(runsDir);
+  } catch {
+    return 0; // runtime/facts/runs 不存在 = 今日无运行，非错误
+  }
+  const todayKey = localDateKey(now);
+  let count = 0;
+  let skipped = 0;
+  for (const name of names) {
+    let raw: string;
+    try {
+      raw = readFileSync(join(runsDir, name, "final.json"), "utf8");
+    } catch {
+      continue;
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    const at = new Date(String(data.finishedAt ?? ""));
+    if (data.outcome === "committed" && !Number.isNaN(at.getTime()) && localDateKey(at) === todayKey) {
+      count += 1;
+    }
+  }
+  if (skipped > 0) console.warn(`[memory-telemetry] ${skipped} 个损坏 final.json 已跳过（${runsDir}）`);
+  return count;
+}
+
+/** 遥测计算（只读；runtime/ 仅触碰 facts 运行 final.json，见文件头白名单）。
+ * factsGroups 复用路由已拆条结果，避免二次解析。 */
+export function readMemoryTelemetry(
+  libDir: string,
+  factsGroups: Array<{ entries: string[] }>,
+  now: Date,
+): MemoryTelemetry {
+  const factsDir = join(libDir, "repo", "notes", "facts");
+  const systemDir = join(libDir, "repo", "system");
+  const factsFiles = listMarkdownFiles(factsDir);
+  const systemFiles = listMarkdownFiles(systemDir);
+  let systemBytes = 0;
+  let lastMs: number | null = null;
+  for (const file of systemFiles) systemBytes += statOrNull(join(systemDir, file))?.size ?? 0;
+  for (const file of factsFiles) {
+    const st = statOrNull(join(factsDir, file));
+    if (st && (lastMs === null || st.mtimeMs > lastMs)) lastMs = st.mtimeMs;
+  }
+  return {
+    todayCount: countTodayCommittedRuns(join(libDir, "runtime", "facts", "runs"), now),
+    totalEntries: factsGroups.reduce((n, g) => n + g.entries.length, 0),
+    fileCount: factsFiles.length + systemFiles.length,
+    lastEntryAt: lastMs === null ? null : new Date(lastMs).toISOString(),
+    systemBytes,
+  };
+}
+
 export function createMemoryRoutes(deps: ApiDeps & { memoryHome?: string }): Hono {
   const app = new Hono();
   app.get("/api/memory/facts", route(async (c: Context) => {
@@ -190,15 +286,28 @@ export function createMemoryRoutes(deps: ApiDeps & { memoryHome?: string }): Hon
         throw new ApiError(403, "memory_escape", `记忆库路径越界被拒绝：${identity}`);
       }
     }
-    const exists = libReal !== null && statSync(libReal).isDirectory();
-
+    // 库存在/缺失两分支直返：if 内对 let libReal 直接收窄（const 别名对 let 不收窄）
+    if (libReal !== null && statSync(libReal).isDirectory()) {
+      const factsGroups = readFactGroups(join(libReal, "repo", "notes", "facts"));
+      return c.json({
+        project,
+        libraryId: identity,
+        libraryPath: libReal,
+        exists: true,
+        facts: factsGroups,
+        system: readSystemGroups(join(libReal, "repo", "system")),
+        telemetry: readMemoryTelemetry(libReal, factsGroups, new Date()),
+      });
+    }
+    // 库缺失 = telemetry null（诚实空态：无库即无遥测数字可报）
     return c.json({
       project,
       libraryId: identity,
       libraryPath: libReal ?? libDir,
-      exists,
-      facts: exists ? readFactGroups(join(libReal, "repo", "notes", "facts")) : [],
-      system: exists ? readSystemGroups(join(libReal, "repo", "system")) : [],
+      exists: false,
+      facts: [],
+      system: [],
+      telemetry: null,
     });
   }));
   return app;

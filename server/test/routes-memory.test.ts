@@ -3,8 +3,8 @@
 // facts 解析（front-matter 跳过/bullet 拆条/续行并入/原文不截断）、空库/库不存在
 // 诚实空态、未注册项目 403、符号链接逃逸 403、非法身份串降级重算。
 // 全部用 mkdtemp 隔离目录 + 注入 memoryHome，不触引擎、不碰真实 ~/.omo/memory。
-import { afterAll, describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -258,6 +258,125 @@ kind: persona
     const body = await res.json();
     expect(body.exists).toBe(false);
     expect(body.facts).toEqual([]);
+  });
+});
+
+describe("GET /api/memory/facts telemetry（docs08-r5 任务 14）", () => {
+  /** 写一个 facts 运行 final.json（合成样本；口径由 mini-spike 钉死） */
+  function writeRun(agentsRoot: string, identity: string, run: string, body: string): void {
+    const dir = join(agentsRoot, identity, "runtime", "facts", "runs", run);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "final.json"), body, "utf8");
+  }
+  /** 合法 final.json 形态（committed 带 sha，no_facts 不带——真实库实测） */
+  const runJson = (outcome: string, finishedAt: string): string =>
+    JSON.stringify({
+      version: 1,
+      runId: "r",
+      outcome,
+      finishedAt,
+      ...(outcome === "committed" ? { sha: "ab".repeat(20) } : {}),
+    });
+
+  test("有库：四项硬数据全字段正确（今日 committed 计数/bullet 求和/文件数/最新 mtime/system 字节）", async () => {
+    const { agentsRoot, projectDir, register, writeSession, makeLibrary, get } = setup();
+    register();
+    writeSession("tele-lib-12345678");
+    makeLibrary("tele-lib-12345678", {
+      "repo/notes/facts/2026-10.md": "- a\n- b\n",
+      "repo/notes/facts/2026-09.md": "- c\n",
+      "repo/system/persona.md": "abcd",
+      "repo/system/human.md": "abcdef",
+    });
+    // mtime 钉死：lastEntryAt 取最新 facts 文件（2026-09.md）
+    const factsDir = join(agentsRoot, "tele-lib-12345678", "repo", "notes", "facts");
+    utimesSync(join(factsDir, "2026-10.md"), new Date("2026-10-01T00:00:00Z"), new Date("2026-10-01T00:00:00Z"));
+    utimesSync(join(factsDir, "2026-09.md"), new Date("2026-10-02T00:00:00Z"), new Date("2026-10-02T00:00:00Z"));
+    // 运行：今日 committed 1 + 今日 no_facts（不计）+ 无 final.json（进行中，静默）
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const insideToday = new Date(todayStart.getTime() + 60_000).toISOString();
+    writeRun(agentsRoot, "tele-lib-12345678", "r-today", runJson("committed", insideToday));
+    writeRun(agentsRoot, "tele-lib-12345678", "r-nofacts", runJson("no_facts", insideToday));
+    mkdirSync(join(agentsRoot, "tele-lib-12345678", "runtime", "facts", "runs", "r-running"), { recursive: true });
+
+    const res = await get(projectDir);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.exists).toBe(true);
+    expect(body.telemetry).toEqual({
+      todayCount: 1,
+      totalEntries: 3,
+      fileCount: 4,
+      lastEntryAt: "2026-10-02T00:00:00.000Z",
+      systemBytes: 10,
+    });
+  });
+
+  test("跨日界线：今日 00:00 后 committed 计入，昨日/明日 committed 不计入", async () => {
+    const { agentsRoot, projectDir, register, writeSession, get } = setup();
+    register();
+    writeSession("daycut-lib-12345678");
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const insideToday = new Date(todayStart.getTime() + 60_000).toISOString();
+    const yesterdayNight = new Date(todayStart.getTime() - 3_600_000).toISOString();
+    const tomorrow = new Date(todayStart.getTime() + 36 * 3_600_000).toISOString();
+    writeRun(agentsRoot, "daycut-lib-12345678", "r-in", runJson("committed", insideToday));
+    writeRun(agentsRoot, "daycut-lib-12345678", "r-yesterday", runJson("committed", yesterdayNight));
+    writeRun(agentsRoot, "daycut-lib-12345678", "r-tomorrow", runJson("committed", tomorrow));
+
+    const body = await (await get(projectDir)).json();
+    expect(body.telemetry.todayCount).toBe(1);
+  });
+
+  test("损坏 final.json 跳过并 console.warn 计数；日期不可解析合法 JSON 静默不计", async () => {
+    const { agentsRoot, projectDir, register, writeSession, get } = setup();
+    register();
+    writeSession("corrupt-lib-12345678");
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const insideToday = new Date(todayStart.getTime() + 60_000).toISOString();
+    writeRun(agentsRoot, "corrupt-lib-12345678", "r-good", runJson("committed", insideToday));
+    writeRun(agentsRoot, "corrupt-lib-12345678", "r-corrupt", "{ not json");
+    writeRun(agentsRoot, "corrupt-lib-12345678", "r-baddate", runJson("committed", "not-a-date"));
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const body = await (await get(projectDir)).json();
+      expect(body.telemetry.todayCount).toBe(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain("1 个损坏 final.json 已跳过");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("空库（exists=true 零文件）：遥测全零 + lastEntryAt null（诚实零值）", async () => {
+    const { agentsRoot, projectDir, register, writeSession, get } = setup();
+    register();
+    writeSession("teleempty-lib-12345678");
+    mkdirSync(join(agentsRoot, "teleempty-lib-12345678", "repo"), { recursive: true });
+
+    const body = await (await get(projectDir)).json();
+    expect(body.exists).toBe(true);
+    expect(body.telemetry).toEqual({
+      todayCount: 0,
+      totalEntries: 0,
+      fileCount: 0,
+      lastEntryAt: null,
+      systemBytes: 0,
+    });
+  });
+
+  test("库缺失：telemetry=null（诚实空态，不报错）", async () => {
+    const { projectDir, register, writeSession, get } = setup();
+    register();
+    writeSession("telegost-lib-12345678");
+
+    const body = await (await get(projectDir)).json();
+    expect(body.exists).toBe(false);
+    expect(body.telemetry).toBeNull();
   });
 });
 

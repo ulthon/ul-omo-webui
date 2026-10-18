@@ -714,7 +714,22 @@ export interface MemorySystemDoc {
   body: string;
 }
 
-/** 记忆库浏览响应：exists=false = 库目录不存在（诚实空态；libraryPath 仍给出预期落点） */
+/** 记忆库遥测（docs08-r5 任务 14，只读硬数据；字段口径由 mini-spike 钉死） */
+export interface MemoryTelemetry {
+  /** 当日 committed 记忆运行个数（服务器本地时区日界线） */
+  todayCount: number;
+  /** facts bullet 条目总数 */
+  totalEntries: number;
+  /** facts + system 的 *.md 文件数 */
+  fileCount: number;
+  /** 最新 facts 文件 mtime（ISO 串；无 facts 文件为 null） */
+  lastEntryAt: string | null;
+  /** repo/system/*.md 磁盘字节和（展示文案“system 文件体积”，非注入体积） */
+  systemBytes: number;
+}
+
+/** 记忆库浏览响应：exists=false = 库目录不存在（诚实空态；libraryPath 仍给出预期落点，
+ * telemetry=null——无库即无遥测数字可报） */
 export interface MemoryFactsResponse {
   project: string;
   libraryId: string;
@@ -722,4 +737,5 @@ export interface MemoryFactsResponse {
   exists: boolean;
   facts: MemoryFactsGroup[];
   system: MemorySystemDoc[];
+  telemetry: MemoryTelemetry | null;
 }

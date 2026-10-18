@@ -7,7 +7,7 @@
 // 布局按右栏窄容器（320-560px）自适应：单列分区卡片，月份组默认全展开、条目全文。
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystemDoc } from "@/lib/api";
+import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystemDoc, type MemoryTelemetry } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -47,9 +47,55 @@ function PanelMessage({
   );
 }
 
-/** 库路径说明行（空态共享：诚实告知分库位置） */
+/** 库路径说明行（空态/遥测卡共享：诚实告知分库位置） */
 function LibraryHint({ libraryPath }: { libraryPath: string }) {
   return <p className="break-all text-xs tabular-nums text-muted-foreground/70">库路径：{libraryPath}</p>;
+}
+
+/** 相对时间中文短格式（CLI 遥测行 "4m ago" 同语义；时钟轻微超前按刚刚处理） */
+function relativeTime(iso: string): string {
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return "—";
+  const diff = Date.now() - at;
+  if (diff < 60_000) return "刚刚";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  return `${Math.floor(diff / 86_400_000)} 天前`;
+}
+
+/** 字节人性化（CLI 遥测行同风格：B / 一位小数 K / M） */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
+  return `${(n / 1024 / 1024).toFixed(1)}M`;
+}
+
+/** 遥测状态卡（docs08-r5 任务 14，只读）：硬数据来自 GET /api/memory/facts 的
+ * telemetry 字段；无实时 wire 帧，数字随手动刷新更新（页签既有语义）。
+ * system 体积文案定“system 文件体积”，不声称注入体积（mini-spike 无等价性证明）。 */
+function TelemetryCard({ telemetry, libraryPath }: { telemetry: MemoryTelemetry; libraryPath: string }) {
+  return (
+    <div data-testid="memory-telemetry" className="shrink-0 space-y-1.5 border-b px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span data-testid="memory-telemetry-today" title="今日 committed 记忆运行数">
+          今日 {telemetry.todayCount} 条
+        </span>
+        <span data-testid="memory-telemetry-total" title="facts 条目总数">
+          库 {telemetry.totalEntries} 条
+        </span>
+        <span data-testid="memory-telemetry-files" title="facts + system 文件数">
+          {telemetry.fileCount} 个文件
+        </span>
+        <span data-testid="memory-telemetry-last" title={telemetry.lastEntryAt ?? ""}>
+          最近落条 {telemetry.lastEntryAt ? relativeTime(telemetry.lastEntryAt) : "—"}
+        </span>
+        <span data-testid="memory-telemetry-system" title="repo/system/*.md 磁盘字节和">
+          system 文件体积 {formatBytes(telemetry.systemBytes)}
+        </span>
+      </div>
+      <LibraryHint libraryPath={libraryPath} />
+    </div>
+  );
 }
 
 function FactsGroup({ group }: { group: MemoryFactsGroup }) {
@@ -195,6 +241,10 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           <RefreshCw className="size-4" />
         </button>
       </div>
+      {/* 遥测卡（页签头部区）：仅当前项目数据就绪且库存在时渲染；库缺失走既有诚实空态 */}
+      {!failed && !stale && data !== null && data.exists && data.telemetry ? (
+        <TelemetryCard telemetry={data.telemetry} libraryPath={data.libraryPath} />
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
     </div>
   );
