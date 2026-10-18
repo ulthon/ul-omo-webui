@@ -1013,7 +1013,8 @@ export function Composer({
   // 参考在线 OpenChamber 390 实测形态：贴边胶囊（圆角 border，内嵌无边框 textarea），
   // 左端"+"收纳低频工具（展开行在胶囊上方），右端内嵌发送钮（size-9，canSend 语义不变）；
   // textarea 聚焦即收起展开区，blur 后可再展开。上方各条（粘贴选择/历史/图片/附件）
-  // 形态不变；斜杠提示仍锚定 textarea（锚定元素不变）。流式态：模式切换钮入胶囊
+  // 形态不变；斜杠提示 inline 档流内渲染于胶囊上方条区（docs08-r5 任务 7：输入框与
+  // 已输入筛选词不再被遮挡，锚定元素不变仅保留外点豁免）。流式态：模式切换钮入胶囊
   // （发送钮旁），停止钮胶囊外小钮（docs08-r4 任务 11）。
   if (isCompact) {
     return (
@@ -1030,6 +1031,8 @@ export function Composer({
             </div>
           </div>
         )}
+        {/* 斜杠提示 inline 档（docs08-r5 任务 7）：胶囊上方条区流内渲染，输入框可见 */}
+        {slashHintsNode}
         <div className="flex items-end gap-1.5">
           <div
             data-testid="composer-capsule"
@@ -1087,7 +1090,6 @@ export function Composer({
         {fileInputNode}
         {errorLine}
         {filePickerNode}
-        {slashHintsNode}
         {snippetDropdownNode}
         {snippetPanelNode}
       </div>

@@ -3,6 +3,9 @@
 // 空段不渲染）+ 受控高亮；键盘导航（上下/回车）在宿主 composer keystroke 域实现，
 // Esc 的关闭走 AnchoredPanel 截停（onClose），输入回退由宿主 document 段监听补做。
 // 数据由宿主取数过滤后传入（扁平序 = 渲染序，键盘导航两域共享同一下标）。
+// 移动端（docs08-r5 任务 7）：消费 AnchoredPanel inline 档——流内渲染，挂载点由
+// 宿主置于 composer 胶囊上方条区，输入框与已输入筛选词保持可见可编辑；桌面
+// 锚定档不变。
 import { Fragment } from "react";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { flattenSlashItems, type SlashItem, type SlashSection } from "./composer-logic";
@@ -36,7 +39,15 @@ export function SlashHints({
     for (const item of groups[section]) rows.push({ section, item, index: index++ });
   }
   return (
-    <AnchoredPanel anchor={anchor} open onClose={onClose} className="w-80" maxHeight={320} data-testid="slash-hints">
+    <AnchoredPanel
+      anchor={anchor}
+      open
+      onClose={onClose}
+      className="w-80"
+      maxHeight={320}
+      mobilePresentation="inline"
+      data-testid="slash-hints"
+    >
       <div className="overflow-y-auto p-1.5" role="listbox" aria-label="斜杠命令提示">
         {total === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground" data-testid="slash-empty">无匹配命令</p>

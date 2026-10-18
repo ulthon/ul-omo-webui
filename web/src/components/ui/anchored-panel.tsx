@@ -10,7 +10,11 @@
 // （锚元素仅保留外点豁免职责），底缘贴 --app-height 根容器（fixed + bottom:
 // calc(100vh - var(--app-height))：键盘只缩 visualViewport 不缩布局视口，根容器随
 // vv 收缩，calc 让 sheet 底缘恒在根容器底 = 键盘上方；fixed 保证脱离窄父容器）。
-// 开合语义两档一致：外点关（触发钮豁免，toggle 自管）、Esc 捕获段截停。
+// inline 档（docs08-r5 任务 7）：mobilePresentation="inline" 时窄视口不再浮层——
+// 流内渲染（宽度撑满宿主列、maxHeight 直接生效内部滚动、与桌面档同视觉语言：
+// 圆角/边框/影），定位/尺寸监听全部跳过，挂载位置由宿主负责（斜杠提示迁至
+// composer 胶囊上方条区，输入框不再被遮挡）；缺省 "sheet" 向后兼容。
+// 开合语义三档一致：外点关（触发钮豁免，toggle 自管）、Esc 捕获段截停。
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -23,7 +27,7 @@ const ANCHOR_GAP = 4;
 const SHEET_QUERY = "(max-width: 639.98px)";
 
 export interface AnchoredPanelProps {
-  /** 锚定参照元素（触发按钮或输入框）；null 时整件不渲染 */
+  /** 锚定参照元素（触发按钮或输入框）；null 时整件不渲染；inline 档仍保留外点豁免职责 */
   anchor: HTMLElement | null;
   open: boolean;
   onClose: () => void;
@@ -32,6 +36,8 @@ export interface AnchoredPanelProps {
   className?: string;
   /** 面板最大高度（px），视口空间不足时进一步收缩；缺省 320 */
   maxHeight?: number;
+  /** 窄视口（<640px）呈现档："sheet"（缺省，贴底 bottom sheet）| "inline"（流内，不定位不浮层）；桌面恒锚定不受影响 */
+  mobilePresentation?: "sheet" | "inline";
   "data-testid"?: string;
 }
 
@@ -48,11 +54,14 @@ export function AnchoredPanel({
   children,
   className,
   maxHeight = 320,
+  mobilePresentation = "sheet",
   "data-testid": testId,
 }: AnchoredPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [placement, setPlacement] = useState<Placement | null>(null);
-  const isSheet = useIsMobile(SHEET_QUERY);
+  const isNarrow = useIsMobile(SHEET_QUERY);
+  // 呈现档：桌面恒锚定（零改动铁律）；窄视口按 mobilePresentation 取 sheet（缺省）或 inline
+  const presentation: "anchored" | "sheet" | "inline" = isNarrow ? mobilePresentation : "anchored";
 
   // bottom-start 定位：面板左上角对齐锚元素左下角；右溢出向视口内钳制；
   // 下方放不下且上方空间更大时翻转到锚元素上方（保持左对齐）。高度按所在侧
@@ -81,11 +90,11 @@ export function AnchoredPanel({
     );
   }, [anchor, maxHeight]);
 
-  // open 翻真后先量后画（layout effect 在首帧绘制前落位，无闪跳）；sheet 档定位与
-  // 锚元素无关，跳过量算
+  // open 翻真后先量后画（layout effect 在首帧绘制前落位，无闪跳）；sheet/inline 档
+  // 定位与锚元素无关，跳过量算
   useLayoutEffect(() => {
-    if (open && anchor && !isSheet) place();
-  }, [open, anchor, isSheet, place]);
+    if (open && anchor && presentation === "anchored") place();
+  }, [open, anchor, presentation, place]);
 
   // 开启期间挂外点/Esc 监听（两档共用）；Esc 在 document 捕获段截停（stopPropagation），
   // 宿主（如 composer textarea 的历史 Esc）不再响应同一次按键
@@ -113,9 +122,10 @@ export function AnchoredPanel({
   }, [open, anchor, onClose]);
 
   // 锚定档重算：open/resize/滚动（capture，覆盖内部滚动容器）/内容尺寸变化
-  // （ResizeObserver）时重算定位；sheet 档底缘贴根容器由 CSS 变量随动，无需监听
+  // （ResizeObserver）时重算定位；sheet 档底缘贴根容器由 CSS 变量随动，inline 档流内
+  // 自适应，均无需监听
   useEffect(() => {
-    if (!open || !anchor || isSheet) return;
+    if (!open || !anchor || presentation !== "anchored") return;
     const onResize = () => place();
     window.addEventListener("resize", onResize);
     window.addEventListener("scroll", onResize, true);
@@ -126,15 +136,37 @@ export function AnchoredPanel({
       window.removeEventListener("scroll", onResize, true);
       ro.disconnect();
     };
-  }, [open, anchor, isSheet, place]);
+  }, [open, anchor, presentation, place]);
 
   if (!open || !anchor) return null;
+
+  // 移动端 inline 档（docs08-r5 任务 7）：流内渲染——不定位不浮层，宽度撑满宿主列
+  // （复用方宽度类被 w-full 覆盖 + inline width 兜底），maxHeight 直接生效（内容区
+  // 内部滚动），视觉语言与桌面档一致（圆角/边框/影）；挂载位置由宿主负责。
+  if (presentation === "inline") {
+    return (
+      <div
+        ref={panelRef}
+        data-slot="anchored-panel"
+        data-presentation="inline"
+        data-testid={testId}
+        className={cn(
+          "flex flex-col overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden duration-100 animate-in fade-in-0",
+          className,
+          "w-full",
+        )}
+        style={{ width: "100%", maxHeight: `${maxHeight}px` }}
+      >
+        {children}
+      </div>
+    );
+  }
 
   // 移动端 bottom sheet 档（<640px）：全宽贴 --app-height 根容器底、顶部圆角、
   // 最大高 60vh（再与复用方 maxHeight 取小）、顶部细拖拽条（纯视觉）、上滑入场。
   // className 仍参与合并（复用方 w-80 被后面的 w-full 覆盖），inline width/left/right
   // 兜底保证全宽不受复用方宽度类影响。
-  if (isSheet) {
+  if (presentation === "sheet") {
     return (
       <div
         ref={panelRef}
