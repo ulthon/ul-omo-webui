@@ -1,8 +1,11 @@
 // 斜杠命令表与拦截判定（todo 24）。
-// 实证结论（docs/verification/05「/compact /clear /new /undo 命令支持度实证」）：
-// 四命令均未注册于引擎命令系统（getCommands 83 条无命中），prompt 直发会被引擎当
-// 普通消息交给模型，且模型会伪造"已执行"（"已撤销"/"上下文已清空"均无实际效果）
-// ——故四命令判不支持：按钮禁用 + 输入拦截明示，绝不静默直发。
+// 实证结论（docs/verification/05 + docs08-r5 任务 8 spike 重核）：
+// - /compact 翻案为支持（docs08-r5 任务 8）：命令不在引擎 get_commands 枚举（隔离实例
+//   重核 75 条无命中，枚举源只收 extension/prompts/skills），但官方 RpcClient 暴露
+//   类型化 compact()（协议面 compact -> session.compact()，与 CLI /compact 共用入口），
+//   webui 直调压缩端点，绝不进 prompt 通道（模型会伪执行）。
+// - /clear /new /undo 仍无稳定会话级调用面：prompt 直发被模型当普通消息并伪造"已执行"
+//   ——判不支持：按钮禁用 + 输入拦截明示，绝不静默直发。
 import { ApiError } from "@/lib/api";
 
 export interface ChatCommand {
@@ -18,8 +21,8 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   {
     name: "compact",
     label: "/compact",
-    supported: false,
-    note: "压缩上下文：引擎未注册该命令，直发会被模型当作普通消息",
+    supported: true,
+    note: "压缩上下文：引擎协议面 compact 实证可用（spike 直调 session.compact），webui 端点直调",
   },
   {
     name: "clear",

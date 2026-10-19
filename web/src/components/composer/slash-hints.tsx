@@ -14,9 +14,10 @@ const SECTION_LABELS: Record<SlashSection, string> = {
   extension: "引擎命令",
   skill: "技能",
   prompt: "用户提示",
+  webui: "WebUI",
 };
 
-const SECTION_ORDER: readonly SlashSection[] = ["extension", "skill", "prompt"];
+const SECTION_ORDER: readonly SlashSection[] = ["extension", "skill", "prompt", "webui"];
 
 export function SlashHints({
   anchor,

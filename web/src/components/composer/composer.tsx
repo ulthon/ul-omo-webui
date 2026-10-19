@@ -27,6 +27,8 @@ import { SlashHints } from "@/components/composer/slash-hints";
 import { CapsuleModelTag, ModelChip, ThinkingChip } from "@/components/composer/chips";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
+import { parseSlashCommand } from "@/components/chat/commands";
+import { compactToastText, runCompact } from "@/components/chat/compact-run";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   EMPTY_SLASH_GROUPS,
@@ -349,6 +351,31 @@ export function Composer({
       // 普通发送：文本/图片/附件皆空早退（原校验扩展，有图或有附件无文本仍可发）；直发必须有文本
       if (!trimmed && imgs && imgs.length === 0 && atts.length === 0) return;
       if (!trimmed && !opts.clearInputs) return;
+      // /compact 精确解析（docs08-r5 任务 8）：裸命令直调压缩端点后返回——不追加本地
+      // 用户气泡、不写输入历史、绝不落入 api.prompt（无此拦截则翻案后的放行命令会被
+      // 模型当普通消息伪执行已压缩）；带参数行内明示拒绝（引擎 compact 无参数面）；
+      // 失败保留输入（不 clearDraft），错误行内展示。
+      const compactParsed = parseSlashCommand(trimmed);
+      if (compactParsed?.name === "compact") {
+        if (compactParsed.args !== "") {
+          setError("/compact 不接受参数：请直接发送 /compact");
+          return;
+        }
+        setSending(true);
+        setError(null);
+        try {
+          const receipt = await runCompact(sessionId);
+          clearDraft();
+          setHistory(null);
+          showToast(compactToastText(receipt), "info");
+          onSent();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          setSending(false);
+        }
+        return;
+      }
       setSending(true);
       setError(null);
       try {
@@ -422,7 +449,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [permissionLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent],
+    [permissionLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);

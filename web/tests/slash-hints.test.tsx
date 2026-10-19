@@ -33,7 +33,7 @@ const DATA: CommandsResponse = {
   },
 };
 
-const EMPTY_GROUPS: Record<SlashSection, SlashItem[]> = { extension: [], skill: [], prompt: [] };
+const EMPTY_GROUPS: Record<SlashSection, SlashItem[]> = { extension: [], skill: [], prompt: [], webui: [] };
 
 interface SlashHandle {
   panel: HTMLElement;
@@ -44,8 +44,10 @@ interface SlashHandle {
   unmount: () => void;
 }
 
-/** stub matchMedia（命中手机档断点）渲染 SlashHints：inline 档生效路径 */
+/** stub matchMedia（命中手机档断点）渲染 SlashHints：inline 档生效路径。
+ *  groups 补 webui 缺省（docs08-r5 任务 8 新段；本文件用三段字面量构造） */
 function renderHints(groups: Record<SlashSection, SlashItem[]>, highlight = 0): SlashHandle {
+  const fullGroups: Record<SlashSection, SlashItem[]> = { webui: [], ...groups };
   const real = window.matchMedia.bind(window);
   window.matchMedia = ((query: string) =>
     ({
@@ -70,7 +72,7 @@ function renderHints(groups: Record<SlashSection, SlashItem[]>, highlight = 0): 
       root.render(
         createElement(SlashHints, {
           anchor,
-          groups,
+          groups: fullGroups,
           highlight,
           onSelect: (item: SlashItem) => {
             selected.push(item);

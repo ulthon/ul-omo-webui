@@ -12,6 +12,7 @@ import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry } from "@/lib/api";
 import { addMessageUsage, formatCost, formatTokens, toUsageStats, type UsageStats } from "./status-bar-data";
+import { onUsageRefresh } from "./compact-run";
 
 function entryId(entry: WireEntry): string | null {
   return typeof entry.id === "string" ? entry.id : null;
@@ -119,6 +120,9 @@ export function StatusBar({ sessionId }: { sessionId: string }) {
     if (runState !== "idle" || prev === "idle") return;
     scheduleSnapshotRefresh();
   }, [runState, sessionId, scheduleSnapshotRefresh]);
+
+  // 压缩等非回合路径的水位刷新广播（docs08-r5 任务 8）：立即重拉权威快照
+  useEffect(() => onUsageRefresh(() => scheduleSnapshotRefresh(0)), [scheduleSnapshotRefresh]);
 
   const tokens = stats?.tokens;
 

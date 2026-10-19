@@ -154,7 +154,7 @@ export function appendAttachmentLines(text: string, attachments: ReadonlyArray<{
 
 // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
 
-export type SlashSection = "extension" | "skill" | "prompt";
+export type SlashSection = "extension" | "skill" | "prompt" | "webui";
 
 /** 下拉条目：section 供分段渲染与段标题，name 为命令形态（技能含 "skill:" 前缀） */
 export interface SlashItem {
@@ -176,7 +176,16 @@ export function slashTriggerToken(text: string): string | null {
   return m ? m[1] : null;
 }
 
-/** 三段过滤：token 前缀匹配（技能行对去 "skill:" 前缀短名同样命中）；四不支持命令排除 */
+/** webui 静态命令段（docs08-r5 任务 8）：引擎 get_commands 枚举不含 compact
+ *  （spike 隔离实例重核 75 条无命中——枚举源只收 extension/prompts/skills），
+ *  webui 直调压缩端点的命令在此补挂，段名标注来源，不冒充引擎命令；引擎侧若
+ *  未来注册同名命令则优先用引擎行（过滤去重）。 */
+export const WEBUI_SLASH_COMMANDS: Array<{ name: string; description: string }> = [
+  { name: "compact", description: "压缩上下文（webui 端点直调，非引擎命令）" },
+];
+
+/** 三段+webui 过滤：token 前缀匹配（技能行对去 "skill:" 前缀短名同样命中）；
+ *  三不支持命令排除；webui 静态段在引擎命令段同名时去重 */
 export function filterSlashGroups(commands: CommandsResponse, token: string): Record<SlashSection, SlashItem[]> {
   const q = token.toLowerCase();
   const matches = (name: string): boolean => {
@@ -187,26 +196,32 @@ export function filterSlashGroups(commands: CommandsResponse, token: string): Re
     rows
       .filter((r) => r.name.length > 0 && !UNSUPPORTED_COMMANDS.has(r.name.toLowerCase()) && matches(r.name))
       .map((r) => ({ section, name: r.name, ...(r.description ? { description: r.description } : {}) }));
+  const extension = pick("extension", commands.commands.extension);
+  const extensionNames = new Set(extension.map((r) => r.name.toLowerCase()));
   return {
-    extension: pick("extension", commands.commands.extension),
+    extension,
     skill: pick("skill", commands.commands.skill),
     prompt: pick("prompt", commands.commands.prompt),
+    webui: WEBUI_SLASH_COMMANDS.filter(
+      (c) => !UNSUPPORTED_COMMANDS.has(c.name) && !extensionNames.has(c.name.toLowerCase()) && matches(c.name),
+    ).map((c) => ({ section: "webui", name: c.name, description: c.description })),
   };
 }
 
-/** 空数据（available=false / 取数失败）的空三段，调用方统一走过滤渲染空态 */
+/** 空数据（available=false / 取数失败）的空段组，调用方统一走过滤渲染空态 */
 export const EMPTY_SLASH_GROUPS: Record<SlashSection, SlashItem[]> = {
   extension: [],
   skill: [],
   prompt: [],
+  webui: [],
 };
 
-/** 键盘导航扁平序：引擎命令 → 技能 → 用户提示（与渲染分段一致） */
+/** 键盘导航扁平序：引擎命令 → 技能 → 用户提示 → webui 静态命令（与渲染分段一致） */
 export function flattenSlashItems(groups: Record<SlashSection, SlashItem[]>): SlashItem[] {
-  return [...groups.extension, ...groups.skill, ...groups.prompt];
+  return [...groups.extension, ...groups.skill, ...groups.prompt, ...groups.webui];
 }
 
-/** 选择替换：首个斜杠 token 换为 /<name>（含尾部空格），保留其余输入；用户补参数后按普通 prompt 发送 */
+/** 选择替换：首个斜杠 token 换为 /<name>（含尾部空格），保留其余输入；用户补参数后按普通 prompt 发送（webui compact 选中后直接回车即裸命令直调） */
 export function slashReplaceToken(text: string, name: string): string {
   return `/${name} ${text.replace(/^\/\S*/, "")}`;
 }

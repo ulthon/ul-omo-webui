@@ -159,6 +159,13 @@ class FakeRpcClient implements SenpiRpcClient {
     return statsFixture
   }
 
+  compactResult: unknown = { summary: "s", firstKeptEntryId: "e1", tokensBefore: 100 }
+  async compact(): Promise<unknown> {
+    this.calls.push({ method: "compact" })
+    if (!this.opened) throw new Error("missing_session_id")
+    return this.compactResult
+  }
+
   async getMedia(): Promise<{ type: "image"; data: string; mimeType: string }> {
     return { type: "image", data: "ZmFrZQ==", mimeType: "image/png" }
   }
@@ -356,6 +363,36 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(u.cost).toBe(Number(statsFixture.cost))
     expect((await adapter.modelsList()).length).toBe(modelsFixture.length)
     expect(await adapter.thinkingLevels()).toEqual(["low", "high", "max"])
+  })
+
+  test("compactSession 映射 CompactionResult（tokensBefore/estimatedTokensAfter 窄化，docs08-r5 任务 8）", async () => {
+    const fake = new FakeRpcClient()
+    fake.compactResult = {
+      summary: "压缩摘要",
+      firstKeptEntryId: "entry-9",
+      tokensBefore: 32881,
+      estimatedTokensAfter: 9120,
+      usage: { input: 1 },
+      details: { internal: true },
+    }
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({})
+    const result = await adapter.compactSession()
+    expect(result).toEqual({ summary: "压缩摘要", firstKeptEntryId: "entry-9", tokensBefore: 32881, estimatedTokensAfter: 9120 })
+    expect(fake.calls.some((c) => c.method === "compact")).toBe(true)
+  })
+
+  test("compactSession 无活跃会话拒（no_active_session，与 usage 同口径）", async () => {
+    const adapter = makeAdapter(new FakeRpcClient())
+    await adapter.start()
+    let err: unknown
+    try {
+      await adapter.compactSession()
+    } catch (e) {
+      err = e
+    }
+    expect((err as EngineAdapterError).code).toBe("no_active_session")
   })
 
   test("events 订阅/退订 + readImagePart", async () => {

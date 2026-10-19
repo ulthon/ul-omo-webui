@@ -29,6 +29,7 @@ import {
   type EngineActiveSession,
   type EngineCapabilities,
   type EngineCommandInfo,
+  type EngineCompactResult,
   type EngineEntry,
   type EngineEvent,
   type EngineEventSubscription,
@@ -118,6 +119,9 @@ export interface SenpiRpcClient {
   sendExtensionUIResponse(response: Record<string, unknown>): Promise<void>
   /** 会话状态快照（get_state；pendingQuestions 为未决提问数组，q1 提问卡片对账源） */
   getState(): Promise<Record<string, unknown>>
+  /** 手动压缩会话上下文（协议面 compact；官方 RpcClient.compact 类型化方法，
+   *  docs08-r5 任务 8 spike 实证） */
+  compact(): Promise<unknown>
   getAvailableModels(): Promise<Array<Record<string, unknown>>>
   getAvailableThinkingLevels(): Promise<string[]>
   /** 斜杠命令面（get_commands，宿主 RpcClient 已解包 data.commands；需活跃会话） */
@@ -229,6 +233,19 @@ export function mapCommandInfo(raw: Record<string, unknown>): EngineCommandInfo 
   const info: EngineCommandInfo = { name, source: String(raw.source ?? "") }
   if (typeof raw.description === "string" && raw.description) info.description = raw.description
   return info
+}
+
+/** 引擎 CompactionResult -> 压缩结果（字段面 spike 实证：summary/firstKeptEntryId/
+ *  tokensBefore/estimatedTokensAfter?/usage?/details?；后两者宿主不透传） */
+export function mapCompactResult(raw: unknown): EngineCompactResult {
+  const r = (raw ?? {}) as Record<string, unknown>
+  const result: EngineCompactResult = {
+    summary: String(r.summary ?? ""),
+    firstKeptEntryId: String(r.firstKeptEntryId ?? ""),
+    tokensBefore: Number(r.tokensBefore ?? 0),
+  }
+  if (typeof r.estimatedTokensAfter === "number") result.estimatedTokensAfter = r.estimatedTokensAfter
+  return result
 }
 
 /** 权限应答帧（verification/02：{type:"extension_ui_response", id, value|confirmed}，取消 {cancelled:true}） */
@@ -530,6 +547,14 @@ export class SenpiAdapter implements EngineAdapter {
   async usage(): Promise<EngineUsageStats> {
     this.requireActive()
     return mapUsageStats(await this.rpc().getSessionStats())
+  }
+
+  async compactSession(): Promise<EngineCompactResult> {
+    this.requireActive()
+    // 协议面 compact（connection-handler case "compact" -> session.compact()）。
+    // 引擎侧失败形态（spike 实证）：无更多可压缩内容时 RpcCommandError（"Already
+    // compacted" / "Nothing to compact (session too small)"），由运行时层映射业务码。
+    return mapCompactResult(await this.rpc().compact())
   }
 
   async readImagePart(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }> {

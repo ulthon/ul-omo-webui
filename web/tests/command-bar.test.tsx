@@ -1,8 +1,8 @@
 // CommandBar 组件测试（docs08-r3 任务 14：A4 命令行数据驱动显隐）。
 // 不 mock 命令模块（mock.module 会污染单进程内其他测试文件的模块缓存）：
 // 直接翻转真实 CHAT_COMMANDS 条目的 supported 字段模拟混合支持表，afterEach 还原。
-// 现状四命令全不支持（实证 docs/verification/05）→ 组件整条不渲染；
-// 翻转任一命令 supported=true → 组件回归可见且仅支持项可点（数据驱动）。
+// docs08-r5 任务 8 起 compact 默认 supported=true（引擎协议面实证）→ 组件默认可见，
+// 点击直调压缩端点；其余三命令仍不支持禁用态。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -67,13 +67,14 @@ afterEach(() => {
 });
 
 describe("CommandBar 数据驱动显隐", () => {
-  test("四命令全不支持（实证现状）→ 整条不渲染（document 级无 command-bar 与任何 cmd-* 按钮）", async () => {
+  test("默认表（compact 支持，其余不支持）→ 组件渲染，仅 compact 可点（其余禁用）", async () => {
     const { container, unmount } = await render(createElement(CommandBar, { sessionId: "s1", busy: false }));
-    // container 挂在 document.body 下：document 级断言等价于整页 DOM 无该元素
-    expect(document.querySelector("[data-testid=command-bar]")).toBeNull();
-    expect(document.querySelector("[data-testid^=cmd-]")).toBeNull();
-    expect(bar(container)).toBeNull();
-    expect(container.textContent).not.toContain("（引擎不支持，已禁用）");
+    expect(bar(container)).not.toBeNull();
+    expect(cmdButton(container, "compact")?.disabled).toBe(false);
+    for (const cmd of CHAT_COMMANDS) {
+      if (cmd.name === "compact") continue;
+      expect(cmdButton(container, cmd.name)?.disabled).toBe(true);
+    }
     await unmount();
   });
 
@@ -115,16 +116,48 @@ describe("CommandBar 数据驱动显隐", () => {
     }
   });
 
+  test("点 compact 直调压缩端点（绝不落 prompt 通道，docs08-r5 任务 8）", async () => {
+    const calls: { url: string; body: string }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, body: String(init?.body ?? "") });
+      if (url.includes("/compact")) {
+        return new Response(
+          JSON.stringify({
+            sessionId: "s1",
+            summary: "s",
+            firstKeptEntryId: "e1",
+            tokensBefore: 32881,
+            tokensAfter: 9120,
+            usage: {},
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/messages")) {
+        return new Response(JSON.stringify({ sessionId: "s1", entries: [], leafId: null, cursor: null }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    const { container, unmount } = await render(createElement(CommandBar, { sessionId: "s1", busy: false }));
+    await act(async () => {
+      cmdButton(container, "compact")!.click();
+    });
+    expect(calls.some((c) => c.url.includes("/api/sessions/s1/compact"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("/prompt"))).toBe(false);
+    await unmount();
+  });
+
   test("支持表静态非运行时数据：显隐在挂载时按表判定（翻转后重挂载可见性跟随）", async () => {
-    // 对抗 stale state：现状支持表为静态常量（commands.ts:17-42，非运行时下发），
+    // 对抗 stale state：支持表为静态常量（commands.ts，非运行时下发），
     // 组件每次渲染即时读表，无快照缓存——翻转后重挂载即跟随，不存在陈旧态窗口。
     const first = await render(createElement(CommandBar, { sessionId: "s1", busy: false }));
-    expect(bar(first.container)).toBeNull();
+    expect(bar(first.container)).not.toBeNull();
     await first.unmount();
-    const restore = flip("new", true);
+    const restore = flip("compact", false);
     try {
       const { container, unmount } = await render(createElement(CommandBar, { sessionId: "s1", busy: false }));
-      expect(bar(container)).not.toBeNull();
+      expect(bar(container)).toBeNull();
       await unmount();
     } finally {
       restore();

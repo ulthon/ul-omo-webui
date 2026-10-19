@@ -11,6 +11,7 @@ import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost, formatTokens, toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
+import { onUsageRefresh } from "@/components/chat/compact-run";
 
 const RADIUS = 15.5;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -58,6 +59,18 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
       .then((r) => setStats(toUsageStats(r.usage)))
       .catch(() => {});
   }, [runState, sessionId]);
+
+  // 压缩等非回合路径的水位刷新广播（docs08-r5 任务 8）：立即重拉，环即时反映压缩效果
+  useEffect(
+    () =>
+      onUsageRefresh(() => {
+        api
+          .getUsage(sessionId)
+          .then((r) => setStats(toUsageStats(r.usage)))
+          .catch(() => {});
+      }),
+    [sessionId],
+  );
 
   // 无数据整环隐藏（接口失败 / 无 contextUsage）
   if (!stats || !stats.context) return null;

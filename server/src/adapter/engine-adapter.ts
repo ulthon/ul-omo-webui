@@ -168,6 +168,15 @@ export interface EngineCommandInfo {
   description?: string
 }
 
+/** 手动压缩结果（RPC compact -> session.compact() 的 CompactionResult 映射；
+ *  docs08-r5 任务 8 spike 实证：连接层 case "compact" 直调会话级入口，无 UI 依赖） */
+export interface EngineCompactResult {
+  summary: string
+  firstKeptEntryId: string
+  tokensBefore: number
+  estimatedTokensAfter?: number
+}
+
 /** todo 状态（senpi.todo-state custom entry 的 data.phases，verification/03/05 P1-2） */
 export interface EngineTodoState {
   phases: Array<{
@@ -335,6 +344,15 @@ export interface EngineAdapter {
 
   /** 活跃会话 usage 统计（会话级累计；事件级增量走 events()） */
   usage(): Promise<EngineUsageStats>
+
+  /**
+   * 手动压缩活跃会话上下文（RPC compact；docs08-r5 任务 8 spike 实证：
+   * 官配引擎 RpcClient.compact -> 连接层 case "compact" -> session.compact()，
+   * 与 CLI /compact、扩展共用同一入口，无需改引擎源码）。
+   * 语义注意：引擎 manual compact 会先中止当前回合（"Aborts the current agent
+   * operation first"），调用方须在回合中拒绝（运行时层 streaming 守卫）。
+   */
+  compactSession(): Promise<EngineCompactResult>
 
   /** 读取工具产出的图片 part（get_media 协议面；contentIndex 为工具结果 content 数组下标） */
   readImagePart(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }>

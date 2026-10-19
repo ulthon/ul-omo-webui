@@ -344,6 +344,27 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     return c.json({ ok: true, sessionId: id });
   }));
 
+  // 手动压缩上下文（docs08-r5 任务 8）：协议面 compact，端点无参数（webui 只暴露
+  // 裸 /compact）；回执带压缩前后水位（tokensBefore/estimatedTokensAfter + 压缩后
+  // usage 快照）供前端佐证真实生效。回合中 409 already_processing、无更多可压缩
+  // 内容 409 already_compacted/nothing_to_compact（运行时层映射，前端明示不静默）。
+  app.post("/api/sessions/:id/compact", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    // 可选面守卫（favoriteModels 同例）：测试装配 fake 可省略 compact
+    if (!deps.engines.compact) {
+      throw new ApiError(501, "compact_unsupported", "当前网关未实现压缩通道");
+    }
+    const { result, usage } = await deps.engines.compact(id);
+    return c.json({
+      sessionId: id,
+      summary: result.summary,
+      firstKeptEntryId: result.firstKeptEntryId,
+      tokensBefore: result.tokensBefore,
+      ...(result.estimatedTokensAfter !== undefined ? { tokensAfter: result.estimatedTokensAfter } : {}),
+      usage,
+    });
+  }));
+
   // 排队快照对账（docs08-r4 任务 11，spike 指引 2）：断线重连/初次渲染拉一次；
   // 增量走 queue_update wire 事件（SSE 原样透传，前端 store 消化）
   app.get("/api/sessions/:id/queue", route(async (c: Context) => {

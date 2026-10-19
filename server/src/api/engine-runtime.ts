@@ -30,6 +30,7 @@ import {
   type EngineAdapter,
   type EngineMessagesPage,
   type EngineCommandInfo,
+  type EngineCompactResult,
   type EngineModelInfo,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
@@ -85,6 +86,15 @@ export interface EngineGateway {
   /** 未决提问对账快照（q1；get_state.pendingQuestions 注入会话 id 后返回） */
   questionsList(sessionId: string): Promise<EngineQuestionFrame[]>;
   usage(sessionId: string): Promise<EngineUsageStats>;
+  /**
+   * 手动压缩会话上下文（docs08-r5 任务 8：POST /api/sessions/:id/compact，
+   * 协议面 compact 实证）。目标会话回合进行中抛 ApiError(409, "already_processing")
+   * （引擎 manual compact 会先中止当前回合，webui 单驱动纪律下拒绝而非隐式中断）；
+   * 返回压缩水位（tokensBefore/estimatedTokensAfter）供前端佐证真实生效。
+   * 可选面（favoriteModels 同例）：真实注册表实现之；测试 fake 可省略
+   * （路由层降级 501 compact_unsupported）。
+   */
+  compact?(sessionId: string): Promise<{ result: EngineCompactResult; usage: EngineUsageStats }>;
   modelsList(project: string): Promise<EngineModelInfo[]>;
   /** CLI 收藏（settings.json favoriteModels，归一 "provider/model"）。可选面：
    * 真实注册表实现直读 agent 目录；测试 fake 可省略（路由层降级空数组）。 */
@@ -367,6 +377,8 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
     // 斜杠命令面（docs08-r3 任务 19）：宿主 RpcClient 已解包 data.commands
     getCommands: () => client.getCommands(),
     getSessionStats: () => client.getSessionStats(),
+    // 手动压缩（docs08-r5 任务 8）：包装层清单随 SenpiRpcClient 同步扩充（同上 QA 教训）
+    compact: (customInstructions?: string) => client.compact(customInstructions),
     getMedia: (toolCallId: string, contentIndex: number) => client.getMedia(toolCallId, contentIndex),
   };
   return wrapped as unknown as SenpiRpcClient;
@@ -999,6 +1011,38 @@ class ProjectRuntime {
     });
   }
 
+  /** 手动压缩（docs08-r5 任务 8）：流式守卫 → 协议面 compact → 压缩后 usage 快照。
+   *  引擎侧失败形态映射（spike 实证）："Already compacted"/"Nothing to compact"
+   *  → 409 业务码（前端明示，不静默）；其余原样上抛（route 包装统一 500）。 */
+  async compact(sessionId: string): Promise<{ result: EngineCompactResult; usage: EngineUsageStats }> {
+    await this.ensure();
+    return this.runExclusive(async () => {
+      // 单驱动纪律：回合中拒绝——引擎 manual compact 会先 abort 活动回合
+      // （agent-session.compact "Aborts the current agent operation first"），
+      // webui 语义下隐式中断用户回合不可接受，明确 409 与 prompt 同码。
+      if (this.streamingId === sessionId) {
+        throw new ApiError(409, "already_processing", "该会话回合进行中，压缩前请先等待回合结束或中断");
+      }
+      await this.switchTo(sessionId);
+      let result: EngineCompactResult;
+      try {
+        result = await this.requireAdapter().compactSession();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("Already compacted")) {
+          throw new ApiError(409, "already_compacted", "上下文已压缩过，无新的可压缩内容");
+        }
+        if (message.includes("Nothing to compact")) {
+          throw new ApiError(409, "nothing_to_compact", "会话上下文还很小，暂无需压缩");
+        }
+        throw err;
+      }
+      // 压缩后权威水位：同锁内取快照，前端 toast 与水位环直接对比 tokensBefore
+      const stats = await this.requireAdapter().usage();
+      return { result, usage: stats };
+    });
+  }
+
   async modelsList(): Promise<EngineModelInfo[]> {
     // 引擎未就绪时不为模型列表触发冷启动 spawn，直接走模型目录降级
     //（models-store.json 目录缓存 + models.json 自定义，同 id 自定义覆盖——
@@ -1264,6 +1308,11 @@ export class EngineRuntimeRegistry implements EngineGateway {
   async usage(sessionId: string): Promise<EngineUsageStats> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.usage(sessionId);
+  }
+
+  async compact(sessionId: string): Promise<{ result: EngineCompactResult; usage: EngineUsageStats }> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.compact(sessionId);
   }
 
   async modelsList(project: string): Promise<EngineModelInfo[]> {

@@ -1,11 +1,13 @@
 // 斜杠命令按钮行（todo 24）。命令映射与支持度实证见 commands.ts 与
-// docs/verification/05：支持路径保留（POST prompt 发送原文，引擎命令系统处理）；
-// 全不支持时整条不渲染（docs08-r3 任务 14/A4：数据驱动显隐，禁用态死文案移除），
+// docs/verification/05：支持路径保留（POST prompt 发送原文，引擎命令系统处理），
+// compact 例外（docs08-r5 任务 8）：直调压缩端点（引擎协议面 compact 实证），
+// 绝不落 api.prompt（模型会伪执行已压缩）；不支持项禁用死文案，数据驱动显隐，
 // 命令门链（commands.ts → chat-view → api.prompt）不随显隐变化，输入拦截继续兜底。
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { CHAT_COMMANDS, type ChatCommand } from "./commands";
+import { compactToastText, runCompact } from "./compact-run";
 
 export function CommandBar({ sessionId, busy }: { sessionId: string; busy: boolean }) {
   const showToast = useUiStore((s) => s.showToast);
@@ -15,7 +17,12 @@ export function CommandBar({ sessionId, busy }: { sessionId: string; busy: boole
     if (!cmd.supported || busy || pending !== null) return;
     setPending(cmd.name);
     try {
-      await api.prompt(sessionId, { text: cmd.label });
+      if (cmd.name === "compact") {
+        const receipt = await runCompact(sessionId);
+        showToast(compactToastText(receipt), "info");
+      } else {
+        await api.prompt(sessionId, { text: cmd.label });
+      }
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : "命令发送失败", "error");
     } finally {

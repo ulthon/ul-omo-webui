@@ -41,7 +41,6 @@ describe("filterSlashGroups", () => {
   const data = res({
     extension: [
       { name: "init", source: "extension", description: "Initialize" },
-      { name: "compact", source: "extension" },
       { name: "clear", source: "extension" },
       { name: "new", source: "extension" },
       { name: "undo", source: "extension" },
@@ -54,16 +53,29 @@ describe("filterSlashGroups", () => {
     prompt: [{ name: "doctor", source: "prompt" }],
   });
 
-  test("裸 / 全量返回，但四个不支持命令（compact/clear/new/undo）一律不进列表", () => {
+  test("裸 / 全量返回，不支持命令（clear/new/undo）一律不进列表；compact 由 webui 静态段提供（docs08-r5 任务 8）", () => {
     const groups = filterSlashGroups(data, "");
     // 顺序保持服务端给的序（前端不重排；服务端已按 name 排序）
     expect(groups.extension.map((r) => r.name)).toEqual(["init", "history"]);
     expect(groups.skill).toHaveLength(2);
     expect(groups.prompt).toHaveLength(1);
     const names = flattenSlashItems(groups).map((r) => r.name);
-    for (const banned of ["compact", "clear", "new", "undo"]) {
+    for (const banned of ["clear", "new", "undo"]) {
       expect(names).not.toContain(banned);
     }
+    // compact 不在引擎枚举（spike 实证 75 条无命中），由 webui 静态段补挂且标注来源
+    const webui = groups.webui;
+    expect(webui.map((r) => r.section)).toEqual(["webui"]);
+    expect(webui.map((r) => r.name)).toEqual(["compact"]);
+    expect(webui[0]?.description).toContain("webui");
+    // 若引擎侧未来注册同名命令，webui 静态段去重不重复展示
+    const withEngineCompact = res({
+      extension: [{ name: "compact", source: "extension" }],
+      skill: [],
+      prompt: [],
+    });
+    expect(filterSlashGroups(withEngineCompact, "").webui).toEqual([]);
+    expect(filterSlashGroups(withEngineCompact, "").extension.map((r) => r.name)).toEqual(["compact"]);
   });
 
   test("token 前缀过滤三段；技能行对去 skill: 前缀短名同样命中", () => {
@@ -73,18 +85,22 @@ describe("filterSlashGroups", () => {
     expect(filterSlashGroups(data, "doc").prompt.map((r) => r.name)).toEqual(["doctor"]);
   });
 
-  test("无命中返回空三段（空段不渲染的判定在渲染层）", () => {
+  test("无命中返回空段组（空段不渲染的判定在渲染层）", () => {
     expect(filterSlashGroups(data, "zzz")).toEqual(EMPTY_SLASH_GROUPS);
   });
 
-  test("降级数据（available=false 空三段）过滤结果为空", () => {
+  test("降级数据（available=false 空三段）：引擎三段为空，webui 静态段不受降级影响（不依赖引擎）", () => {
     const empty = res({});
-    expect(flattenSlashItems(filterSlashGroups(empty, ""))).toEqual([]);
+    const groups = filterSlashGroups(empty, "");
+    expect(groups.extension).toEqual([]);
+    expect(groups.skill).toEqual([]);
+    expect(groups.prompt).toEqual([]);
+    expect(groups.webui.map((r) => r.name)).toEqual(["compact"]);
   });
 });
 
 describe("flattenSlashItems", () => {
-  test("扁平序 = 段序 extension → skill → prompt（与渲染一致，键盘导航共享下标）", () => {
+  test("扁平序 = 段序 extension → skill → prompt → webui（与渲染一致，键盘导航共享下标）", () => {
     const groups = filterSlashGroups(
       res({
         extension: [{ name: "init", source: "extension" }],
@@ -97,6 +113,7 @@ describe("flattenSlashItems", () => {
       "extension:init",
       "skill:skill:git-master",
       "prompt:doctor",
+      "webui:compact",
     ]);
   });
 });

@@ -110,6 +110,19 @@ export interface PromptReceipt {
   degradations?: string[];
 }
 
+/** 手动压缩回执（docs08-r5 任务 8：POST /api/sessions/:id/compact；协议面 compact）。
+ *  tokensBefore/tokensAfter 为压缩前后水位（前端 toast 佐证真实生效）；usage 为
+ *  压缩后权威快照（服务端同锁内取，水位环/状态条刷新数据源）。 */
+export interface CompactReceipt {
+  sessionId: string;
+  summary: string;
+  firstKeptEntryId: string;
+  tokensBefore: number;
+  /** 压缩后估算水位（引擎 estimatedTokensAfter；未下发时缺省） */
+  tokensAfter?: number;
+  usage: UsageInfo;
+}
+
 export interface DraftInfo {
   content: string;
   updatedAt: string;
@@ -426,6 +439,12 @@ export const api = {
   },
   async abort(sessionId: string): Promise<{ ok: boolean; sessionId: string }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, jsonInit("POST", {}));
+  },
+  /** 手动压缩上下文（docs08-r5 任务 8）：协议面 compact 直调，绝不走 prompt 通道
+   *  （/compact 进 prompt 会被模型当普通消息并伪执行已压缩）。失败 409/5xx 由调用方
+   *  明示（ApiError.message），不静默。 */
+  async compactSession(sessionId: string): Promise<CompactReceipt> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, jsonInit("POST", {}));
   },
   /** 排队快照对账（docs08-r4 任务 11）：断线重连/初次渲染各拉一次；增量走 queue_update 事件 */
   async getQueue(sessionId: string): Promise<QueueSnapshot> {

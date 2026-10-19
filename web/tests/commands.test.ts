@@ -75,16 +75,22 @@ describe("makeCommandGate", () => {
 });
 
 describe("commandGate（实证表）", () => {
-  test("四命令全部不支持且命中即拦", () => {
-    for (const cmd of CHAT_COMMANDS) {
+  test("compact 翻案支持（docs08-r5 任务 8）：门放行（webui 端点直调，不经 prompt）", () => {
+    const compact = lookupCommand("compact");
+    expect(compact?.supported).toBe(true);
+    expect(() => commandGate("/compact")).not.toThrow();
+    expect(() => commandGate("/compact extra")).not.toThrow();
+  });
+
+  test("其余三命令不支持且命中即拦（clear/new/undo）", () => {
+    for (const cmd of CHAT_COMMANDS.filter((c) => c.name !== "compact")) {
       expect(cmd.supported).toBe(false);
       expect(() => commandGate(`/${cmd.name}`)).toThrow(ApiError);
       expect(() => commandGate(`/${cmd.name} extra`)).toThrow(ApiError);
     }
-    expect(lookupCommand("compact")).toBeDefined();
   });
 
-  test("引擎注册命令（83 条清单内，如 /init）与非命令放行", () => {
+  test("引擎注册命令（清单内，如 /init）与非命令放行", () => {
     expect(() => commandGate("/init")).not.toThrow();
     expect(() => commandGate("/todo")).not.toThrow();
     expect(() => commandGate("帮我总结一下 /clear 的用法")).not.toThrow();
