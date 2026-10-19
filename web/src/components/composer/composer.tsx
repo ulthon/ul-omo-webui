@@ -139,7 +139,9 @@ export function Composer({
   const [picker, setPicker] = useState<{ open: boolean; trigger: number | null } | null>(null);
 
   // 常用语（todo 14 / docs08-r3 A1）：snippetDropdown* = 工具条按钮的锚定下拉；
-  // snippetOpen 仅作「查看全部」打开旧弹框（SnippetPanelDialog）的开关
+  // snippetOpen 仅作「查看全部」打开旧弹框（SnippetPanelDialog）的开关。
+  // docs08-r5 任务 9：手机档常用语钮迁出工具行，独立常驻胶囊内左端第一位
+  // （OC ⊕ 同位形态），点击直达下拉——一步可达；桌面工具行保留原钮零改动。
   const [snippetOpen, setSnippetOpen] = useState(false);
   const [snippetDropdownOpen, setSnippetDropdownOpen] = useState(false);
   const [snippetAnchor, setSnippetAnchor] = useState<HTMLElement | null>(null);
@@ -848,7 +850,9 @@ export function Composer({
         ))}
       </div>
     ) : null;
-  // 低频工具按钮本体：桌面工具条与手机"更多"工具行共用（仅收纳位置不同，逻辑零改动）
+  // 低频工具按钮本体：桌面工具条与手机"更多"工具行共用（仅收纳位置不同，逻辑零改动）。
+  // docs08-r5 任务 9：常用语钮拆出为独立钮（snippetButton）——手机档常驻胶囊内
+  // 一步直达，桌面档仍排在工具行末位（顺序/形态零改动）。
   const toolButtons = (
     <>
       <button
@@ -885,24 +889,35 @@ export function Composer({
       >
         <ImagePlus className="size-5" />
       </button>
-      {/* 常用语锚定下拉入口（docs08-r3 A1）；「查看全部」进旧弹框 */}
-      <button
-        type="button"
-        data-testid="snippet-btn"
-        aria-label="常用语"
-        title="常用语"
-        aria-expanded={snippetDropdownOpen}
-        onClick={(e) => {
-          setSnippetAnchor(e.currentTarget);
-          setSnippetDropdownOpen((v) => !v);
-        }}
-        className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
-          snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
-        }`}
-      >
-        <MessageSquareText className="size-5" />
-      </button>
     </>
+  );
+  // 常用语钮（docs08-r5 任务 9）：桌面在工具行末位（size-11 方角），手机常驻胶囊内
+  // 左端第一位（size-9 圆形，与 "+" 同形态）——一步直达下拉
+  const snippetButtonNode = (buttonClass: string) => (
+    <button
+      type="button"
+      data-testid="snippet-btn"
+      aria-label="常用语"
+      title="常用语"
+      aria-expanded={snippetDropdownOpen}
+      onClick={(e) => {
+        setSnippetAnchor(e.currentTarget);
+        setSnippetDropdownOpen((v) => !v);
+      }}
+      className={buttonClass}
+    >
+      <MessageSquareText className="size-5" />
+    </button>
+  );
+  const snippetButtonMd = snippetButtonNode(
+    `flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
+      snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+    }`,
+  );
+  const snippetButtonSm = snippetButtonNode(
+    `flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
+      snippetDropdownOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+    }`,
   );
   const errorLine = error ? (
     <p className="text-xs text-destructive" data-testid="composer-error">
@@ -954,6 +969,9 @@ export function Composer({
         // busy 语义定则（docs08-r4 任务 11）：仅权限锁禁直发——流式态直发转排队
         busy={permissionLocked}
         sending={sending}
+        // 手机档 inline 流内（docs08-r5 任务 9）：胶囊上方条区渲染，与斜杠提示同区；
+        // 桌面锚定档不受影响（缺省 sheet 值只在窄视口生效）
+        mobilePresentation={isCompact ? "inline" : "sheet"}
         // 插入：先收下拉再走草稿链路；rAF 焦点回输入框（排队晚于 insertSnippetText
         // 的 caret 落位 rAF，focus() 保留 selection）
         onInsert={(content) => {
@@ -1045,13 +1063,14 @@ export function Composer({
     "flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
   );
 
-  // ---------- 手机档（<sm）胶囊输入区（docs08-r4 任务 7） ----------
-  // 参考在线 OpenChamber 390 实测形态：贴边胶囊（圆角 border，内嵌无边框 textarea），
-  // 左端"+"收纳低频工具（展开行在胶囊上方），右端内嵌发送钮（size-9，canSend 语义不变）；
-  // textarea 聚焦即收起展开区，blur 后可再展开。上方各条（粘贴选择/历史/图片/附件）
-  // 形态不变；斜杠提示 inline 档流内渲染于胶囊上方条区（docs08-r5 任务 7：输入框与
-  // 已输入筛选词不再被遮挡，锚定元素不变仅保留外点豁免）。流式态：模式切换钮入胶囊
-  // （发送钮旁），停止钮胶囊外小钮（docs08-r4 任务 11）。
+  // ---------- 手机档（<sm）胶囊输入区（docs08-r4 任务 7；docs08-r5 任务 9 OC 对标重排） ----------
+  // 参考在线 OpenChamber 390 实拍（.omo/evidence/docs08-r5/task-9-oc-390-*.png）：
+  // 贴底胶囊卡片，行1左端圆形功能钮 + 输入区 + 右端动作钮；低频功能收进菜单。
+  // 落地：胶囊内左端第一位 = 常用语独立钮（高频一步直达，OC ⊕ 同位同形态）；
+  // 第二位 "+" 收纳低频工具（历史/@/图片，展开行在胶囊上方，聚焦自动收起）；
+  // 右端内嵌发送钮（size-9，canSend 语义不变）。常用语下拉手机档 inline 流内
+  // 渲染于胶囊上方条区（与斜杠提示同区）。模型浮签保持胶囊右上常驻（等价 OC
+  // 行2 模型名右侧常显）。上方各条（粘贴选择/历史/图片/附件）形态不变；桌面档零改动。
   if (isCompact) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
@@ -1067,24 +1086,26 @@ export function Composer({
             </div>
           </div>
         )}
-        {/* 斜杠提示 inline 档（docs08-r5 任务 7）：胶囊上方条区流内渲染，输入框可见 */}
+        {/* 斜杠提示（任务 7）与常用语下拉（任务 9）均为 inline 档：胶囊上方条区流内渲染 */}
         {slashHintsNode}
+        {snippetDropdownNode}
         <div className="flex items-end gap-1.5">
           <div
             data-testid="composer-capsule"
             className="relative flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
           >
             {/* 模型浮签（2026-10-15 可见性缺口 ①③）：胶囊右上角常驻当前模型短名，点开
-                直达选择弹层；替代 "+" 工具行的 ModelChip（聚焦自动收起 → 收起态全界面
-                无模型信息）。取式样浮签不占行宽，textarea 宽度不受影响。 */}
+                直达选择弹层；取式样浮签不占行宽，textarea 宽度不受影响。 */}
             <div className="absolute -top-2.5 right-2 z-10">
               <CapsuleModelTag />
             </div>
+            {/* 常用语独立钮（docs08-r5 任务 9）：高频一步直达，点开即上方 inline 下拉 */}
+            {snippetButtonSm}
             <button
               type="button"
               data-testid="composer-more-btn"
               aria-label="更多"
-              title="更多：历史、@、图片、常用语、模型"
+              title="更多：历史、@、图片"
               aria-expanded={toolsOpen}
               onClick={() => setToolsOpen((v) => !v)}
               className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
@@ -1126,7 +1147,7 @@ export function Composer({
         {fileInputNode}
         {errorLine}
         {filePickerNode}
-        {snippetDropdownNode}
+        {/* snippetDropdownNode 已在上方条区渲染（docs08-r5 任务 9），不重复挂载 */}
         {snippetPanelNode}
       </div>
     );
@@ -1153,7 +1174,11 @@ export function Composer({
       />
       {fileInputNode}
       <div className="flex items-center gap-1">
-        <div className="flex shrink-0 items-center gap-1">{toolButtons}</div>
+        <div className="flex shrink-0 items-center gap-1">
+          {toolButtons}
+          {/* 常用语钮仍居工具行末位（docs08-r5 任务 9：仅手机档迁出，桌面零改动） */}
+          {snippetButtonMd}
+        </div>
         {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐。
             流式态（docs08-r4 任务 11）：停止钮与排队模式切换钮插队发送钮左侧，发送变排队语义 */}
         <div className="ml-auto flex min-w-0 items-center gap-1">

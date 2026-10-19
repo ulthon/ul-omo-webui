@@ -4,6 +4,9 @@
 // （sendText clearInputs:false，不动既有草稿/图片）；底部「查看全部」打开旧
 // SnippetPanelDialog 兜底（管理与导入留在弹框，不进下拉）。两动作分区复用
 // SnippetEntryList，与弹框保持同款结构同款测试锚点。
+// docs08-r5 任务 9：mobilePresentation 透传 AnchoredPanel——手机档改 inline
+// 流内形态（挂载于胶囊上方条区，与斜杠提示同区），常用语一步直达且不遮挡输入框；
+// 桌面锚定档不受影响（缺省 "sheet" 由 composer 按断点传值）。
 import { useEffect, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
@@ -20,6 +23,7 @@ export function SnippetDropdown({
   onInsert,
   onSendNow,
   onViewAll,
+  mobilePresentation,
 }: {
   anchor: HTMLElement | null;
   onClose: () => void;
@@ -30,6 +34,8 @@ export function SnippetDropdown({
   onInsert: (content: string) => void;
   onSendNow: (content: string) => void;
   onViewAll: () => void;
+  /** 窄视口呈现档透传（docs08-r5 任务 9）：composer 手机档传 "inline" */
+  mobilePresentation?: "sheet" | "inline";
 }) {
   const [data, setData] = useState<{ global: SnippetEntry[]; project: SnippetEntry[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -55,7 +61,15 @@ export function SnippetDropdown({
   const empty = data !== null && data.global.length === 0 && (!project || data.project.length === 0);
 
   return (
-    <AnchoredPanel anchor={anchor} open onClose={onClose} data-testid="snippet-dropdown" maxHeight={360} className="w-80">
+    <AnchoredPanel
+      anchor={anchor}
+      open
+      onClose={onClose}
+      data-testid="snippet-dropdown"
+      maxHeight={360}
+      className="w-80"
+      mobilePresentation={mobilePresentation}
+    >
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
         {!data && !loadError && <p className="px-1 py-1 text-xs text-muted-foreground/60">加载中…</p>}
         {loadError && (
