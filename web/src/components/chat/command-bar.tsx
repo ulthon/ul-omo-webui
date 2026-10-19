@@ -9,12 +9,12 @@ import { useUiStore } from "@/stores/ui";
 import { CHAT_COMMANDS, type ChatCommand } from "./commands";
 import { compactToastText, runCompact } from "./compact-run";
 
-export function CommandBar({ sessionId, busy }: { sessionId: string; busy: boolean }) {
+export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessionId: string; busy: boolean; /** 水合锁（docs08-r5 任务 6）：运行态未知窗口禁命令直发；缺省 false 向后兼容既有调用方 */ hydrationLocked?: boolean }) {
   const showToast = useUiStore((s) => s.showToast);
   const [pending, setPending] = useState<string | null>(null);
 
   const send = async (cmd: ChatCommand) => {
-    if (!cmd.supported || busy || pending !== null) return;
+    if (!cmd.supported || busy || hydrationLocked || pending !== null) return;
     setPending(cmd.name);
     try {
       if (cmd.name === "compact") {
@@ -42,7 +42,7 @@ export function CommandBar({ sessionId, busy }: { sessionId: string; busy: boole
           key={cmd.name}
           type="button"
           data-testid={`cmd-${cmd.name}`}
-          disabled={!cmd.supported || busy || pending !== null}
+          disabled={!cmd.supported || busy || hydrationLocked || pending !== null}
           title={cmd.supported ? `发送 ${cmd.label}` : `引擎不支持：${cmd.note}`}
           aria-disabled={!cmd.supported}
           onClick={() => void send(cmd)}

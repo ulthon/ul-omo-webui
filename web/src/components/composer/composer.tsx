@@ -78,14 +78,18 @@ export function Composer({
   sessionId,
   queueAvailable,
   permissionLocked,
+  hydrationLocked,
   onSent,
   onAborted,
 }: {
   sessionId: string;
-  /** 排队可用性 = 会话流式态（docs08-r4 任务 11 busy 拆解）：输入可用、发送变排队 */
+  /** 排队可用性 = 会话流式态或已知 running 运行态（docs08-r4 任务 11 + r5 任务 6）：输入可用、发送变排队 */
   queueAvailable: boolean;
   /** 权限锁 = 权限未决：禁一切输入动作，保持整锁形态（原 busy 语义的一半，语义不放宽） */
   permissionLocked: boolean;
+  /** 水合锁（docs08-r5 任务 6）：刷新/会话打开后至首个权威运行态信号前禁发送（悲观默认
+   * 按「进行中」阻塞）；只锁发送不换权限锁形态，解锁后不回锁（见 hydration-lock.ts） */
+  hydrationLocked: boolean;
   onSent: () => void;
   onAborted: () => void;
 }) {
@@ -346,8 +350,9 @@ export function Composer({
       const imgs = opts.clearInputs ? imagesRef.current : undefined;
       const atts = opts.clearInputs ? attachmentsRef.current : [];
       // busy 语义定则（docs08-r4 任务 11）：权限锁禁发送；流式态放行（发送变排队）。
-      // 排队判定读发送瞬间的 store 流式态（不经渲染闭包，回合刚结束/开始的窗口也对）
-      if (permissionLocked || sending) return;
+      // 水合锁（docs08-r5 任务 6）同禁发送：运行态未知窗口悲观默认阻塞。
+      // 排队判定读发送瞬间的 store 流式态与运行态（不经渲染闭包，回合刚结束/开始的窗口也对）
+      if (permissionLocked || hydrationLocked || sending) return;
       // 普通发送：文本/图片/附件皆空早退（原校验扩展，有图或有附件无文本仍可发）；直发必须有文本
       if (!trimmed && imgs && imgs.length === 0 && atts.length === 0) return;
       if (!trimmed && !opts.clearInputs) return;
@@ -382,7 +387,10 @@ export function Composer({
         const outgoingImages =
           imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined;
         const outgoingText = appendAttachmentLines(trimmed, atts);
-        const queuing = useMessagesStore.getState().bySession[sessionId]?.streaming ?? false;
+        const msgStreaming = useMessagesStore.getState().bySession[sessionId]?.streaming ?? false;
+        const rs = useSessionsStore.getState().runStates[sessionId];
+        // 已知 running（SSE 权威链）同样转排队（docs08-r5 任务 6：r4 排队语义不回退）
+        const queuing = msgStreaming || rs === "running" || rs === "waiting";
         // 排队请求只带 streamingBehavior（spike 铁律；api.prompt 自动剥模型/思考档注入，
         // images 未实测随排队投递、同样省略——图片条保留待下次直发）
         let receipt: PromptReceipt;
@@ -449,7 +457,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [permissionLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast],
+    [permissionLocked, hydrationLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
@@ -724,7 +732,8 @@ export function Composer({
     );
   }
 
-  const canSend = (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending;
+  const canSend =
+    (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending && !hydrationLocked;
 
   // ---------- 桌面/手机共享子树（docs08-r4 任务 7）：两分支同源，仅容器排布不同 ----------
 

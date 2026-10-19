@@ -17,6 +17,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { Composer } from "@/components/composer/composer";
 import { CommandBar } from "./command-bar";
+import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList } from "./message-list";
 import { buildMessageItems, type ChatListItem } from "./message-items";
@@ -66,6 +67,11 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 权限锁禁一切输入动作（P0-2 实证：挂起权限回合不结束）；流式态输入可用、发送变
   // 排队（Composer 双信号下传）。CommandBar 维持原 composerLocked 单布尔口径不变。
   const composerLocked = streaming || hasPendingPermission;
+
+  // 运行态水合锁（docs08-r5 任务 6）：刷新/会话打开起默认按「进行中」阻塞，首个权威
+  // 运行态信号（runStates 写入 / 探询 active / 探询完成仍 unknown）解锁，不回锁。
+  // 已知 running 解锁后照常排队（r4 语义不回退）：queueAvailable 并入 knownRunning。
+  const { hydrationLocked, knownRunning } = useHydrationRunLock(sessionId);
 
   // / 命令门（todo 24）：注册到 api.prompt 链路，输入以 / 开头且命中不支持命令时
   // 抛 ApiError（composer 行内明示），阻止引擎把命令当普通消息交给模型（模型会伪造已执行）。
@@ -231,11 +237,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
           <QueueBar sessionId={sessionId} />
-          <CommandBar sessionId={sessionId} busy={composerLocked} />
+          <CommandBar sessionId={sessionId} busy={composerLocked} hydrationLocked={hydrationLocked} />
           <Composer
             sessionId={sessionId}
-            queueAvailable={streaming}
+            queueAvailable={streaming || knownRunning}
             permissionLocked={hasPendingPermission}
+            hydrationLocked={hydrationLocked}
             onSent={() => setInterrupted(false)}
             onAborted={() => setInterrupted(true)}
           />
