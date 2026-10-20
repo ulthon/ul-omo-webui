@@ -17,8 +17,19 @@ import type { MetaDb } from "./db/meta";
 export const DEFAULT_TITLE_BASEURL = "https://api.z.ai/api/coding/paas/v4/chat/completions";
 export const DEFAULT_TITLE_MODEL = "zai-coding-cn/glm-5.3-flash";
 
-/** prompt 模板固定（决策 9g：会话内容进模板 + 只输出标题的指令即 injection 缓解） */
-const TITLE_PROMPT_TEMPLATE = "为以下对话生成一个不超过 16 个字的中文短标题，只输出标题本身";
+/** prompt 按语言映射（计划任务 9；决策 9g 语义不变：会话内容进模板 + 只输出标题的
+ * 指令即 injection 缓解）。zh 逐字保留原 TITLE_PROMPT_TEMPLATE；en 为新增英文档。
+ * golden 逐字断言在 test/title-gen.test.ts 与 test/title-gen-trigger.test.ts（防常量引用同义反复）。 */
+export type TitleLanguage = "zh" | "en";
+export const TITLE_PROMPTS: Record<TitleLanguage, string> = {
+  zh: "为以下对话生成一个不超过 16 个字的中文短标题，只输出标题本身",
+  en: "Generate a short session title of at most 60 characters, output only the title",
+};
+/** 分档截断上限（计划任务 9 钦定值，禁止执行者自定）：zh 中文字数 / en 字符数 */
+export const ZH_TITLE_MAX = 16;
+export const EN_TITLE_MAX = 60;
+/** meta_kv 键：服务端标题语言设置（缺省 zh；写入方为后续设置端点，本模块只读） */
+export const TITLE_LANGUAGE_KV_KEY = "titlegen.language";
 const MESSAGE_TRUNCATE = 500;
 /** 自动路径超时（手动路径 ≤10s——Bun.serve 空闲 ~12s 掐断，spike 实证 14s 响应 Empty reply） */
 export const AUTO_TIMEOUT_MS = 15_000;
@@ -35,6 +46,15 @@ export function titleBaseUrl(): string {
 
 export function titleModel(): string {
   return process.env.UL_OMO_WEBUI_TITLE_MODEL || DEFAULT_TITLE_MODEL;
+}
+
+/** 标题语言解析（计划任务 9）：环境变量 UL_OMO_WEBUI_TITLE_LANG 覆盖（与
+ * UL_OMO_WEBUI_TITLE_MODEL/BASEURL 同族同模式）> meta_kv titlegen.language > 缺省 zh。
+ * env 非 zh/en 视为未设置（回退 kv/zh，不抛）；每次生成调用时解析，改设置无需重启。 */
+export function resolveTitleLanguage(meta?: { getKv?(key: string): string | null }): TitleLanguage {
+  const env = process.env.UL_OMO_WEBUI_TITLE_LANG;
+  if (env === "zh" || env === "en") return env;
+  return meta?.getKv?.(TITLE_LANGUAGE_KV_KEY) === "en" ? "en" : "zh";
 }
 
 /** "provider/model" → 取 provider（凭证键）与裸 id（HTTP model 参数）。
@@ -136,21 +156,26 @@ export function readSessionHead(sessionPath: string): SessionHeadMessages | null
 
 // ---------------------------------------------------------------- prompt 与 HTTP
 
-export function buildTitlePrompt(userText: string, assistantText: string | null): string {
+export function buildTitlePrompt(
+  userText: string,
+  assistantText: string | null,
+  language: TitleLanguage = "zh",
+): string {
   const parts = [`用户：${userText.slice(0, MESSAGE_TRUNCATE)}`];
   if (assistantText) parts.push(`助手：${assistantText.slice(0, MESSAGE_TRUNCATE)}`);
-  return `${TITLE_PROMPT_TEMPLATE}\n\n${parts.join("\n")}`;
+  return `${TITLE_PROMPTS[language]}\n\n${parts.join("\n")}`;
 }
 
-/** 模型输出清洗：去首尾引号/空白，按字符数截 16 字（中文语义的字数） */
-export function sanitizeTitle(raw: string): string {
+/** 模型输出清洗：去首尾引号/空白，按语言分档截断（zh 16 字 / en 60 字符） */
+export function sanitizeTitle(raw: string, language: TitleLanguage = "zh"): string {
   const stripped = raw
     .trim()
     .replace(/^["'「『]+/, "")
     .replace(/["'」』]+$/, "")
     .trim();
+  const max = language === "en" ? EN_TITLE_MAX : ZH_TITLE_MAX;
   return Array.from(stripped)
-    .slice(0, 16)
+    .slice(0, max)
     .join("");
 }
 
@@ -161,6 +186,7 @@ async function requestTitle(opts: {
   prompt: string;
   timeoutMs: number;
   fetchImpl: typeof fetch;
+  language: TitleLanguage;
 }): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
@@ -180,7 +206,7 @@ async function requestTitle(opts: {
     }
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
     const content = data.choices?.[0]?.message?.content;
-    const title = sanitizeTitle(typeof content === "string" ? content : "");
+    const title = sanitizeTitle(typeof content === "string" ? content : "", opts.language);
     if (!title) throw new Error("模型返回空标题");
     return title;
   } finally {
@@ -199,7 +225,11 @@ export interface RoundSettleInfo {
 export interface TitleGenDeps {
   meta: Pick<
     MetaDb,
-    "getSessionMeta" | "getSessionGeneratedTitle" | "setSessionGeneratedTitle" | "setSessionRenamedTitle"
+    | "getSessionMeta"
+    | "getSessionGeneratedTitle"
+    | "setSessionGeneratedTitle"
+    | "setSessionRenamedTitle"
+    | "getKv"
   >;
   agentDir: string;
   /** sessionId → 会话 store 行（path 供 jsonl 直读、name 供触发条件）。
@@ -252,7 +282,8 @@ export class TitleGenService {
     if (!head.hasAssistant || !head.userText) return; // 中断回合仅 user 消息不触发
     this.inFlight.add(durable);
     try {
-      const title = await this.callModel(head, AUTO_TIMEOUT_MS);
+      // 语言每次调用时解析（env 覆盖 > meta_kv > zh）：设置变更不重启即生效
+      const title = await this.callModel(head, AUTO_TIMEOUT_MS, resolveTitleLanguage(this.deps.meta));
       this.deps.meta.setSessionGeneratedTitle(durable, title);
     } catch (err) {
       this.attempted.add(durable);
@@ -265,8 +296,11 @@ export class TitleGenService {
   /** 手动路径（POST /api/sessions/:id/generate-title）：同步生成，失败抛错
    * 由路由转 502 带原因。不查 attempted（用户显式重试可再试）与 renamedTitle/
    * generatedTitle/name 触发条件（结果写 renamedTitle，覆盖一切既有形态）；
-   * in-flight 仍防并发重入。 */
-  async generateForSession(sessionId: string): Promise<string> {
+   * in-flight 仍防并发重入。
+   *
+   * language（计划任务 9）：由手动入口（routes-session POST generate-title）读服务端
+   * 设置后传入；缺省 zh 保持旧调用形态行为不变。 */
+  async generateForSession(sessionId: string, language: TitleLanguage = "zh"): Promise<string> {
     const row = await this.deps.resolveSessionRow(sessionId);
     if (!row) throw new Error(`会话不存在：${sessionId}`);
     const head = readSessionHead(row.path);
@@ -275,7 +309,7 @@ export class TitleGenService {
     if (this.inFlight.has(head.durableId)) throw new Error("该会话标题生成进行中");
     this.inFlight.add(head.durableId);
     try {
-      const title = await this.callModel(head, MANUAL_TIMEOUT_MS);
+      const title = await this.callModel(head, MANUAL_TIMEOUT_MS, language);
       this.deps.meta.setSessionRenamedTitle(head.durableId, title);
       return title;
     } finally {
@@ -283,7 +317,7 @@ export class TitleGenService {
     }
   }
 
-  private callModel(head: SessionHeadMessages, timeoutMs: number): Promise<string> {
+  private callModel(head: SessionHeadMessages, timeoutMs: number, language: TitleLanguage): Promise<string> {
     const { provider, bareModel } = splitTitleModel(this.model);
     const apiKey = readApiKey(this.deps.agentDir, provider);
     if (!apiKey) throw new Error(`凭证缺失：${this.deps.agentDir}/auth.json 无 ${provider} 的 key`);
@@ -291,9 +325,10 @@ export class TitleGenService {
       baseUrl: this.baseUrl,
       apiKey,
       bareModel,
-      prompt: buildTitlePrompt(head.userText ?? "", head.assistantText),
+      prompt: buildTitlePrompt(head.userText ?? "", head.assistantText, language),
       timeoutMs,
       fetchImpl: this.fetchImpl,
+      language,
     });
   }
 }

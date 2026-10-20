@@ -18,7 +18,17 @@ import type { EngineSessionSummary } from "../src/adapter/engine-adapter";
 import { ApiError } from "../src/api/http";
 import { createSessionRoutes, resolveSessionTitle } from "../src/api/routes-session";
 import { openMetaDb, type MetaDb } from "../src/db/meta";
-import { TitleGenService, type RoundSettleInfo } from "../src/title-gen";
+import {
+  EN_TITLE_MAX,
+  TITLE_LANGUAGE_KV_KEY,
+  TITLE_PROMPTS,
+  TitleGenService,
+  type RoundSettleInfo,
+} from "../src/title-gen";
+
+// golden 字符串（防常量引用同义反复：断言不引用 TITLE_PROMPTS，源码常量另测逐字对照）
+const GOLDEN_PROMPT_ZH = "为以下对话生成一个不超过 16 个字的中文短标题，只输出标题本身";
+const GOLDEN_PROMPT_EN = "Generate a short session title of at most 60 characters, output only the title";
 
 // ---------------------------------------------------------------- fixture 工具
 
@@ -108,9 +118,34 @@ describe("TitleGenService.handleRoundSettled（自动触发矩阵）", () => {
     const init = fetchCalls[0].init as RequestInit;
     const body = JSON.parse(String(init.body)) as { model: string; messages: Array<{ content: string }> };
     expect(body.model).toBe("test-model"); // 裸 id（剥离 provider 前缀）
-    expect(body.messages[0].content.startsWith("为以下对话生成一个不超过 16 个字的中文短标题，只输出标题本身")).toBe(true);
+    // 缺省语言 zh：golden 逐字断言 + 导出常量对照（两种语言各一份，防同义反复）
+    expect(body.messages[0].content.startsWith(GOLDEN_PROMPT_ZH)).toBe(true);
+    expect(TITLE_PROMPTS.zh).toBe(GOLDEN_PROMPT_ZH);
+    expect(TITLE_PROMPTS.en).toBe(GOLDEN_PROMPT_EN);
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer k-test");
     expect(fetchCalls[0].url).toBe("http://title.test/v1/chat/completions");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("meta_kv titlegen.language=en：自动路径发英文 prompt（golden en 逐字）", async () => {
+    const dir = tmpDir("tg-case-");
+    const path = writeSessionJsonl(dir, "s1-en.jsonl", "dur-lang-en");
+    const metaEn = tmpMeta();
+    metaEn.setKv(TITLE_LANGUAGE_KV_KEY, "en");
+    const { service, fetchCalls } = makeService({ row: { path }, meta: metaEn });
+    await service.handleRoundSettled("/proj", settle("alias-en", path), "agent_end");
+    const init = fetchCalls[0].init as RequestInit;
+    const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    expect(body.messages[0].content.startsWith(GOLDEN_PROMPT_EN)).toBe(true);
+    expect(body.messages[0].content.startsWith(GOLDEN_PROMPT_ZH)).toBe(false);
+    // 语言每次调用时解析：改回 kv 后下一会话即回中文（设置变更不重启生效）
+    metaEn.setKv(TITLE_LANGUAGE_KV_KEY, "zh");
+    const path2 = writeSessionJsonl(dir, "s2-zh.jsonl", "dur-lang-zh");
+    const svc2 = makeService({ row: { path: path2 }, meta: metaEn });
+    await svc2.service.handleRoundSettled("/proj", settle("alias-zh", path2), "agent_end");
+    const init2 = svc2.fetchCalls[0].init as RequestInit;
+    const body2 = JSON.parse(String(init2.body)) as { messages: Array<{ content: string }> };
+    expect(body2.messages[0].content.startsWith(GOLDEN_PROMPT_ZH)).toBe(true);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -286,6 +321,32 @@ describe("POST /api/sessions/:id/generate-title 端点", () => {
     expect(row.title).toBe("并发去重与幂等写入");
     rmSync(dir, { recursive: true, force: true });
     rmSync(projDir, { recursive: true, force: true });
+  });
+
+  test("服务端语言设置 en：手动入口发英文 prompt 且 en 档 60 字符清洗", async () => {
+    const dir = tmpDir("tg-case-");
+    const path = writeSessionJsonl(dir, "s1-ep-en.jsonl", "dur-ep-en");
+    const meta = tmpMeta();
+    meta.setKv(TITLE_LANGUAGE_KV_KEY, "en");
+    const engines = new FakeGateway();
+    const fetchCalls: FetchCall[] = [];
+    const enFetch: FetchMock = (url, init) => {
+      fetchCalls.push({ url, init });
+      return Promise.resolve(Response.json({ choices: [{ message: { content: "b".repeat(70) } }] }));
+    };
+    const { service } = makeService({ row: { path }, meta, fetchImpl: enFetch });
+    const app = new Hono();
+    app.route("/", createSessionRoutes({ meta, engines: engines as unknown as EngineGateway, titleGen: service }));
+    const res = await app.request("/api/sessions/dur-ep-en/generate-title", { method: "POST" });
+    expect(res.status).toBe(200);
+    // en 档 60 字符截断（计划铖定 EN_TITLE_MAX）
+    expect(((await res.json()) as { title: string }).title).toBe("b".repeat(EN_TITLE_MAX));
+    // 手动入口读服务端设置：请求体 prompt 为英文 golden（不收客户端语言参数）
+    const init = fetchCalls[0].init as RequestInit;
+    const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    expect(body.messages[0].content.startsWith(GOLDEN_PROMPT_EN)).toBe(true);
+    expect(meta.getSessionMeta("dur-ep-en")?.renamedTitle).toBe("b".repeat(EN_TITLE_MAX));
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("失败 502 带原因；服务未接线 502", async () => {

@@ -16,7 +16,7 @@ import {
   validateAttachmentName,
 } from "./attachments";
 import type { SessionMeta, SessionTagRef } from "../db/meta";
-import type { TitleGenService } from "../title-gen";
+import { resolveTitleLanguage, type TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway } from "./engine-runtime";
@@ -436,7 +436,9 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     const id = requireParam(c, "id");
     if (!deps.titleGen) throw new ApiError(502, "title_gen_unavailable", "标题生成服务未接线");
     try {
-      const title = await deps.titleGen.generateForSession(id);
+      // 计划任务 9：手动入口读服务端语言设置（env UL_OMO_WEBUI_TITLE_LANG 覆盖 >
+      // meta_kv titlegen.language > 缺省 zh），不收客户端语言参数（不随 UI 语言切换）
+      const title = await deps.titleGen.generateForSession(id, resolveTitleLanguage(deps.meta));
       return c.json({ title });
     } catch (err) {
       throw new ApiError(502, "title_gen_failed", err instanceof Error ? err.message : String(err));
