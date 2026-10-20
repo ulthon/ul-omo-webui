@@ -15,14 +15,11 @@ type Catalog = Record<string, unknown>;
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Wave 2 接线前的既定零引用键：任务1 先行抽取、尚无调用点。接线一个移除一个，最终应清空；
-// 清单之外出现任何新死键（定义了却无人引用）本断言即红，防"另一方向博弈"。
+// Wave 2 接线后的死键豁免清单：仅剩仍无调用点的 common.loadFailed / common.loading。
+// 接线一个移除一个；清单清空后保留空数组，本断言继续守抚未来新出现的死键。
 const EXPECTED_UNWIRED: string[] = [
-  "common.close",
-  "common.delete",
   "common.loadFailed",
   "common.loading",
-  "common.save",
 ];
 
 /** 复数形叶子判定：{ one, other } 双字符串形态视为叶子，不再下钻 */

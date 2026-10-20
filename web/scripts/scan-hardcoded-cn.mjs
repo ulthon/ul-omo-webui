@@ -68,6 +68,7 @@ function collectFiles(dir, out = []) {
     const full = path.join(dir, name);
     if (fs.statSync(full).isDirectory()) {
       if (name === "__tests__" || name === "node_modules") continue; // 测试与 fixtures 不在范围
+      if (dir === SRC_ROOT && name === "i18n") continue; // i18n 目录为键定义处，整体排除（与头注释规则一致）
       collectFiles(full, out);
       continue;
     }
