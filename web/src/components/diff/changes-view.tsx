@@ -84,7 +84,7 @@ function ChangeRow({ entry, file }: { entry: ChangeEntry; file: FileData | null 
         />
         <span
           className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${TONE_CLASS[info.tone]}`}
-          title={t(info.label.key)}
+          title={t(info.label)}
         >
           {info.code}
         </span>
