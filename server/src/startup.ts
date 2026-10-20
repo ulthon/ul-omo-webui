@@ -38,9 +38,12 @@ export function snapshotEnv(env: NodeJS.ProcessEnv = process.env): Record<string
   return out;
 }
 
-export function buildSystemdUnit(env: Record<string, string>): string {
+export function buildSystemdUnit(env: Record<string, string>, path?: string): string {
   const { exec, script } = serverExecStart();
-  const envLines = Object.entries(env)
+  // systemd 用户服务 PATH 缺省仅 /usr/bin:/bin，引擎子进程 spawn "node" 会 ENOENT——
+  // 必须显式带入 enable 时的 PATH（含 node 绝对路径所在目录）
+  const fullEnv = { ...(path ? { PATH: path } : {}), ...env };
+  const envLines = Object.entries(fullEnv)
     .map(([k, v]) => `Environment=${k}=${JSON.stringify(v)}`)
     .join("\n");
   return `[Unit]
@@ -94,7 +97,7 @@ function unitPath(): string {
 
 function linuxEnable(): void {
   const env = snapshotEnv();
-  const unit = buildSystemdUnit(env);
+  const unit = buildSystemdUnit(env, process.env.PATH);
   mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
   writeFileSync(unitPath(), unit, "utf8");
   run(["systemctl", "--user", "daemon-reload"]);
