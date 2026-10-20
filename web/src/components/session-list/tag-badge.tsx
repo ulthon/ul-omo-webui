@@ -7,6 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { isOrphanTag, orphanTags, visibleTags } from "./tag-data";
 
 interface TagBadgesProps {
@@ -27,23 +28,24 @@ export function TagBadges({ session, definedKeys }: TagBadgesProps) {
     try {
       await api.setSessionTags(session.id, keep);
       useSessionsStore.getState().patchSession(session.id, { tags: keep });
-      useUiStore.getState().showToast("已清理失效标签");
+      useUiStore.getState().showToast(t("sessionList.tagBadge.cleaned"));
     } catch (err) {
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "清理失败", "error");
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.tagBadge.cleanFailed"), "error");
     }
   };
 
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5" data-testid="tag-badges">
-      {shown.map((t) => {
-        const orphan = isOrphanTag(t, definedKeys);
+      {/* 参数改名 t→tag：避免遮蔽 i18n 翻译函数 t */}
+      {shown.map((tag) => {
+        const orphan = isOrphanTag(tag, definedKeys);
         return (
           <span
-            key={`${t.scope}:${t.name}`}
+            key={`${tag.scope}:${tag.name}`}
             data-testid="tag-badge"
-            data-tag={t.name}
+            data-tag={tag.name}
             data-orphan={orphan || undefined}
-            title={orphan ? `标签「${t.name}」定义已删除，点击清理` : `标签：${t.name}`}
+            title={orphan ? t("sessionList.tagBadge.orphanTitle", { name: tag.name }) : t("sessionList.tagBadge.title", { name: tag.name })}
             className={`inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground ${
               orphan ? "border-dashed bg-transparent text-muted-foreground/50" : "bg-muted"
             }`}
@@ -57,7 +59,7 @@ export function TagBadges({ session, definedKeys }: TagBadgesProps) {
             }
           >
             <Tag className="size-2.5" />
-            {t.name}
+            {tag.name}
             {orphan && <X className="size-2" />}
           </span>
         );
@@ -65,7 +67,7 @@ export function TagBadges({ session, definedKeys }: TagBadgesProps) {
       {extra > 0 && (
         <span
           className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-          title={`还有 ${extra} 个标签`}
+          title={t("sessionList.tagBadge.more", { n: extra })}
           data-testid="tag-extra"
         >
           +{extra}

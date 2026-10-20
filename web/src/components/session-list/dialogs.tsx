@@ -8,6 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,14 +66,14 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       // title 与 renamedTitle 同步更新：列表行展示的是服务端合并后的 title
       // （renamedTitle ?? name ?? firstMessage 截断），只 patch renamedTitle 会让行显示滞留旧值
       const nextTitle =
-        trimmed === "" ? session.name ?? (session.firstMessage ? session.firstMessage.slice(0, 80) : "(空会话)") : trimmed;
+        trimmed === "" ? session.name ?? (session.firstMessage ? session.firstMessage.slice(0, 80) : t("sessionList.dialogs.emptySession")) : trimmed;
       await api.patchSessionMeta(session.id, { renamedTitle: trimmed === "" ? null : trimmed });
       useSessionsStore.getState().patchSession(session.id, { renamedTitle: trimmed === "" ? null : trimmed, title: nextTitle });
-      showToast(trimmed === "" ? "已恢复自动命名" : "已重命名");
+      showToast(trimmed === "" ? t("sessionList.dialogs.autoNameRestored") : t("sessionList.dialogs.renamed"));
       onClose();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "重命名失败");
+      setError(err instanceof ApiError ? err.message : t("sessionList.dialogs.renameFailed"));
     } finally {
       setBusy(false);
     }
@@ -85,11 +86,11 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
     try {
       await api.deleteSession(session.id);
       useSessionsStore.getState().removeSession(session.id);
-      showToast("会话已删除");
+      showToast(t("sessionList.dialogs.sessionDeleted"));
       onClose();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "删除失败");
+      setError(err instanceof ApiError ? err.message : t("sessionList.dialogs.deleteFailed"));
     } finally {
       // 常驻单例不因关闭卸载，成功路径也必须复位 busy（与 submitRename 对齐）
       setBusy(false);
@@ -112,7 +113,7 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       } catch (err) {
         failed.push({
           title: titles[i] ?? ids[i],
-          message: err instanceof ApiError ? err.message : "删除失败",
+          message: err instanceof ApiError ? err.message : t("sessionList.dialogs.deleteFailed"),
         });
       }
       done = i + 1;
@@ -121,11 +122,16 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
     setFailures(failed);
     setBusy(false);
     if (failed.length === 0) {
-      showToast(`已删除 ${ids.length} 个会话`);
+      showToast(t("sessionList.dialogs.batchDeletedAll", { n: ids.length }));
       onClose();
     } else {
-      setError(`${failed.length} 个会话删除失败：${failed.map((f) => f.title).join("、")}`);
-      showToast(`已删除 ${ids.length - failed.length}/${ids.length} 个，其余失败`, "error");
+      setError(
+        t("sessionList.dialogs.batchDeleteFailedList", { n: failed.length, titles: failed.map((f) => f.title).join("、") }),
+      );
+      showToast(
+        t("sessionList.dialogs.batchDeletedPartial", { ok: ids.length - failed.length, total: ids.length }),
+        "error",
+      );
     }
     onChanged();
   };
@@ -138,10 +144,8 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>批量删除会话</DialogTitle>
-            <DialogDescription>
-              将删除 {ids.length} 个会话的记录、元数据与引擎侧文件，终端 omo -r 也不再可见。此操作不可撤销。
-            </DialogDescription>
+            <DialogTitle>{t("sessionList.dialogs.batchDeleteTitle")}</DialogTitle>
+            <DialogDescription>{t("sessionList.dialogs.batchDeleteDesc", { n: ids.length })}</DialogDescription>
           </DialogHeader>
           <ul className="max-h-32 space-y-0.5 overflow-y-auto rounded bg-muted px-2 py-1.5 text-sm">
             {preview.map((t, i) => (
@@ -150,7 +154,7 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
               </li>
             ))}
             {titles.length > preview.length && (
-              <li className="text-muted-foreground">…等共 {titles.length} 个</li>
+              <li className="text-muted-foreground">{t("sessionList.dialogs.previewMore", { n: titles.length })}</li>
             )}
           </ul>
           {needStrongConfirm && (
@@ -161,10 +165,14 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
                 onChange={(e) => setConfirmedBulk(e.target.checked)}
                 disabled={busy}
               />
-              我确认删除全部 {ids.length} 个会话（超过 {BULK_DELETE_CONFIRM_THRESHOLD} 个需强化确认）
+              {t("sessionList.dialogs.bulkConfirmLabel", { n: ids.length, threshold: BULK_DELETE_CONFIRM_THRESHOLD })}
             </label>
           )}
-          {progress && <p className="text-sm text-muted-foreground">删除中 {progress.done}/{progress.total}…</p>}
+          {progress && (
+            <p className="text-sm text-muted-foreground">
+              {t("sessionList.dialogs.deletingProgress", { done: progress.done, total: progress.total })}
+            </p>
+          )}
           {failures.length > 0 && (
             <ul className="max-h-24 space-y-0.5 overflow-y-auto rounded bg-destructive/10 px-2 py-1.5 text-sm text-destructive">
               {failures.map((f, i) => (
@@ -177,7 +185,7 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
-              {busy ? "取消" : "关闭"}
+              {busy ? t("common.cancel") : t("common.close")}
             </Button>
             <Button
               type="button"
@@ -185,7 +193,7 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
               disabled={busy || (needStrongConfirm && !confirmedBulk)}
               onClick={() => void submitBatchDelete()}
             >
-              {busy ? `删除中…` : `删除 ${ids.length} 个`}
+              {busy ? t("sessionList.dialogs.deleting") : t("sessionList.dialogs.deleteN", { n: ids.length })}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -199,8 +207,8 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       <DialogContent className="sm:max-w-md">
         <form onSubmit={submitRename}>
           <DialogHeader>
-            <DialogTitle>重命名会话</DialogTitle>
-            <DialogDescription>留空提交可恢复自动命名。</DialogDescription>
+            <DialogTitle>{t("sessionList.dialogs.renameTitle")}</DialogTitle>
+            <DialogDescription>{t("sessionList.dialogs.renameHint")}</DialogDescription>
           </DialogHeader>
           <div className="mt-4 space-y-2">
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={session.title} autoFocus />
@@ -208,10 +216,10 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
           </div>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" onClick={onClose}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button type="submit" disabled={busy}>
-              {busy ? "保存中…" : "保存"}
+              {busy ? t("sessionList.dialogs.saving") : t("common.save")}
             </Button>
           </DialogFooter>
         </form>
@@ -221,10 +229,8 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>删除会话</DialogTitle>
-          <DialogDescription>
-            将删除会话记录与元数据，引擎侧文件一并移除，终端 omo -r 也不再可见。此操作不可撤销。
-          </DialogDescription>
+          <DialogTitle>{t("sessionList.dialogs.deleteTitle")}</DialogTitle>
+          <DialogDescription>{t("sessionList.dialogs.deleteDesc")}</DialogDescription>
         </DialogHeader>
         <p className="max-w-full truncate rounded bg-muted px-2 py-1.5 text-sm" title={session.title}>
           {session.title}
@@ -232,10 +238,10 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
         {error && <p className="text-sm text-destructive">{error}</p>}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button type="button" variant="destructive" disabled={busy} onClick={() => void submitDelete()}>
-            {busy ? "删除中…" : "删除"}
+            {busy ? t("sessionList.dialogs.deleting") : t("common.delete")}
           </Button>
         </DialogFooter>
       </DialogContent>

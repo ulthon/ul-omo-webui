@@ -15,6 +15,7 @@ import type { SessionListItem } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -48,16 +49,16 @@ export function formatRelative(iso: string): string {
 function StatusDot({ runState, active }: { runState: SessionRunState | null; active: boolean | null }) {
   // runStates 一旦有值即权威（SSE 见过事件）；null 才回落引擎探询的 active（不回落，仅初始参考）
   let cls = "bg-muted-foreground/30";
-  let title = "空闲";
+  let title = t("sessionList.item.statusIdle");
   if (runState === "waiting") {
     cls = "bg-amber-500 animate-pulse";
-    title = "等待权限";
+    title = t("sessionList.item.statusWaiting");
   } else if (runState === "error") {
     cls = "bg-destructive";
-    title = "出错";
+    title = t("sessionList.item.statusError");
   } else if (runState === "running" || (runState === null && active === true)) {
     cls = "bg-sky-500 animate-pulse";
-    title = "运行中";
+    title = t("sessionList.item.statusRunning");
   }
   return <span className={`size-1.5 shrink-0 rounded-full ${cls}`} title={title} />;
 }
@@ -69,7 +70,7 @@ function SourceBadge({ session }: { session: SessionListItem }) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-      title={`fork 自 ${session.parentSessionPath}`}
+      title={t("sessionList.item.forkedFrom", { path: session.parentSessionPath })}
     >
       <GitFork className="size-2.5" />
       fork
@@ -259,7 +260,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             type="button"
             role="checkbox"
             aria-checked={!!checked}
-            aria-label={`选择会话：${session.title}`}
+            aria-label={t("sessionList.item.selectSession", { title: session.title })}
             className="flex size-8 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground lg:size-5"
             onClick={(e) => {
               e.stopPropagation();
@@ -272,7 +273,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         {expandable ? (
           <button
             type="button"
-            aria-label={expanded ? "收起子会话" : "展开子会话"}
+            aria-label={expanded ? t("sessionList.item.collapseChildren") : t("sessionList.item.expandChildren")}
             className={`flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted lg:size-4 ${
               hasKnownChildren ? "text-muted-foreground" : "text-muted-foreground/40"
             }`}
@@ -303,7 +304,9 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
           <SourceBadge session={session} />
           <TagBadges session={session} definedKeys={definedKeys ?? null} />
           {session.archivedAt && (
-            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">已归档</span>
+            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">
+              {t("sessionList.item.archivedBadge")}
+            </span>
           )}
           {projectLabel && (
             <span className="shrink min-w-0 truncate rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground" title={session.project}>
@@ -334,7 +337,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               variant="ghost"
               size="icon"
               className="size-8 shrink-0 opacity-100 transition-opacity focus-visible:opacity-100 data-[state=open]:opacity-100 lg:absolute lg:right-1.5 lg:top-1/2 lg:-translate-y-1/2 lg:opacity-0 lg:group-hover:opacity-100"
-              aria-label="会话操作"
+              aria-label={t("sessionList.item.sessionActions")}
             >
               <MoreVertical className="size-3.5" />
             </Button>
@@ -342,11 +345,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
           <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuItem disabled={busy} onSelect={() => void patch({ pinned: !session.pinned })}>
               {session.pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
-              {session.pinned ? "取消置顶" : "置顶"}
+              {session.pinned ? t("sessionList.item.unpin") : t("sessionList.item.pin")}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={busy} onSelect={() => onDialog("rename", session)}>
               <SquarePen className="mr-2 size-4" />
-              重命名
+              {t("sessionList.item.rename")}
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={generatingTitle}
@@ -357,23 +360,24 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               }}
             >
               {generatingTitle ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Sparkles className="mr-2 size-4" />}
-              {generatingTitle ? "生成中…" : "生成标题"}
+              {generatingTitle ? t("sessionList.item.generating") : t("sessionList.item.generateTitle")}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={busy} onSelect={() => void patch({ archived: !session.archivedAt })}>
               {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
-              {session.archivedAt ? "取消归档" : "归档"}
+              {session.archivedAt ? t("sessionList.item.unarchive") : t("sessionList.item.archive")}
             </DropdownMenuItem>
+            {/* 任务11 递延：copyField 的 label 实参随 toast 文案一并迁移，此处仅迁移菜单可见文案 */}
             <DropdownMenuItem data-testid="item-copy-id" onSelect={() => void copyField(session.id, "会话 ID")}>
               <Hash className="mr-2 size-4" />
-              复制会话 ID
+              {t("sessionList.item.copyId")}
             </DropdownMenuItem>
             <DropdownMenuItem data-testid="item-copy-title" onSelect={() => void copyField(session.title, "标题")}>
               <Copy className="mr-2 size-4" />
-              复制标题
+              {t("sessionList.item.copyTitle")}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={exporting} onSelect={() => void exportHtml()}>
               {exporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}
-              导出 HTML
+              {t("sessionList.item.exportHtml")}
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={busy}
@@ -381,12 +385,12 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               data-testid="item-tags"
             >
               <Tag className="mr-2 size-4" />
-              标签
+              {t("sessionList.item.tags")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => onDialog("delete", session)}>
               <Trash2 className="mr-2 size-4" />
-              删除
+              {t("common.delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -397,7 +401,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
       {expandable && expanded && (
         <div className="ml-4 border-l pl-1.5">
           {childRows.length === 0 && !loadingChildren ? (
-            <div className="px-2 py-1 text-xs text-muted-foreground/60">无子会话</div>
+            <div className="px-2 py-1 text-xs text-muted-foreground/60">{t("sessionList.item.noChildren")}</div>
           ) : (
             childRows.map((child) => (
               <SessionItem

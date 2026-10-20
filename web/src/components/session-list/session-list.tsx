@@ -17,6 +17,7 @@ import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
 import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -168,7 +169,7 @@ export function SessionList() {
       setSearchResults(res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast("搜索失败", "error");
+        useUiStore.getState().showToast(t("sessionList.list.searchFailed"), "error");
       }
     } finally {
       setSearching(false);
@@ -247,7 +248,7 @@ export function SessionList() {
         id: res.session.id,
         path: res.session.sessionPath,
         project,
-        title: "新会话",
+        title: t("sessionList.list.untitledTitle"),
         name: null,
         renamedTitle: null,
         parentSessionPath: null,
@@ -270,9 +271,9 @@ export function SessionList() {
       // F-1（docs08-r4 验证波 F3）：手机档抽屉内新建会话后自动收起（与 selectSession 同一
       // 关闭路径；桌面侧栏常驻，drawerOpen 无视觉效果，写 false 无害且与现状一致）
       ui.setDrawerOpen(false);
-      useUiStore.getState().showToast("会话已创建，发送首条消息后保存");
+      useUiStore.getState().showToast(t("sessionList.list.createdToast"));
     } catch (err) {
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "创建失败", "error");
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.list.createFailed"), "error");
     } finally {
       setCreating(false);
     }
@@ -314,10 +315,10 @@ export function SessionList() {
         useSessionsStore.getState().select(null);
       }
       void useSessionsStore.getState().refreshSessions();
-      ui.showToast(hidden ? "已隐藏项目，可在设置的项目管理中恢复" : "已恢复显示项目", "info");
+      ui.showToast(hidden ? t("sessionList.list.projectHidden") : t("sessionList.list.projectShown"), "info");
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "操作失败，请重试", "error");
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.list.operationFailed"), "error");
       }
     } finally {
       setHiding(false);
@@ -332,7 +333,7 @@ export function SessionList() {
       await api.putSettings({ [PROJECT_ORDER_KV]: JSON.stringify(nextOrder) });
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast("保存手动排序失败", "error");
+        useUiStore.getState().showToast(t("sessionList.list.saveManualOrderFailed"), "error");
       }
     }
   }, []);
@@ -485,23 +486,30 @@ export function SessionList() {
     const ids = [...selectedIds];
     const failed: string[] = [];
     for (let i = 0; i < ids.length; i++) {
-      setBatchProgress({ label: archived ? "归档中" : "取消归档中", done: i, total: ids.length });
+      setBatchProgress({ label: archived ? t("sessionList.list.archiving") : t("sessionList.list.unarchiving"), done: i, total: ids.length });
       try {
         await api.patchSessionMeta(ids[i], { archived });
       } catch {
         failed.push(ids[i]);
       }
     }
-    setBatchProgress({ label: archived ? "归档中" : "取消归档中", done: ids.length, total: ids.length });
+    setBatchProgress({ label: archived ? t("sessionList.list.archiving") : t("sessionList.list.unarchiving"), done: ids.length, total: ids.length });
     setBatchBusy(false);
     setBatchProgress(null);
     setSelectedIds(new Set());
     if (failed.length === 0) {
-      useUiStore.getState().showToast(`已${archived ? "归档" : "取消归档"} ${ids.length} 个会话`);
-    } else {
       useUiStore
         .getState()
-        .showToast(`${ids.length - failed.length}/${ids.length} 成功，${failed.length} 个失败（见网络日志）`, "error");
+        .showToast(t(archived ? "sessionList.list.archivedN" : "sessionList.list.unarchivedN", { n: ids.length }));
+    } else {
+      useUiStore.getState().showToast(
+        t("sessionList.list.batchArchiveResult", {
+          ok: ids.length - failed.length,
+          total: ids.length,
+          failed: failed.length,
+        }),
+        "error",
+      );
     }
     onChanged();
   };
@@ -530,7 +538,8 @@ export function SessionList() {
     [],
   );
 
-  const archivedLabel = archived === "false" ? "未归档" : archived === "true" ? "已归档" : "含归档";
+  const archivedLabel =
+    archived === "false" ? t("sessionList.list.filterUnarchived") : archived === "true" ? t("sessionList.list.filterArchived") : t("sessionList.list.filterIncludingArchived");
 
   // ---- 打标签下拉（docs08-r3 任务 13）----
 
@@ -576,20 +585,20 @@ export function SessionList() {
             render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
         <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession(useUiStore.getState().currentProject)}>
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          新建会话
+          {t("sessionList.list.newSession")}
         </Button>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="搜索全部项目的会话…"
+            placeholder={t("sessionList.list.searchPlaceholder")}
             className="h-11 pl-7 pr-7 text-xs lg:h-7"
           />
           {searchInput && (
             <button
               type="button"
-              aria-label="清空搜索"
+              aria-label={t("sessionList.list.clearSearch")}
               className="absolute right-1.5 top-1/2 size-7 -translate-y-1/2 rounded text-muted-foreground hover:bg-muted"
               onClick={() => setSearchInput("")}
             >
@@ -609,7 +618,7 @@ export function SessionList() {
               data-testid="batch-toggle"
             >
               <ListChecks className="size-3" />
-              批量
+              {t("sessionList.list.batch")}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -619,9 +628,15 @@ export function SessionList() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => switchFilter({ archived: "false" })}>未归档</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => switchFilter({ archived: "true" })}>已归档</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => switchFilter({ archived: "all" })}>全部</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => switchFilter({ archived: "false" })}>
+                  {t("sessionList.list.filterUnarchived")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => switchFilter({ archived: "true" })}>
+                  {t("sessionList.list.filterArchived")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => switchFilter({ archived: "all" })}>
+                  {t("sessionList.list.filterAll")}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             {/* 标签过滤下拉（todo 11）：多选 chips OR 语义（任一命中）；CheckboxItem preventDefault
@@ -635,12 +650,12 @@ export function SessionList() {
                   data-testid="tag-filter-btn"
                 >
                   <Tag className="size-3" />
-                  {tagFilter.length > 0 ? `标签 ×${tagFilter.length}` : "标签"}
+                  {tagFilter.length > 0 ? t("sessionList.list.tagFilter", { n: tagFilter.length }) : t("sessionList.list.tags")}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="max-h-72 w-44 overflow-y-auto" data-testid="tag-filter-menu">
                 {tagOptions.length === 0 ? (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">暂无标签</div>
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">{t("sessionList.list.noTags")}</div>
                 ) : (
                   tagOptions.map((name) => (
                     <DropdownMenuCheckboxItem
@@ -659,7 +674,7 @@ export function SessionList() {
                 <DropdownMenuSeparator />
                 {/* 全局入口（任务 11 拆域）：恒 global，与当前项目无关 */}
                 <DropdownMenuItem onSelect={() => setManageScope("global")} data-testid="manage-tags-item">
-                  管理标签
+                  {t("sessionList.list.manageTags")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -673,7 +688,7 @@ export function SessionList() {
                 key={name}
                 type="button"
                 className="inline-flex min-h-7 items-center gap-0.5 rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-                title="移除该过滤标签"
+                title={t("sessionList.list.removeFilterTag")}
                 data-tag-chip={name}
                 onClick={() => toggleTagFilter(name)}
               >
@@ -688,9 +703,9 @@ export function SessionList() {
       {/* 批量操作条（todo 25）：勾选集合上的归档/删除（删除走确认弹窗）+ 全选 + 进度 */}
       {batchMode && (
         <div className="flex shrink-0 items-center gap-1 border-b px-1.5 py-1.5 text-xs lg:px-2" data-testid="batch-bar">
-          <span className="text-muted-foreground">已选 {selectedIds.size}</span>
+          <span className="text-muted-foreground">{t("sessionList.list.selectedCount", { n: selectedIds.size })}</span>
           <Button variant="ghost" size="sm" className="h-11 px-1.5 text-xs lg:h-6" disabled={batchBusy} onClick={selectAllVisible}>
-            全选
+            {t("sessionList.list.selectAll")}
           </Button>
           {/* todo 26 走查修复：已归档视图下批量动作应为取消归档（原写死归档，归档会话无法批量恢复） */}
           <Button
@@ -701,7 +716,7 @@ export function SessionList() {
             onClick={() => void runBatchArchive(archived !== "true")}
           >
             {archived === "true" ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
-            {archived === "true" ? "取消归档" : "归档"}
+            {archived === "true" ? t("sessionList.list.unarchive") : t("sessionList.list.archive")}
           </Button>
           {/* 批量打标签（任务 13）：锚定下拉对选中集合循环 PUT 勾选即存，进度反馈在下拉内；
               锚点 = 本钮（点击时刻的 DOM 元素存入 state） */}
@@ -714,7 +729,7 @@ export function SessionList() {
             data-testid="batch-tag-btn"
           >
             <Tag className="size-3" />
-            打标签
+            {t("sessionList.list.tagSessions")}
           </Button>
           <Button
             variant="ghost"
@@ -724,7 +739,7 @@ export function SessionList() {
             onClick={openBatchDelete}
           >
             <Trash2 className="size-3" />
-            删除
+            {t("common.delete")}
           </Button>
           {batchProgress && (
             <span className="text-muted-foreground" data-testid="batch-progress">
@@ -732,7 +747,7 @@ export function SessionList() {
             </span>
           )}
           <Button variant="ghost" size="sm" className="ml-auto h-11 px-1.5 text-xs lg:h-6" disabled={batchBusy} onClick={exitBatch}>
-            完成
+            {t("sessionList.list.done")}
           </Button>
         </div>
       )}
@@ -742,9 +757,9 @@ export function SessionList() {
       <div ref={listBodyRef} data-testid="session-scroll" className="min-h-0 flex-1 overflow-y-auto p-1 lg:p-1.5">
         {searchResults !== null ? (
           searching && searchResults.length === 0 ? (
-            <div className="px-2 py-6 text-center text-sm text-muted-foreground">搜索中…</div>
+            <div className="px-2 py-6 text-center text-sm text-muted-foreground">{t("sessionList.list.searching")}</div>
           ) : searchResults.length === 0 ? (
-            <div className="px-2 py-6 text-center text-sm text-muted-foreground">无匹配会话</div>
+            <div className="px-2 py-6 text-center text-sm text-muted-foreground">{t("sessionList.list.noMatch")}</div>
           ) : (
             searchResults.map((s) => (
               <SessionItem
@@ -774,7 +789,7 @@ export function SessionList() {
                   onClick={() => setRecentOpen((v) => !v)}
                 >
                   <ChevronDown className={`size-3 shrink-0 transition-transform ${recentOpen ? "" : "-rotate-90"}`} />
-                  最近会话
+                  {t("sessionList.list.recent")}
                   <span className="ml-auto shrink-0 tabular-nums">{recent.length}</span>
                 </button>
                 {recentOpen &&
@@ -865,7 +880,7 @@ export function SessionList() {
                       <span className={`truncate ${isCurrent ? "font-medium text-foreground" : ""}`} title={projectPath}>
                         {basename(projectPath)}
                       </span>
-                      {isCurrent && <span className="shrink-0 text-[10px] text-muted-foreground/60">当前</span>}
+                      {isCurrent && <span className="shrink-0 text-[10px] text-muted-foreground/60">{t("sessionList.list.current")}</span>}
                       {/* 空项目组显示但标注 0（todo 10） */}
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
@@ -876,7 +891,7 @@ export function SessionList() {
                         <button
                           type="button"
                           data-testid="group-menu"
-                          aria-label={`${basename(projectPath)} 分组菜单`}
+                          aria-label={t("sessionList.list.groupMenu", { name: basename(projectPath) })}
                           className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:size-6"
                         >
                           <MoreVertical className="size-3.5" />
@@ -890,14 +905,14 @@ export function SessionList() {
                               data-testid="group-move-up"
                               onSelect={() => moveProjectByStep(projectPath, -1)}
                             >
-                              上移
+                              {t("sessionList.list.moveUp")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={index >= sortedProjects.length - 1}
                               data-testid="group-move-down"
                               onSelect={() => moveProjectByStep(projectPath, 1)}
                             >
-                              下移
+                              {t("sessionList.list.moveDown")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                           </>
@@ -913,7 +928,7 @@ export function SessionList() {
                           }}
                         >
                           <EyeOff className="mr-2 size-3.5" />
-                          隐藏该项目
+                          {t("sessionList.list.hideProject")}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         {/* 项目入口（任务 11 拆域接线）：管理弹框 scope = 本分组项目 */}
@@ -921,7 +936,7 @@ export function SessionList() {
                           data-testid="group-manage-tags"
                           onSelect={() => setManageScope({ projectPath })}
                         >
-                          管理标签
+                          {t("sessionList.list.manageTags")}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -929,8 +944,8 @@ export function SessionList() {
                     <button
                       type="button"
                       data-testid="group-new"
-                      aria-label={`在 ${basename(projectPath)} 新建会话`}
-                      title={`在 ${basename(projectPath)} 新建会话`}
+                      aria-label={t("sessionList.list.newInProject", { name: basename(projectPath) })}
+                      title={t("sessionList.list.newInProject", { name: basename(projectPath) })}
                       disabled={creating}
                       className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:size-6"
                       onClick={(e) => {
@@ -944,11 +959,11 @@ export function SessionList() {
                   {expanded && (
                     <div className="pb-1">
                       {loading && sessions === undefined ? (
-                        <div className="px-2 py-4 text-center text-xs text-muted-foreground">加载中…</div>
+                        <div className="px-2 py-4 text-center text-xs text-muted-foreground">{t("sessionList.list.loading")}</div>
                       ) : tops.length === 0 ? (
                         <div className="flex flex-col items-center gap-1.5 px-4 py-6 text-center">
                           <MessageSquare className="size-6 text-muted-foreground/40" />
-                          <p className="text-xs text-muted-foreground">暂无会话</p>
+                          <p className="text-xs text-muted-foreground">{t("sessionList.list.empty")}</p>
                         </div>
                       ) : (
                         tops.map((s) => (
@@ -985,19 +1000,17 @@ export function SessionList() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>隐藏项目</DialogTitle>
+            <DialogTitle>{t("sessionList.list.hideProjectTitle")}</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-1.5 text-left">
-                <p>将隐藏「{hidePending ? basename(hidePending) : ""}」：侧栏分组不再显示。</p>
-                <p>
-                  它是当前项目，隐藏后将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在设置的项目管理中恢复。
-                </p>
+                <p>{t("sessionList.list.hideProjectDesc1", { name: hidePending ? basename(hidePending) : "" })}</p>
+                <p>{t("sessionList.list.hideProjectDesc2")}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" disabled={hiding} onClick={() => setHidePending(null)}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               type="button"
@@ -1006,7 +1019,7 @@ export function SessionList() {
               data-testid="group-hide-confirm"
               onClick={() => hidePending && void hideProject(hidePending, true)}
             >
-              {hiding ? "隐藏中…" : "确认隐藏"}
+              {hiding ? t("sessionList.list.hiding") : t("sessionList.list.confirmHide")}
             </Button>
           </DialogFooter>
         </DialogContent>

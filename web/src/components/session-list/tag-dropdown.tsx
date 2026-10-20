@@ -11,6 +11,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagRef } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { tagKey, nextSessionTags, type TagDefs } from "./tag-data";
 import type { TagManageScope } from "./tag-manage-dialog";
@@ -68,7 +69,7 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
         useSessionsStore.getState().patchSession(s.id, { tags: res.tags });
       } catch (err) {
         failedIds.push(s.title || s.id);
-        showToast(err instanceof ApiError ? err.message : "标签保存失败", "error");
+        showToast(err instanceof ApiError ? err.message : t("sessionList.tagDropdown.saveFailed"), "error");
       }
       done++;
       if (targets.length > 1) setProgress({ done, total: targets.length });
@@ -85,8 +86,15 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
     if (targets.length > 1) {
       showToast(
         failedIds.length === 0
-          ? `已为 ${targets.length} 个会话${on ? "打上" : "移除"}标签「${ref.name}」`
-          : `${targets.length - failedIds.length}/${targets.length} 成功，${failedIds.length} 个失败`,
+          ? t(on ? "sessionList.tagDropdown.appliedTo" : "sessionList.tagDropdown.removedFrom", {
+              n: targets.length,
+              name: ref.name,
+            })
+          : t("sessionList.tagDropdown.batchResult", {
+              ok: targets.length - failedIds.length,
+              total: targets.length,
+              failed: failedIds.length,
+            }),
         failedIds.length === 0 ? undefined : "error",
       );
     }
@@ -141,22 +149,22 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
         {batch && (
           <p className="px-1 text-xs text-muted-foreground" data-testid="tag-batch-hint">
-            批量标签（{sessions.length} 个会话）：勾选立即保存到全部选中会话
+            {t("sessionList.tagDropdown.batchHint", { n: sessions.length })}
           </p>
         )}
         {empty ? (
           <p className="px-1 py-6 text-center text-xs text-muted-foreground" data-testid="tag-dropdown-empty">
-            暂无标签，可在「管理…」中添加
+            {t("sessionList.tagDropdown.empty")}
           </p>
         ) : (
           <>
-            {renderGroup("global", "全局标签")}
-            {renderGroup("project", "项目标签")}
+            {renderGroup("global", t("sessionList.tagDropdown.globalGroup"))}
+            {renderGroup("project", t("sessionList.tagDropdown.projectGroup"))}
           </>
         )}
         {progress && (
           <p className="px-1 text-xs text-muted-foreground" data-testid="tag-progress">
-            打标中 {progress.done}/{progress.total}…
+            {t("sessionList.tagDropdown.taggingProgress", { done: progress.done, total: progress.total })}
           </p>
         )}
       </div>
@@ -165,12 +173,12 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
           type="button"
           data-testid="tag-manage-open"
           disabled={manageScope === null}
-          title={manageScope === null ? "选中会话跨项目，无法确定管理域" : undefined}
+          title={manageScope === null ? t("sessionList.tagDropdown.manageUnavailable") : undefined}
           onClick={onManage}
           className="flex min-h-9 w-full cursor-pointer items-center justify-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
           <Settings2 className="size-3.5" />
-          管理…
+          {t("sessionList.tagDropdown.manage")}
         </button>
       </div>
     </AnchoredPanel>

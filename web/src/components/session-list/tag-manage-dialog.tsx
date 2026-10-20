@@ -8,6 +8,7 @@ import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Trash2, X } from "lucide-rea
 import { api, ApiError } from "@/lib/api";
 import type { TagDefinition } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -64,7 +65,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
       onChanged();
       return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "保存失败");
+      setError(err instanceof ApiError ? err.message : t("sessionList.tagManage.saveFailed"));
       return false;
     } finally {
       setBusy(false);
@@ -74,7 +75,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
   const addTag = async () => {
     const name = newName.trim();
     if (name === "") {
-      setError("标签名不能为空");
+      setError(t("sessionList.tagManage.nameRequired"));
       return;
     }
     if (await putScope(appendTagEntry(entriesOf(), name))) {
@@ -86,7 +87,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
     if (!editing) return;
     const to = editing.value.trim();
     if (to === "") {
-      setError("标签名不能为空");
+      setError(t("sessionList.tagManage.nameRequired"));
       return;
     }
     if (to === editing.from) {
@@ -94,14 +95,14 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
       return;
     }
     if (await putScope(renameTagEntries(entriesOf(), editing.from, to))) {
-      showToast(`已重命名「${editing.from}」→「${to}」；已挂载旧标签的会话将显示为失效标签（灰显），可在列表中清理`);
+      showToast(t("sessionList.tagManage.renamedToast", { from: editing.from, to }));
       setEditing(null);
     }
   };
 
   const removeTag = async (name: string) => {
     if (await putScope(removeTagEntry(entriesOf(), name))) {
-      showToast(`已删除标签「${name}」；挂载记录保留为失效标签（灰显），可在列表中清理`);
+      showToast(t("sessionList.tagManage.deletedToast", { name }));
     }
   };
 
@@ -114,10 +115,12 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
     return (
       <section data-testid={`tag-manage-${groupScope}`}>
         <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">
-          {isProject ? `项目标签（${project.split("/").filter(Boolean).pop() ?? project}）` : "全局标签"}
+          {isProject
+            ? t("sessionList.tagManage.projectGroup", { name: project.split("/").filter(Boolean).pop() ?? project })
+            : t("sessionList.tagManage.globalGroup")}
         </h3>
         <ul className="rounded-md border">
-          {entries.length === 0 && <li className="px-2 py-2 text-xs text-muted-foreground/60">暂无标签</li>}
+          {entries.length === 0 && <li className="px-2 py-2 text-xs text-muted-foreground/60">{t("sessionList.tagManage.noTags")}</li>}
           {entries.map((d, i) => {
             const isEditing = editing?.from === d.name;
             return (
@@ -145,7 +148,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       className="size-11 shrink-0 lg:size-7"
                       disabled={busy}
                       onClick={() => void renameTag()}
-                      aria-label="确认重命名"
+                      aria-label={t("sessionList.tagManage.confirmRename")}
                     >
                       <Pencil className="size-3.5" />
                     </Button>
@@ -155,7 +158,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       size="sm"
                       className="size-11 shrink-0 lg:size-7"
                       onClick={() => setEditing(null)}
-                      aria-label="取消重命名"
+                      aria-label={t("sessionList.tagManage.cancelRename")}
                     >
                       <X className="size-3.5" />
                     </Button>
@@ -172,7 +175,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       className="size-11 shrink-0 lg:size-7"
                       disabled={busy || i === 0}
                       onClick={() => moveTag(d.name, -1)}
-                      aria-label={`上移 ${d.name}`}
+                      aria-label={t("sessionList.tagManage.moveUp", { name: d.name })}
                     >
                       <ArrowUp className="size-3.5" />
                     </Button>
@@ -183,7 +186,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       className="size-11 shrink-0 lg:size-7"
                       disabled={busy || i === entries.length - 1}
                       onClick={() => moveTag(d.name, 1)}
-                      aria-label={`下移 ${d.name}`}
+                      aria-label={t("sessionList.tagManage.moveDown", { name: d.name })}
                     >
                       <ArrowDown className="size-3.5" />
                     </Button>
@@ -194,7 +197,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       className="size-11 shrink-0 lg:size-7"
                       disabled={busy}
                       onClick={() => setEditing({ from: d.name, value: d.name })}
-                      aria-label={`重命名 ${d.name}`}
+                      aria-label={t("sessionList.tagManage.rename", { name: d.name })}
                     >
                       <Pencil className="size-3.5" />
                     </Button>
@@ -205,7 +208,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                       className="size-11 shrink-0 text-destructive hover:text-destructive lg:size-7"
                       disabled={busy}
                       onClick={() => void removeTag(d.name)}
-                      aria-label={`删除 ${d.name}`}
+                      aria-label={t("sessionList.tagManage.delete", { name: d.name })}
                     >
                       <Trash2 className="size-3.5" />
                     </Button>
@@ -219,7 +222,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
           <Input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder={`新增${isProject ? "项目" : "全局"}标签`}
+            placeholder={isProject ? t("sessionList.tagManage.newProjectPlaceholder") : t("sessionList.tagManage.newGlobalPlaceholder")}
             className="h-11 flex-1 text-sm lg:h-8"
             data-testid={`tag-manage-new-input-${groupScope}`}
             onKeyDown={(e) => {
@@ -239,7 +242,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
             data-testid={`tag-manage-add-${groupScope}`}
           >
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            添加
+            {t("sessionList.tagManage.add")}
           </Button>
         </div>
       </section>
@@ -250,10 +253,8 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-sm" data-testid="tag-manage-dialog">
         <DialogHeader>
-          <DialogTitle>管理标签</DialogTitle>
-          <DialogDescription>
-            重命名/删除定义不影响已有挂载记录——会话上的旧标签将显示为失效标签（灰显），可点击清理。
-          </DialogDescription>
+          <DialogTitle>{t("sessionList.tagManage.title")}</DialogTitle>
+          <DialogDescription>{t("sessionList.tagManage.description")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {renderGroup()}
