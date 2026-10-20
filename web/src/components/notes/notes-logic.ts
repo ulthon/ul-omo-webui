@@ -1,4 +1,5 @@
 // 笔记页签纯逻辑（todo 15）：标签解析、标签聚合、本地过滤、相对时间。
+import { formatRelativeTime } from "@/i18n/i18n";
 // 全部无副作用，供 notes-view / note-detail 与单测直接消费。
 // 约定：updatedAt/createdAt/deletedAt 服务端可为 null（库层可空），展示一律容错为 "—"。
 
@@ -45,16 +46,12 @@ export function filterNotesByTag<T extends { tags: string[] }>(
   return notes.filter((n) => n.tags.includes(tag));
 }
 
-/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 超过 30 天显日期；null/非法 → "—" */
+/** 相对时间：30 天内走统一 i18n 实现；超过 30 天保持本页签既有 YYYY-MM-DD 契约；null/非法 → "—" */
 export function relTime(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return "—";
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
-  const diff = now - t;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (now - t < 30 * 86_400_000) return formatRelativeTime(iso, now);
   const d = new Date(t);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

@@ -11,6 +11,7 @@ import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystem
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { formatRelativeTime } from "@/i18n/i18n";
 
 /** 路径末段（项目显示名；根路径 "/" 的空末段回退全路径） */
 function projectLabel(project: string): string {
@@ -52,15 +53,9 @@ function LibraryHint({ libraryPath }: { libraryPath: string }) {
   return <p className="break-all text-xs tabular-nums text-muted-foreground/70">库路径：{libraryPath}</p>;
 }
 
-/** 相对时间中文短格式（CLI 遥测行 "4m ago" 同语义；时钟轻微超前按刚刚处理） */
+/** 相对时间走统一 i18n 实现（CLI 遥测行 "4m ago" 同语义；时钟轻微超前按刚刚处理） */
 function relativeTime(iso: string): string {
-  const at = new Date(iso).getTime();
-  if (Number.isNaN(at)) return "—";
-  const diff = Date.now() - at;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  return formatRelativeTime(iso);
 }
 
 /** 字节人性化（CLI 遥测行同风格：B / 一位小数 K / M） */
