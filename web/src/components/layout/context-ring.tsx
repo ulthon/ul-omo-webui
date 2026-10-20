@@ -12,6 +12,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost, formatTokens, toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { onUsageRefresh } from "@/components/chat/compact-run";
+import { t } from "@/i18n/i18n";
 
 const RADIUS = 15.5;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -84,8 +85,8 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
         <button
           type="button"
           data-testid="context-ring"
-          aria-label={`上下文水位 ${Math.round(pct)}%，点开明细`}
-          title={`上下文 ${Math.round(pct)}%`}
+          aria-label={t("login.contextRing.ringLabel", { pct: Math.round(pct) })}
+          title={t("login.contextRing.ringTitle", { pct: Math.round(pct) })}
           className="relative flex size-9 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <svg viewBox="0 0 36 36" className="size-9 -rotate-90" aria-hidden>
@@ -124,24 +125,24 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
             aria-hidden
           />
           <span data-testid="context-ring-run-state" data-running={running ? "true" : "false"} className="shrink-0">
-            {running ? "运行中" : "空闲"}
+            {running ? t("login.contextRing.running") : t("login.contextRing.idle")}
           </span>
-          <span className="ml-auto truncate text-muted-foreground">上下文水位</span>
+          <span className="ml-auto truncate text-muted-foreground">{t("login.contextRing.usage")}</span>
         </div>
         <div className="space-y-1.5">
-          <DetailRow label="累计" value={`${formatTokens(tokens.total)} tok`} testid="context-ring-tok" />
+          <DetailRow label={t("login.contextRing.total")} value={`${formatTokens(tokens.total)} tok`} testid="context-ring-tok" />
           <DetailRow
-            label="输入 / 输出"
+            label={t("login.contextRing.inputOutput")}
             value={`↑${formatTokens(tokens.input)} ↓${formatTokens(tokens.output)}`}
             testid="context-ring-io"
           />
           <DetailRow
-            label="缓存"
+            label={t("login.contextRing.cache")}
             value={formatTokens(tokens.cacheRead + tokens.cacheWrite)}
             testid="context-ring-cache"
           />
-          <DetailRow label="成本" value={formatCost(stats.cost)} testid="context-ring-cost" />
-          <DetailRow label="上下文" value={`${Math.round(pct)}%`} testid="context-ring-ctx" />
+          <DetailRow label={t("login.contextRing.cost")} value={formatCost(stats.cost)} testid="context-ring-cost" />
+          <DetailRow label={t("login.contextRing.context")} value={`${Math.round(pct)}%`} testid="context-ring-ctx" />
         </div>
       </PopoverContent>
     </Popover>

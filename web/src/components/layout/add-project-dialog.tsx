@@ -32,6 +32,7 @@ import {
   suggestionBackfill,
   suggestDirOf,
 } from "@/components/file-tree/directory-tree-logic";
+import { t } from "@/i18n/i18n";
 
 /** 目录建议状态：记录取数时的目录部分，用于过滤陈旧结果（输入已跨目录段时不展示） */
 interface SuggestState {
@@ -133,7 +134,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
       onOpenChange(false);
       await openProject(path.trim());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "添加失败，请重试");
+      setError(err instanceof ApiError ? err.message : t("login.addProjectDialog.addFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -149,10 +150,8 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
     >
       <form onSubmit={submit}>
       <DialogHeader>
-        <DialogTitle>添加项目</DialogTitle>
-        <DialogDescription>
-          输入服务器上的项目目录绝对路径，服务端校验存在性与合法性。绝对路径（/… 或 Windows 盘符 D:\…）可自动补全目录。
-        </DialogDescription>
+        <DialogTitle>{t("login.addProjectDialog.title")}</DialogTitle>
+        <DialogDescription>{t("login.addProjectDialog.description")}</DialogDescription>
       </DialogHeader>
       <div className="mt-4 space-y-2">
         <div className="flex items-stretch gap-2">
@@ -165,7 +164,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
                 setHighlight(0);
               }}
               onKeyDown={onInputKeyDown}
-              placeholder="如 /home/user/my-project 或 D:\projects\my-project"
+              placeholder={t("login.addProjectDialog.pathPlaceholder")}
               className="h-11"
               data-testid="add-project-input"
               autoFocus
@@ -175,7 +174,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
               <ul
                 data-testid="path-suggestions"
                 role="listbox"
-                aria-label="目录建议"
+                aria-label={t("login.addProjectDialog.dirSuggestions")}
                 className="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-lg border bg-popover p-1 shadow-md"
               >
                 {suggestions.map((entry, i) => (
@@ -211,17 +210,17 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
             data-testid="browse-dir-btn"
             onClick={() => setPickerOpen(true)}
           >
-            浏览…
+            {t("login.addProjectDialog.browse")}
           </Button>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
       <DialogFooter className="mt-4">
         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button type="submit" disabled={submitting || !path.trim()}>
-          {submitting ? "添加中…" : "添加"}
+          {submitting ? t("login.addProjectDialog.adding") : t("login.addProjectDialog.add")}
         </Button>
       </DialogFooter>
       <DirectoryPickerDialog

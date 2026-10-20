@@ -19,6 +19,7 @@ import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { useUiStore } from "@/stores/ui";
+import { t, type MessageKey } from "@/i18n/i18n";
 
 const ChangesView = lazy(() =>
   import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
@@ -29,13 +30,16 @@ const NotesView = lazy(() =>
 
 export type RightRailTab = "todo" | "changes" | "notes" | "stats" | "memory";
 
-const TABS: { id: RightRailTab; label: string }[] = [
-  { id: "todo", label: "任务" },
-  { id: "changes", label: "变更" },
-  { id: "notes", label: "笔记" },
-  { id: "stats", label: "统计" },
-  { id: "memory", label: "记忆" },
-];
+// 页签标签键：完整点分路径字面量映射（i18n 死键检测要求键以字面量被引用）
+const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
+  todo: "login.rightRail.tabTodo",
+  changes: "login.rightRail.tabChanges",
+  notes: "login.rightRail.tabNotes",
+  stats: "login.rightRail.tabStats",
+  memory: "login.rightRail.tabMemory",
+};
+
+const TAB_IDS: RightRailTab[] = ["todo", "changes", "notes", "stats", "memory"];
 
 /** 宽度记忆 localStorage 键与拖宽边界（px） */
 const RAIL_WIDTH_KEY = "ul-omo-webui:right-rail-width";
@@ -69,8 +73,8 @@ function DrawerExternalLinks() {
           href={gitUrl}
           target="_blank"
           rel="noreferrer"
-          aria-label="打开 Git 外链"
-          title={`Git 外链：${gitUrl}`}
+          aria-label={t("login.rightRail.openGitLink")}
+          title={t("login.rightRail.gitLinkTitle", { url: gitUrl })}
           className={RAIL_EXTERNAL_LINK_CLASS}
         >
           <GitBranch className="size-5" />
@@ -81,8 +85,8 @@ function DrawerExternalLinks() {
           href={filesUrl}
           target="_blank"
           rel="noreferrer"
-          aria-label="打开文件管理外链"
-          title={`文件管理外链：${filesUrl}`}
+          aria-label={t("login.rightRail.openFilesLink")}
+          title={t("login.rightRail.filesLinkTitle", { url: filesUrl })}
           className={RAIL_EXTERNAL_LINK_CLASS}
         >
           <FolderOpen className="size-5" />
@@ -126,18 +130,18 @@ function RailLoading({ text }: { text: string }) {
 
 function RailTabBar({ tab, onSwitch }: { tab: RightRailTab; onSwitch: (tab: RightRailTab) => void }) {
   return (
-    <div role="tablist" aria-label="右栏视图" className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
-      {TABS.map((t) => (
+    <div role="tablist" aria-label={t("login.rightRail.views")} className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+      {TAB_IDS.map((id) => (
         <button
-          key={t.id}
+          key={id}
           type="button"
           role="tab"
-          aria-selected={tab === t.id}
-          data-testid={`right-rail-tab-${t.id}`}
-          onClick={() => onSwitch(t.id)}
-          className={TAB_CLASS(tab === t.id)}
+          aria-selected={tab === id}
+          data-testid={`right-rail-tab-${id}`}
+          onClick={() => onSwitch(id)}
+          className={TAB_CLASS(tab === id)}
         >
-          {t.label}
+          {t(TAB_LABEL_KEY[id])}
         </button>
       ))}
     </div>
@@ -161,7 +165,7 @@ function RailBody({
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
   return (
-    <Suspense fallback={<RailLoading text={tab === "notes" ? "加载笔记视图…" : "加载变更视图…"} />}>
+    <Suspense fallback={<RailLoading text={tab === "notes" ? t("login.rightRail.loadingNotes") : t("login.rightRail.loadingChanges")} />}>
       {tab === "notes" ? <NotesView dirtyRef={notesDirtyRef} /> : <ChangesView />}
     </Suspense>
   );
@@ -189,7 +193,7 @@ export function RightRail({
 
   const switchTab = (next: RightRailTab) => {
     if (tab === "notes" && next !== "notes" && notesDirtyRef.current) {
-      if (!window.confirm("笔记有未保存的修改，离开将丢失。确定离开吗？")) return;
+      if (!window.confirm(t("login.rightRail.confirmLeaveNotes"))) return;
     }
     setTab(next);
   };
@@ -234,7 +238,7 @@ export function RightRail({
           w-1.5 命中区 + hover/focus 视觉反馈；宽度内联样式承载拖宽 */}
       {open ? (
         <aside
-          aria-label="右栏"
+          aria-label={t("login.rightRail.rail")}
           data-testid="right-rail"
           className="relative hidden shrink-0 flex-col border-l bg-background lg:flex"
           style={{ width }}
@@ -242,7 +246,7 @@ export function RightRail({
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="拖拽调整右栏宽度"
+            aria-label={t("login.rightRail.resizeHandle")}
             aria-valuenow={width}
             aria-valuemin={RAIL_WIDTH_MIN}
             aria-valuemax={RAIL_WIDTH_MAX}
@@ -261,13 +265,13 @@ export function RightRail({
         </aside>
       ) : (
         <aside
-          aria-label="右栏（已折叠）"
+          aria-label={t("login.rightRail.railCollapsed")}
           className="hidden w-10 shrink-0 flex-col items-center border-l bg-background py-2 lg:flex"
         >
           <button
             type="button"
-            aria-label="展开右栏"
-            title="展开右栏"
+            aria-label={t("login.rightRail.expandRail")}
+            title={t("login.rightRail.expandRail")}
             onClick={onToggle}
             className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
           >
@@ -280,7 +284,7 @@ export function RightRail({
           截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于 toast z-50（沿用 W5-15 结论）。
           A6：头部承载自第二层行迁入的 git/files 外链（桌面折叠条不受影响） */}
       <aside
-        aria-label="右栏"
+        aria-label={t("login.rightRail.rail")}
         data-testid="right-rail-drawer"
         className={`fixed inset-y-0 right-0 z-[45] flex w-80 flex-col border-l bg-background transition-transform duration-200 lg:hidden ${
           open ? "translate-x-0" : "translate-x-full"

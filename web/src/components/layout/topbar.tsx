@@ -14,7 +14,7 @@ import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
-import { LANGUAGE_KV, useLocaleStore, type Locale } from "@/i18n/i18n";
+import { LANGUAGE_KV, useLocaleStore, t, type Locale, type MessageKey } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
@@ -67,13 +67,13 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 /** 项目权限预设合法档位（镜像引擎包 @code-yeongyu/senpi 的 PERMISSION_PRESET_NAMES，
  * 2026.10.10 版 bundle 实证；各档描述按引擎 PERMISSION_PRESET_RULES 如实转述）。
  * 空值 = 无预设 = 引擎默认行为（full-access 全部自动放行）。 */
-const PERMISSION_PRESET_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "full-access", label: "full-access（全部自动放行）" },
-  { value: "workspace", label: "workspace（项目内读写与命令放行，项目外访问询问）" },
-  { value: "accept-edits", label: "accept-edits（编辑放行，命令与项目外访问询问）" },
-  { value: "auto", label: "auto（安全操作自动放行，其余询问）" },
-  { value: "read-only", label: "read-only（只读放行，编辑与命令询问）" },
-  { value: "ask", label: "ask（全部询问）" },
+const PERMISSION_PRESET_OPTIONS: ReadonlyArray<{ value: string; labelKey: MessageKey }> = [
+  { value: "full-access", labelKey: "login.topbar.presetFullAccess" },
+  { value: "workspace", labelKey: "login.topbar.presetWorkspace" },
+  { value: "accept-edits", labelKey: "login.topbar.presetAcceptEdits" },
+  { value: "auto", labelKey: "login.topbar.presetAuto" },
+  { value: "read-only", labelKey: "login.topbar.presetReadOnly" },
+  { value: "ask", labelKey: "login.topbar.presetAsk" },
 ];
 
 /** 设置面板项目区：权限预设下拉（选中即 PATCH 落服务端 kv）+ 重启引擎按钮。
@@ -101,9 +101,9 @@ function ProjectPermissionSection() {
       await api.patchProjectMeta({ path: currentProject, permissionPreset: next });
       const ui = useUiStore.getState();
       ui.setProjects(ui.projects.map((p) => (p.projectPath === currentProject ? { ...p, permissionPreset: next } : p)));
-      ui.showToast("权限预设已保存，重启项目引擎后生效", "info");
+      ui.showToast(t("login.topbar.presetSaved"), "info");
     } catch (err) {
-      showError(err, "保存权限预设失败");
+      showError(err, t("login.topbar.presetSaveFailed"));
     } finally {
       setSaving(false);
     }
@@ -115,9 +115,9 @@ function ProjectPermissionSection() {
     try {
       await api.restartProject(currentProject);
       setRestartOpen(false);
-      useUiStore.getState().showToast("项目引擎已重启", "info");
+      useUiStore.getState().showToast(t("login.topbar.engineRestarted"), "info");
     } catch (err) {
-      showError(err, "重启失败，请重试");
+      showError(err, t("login.topbar.restartFailed"));
     } finally {
       setRestarting(false);
     }
@@ -127,7 +127,7 @@ function ProjectPermissionSection() {
     <div className="border-t pt-1">
       <div className="space-y-1.5">
         <label htmlFor="settings-permission-preset" className="text-sm font-medium">
-          权限预设{currentProject && <span className="ml-1.5 font-normal text-muted-foreground" title={currentProject}>{basename(currentProject)}</span>}
+          {t("login.topbar.presetLabel")}{currentProject && <span className="ml-1.5 font-normal text-muted-foreground" title={currentProject}>{basename(currentProject)}</span>}
         </label>
         {currentProject ? (
           <select
@@ -138,17 +138,17 @@ function ProjectPermissionSection() {
             onChange={(e) => void changePreset(e.target.value)}
             className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <option value="">默认（自动放行）</option>
+            <option value="">{t("login.topbar.presetDefault")}</option>
             {PERMISSION_PRESET_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
-                {opt.label}
+                {t(opt.labelKey)}
               </option>
             ))}
           </select>
         ) : (
-          <p className="text-sm text-muted-foreground">尚未选择项目，先在顶栏选择或添加一个项目。</p>
+          <p className="text-sm text-muted-foreground">{t("login.topbar.noProjectSelected")}</p>
         )}
-        <p className="text-xs text-muted-foreground">预设随引擎启动参数生效，变更后需重启项目引擎。</p>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.presetEngineNote")}</p>
       </div>
       <div className="mt-3 flex justify-end">
         <Button
@@ -158,7 +158,7 @@ function ProjectPermissionSection() {
           disabled={!currentProject || restarting}
           onClick={() => setRestartOpen(true)}
         >
-          {restarting ? "重启中…" : "重启引擎"}
+          {restarting ? t("login.topbar.restarting") : t("login.topbar.restartEngine")}
         </Button>
       </div>
 
@@ -170,23 +170,22 @@ function ProjectPermissionSection() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>重启项目引擎</DialogTitle>
+            <DialogTitle>{t("login.topbar.restartTitle")}</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-1.5 text-left">
                 <p>
-                  将停止并重建「{currentProject ? basename(currentProject) : ""}」的引擎进程：
-                  进行中的回合会中断，会话状态在下次访问时自动重建。
+                  {t("login.topbar.restartDesc", { name: currentProject ? basename(currentProject) : "" })}
                 </p>
-                <p>引擎无响应或卡死时可用此操作恢复。</p>
+                <p>{t("login.topbar.restartRecoverNote")}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" disabled={restarting} onClick={() => setRestartOpen(false)}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button type="button" disabled={restarting} data-testid="restart-engine-confirm" onClick={() => void restart()}>
-              {restarting ? "重启中…" : "确认重启"}
+              {restarting ? t("login.topbar.restarting") : t("login.topbar.confirmRestart")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -228,10 +227,10 @@ export function ProjectManagementSection() {
         ui.setCurrentProject(null);
         useSessionsStore.getState().select(null);
       }
-      ui.showToast("已移除项目注册", "info");
+      ui.showToast(t("login.topbar.removedToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "移除失败，请重试", "error");
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.removeFailed"), "error");
     } finally {
       setRemoving(false);
     }
@@ -252,10 +251,10 @@ export function ProjectManagementSection() {
         ui.setCurrentProject(null);
         useSessionsStore.getState().select(null);
       }
-      ui.showToast(hidden ? "已隐藏项目，可在\"已隐藏\"筛选中恢复" : "已恢复显示项目", "info");
+      ui.showToast(hidden ? t("login.topbar.hiddenToast") : t("login.topbar.unhiddenToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : "操作失败，请重试", "error");
+      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.operationFailed"), "error");
     } finally {
       setHiding(false);
     }
@@ -274,7 +273,7 @@ export function ProjectManagementSection() {
         disabled={hiding}
         onClick={() => void setHidden(p.projectPath, false)}
       >
-        取消隐藏
+        {t("login.topbar.unhide")}
       </Button>
     ) : (
       <Button
@@ -287,7 +286,7 @@ export function ProjectManagementSection() {
           p.projectPath === currentProject ? setPendingHide(p.projectPath) : void setHidden(p.projectPath, true)
         }
       >
-        隐藏
+        {t("login.topbar.hide")}
       </Button>
     );
 
@@ -295,9 +294,9 @@ export function ProjectManagementSection() {
     <div className="border-t pt-1">
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">项目管理</p>
+          <p className="text-sm font-medium">{t("login.topbar.management")}</p>
           {/* 正常/已隐藏筛选（A2）：面板内临时视图态（不持久化），计数即容量提示 */}
-          <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label="项目可见性筛选" data-testid="project-visibility-filter">
+          <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label={t("login.topbar.visibilityFilter")} data-testid="project-visibility-filter">
             <button
               type="button"
               role="tab"
@@ -306,7 +305,7 @@ export function ProjectManagementSection() {
               className={`min-h-7 rounded px-2 text-xs ${view === "normal" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => setView("normal")}
             >
-              正常 {projects.length - hiddenCount}
+              {t("login.topbar.filterNormal", { n: projects.length - hiddenCount })}
             </button>
             <button
               type="button"
@@ -316,14 +315,14 @@ export function ProjectManagementSection() {
               className={`min-h-7 rounded px-2 text-xs ${view === "hidden" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => setView("hidden")}
             >
-              已隐藏 {hiddenCount}
+              {t("login.topbar.filterHidden", { n: hiddenCount })}
             </button>
           </div>
         </div>
         {projects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">尚无已注册项目。</p>
+          <p className="text-sm text-muted-foreground">{t("login.topbar.noProjects")}</p>
         ) : visible.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{view === "hidden" ? "没有已隐藏的项目。" : "全部项目均已隐藏。"}</p>
+          <p className="text-sm text-muted-foreground">{view === "hidden" ? t("login.topbar.noHiddenProjects") : t("login.topbar.allHidden")}</p>
         ) : (
           <ul className="space-y-1">
             {visible.map((p) => (
@@ -337,13 +336,13 @@ export function ProjectManagementSection() {
                   {p.missing && (
                     <span
                       className="inline-flex shrink-0 items-center rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
-                      title="项目目录已不存在"
+                      title={t("login.topbar.missingTitle")}
                     >
-                      已丢失
+                      {t("login.topbar.missingBadge")}
                     </span>
                   )}
                   {p.projectPath === currentProject && (
-                    <span className="shrink-0 text-[10px] leading-none text-muted-foreground">当前</span>
+                    <span className="shrink-0 text-[10px] leading-none text-muted-foreground">{t("login.topbar.currentBadge")}</span>
                   )}
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">
@@ -355,7 +354,7 @@ export function ProjectManagementSection() {
                     data-testid="project-remove-button"
                     onClick={() => setPending(p.projectPath)}
                   >
-                    移除
+                    {t("login.topbar.remove")}
                   </Button>
                 </span>
               </li>
@@ -372,19 +371,17 @@ export function ProjectManagementSection() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>移除项目</DialogTitle>
+            <DialogTitle>{t("login.topbar.removeTitle")}</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-1.5 text-left">
-                <p>将移除「{pending ? basename(pending) : ""}」的项目注册。</p>
-                <p>
-                  若移除的是当前项目，将回到空会话状态；项目内会话数据不受影响，重新添加可恢复置顶/改名/标签。
-                </p>
+                <p>{t("login.topbar.removeDesc", { name: pending ? basename(pending) : "" })}</p>
+                <p>{t("login.topbar.removeDescNote")}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" disabled={removing} onClick={() => setPending(null)}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               type="button"
@@ -393,7 +390,7 @@ export function ProjectManagementSection() {
               data-testid="project-remove-confirm"
               onClick={() => void remove()}
             >
-              {removing ? "移除中…" : "确认移除"}
+              {removing ? t("login.topbar.removing") : t("login.topbar.confirmRemove")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -408,19 +405,17 @@ export function ProjectManagementSection() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>隐藏项目</DialogTitle>
+            <DialogTitle>{t("login.topbar.hideTitle")}</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-1.5 text-left">
-                <p>将隐藏「{pendingHide ? basename(pendingHide) : ""}」：侧栏分组不再显示。</p>
-                <p>
-                  若隐藏的是当前项目，将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在"已隐藏"筛选中恢复。
-                </p>
+                <p>{t("login.topbar.hideDesc", { name: pendingHide ? basename(pendingHide) : "" })}</p>
+                <p>{t("login.topbar.hideDescNote")}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" disabled={hiding} onClick={() => setPendingHide(null)}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               type="button"
@@ -429,7 +424,7 @@ export function ProjectManagementSection() {
               data-testid="project-hide-confirm"
               onClick={() => pendingHide && void setHidden(pendingHide, true)}
             >
-              {hiding ? "隐藏中…" : "确认隐藏"}
+              {hiding ? t("login.topbar.hiding") : t("login.topbar.confirmHide")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -443,10 +438,10 @@ export function ProjectManagementSection() {
  * localStorage）；改档即存即生效（session-list 从 ui store 读档位派生分组顺序）。
  * added 档对存量项目（迁移前注册，createdAt 同为迁移时刻）退化为最近打开时间稳定序，
  * 文案如实注明。手动档的拖拽/上移下移交互在侧栏分组头（session-list.tsx）。 */
-const PROJECT_SORT_OPTIONS: ReadonlyArray<{ value: ProjectSortMode; label: string }> = [
-  { value: "activity", label: "活动时间（默认）" },
-  { value: "added", label: "添加时间" },
-  { value: "manual", label: "手动拖拽" },
+const PROJECT_SORT_OPTIONS: ReadonlyArray<{ value: ProjectSortMode; labelKey: MessageKey }> = [
+  { value: "activity", labelKey: "login.topbar.sortActivity" },
+  { value: "added", labelKey: "login.topbar.sortAdded" },
+  { value: "manual", labelKey: "login.topbar.sortManual" },
 ];
 
 function SidebarSortSection() {
@@ -461,7 +456,7 @@ function SidebarSortSection() {
       useUiStore.getState().setProjectSort(mode);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存排序设置失败", "error");
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.sortSaveFailed"), "error");
       }
     } finally {
       setSaving(false);
@@ -471,9 +466,9 @@ function SidebarSortSection() {
   return (
     <div className="border-t pt-1">
       <div className="space-y-1.5">
-        <p className="text-sm font-medium">侧栏</p>
-        <p className="text-xs text-muted-foreground">项目分组排序</p>
-        <div role="radiogroup" aria-label="项目分组排序" data-testid="project-sort-group" className="space-y-1">
+        <p className="text-sm font-medium">{t("login.topbar.sidebarHeading")}</p>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.projectSort")}</p>
+        <div role="radiogroup" aria-label={t("login.topbar.projectSort")} data-testid="project-sort-group" className="space-y-1">
           {PROJECT_SORT_OPTIONS.map((opt) => (
             <label key={opt.value} className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7" data-testid={`project-sort-option-${opt.value}`}>
               <input
@@ -485,12 +480,12 @@ function SidebarSortSection() {
                 onChange={() => void changeSort(opt.value)}
                 className="size-4 accent-primary"
               />
-              {opt.label}
+              {t(opt.labelKey)}
             </label>
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          按添加时间排序时，升级前注册的历史项目以最近打开时间为准；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。
+          {t("login.topbar.sortNote")}
         </p>
       </div>
     </div>
@@ -513,7 +508,7 @@ export function ConversationSection() {
       useUiStore.getState().setThinkingDefaultExpanded(expanded);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存对话设置失败", "error");
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.chatSaveFailed"), "error");
       }
     } finally {
       setSaving(false);
@@ -523,7 +518,7 @@ export function ConversationSection() {
   return (
     <div className="border-t pt-1">
       <div className="space-y-1.5">
-        <p className="text-sm font-medium">对话</p>
+        <p className="text-sm font-medium">{t("login.topbar.chatHeading")}</p>
         <label className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7" data-testid="thinking-default-expanded-option">
           <input
             type="checkbox"
@@ -532,20 +527,20 @@ export function ConversationSection() {
             onChange={(e) => void changeExpanded(e.target.checked)}
             className="size-4 accent-primary"
           />
-          思考块默认展开
+          {t("login.topbar.thinkingExpanded")}
         </label>
         <p className="text-xs text-muted-foreground">
-          开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。
+          {t("login.topbar.thinkingNote")}
         </p>
       </div>
     </div>
   );
 }
 
-/** 语言档位选项：标签用各语言自我称谓，硬编码双语（设置弹层文案的目录迁移属任务4） */
-const LANGUAGE_OPTIONS: ReadonlyArray<{ value: Locale; label: string }> = [
-  { value: "zh-CN", label: "中文" },
-  { value: "en", label: "English" },
+/** 语言档位选项：标签用各语言自我称谓入字典（login.topbar.langZh/langEn，两档同值） */
+const LANGUAGE_OPTIONS: ReadonlyArray<{ value: Locale; labelKey: MessageKey }> = [
+  { value: "zh-CN", labelKey: "login.topbar.langZh" },
+  { value: "en", labelKey: "login.topbar.langEn" },
 ];
 
 /** 设置面板"语言"分区（任务2）：界面语言二档单选（中文/English），档位存 meta_kv
@@ -563,7 +558,7 @@ export function LanguageSection() {
       useLocaleStore.getState().setLocale(next);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存语言设置失败", "error");
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.langSaveFailed"), "error");
       }
     } finally {
       setSaving(false);
@@ -573,8 +568,8 @@ export function LanguageSection() {
   return (
     <div className="border-t pt-1">
       <div className="space-y-1.5">
-        <p className="text-sm font-medium">语言</p>
-        <div role="radiogroup" aria-label="界面语言" data-testid="language-group" className="space-y-1">
+        <p className="text-sm font-medium">{t("login.topbar.languageHeading")}</p>
+        <div role="radiogroup" aria-label={t("login.topbar.uiLanguage")} data-testid="language-group" className="space-y-1">
           {LANGUAGE_OPTIONS.map((opt) => (
             <label
               key={opt.value}
@@ -590,11 +585,11 @@ export function LanguageSection() {
                 onChange={() => void changeLocale(opt.value)}
                 className="size-4 accent-primary"
               />
-              {opt.label}
+              {t(opt.labelKey)}
             </label>
           ))}
         </div>
-        <p className="text-xs text-muted-foreground">切换立即生效，登录后全设备同步。</p>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.langNote")}</p>
       </div>
     </div>
   );
@@ -619,7 +614,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       useUiStore.getState().setExternalLinks({ gitUrl: next.gitUrl || null, filesUrl: next.filesUrl || null });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "保存失败，请重试");
+      setError(err instanceof ApiError ? err.message : t("login.topbar.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -629,33 +624,33 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
     <>
       <form onSubmit={submit}>
         <DialogHeader>
-          <DialogTitle>设置</DialogTitle>
+          <DialogTitle>{t("login.topbar.settings")}</DialogTitle>
           <DialogDescription>
-            外链指向反代挂载的自托管工具（如 cgit、filebrowser），留空则隐藏对应入口；项目区管理当前项目的权限预设与引擎进程。
+            {t("login.topbar.settingsDesc")}
           </DialogDescription>
         </DialogHeader>
         <div className="mt-4 space-y-3">
           <div className="space-y-1.5">
             <label htmlFor="settings-git-url" className="text-sm font-medium">
-              Git 外链地址
+              {t("login.topbar.gitUrlLabel")}
             </label>
             <Input
               id="settings-git-url"
               value={git}
               onChange={(e) => setGit(e.target.value)}
-              placeholder="https://git.example.com 或 /git"
+              placeholder={t("login.topbar.gitUrlPlaceholder")}
               inputMode="url"
             />
           </div>
           <div className="space-y-1.5">
             <label htmlFor="settings-files-url" className="text-sm font-medium">
-              文件管理外链地址
+              {t("login.topbar.filesUrlLabel")}
             </label>
             <Input
               id="settings-files-url"
               value={files}
               onChange={(e) => setFiles(e.target.value)}
-              placeholder="https://files.example.com 或 /files"
+              placeholder={t("login.topbar.filesUrlPlaceholder")}
               inputMode="url"
             />
           </div>
@@ -663,10 +658,10 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
         </div>
         <DialogFooter className="mt-4">
           <Button type="button" variant="outline" onClick={onDone}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={submitting}>
-            {submitting ? "保存中…" : "保存"}
+            {submitting ? t("login.topbar.saving") : t("common.save")}
           </Button>
         </DialogFooter>
       </form>
@@ -687,9 +682,9 @@ function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
   const currentProject = useUiStore((s) => s.currentProject);
   return (
     <>
-      <DropdownMenuLabel>项目</DropdownMenuLabel>
+      <DropdownMenuLabel>{t("login.topbar.projectMenu")}</DropdownMenuLabel>
       {projects.length === 0 && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">尚无项目，先添加一个</div>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">{t("login.topbar.noProjectsMenu")}</div>
       )}
       {projects.map((p) => (
         <DropdownMenuItem
@@ -712,7 +707,7 @@ function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
       <DropdownMenuSeparator />
       <DropdownMenuItem onSelect={onAddProject}>
         <FolderPlus className="mr-2 size-4" />
-        添加项目…
+        {t("login.topbar.addProject")}
       </DropdownMenuItem>
     </>
   );
@@ -756,8 +751,8 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
 
   const noModels = modelsLoaded && models.length === 0;
   const modelLabel = noModels
-    ? "无可用模型"
-    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : "加载中…"));
+    ? t("login.topbar.noModels")
+    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : t("login.topbar.modelLoading")));
 
   const selectModel = (value: string) => {
     if (useUiStore.getState().selectedModel === value) return;
@@ -767,7 +762,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
-      <Button variant="ghost" size="icon" className="lg:hidden" aria-label="打开侧栏" onClick={toggleDrawer}>
+      <Button variant="ghost" size="icon" className="lg:hidden" aria-label={t("login.topbar.openSidebar")} onClick={toggleDrawer}>
         <Menu className="size-5" />
       </Button>
 
@@ -779,7 +774,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             <button
               type="button"
               data-testid="mobile-session-identity"
-              aria-label="会话与项目，点按切换项目"
+              aria-label={t("login.topbar.sessionIdentity")}
               className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               {selectedSession && (
@@ -796,7 +791,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
                 className="flex w-full min-w-0 items-center gap-0.5 text-[11px] leading-tight text-muted-foreground"
               >
                 <span className="min-w-0 truncate">
-                  {currentProject ? basename(currentProject) : "选择项目"}
+                  {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
                 </span>
                 <ChevronDown className="size-3 shrink-0" aria-hidden />
               </span>
@@ -812,7 +807,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             {/* 窄屏 max-w 收敛（todo 26 走查修复：390 顶栏溢出 scrollWidth=430；sm 起保持原桌面宽度） */}
             <Button variant="ghost" className="max-w-[32vw] gap-1.5 px-2 sm:max-w-xs">
               <span className="truncate font-medium">
-                {currentProject ? basename(currentProject) : "选择项目"}
+                {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
               </span>
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
             </Button>
@@ -833,7 +828,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             variant="ghost"
             size="icon"
             className="size-11"
-            aria-label="打开任务面板"
+            aria-label={t("login.topbar.openTodoPanel")}
             data-testid="todo-panel-toggle"
             onClick={onToggleTodoPanel}
           >
@@ -844,7 +839,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             variant="ghost"
             size="icon"
             className="size-11"
-            aria-label="设置"
+            aria-label={t("login.topbar.settings")}
             data-testid="settings-button"
             onClick={() => setSettingsOpen(true)}
           >
@@ -852,7 +847,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
           </Button>
           <span
             className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
-            title={connection === "online" ? "已连接" : "重连中"}
+            title={connection === "online" ? t("login.topbar.online") : t("login.topbar.reconnecting")}
           />
         </div>
       ) : (
@@ -864,14 +859,14 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
                 data-testid="model-switch"
                 disabled={noModels}
                 className="max-w-[26vw] gap-1.5 px-2 sm:max-w-[240px]"
-                title={noModels ? "引擎未提供可用模型，发送已禁用" : (selectedModel ?? undefined)}
+                title={noModels ? t("login.topbar.noModelsTitle") : (selectedModel ?? undefined)}
               >
                 <span className={`truncate text-xs ${noModels ? "text-muted-foreground" : ""}`}>{modelLabel}</span>
                 {!noModels && <ChevronDown className="size-4 shrink-0 text-muted-foreground" />}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-96 w-72 overflow-y-auto">
-              <DropdownMenuLabel>模型</DropdownMenuLabel>
+              <DropdownMenuLabel>{t("login.topbar.modelMenu")}</DropdownMenuLabel>
               {providerGroups.map(([provider, list]) => (
                 <div key={provider}>
                   <div className="px-2 py-1 text-[11px] text-muted-foreground" title={provider}>
@@ -897,7 +892,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             variant="ghost"
             size="icon"
             className="size-11"
-            aria-label="设置"
+            aria-label={t("login.topbar.settings")}
             data-testid="settings-button"
             onClick={() => setSettingsOpen(true)}
           >
@@ -905,7 +900,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
           </Button>
           <span
             className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}
-            title={connection === "online" ? "已连接" : "重连中"}
+            title={connection === "online" ? t("login.topbar.online") : t("login.topbar.reconnecting")}
           />
         </div>
       )}

@@ -17,6 +17,7 @@ import { FolderOpen, GitBranch } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
+import { t } from "@/i18n/i18n";
 import { readSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
@@ -194,8 +195,8 @@ export function AppShell() {
                     href={gitUrl}
                     target="_blank"
                     rel="noreferrer"
-                    aria-label="打开 Git 外链"
-                    title={`Git 外链：${gitUrl}`}
+                    aria-label={t("login.shell.openGitLink")}
+                    title={t("login.shell.gitLinkTitle", { url: gitUrl })}
                     className={EXTERNAL_LINK_CLASS}
                   >
                     <GitBranch className="size-5" />
@@ -206,8 +207,8 @@ export function AppShell() {
                     href={filesUrl}
                     target="_blank"
                     rel="noreferrer"
-                    aria-label="打开文件管理外链"
-                    title={`文件管理外链：${filesUrl}`}
+                    aria-label={t("login.shell.openFilesLink")}
+                    title={t("login.shell.filesLinkTitle", { url: filesUrl })}
                     className={EXTERNAL_LINK_CLASS}
                   >
                     <FolderOpen className="size-5" />
@@ -219,13 +220,13 @@ export function AppShell() {
           <div className="min-h-0 flex-1">
             {!booted ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                加载中…
+                {t("login.shell.booting")}
               </div>
             ) : bootFailed ? (
               <div className="flex h-full flex-col items-center justify-center gap-3">
-                <p className="text-sm text-muted-foreground">加载失败，请检查服务是否可用</p>
+                <p className="text-sm text-muted-foreground">{t("login.shell.bootFailed")}</p>
                 <Button variant="outline" size="sm" onClick={retry}>
-                  重试
+                  {t("login.shell.retry")}
                 </Button>
               </div>
             ) : (

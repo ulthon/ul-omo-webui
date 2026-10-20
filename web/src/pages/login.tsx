@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
-import { applyInitialLocale } from "@/i18n/i18n";
+import { applyInitialLocale, t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -43,7 +43,7 @@ export function LoginPage() {
       await api.login(password);
       window.location.assign("/");
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? "密码错误" : "登录失败，请重试");
+      setError(err instanceof ApiError && err.status === 401 ? t("login.passwordError") : t("login.loginFailed"));
       setSubmitting(false);
     }
   };
@@ -52,19 +52,19 @@ export function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-8 shadow-sm">
         <h1 className="text-xl font-semibold tracking-tight">ul-omo webui</h1>
-        <p className="mt-1 text-sm text-muted-foreground">输入访问密码登录</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t("login.subtitle")}</p>
         <div className="mt-6 space-y-3">
           <Input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="密码"
+            placeholder={t("login.passwordPlaceholder")}
             autoFocus
             autoComplete="current-password"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={submitting || checking || !password}>
-            {submitting ? "登录中…" : "登录"}
+            {submitting ? t("login.submitting") : t("login.submit")}
           </Button>
         </div>
       </form>

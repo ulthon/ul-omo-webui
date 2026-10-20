@@ -4,6 +4,7 @@
 import { X } from "lucide-react";
 import { useUiStore } from "@/stores/ui";
 import { SessionList } from "@/components/session-list/session-list";
+import { t } from "@/i18n/i18n";
 
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -18,7 +19,7 @@ export function Sidebar() {
     <div className="flex h-full flex-col">
       {/* A1（docs08-r4 任务 5）：手机档收紧 h-9 px-3，lg 档维持 h-10 px-4 不变 */}
       <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 lg:h-10 lg:px-4">
-        <span className="text-sm font-medium">会话</span>
+        <span className="text-sm font-medium">{t("login.sidebar.sessions")}</span>
         <div className="flex min-w-0 items-center">
           {currentProject && (
             <span className="max-w-[160px] truncate text-xs text-muted-foreground" title={currentProject}>
@@ -30,8 +31,8 @@ export function Sidebar() {
               出血 4px 被屏幕裁掉），布局盒仍 36px，任务 5 间距不破坏 */}
           <button
             type="button"
-            aria-label="关闭会话抽屉"
-            title="关闭"
+            aria-label={t("login.sidebar.closeDrawer")}
+            title={t("common.close")}
             data-testid="sidebar-close"
             className="mt-1 -mb-3 flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
             onClick={() => setDrawerOpen(false)}
