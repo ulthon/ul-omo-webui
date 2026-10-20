@@ -5,7 +5,7 @@ import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 
@@ -36,6 +36,7 @@ export function BubbleShell({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const t = useT();
   const time = formatTime(timestamp);
   if (role === "user") {
     return (

@@ -19,7 +19,7 @@ import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { useUiStore } from "@/stores/ui";
-import { t, type MessageKey } from "@/i18n/i18n";
+import { useT, type MessageKey } from "@/i18n/i18n";
 
 const ChangesView = lazy(() =>
   import("@/components/diff/changes-view").then((m) => ({ default: m.ChangesView })),
@@ -62,6 +62,7 @@ const RAIL_EXTERNAL_LINK_CLASS =
 function DrawerExternalLinks() {
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
+  const t = useT();
   if (!gitUrl && !filesUrl) return null;
   return (
     <div
@@ -129,6 +130,7 @@ function RailLoading({ text }: { text: string }) {
 }
 
 function RailTabBar({ tab, onSwitch }: { tab: RightRailTab; onSwitch: (tab: RightRailTab) => void }) {
+  const t = useT();
   return (
     <div role="tablist" aria-label={t("login.rightRail.views")} className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
       {TAB_IDS.map((id) => (
@@ -161,6 +163,7 @@ function RailBody({
   notesDirtyRef: { current: boolean };
   onClose: () => void;
 }) {
+  const t = useT();
   if (tab === "todo") return <TodoPanel sessionId={sessionId} onClose={onClose} />;
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
@@ -191,6 +194,7 @@ export function RightRail({
   const widthRef = useRef(width);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
 
+  const t = useT();
   const switchTab = (next: RightRailTab) => {
     if (tab === "notes" && next !== "notes" && notesDirtyRef.current) {
       if (!window.confirm(t("login.rightRail.confirmLeaveNotes"))) return;

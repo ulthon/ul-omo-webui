@@ -7,7 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { isOrphanTag, orphanTags, visibleTags } from "./tag-data";
 
 interface TagBadgesProps {
@@ -17,6 +17,7 @@ interface TagBadgesProps {
 }
 
 export function TagBadges({ session, definedKeys }: TagBadgesProps) {
+  const t = useT();
   const { shown, extra } = visibleTags(session.tags);
   if (shown.length === 0 || definedKeys === null) return null;
 

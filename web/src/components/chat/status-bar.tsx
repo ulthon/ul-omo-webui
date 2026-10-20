@@ -12,7 +12,7 @@ import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry } from "@/lib/api";
 import { addMessageUsage, formatCost, formatTokens, toUsageStats, type UsageStats } from "./status-bar-data";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { onUsageRefresh } from "./compact-run";
 
 function entryId(entry: WireEntry): string | null {
@@ -27,6 +27,7 @@ export function StatusBar({ sessionId }: { sessionId: string }) {
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
+  const t = useT();
   const running = streaming || hasPendingPermission;
 
   const baselineRef = useRef<UsageStats | null>(null);

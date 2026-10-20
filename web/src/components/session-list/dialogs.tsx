@@ -8,7 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -54,6 +54,7 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
     }
   }, [state]);
 
+  const t = useT();
   if (!state) return null;
 
   const submitRename = async (e: FormEvent) => {

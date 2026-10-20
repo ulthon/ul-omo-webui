@@ -32,7 +32,7 @@ import {
   suggestionBackfill,
   suggestDirOf,
 } from "@/components/file-tree/directory-tree-logic";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 /** 目录建议状态：记录取数时的目录部分，用于过滤陈旧结果（输入已跨目录段时不展示） */
 interface SuggestState {
@@ -97,6 +97,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
     return pickSuggestions(path, suggest.entries);
   }, [path, suggest]);
 
+  const t = useT();
   const choose = (entry: FsBrowseEntry) => {
     setPath(suggestionBackfill(entry));
     setHighlight(0);

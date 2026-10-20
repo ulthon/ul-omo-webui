@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { QUESTION_EXPIRY_GRACE_MS, useQuestionsStore, type QuestionRequest } from "@/stores/questions";
 
@@ -47,6 +47,7 @@ export function QuestionCard({
     return () => clearInterval(timer);
   }, [request.deadlineAtMs]);
 
+  const t = useT();
   const remaining = request.deadlineAtMs - now;
   const expired = remaining <= 0;
 

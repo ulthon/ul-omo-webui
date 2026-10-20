@@ -7,7 +7,8 @@ import { useEffect, useState } from "react";
 import { Ban, FileText, FileWarning, ImageIcon, LoaderCircle } from "lucide-react";
 import { api, type FsFileResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { baseName, formatBytes, imageMimeOf } from "./file-tree-logic";
 
 type PreviewState =
@@ -38,7 +39,7 @@ export function FilePreview({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : t("fileTree.preview.loadFailed");
+        const message = err instanceof Error ? err.message : tSnap("fileTree.preview.loadFailed");
         setState({ kind: "error", message });
         showToast(message, "error");
       });
@@ -47,6 +48,7 @@ export function FilePreview({
     };
   }, [project, path, showToast]);
 
+  const t = useT();
   const mime = imageMimeOf(path);
 
   return (

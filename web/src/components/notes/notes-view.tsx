@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NoteDetail } from "./note-detail";
 import { notesApi, type NoteListItem } from "./notes-api";
@@ -65,6 +65,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
     setReloadSeq((n) => n + 1);
   }, []);
 
+  const t = useT();
   const selectTag = async (tag: string | null) => {
     setActiveTag(tag);
     if (tag === null) {
@@ -262,6 +263,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
 
 export function NotesView({ dirtyRef }: { dirtyRef: { current: boolean } }) {
   const project = useUiStore((s) => s.currentProject);
+  const t = useT();
   if (!project) {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="notes-view">

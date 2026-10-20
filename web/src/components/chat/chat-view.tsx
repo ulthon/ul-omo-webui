@@ -15,7 +15,7 @@ import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { Composer } from "@/components/composer/composer";
 import { CommandBar } from "./command-bar";
 import { useHydrationRunLock } from "./hydration-lock";
@@ -29,6 +29,7 @@ import { StatusBar } from "./status-bar";
 
 /** 无选中会话时的空态提示 */
 function EmptyHint() {
+  const t = useT();
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="flex flex-col items-center gap-3 text-center">
@@ -67,6 +68,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 输入锁拆解（docs08-r4 任务 11）：权限锁（hasPendingPermission）与流式态分离——
   // 权限锁禁一切输入动作（P0-2 实证：挂起权限回合不结束）；流式态输入可用、发送变
   // 排队（Composer 双信号下传）。CommandBar 维持原 composerLocked 单布尔口径不变。
+  const t = useT();
   const composerLocked = streaming || hasPendingPermission;
 
   // 运行态水合锁（docs08-r5 任务 6）：刷新/会话打开起默认按「进行中」阻塞，首个权威

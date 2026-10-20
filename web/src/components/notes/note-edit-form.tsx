@@ -2,7 +2,7 @@
 // 标签（逗号分隔自由输入）+ 保存/取消。头部（返回/标题/编辑预览切换）由宿主
 // NoteDetail 的面板头部承载，本件只渲染表单本体。受控表单，状态由父组件持有
 // （编辑/新建草稿共用）。
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 export interface EditDraft {
   title: string;
@@ -20,6 +20,7 @@ interface NoteEditFormProps {
 }
 
 export function NoteEditForm({ edit, saving, saveError, onChange, onSave, onCancel }: NoteEditFormProps) {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-3" data-testid="note-edit-form">
       <input

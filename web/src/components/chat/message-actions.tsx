@@ -11,7 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +27,7 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
     const entries = s.bySession[sessionId]?.entries;
     return entries?.find((e) => e.id === entryId) ?? null;
   });
+  const t = useT();
   const role = entryRole(entry ?? undefined);
   // fork 目标与重发原文：本条为 user 取自身，assistant 就近向前取 user 条目
   const forkTarget = useMemo(() => {

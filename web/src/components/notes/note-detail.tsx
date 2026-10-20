@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Eye, History, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { Markdown } from "@/components/chat/markdown";
 import {
   DropdownMenu,
@@ -54,6 +54,7 @@ function errorMessage(err: unknown): string {
 }
 
 export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, onClose }: NoteDetailProps) {
+  const t = useT();
   const draft = noteId === null;
   const [note, setNote] = useState<NoteData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

@@ -2,7 +2,7 @@
 // 从 notes-view 拆出（250 LOC 上限）：独立加载态，恢复/删除逻辑由父组件经回调持有。
 import { useEffect, useState } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { notesApi, type NoteListItem } from "./notes-api";
 import { relTime } from "./notes-logic";
 
@@ -31,6 +31,7 @@ export function TrashList({ project, reloadSeq, onRestore, onPurge }: TrashListP
     };
   }, [project, reloadSeq]);
 
+  const t = useT();
   if (notes === null) {
     return <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">{t("notes.trash.loading")}</div>;
   }

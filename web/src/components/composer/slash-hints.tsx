@@ -8,7 +8,7 @@
 // 锚定档不变。
 import { Fragment } from "react";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { flattenSlashItems, type SlashItem, type SlashSection } from "./composer-logic";
 
 const SECTION_ORDER: readonly SlashSection[] = ["extension", "skill", "prompt", "webui"];
@@ -28,6 +28,7 @@ export function SlashHints({
   onClose: () => void;
 }) {
   // 渲染期取词（模块级常量会冻结 import 时的语言档）；webui 段名非中文，直渲染字面量
+  const t = useT();
   const sectionLabels: Record<SlashSection, string> = {
     extension: t("composer.slashHints.extension"),
     skill: t("composer.slashHints.skill"),

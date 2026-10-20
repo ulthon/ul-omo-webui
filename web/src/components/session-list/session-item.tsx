@@ -15,7 +15,7 @@ import type { SessionListItem } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -48,6 +48,7 @@ export function formatRelative(iso: string): string {
 
 function StatusDot({ runState, active }: { runState: SessionRunState | null; active: boolean | null }) {
   // runStates 一旦有值即权威（SSE 见过事件）；null 才回落引擎探询的 active（不回落，仅初始参考）
+  const t = useT();
   let cls = "bg-muted-foreground/30";
   let title = t("sessionList.item.statusIdle");
   if (runState === "waiting") {
@@ -66,6 +67,7 @@ function StatusDot({ runState, active }: { runState: SessionRunState | null; act
 /** 来源标识（W3 todo 10 改名；docs08-r3 C14 紧凑化删「人工」分支——仅 fork 子会话显标，
  * 人工创建无徽标，行内不再有恒显的来源噪音）。 */
 function SourceBadge({ session }: { session: SessionListItem }) {
+  const t = useT();
   if (!session.parentSessionPath) return null;
   return (
     <span
@@ -145,6 +147,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   // 展示用子会话：懒加载结果优先，否则用列表已带出的 knownChildren（props 会变，
   // 不能在 useState 初始值里固化——那会拿不到首屏之后才出现的数据）
+  const t = useT();
   const childRows = children ?? knownChildren ?? [];
   const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
 

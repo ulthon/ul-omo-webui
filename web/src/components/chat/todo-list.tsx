@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { ToolCard } from "./tool-card";
 import { findToolResultMessage, parseTodoSnapshot, type TodoPhase, type TodoStatus } from "./todo-list-data";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 function TaskStatusIcon({ status }: { status: TodoStatus }) {
   const className = "mt-0.5 size-3.5 shrink-0";
@@ -33,6 +33,7 @@ function TaskStatusIcon({ status }: { status: TodoStatus }) {
 }
 
 function TodoTaskRow({ task }: { task: { content: string; status: TodoStatus } }) {
+  const t = useT();
   const { status, content } = task;
   const done = status === "completed" || status === "abandoned";
   return (
@@ -57,6 +58,7 @@ function TodoTaskRow({ task }: { task: { content: string; status: TodoStatus } }
 }
 
 function TodoPhaseGroup({ phase }: { phase: TodoPhase }) {
+  const t = useT();
   return (
     <section>
       <div className="mb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground/80">{phase.name}</div>
@@ -88,6 +90,7 @@ export function TodoList({
     return entries ? findToolResultMessage(entries, toolCallId) : null;
   });
 
+  const t = useT();
   const phases = parseTodoSnapshot(resultMessage, run?.result);
   // 结构化快照不可得：降级通用工具卡片（运行态/结果文本通路仍可用，事件源不可用不崩）
   if (!phases) {

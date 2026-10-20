@@ -4,7 +4,7 @@
 import { X } from "lucide-react";
 import { useUiStore } from "@/stores/ui";
 import { SessionList } from "@/components/session-list/session-list";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -15,6 +15,7 @@ export function Sidebar() {
   const currentProject = useUiStore((s) => s.currentProject);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
 
+  const t = useT();
   return (
     <div className="flex h-full flex-col">
       {/* A1（docs08-r4 任务 5）：手机档收紧 h-9 px-3，lg 档维持 h-10 px-4 不变 */}

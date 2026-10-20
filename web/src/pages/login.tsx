@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
-import { applyInitialLocale, t } from "@/i18n/i18n";
+import { applyInitialLocale, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -34,6 +34,7 @@ export function LoginPage() {
     };
   }, []);
 
+  const t = useT();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!password || submitting) return;

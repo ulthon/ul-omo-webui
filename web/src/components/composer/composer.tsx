@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
@@ -245,6 +245,7 @@ export function Composer({
   // 触发与快照：slashOpen 纯派生自 textarea 值；快照在「从不匹配到匹配」的转移帧
   // 记录打开前内容（覆盖 onChange/回填/草稿恢复全部路径——use-draft 恢复不经 update）
   const slashToken = useMemo(() => slashTriggerToken(text), [text]);
+  const t = useT();
   const slashOpen = slashToken !== null && slashDismissedToken !== slashToken;
   const prevTextRef = useRef("");
   useEffect(() => {
@@ -460,7 +461,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [permissionLocked, hydrationLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast],
+    [permissionLocked, hydrationLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast, t],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
@@ -481,7 +482,7 @@ export function Composer({
     } finally {
       onAborted();
     }
-  }, [sessionId, onAborted, showToast]);
+  }, [sessionId, onAborted, showToast, t]);
 
   // ---------- 图片 ----------
 
@@ -514,7 +515,7 @@ export function Composer({
       if (accepted.length > room) showToast(t("composer.imageLimitKept", { n: MAX_IMAGES, kept: room }), "error");
       setImagesBoth([...imagesRef.current, ...accepted.slice(0, room)]);
     },
-    [showToast, setImagesBoth],
+    [showToast, setImagesBoth, t],
   );
 
   const removeImage = useCallback(
@@ -568,7 +569,7 @@ export function Composer({
         showToast(err instanceof Error ? err.message : t("composer.attachmentSaveFailed"), "error");
       }
     },
-    [sessionId, setAttachmentsBoth, showToast],
+    [sessionId, setAttachmentsBoth, showToast, t],
   );
 
   /** chip 显式移除：本地即删 + fire DELETE（失败 toast；文件另有 48h 按龄清理兜底）。
@@ -583,7 +584,7 @@ export function Composer({
         });
       }
     },
-    [sessionId, setAttachmentsBoth, showToast],
+    [sessionId, setAttachmentsBoth, showToast, t],
   );
 
   // ---------- 输入历史 ----------

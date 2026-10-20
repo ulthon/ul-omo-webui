@@ -5,7 +5,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { SnippetGroupEditor } from "./snippet-group";
@@ -30,7 +31,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
         if (!cancelled) setEntries(res);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
+        if (!cancelled) setError(err instanceof ApiError ? err.message : tSnap("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -38,6 +39,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
   }, [project]);
 
   /** 提交该 scope 整替并更新本地副本（失败保持原状并展示错误） */
+  const t = useT();
   const putScope = async (scope: Scope, next: SnippetEntry[]): Promise<boolean> => {
     if (busy) return false;
     if (scope === "project" && !project) {

@@ -11,7 +11,7 @@ import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystem
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { formatRelativeTime, t } from "@/i18n/i18n";
+import { formatRelativeTime, useT } from "@/i18n/i18n";
 
 /** 路径末段（项目显示名；根路径 "/" 的空末段回退全路径） */
 function projectLabel(project: string): string {
@@ -50,6 +50,7 @@ function PanelMessage({
 
 /** 库路径说明行（空态/遥测卡共享：诚实告知分库位置） */
 function LibraryHint({ libraryPath }: { libraryPath: string }) {
+  const t = useT();
   return <p className="break-all text-xs tabular-nums text-muted-foreground/70">{t("chat.memoryPanel.libraryPath", { path: libraryPath })}</p>;
 }
 
@@ -69,6 +70,7 @@ function formatBytes(n: number): string {
  * telemetry 字段；无实时 wire 帧，数字随手动刷新更新（页签既有语义）。
  * system 体积文案定“system 文件体积”，不声称注入体积（mini-spike 无等价性证明）。 */
 function TelemetryCard({ telemetry, libraryPath }: { telemetry: MemoryTelemetry; libraryPath: string }) {
+  const t = useT();
   return (
     <div data-testid="memory-telemetry" className="shrink-0 space-y-1.5 border-b px-3 py-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -96,6 +98,7 @@ function TelemetryCard({ telemetry, libraryPath }: { telemetry: MemoryTelemetry;
 }
 
 function FactsGroup({ group }: { group: MemoryFactsGroup }) {
+  const t = useT();
   return (
     <section data-testid="memory-fact-group" className="rounded-lg border p-3">
       <h3 className="mb-2 text-xs font-medium text-muted-foreground">{group.file}</h3>
@@ -116,6 +119,7 @@ function FactsGroup({ group }: { group: MemoryFactsGroup }) {
 }
 
 function SystemDoc({ doc }: { doc: MemorySystemDoc }) {
+  const t = useT();
   return (
     <section data-testid="memory-system-doc" className="rounded-lg border p-3">
       <h3 className="mb-2 text-xs font-medium text-muted-foreground">system/{doc.file}</h3>
@@ -165,6 +169,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
     };
   }, [project, reloadTick]);
 
+  const t = useT();
   const failed = project !== null && failedFor === project;
   const stale = project === null || data === null || data.project !== project;
 

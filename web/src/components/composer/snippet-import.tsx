@@ -4,7 +4,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
 import { api, ApiError, type InputHistoryItem } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { isSnippetOverLimit, partitionImportable, snippetPreview } from "./snippet-logic";
@@ -35,13 +36,14 @@ export function SnippetImport({
         if (!cancelled) setItems(res.items);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.importLoadFailed"));
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : tSnap("composer.snippet.importLoadFailed"));
       });
     return () => {
       cancelled = true;
     };
   }, [project]);
 
+  const t = useT();
   const parts = items ? partitionImportable(items) : null;
   const toggle = (index: number) => {
     setChecked((prev) => {

@@ -17,7 +17,7 @@ import { FolderOpen, GitBranch } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { readSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
@@ -90,6 +90,7 @@ export function AppShell() {
   // 按 URL 参数显式 select（见 bootstrap effect），本兜底仅覆盖引导完成前的窗口。
   const selectedSessionId = useSessionsStore((s) => s.selectedId);
   const urlSessionId = useMemo(() => readSessionUrl(), []);
+  const t = useT();
   const todoSessionId = selectedSessionId ?? urlSessionId;
   // 折叠态：无 localStorage 记忆时按视口取默认（lg 展开 / <lg 关闭）；一经交互记忆为准
   const [todoPanelOpen, setTodoPanelOpen] = useState(() => {

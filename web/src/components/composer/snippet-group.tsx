@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ArrowDown, ArrowUp, History, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { SnippetEntry } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { isSnippetOverLimit, moveSnippet, snippetPreview } from "./snippet-logic";
 
 export function SnippetGroupEditor({
@@ -34,6 +34,7 @@ export function SnippetGroupEditor({
   const [newValue, setNewValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const t = useT();
   const validateContent = (content: string): string | null => {
     if (content.trim() === "") return t("composer.snippet.contentRequired");
     if (isSnippetOverLimit(content)) return t("composer.snippet.contentOverLimit");

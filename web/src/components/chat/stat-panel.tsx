@@ -14,7 +14,7 @@ import {
   type TurnSpeedStats,
   type UsageStats,
 } from "./status-bar-data";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 /** 回合速度展示值：≥100 取整，否则 1 位小数（tok/s 量级不锁具体精度） */
 function fmtSpeed(v: number): string {
@@ -93,6 +93,7 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
     setReloadTick((t) => t + 1);
   }, [runState]);
 
+  const t = useT();
   if (!sessionId) return <PanelMessage title={t("chat.statPanel.noSession")} />;
   if (failed) return <PanelMessage title={t("chat.statPanel.unavailable")} hint={t("chat.statPanel.unavailableHint")} />;
 

@@ -8,7 +8,7 @@
 import { Fragment, useMemo } from "react";
 import { Decoration, Diff, Hunk } from "react-diff-view";
 import type { FileData } from "react-diff-view";
-import { t } from "@/i18n/i18n";
+import { t, useT } from "@/i18n/i18n";
 import { parseGitDiff } from "./diff-utils";
 import "react-diff-view/style/index.css";
 import "./diff.css";
@@ -45,6 +45,8 @@ export function diffEmptyReason(file: FileData): string | null {
 }
 
 export function FileDiff({ file, viewType }: { file: FileData; viewType: "unified" | "split" }) {
+  // 订阅 locale（切换即重渲染）；模块级 diffEmptyReason 仍走快照 t——重渲染时取新态
+  const t = useT();
   const reason = diffEmptyReason(file);
   if (reason) {
     return (
@@ -85,6 +87,8 @@ export function DiffView({
   viewType?: "unified" | "split";
 }) {
   const files = useMemo(() => parseGitDiff(diffText), [diffText]);
+  // 订阅 locale（切换即重渲染）；模块级 typeLabel 仍走快照 t——重渲染时取新态
+  const t = useT();
   if (files.length === 0) {
     return <div className="diff-empty">{t("diff.view.parseFailed")}</div>;
   }

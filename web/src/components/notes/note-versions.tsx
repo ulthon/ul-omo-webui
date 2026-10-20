@@ -1,7 +1,7 @@
 // 版本历史面板（todo 15）：列表（savedAt 相对时间 + preview）+ 逐项恢复按钮。
 // 从 note-detail 拆出（250 LOC 上限）：纯展示组件，加载/恢复逻辑由父组件持有。
 import { X } from "lucide-react";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import type { NoteVersionInfo } from "./notes-api";
 import { relTime } from "./notes-logic";
 
@@ -13,6 +13,7 @@ interface VersionPanelProps {
 }
 
 export function VersionPanel({ versions, error, onRestore, onClose }: VersionPanelProps) {
+  const t = useT();
   return (
     <div className="shrink-0 border-b bg-muted/30 px-3 py-2" data-testid="note-versions-panel">
       <div className="mb-1.5 flex items-center gap-2">

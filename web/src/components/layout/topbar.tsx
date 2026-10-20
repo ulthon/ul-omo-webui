@@ -14,7 +14,7 @@ import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
-import { LANGUAGE_KV, useLocaleStore, t, type Locale, type MessageKey } from "@/i18n/i18n";
+import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
@@ -87,6 +87,7 @@ function ProjectPermissionSection() {
   const [restartOpen, setRestartOpen] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
+  const t = useT();
   const showError = (err: unknown, fallback: string) => {
     if (err instanceof ApiError && err.status === 401) return;
     useUiStore.getState().showToast(err instanceof ApiError ? err.message : fallback, "error");
@@ -212,6 +213,7 @@ export function ProjectManagementSection() {
   const [pendingHide, setPendingHide] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
 
+  const t = useT();
   const remove = async () => {
     const target = pending;
     if (!target || removing) return;
@@ -448,6 +450,7 @@ function SidebarSortSection() {
   const projectSort = useUiStore((s) => s.projectSort);
   const [saving, setSaving] = useState(false);
 
+  const t = useT();
   const changeSort = async (mode: ProjectSortMode) => {
     if (mode === projectSort || saving) return;
     setSaving(true);
@@ -500,6 +503,7 @@ export function ConversationSection() {
   const thinkingDefaultExpanded = useUiStore((s) => s.thinkingDefaultExpanded);
   const [saving, setSaving] = useState(false);
 
+  const t = useT();
   const changeExpanded = async (expanded: boolean) => {
     if (expanded === thinkingDefaultExpanded || saving) return;
     setSaving(true);
@@ -550,6 +554,7 @@ export function LanguageSection() {
   const locale = useLocaleStore((s) => s.locale);
   const [saving, setSaving] = useState(false);
 
+  const t = useT();
   const changeLocale = async (next: Locale) => {
     if (next === locale || saving) return;
     setSaving(true);
@@ -603,6 +608,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const t = useT();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -680,6 +686,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
 function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
   const projects = useUiStore((s) => s.projects);
   const currentProject = useUiStore((s) => s.currentProject);
+  const t = useT();
   return (
     <>
       <DropdownMenuLabel>{t("login.topbar.projectMenu")}</DropdownMenuLabel>
@@ -749,6 +756,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
     return [...byProvider.entries()];
   }, [models]);
 
+  const t = useT();
   const noModels = modelsLoaded && models.length === 0;
   const modelLabel = noModels
     ? t("login.topbar.noModels")

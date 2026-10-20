@@ -10,7 +10,8 @@
 import { useEffect, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { snippetActionDisabled } from "./snippet-logic";
 import { SnippetEntryList } from "./snippet-panel";
@@ -51,13 +52,14 @@ export function SnippetDropdown({
         if (!cancelled) setData(res);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : tSnap("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
     };
   }, [project]);
 
+  const t = useT();
   const actionDisabled = snippetActionDisabled(busy, sending);
   const empty = data !== null && data.global.length === 0 && (!project || data.project.length === 0);
 

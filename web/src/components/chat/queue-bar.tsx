@@ -10,7 +10,7 @@ import { api, type QueueItem } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 /** 单条撤销：整队清空 + 保留项重新入队 + 快照对账（不依赖事件回传时序） */
 async function cancelQueuedItem(sessionId: string, target: QueueItem, items: QueueItem[]): Promise<void> {
@@ -30,6 +30,7 @@ export function QueueBar({ sessionId }: { sessionId: string }) {
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
   const showToast = useUiStore((s) => s.showToast);
   const [busy, setBusy] = useState(false);
+  const t = useT();
   const list = items ?? [];
   if (list.length === 0) return null;
 

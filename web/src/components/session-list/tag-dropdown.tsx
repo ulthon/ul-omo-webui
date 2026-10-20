@@ -11,7 +11,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagRef } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { tagKey, nextSessionTags, type TagDefs } from "./tag-data";
 import type { TagManageScope } from "./tag-manage-dialog";
@@ -38,6 +38,7 @@ function initialSelected(sessions: SessionListItem[]): Set<string> {
 
 export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onClose }: TagDropdownProps) {
   const showToast = useUiStore((s) => s.showToast);
+  const t = useT();
   const batch = sessions.length > 1;
   // 打开时刻的挂载快照：id → 当前挂载。连续勾选基于快照计算（不依赖行数据回流，
   // 规避竞态），下拉开着期间外部改动不掺和——整替以保存时刻的快照为准（stale 即语义）；

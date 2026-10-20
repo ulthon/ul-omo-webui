@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { ShieldAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { parsePermissionTool, usePermissionsStore, type PermissionRequest } from "@/stores/permissions";
 import { autoAllowKey } from "@/stores/permissions";
@@ -35,6 +35,7 @@ export function PermissionCard({
   const [editorValue, setEditorValue] = useState(request.prefill ?? "");
   const [alwaysAllow, setAlwaysAllow] = useState(false);
 
+  const t = useT();
   const respond = async (payload: { value?: string; confirmed?: boolean }) => {
     if (busy) return;
     setBusy(true);

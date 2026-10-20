@@ -1,5 +1,6 @@
 // i18n 基建：语言 store、t() 取词插值、相对时间与整数格式化。
 // 双静态 import（禁懒加载防首帧闪烁）；模块顶层不触碰 document/navigator/localStorage。
+import { useCallback } from "react";
 import { create } from "zustand";
 import { zh } from "./zh";
 import { en } from "./en";
@@ -115,9 +116,8 @@ function interpolate(template: string, vars: Record<string, unknown> | undefined
   );
 }
 
-/** 缺键：dev 告警后回退 zh 值再回退键名；prod 静默。当前双语 satisfies 锁定，回退不可达。 */
-export function t(key: MessageKey, vars?: Record<string, unknown>): string {
-  const locale = useLocaleStore.getState().locale;
+/** 纯取词核心：按给定 locale 查目录并插值（t 与 useT 共用；无状态无副作用） */
+function translate(locale: Locale, key: MessageKey, vars?: Record<string, unknown>): string {
   const entry = (locale === "en" ? pick(en, key) : undefined) ?? pick(zh, key);
   if (entry === undefined) {
     if (import.meta.env.DEV) console.warn(`[i18n] 缺键: ${key}`);
@@ -128,6 +128,23 @@ export function t(key: MessageKey, vars?: Record<string, unknown>): string {
   const n = Number(vars?.n);
   const form = new Intl.PluralRules(locale === "en" ? "en" : "zh-CN").select(n);
   return interpolate(form === "one" ? entry.one : entry.other, vars);
+}
+
+/** 缺键：dev 告警后回退 zh 值再回退键名；prod 静默。当前双语 satisfies 锁定，回退不可达。
+ * 快照取词（非 React 调用点）：每次读 store 当前态；React 组件请用 useT（t() 是快照，
+ * 语言切换不触发重渲染）。 */
+export function t(key: MessageKey, vars?: Record<string, unknown>): string {
+  return translate(useLocaleStore.getState().locale, key, vars);
+}
+
+/** React 订阅取词（组件/自定义 hook 专用）：订阅 locale，切换即重渲染；
+ * 返回的取词函数签名与 t() 完全一致，调用点无需改动。 */
+export function useT(): (key: MessageKey, vars?: Record<string, unknown>) => string {
+  const locale = useLocaleStore((s) => s.locale);
+  return useCallback(
+    (key: MessageKey, vars?: Record<string, unknown>) => translate(locale, key, vars),
+    [locale],
+  );
 }
 
 /** 相对时间：60s/1h/24h/30d 阈值走 catalog 键；超 30 天走 Intl 日期；

@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { useMessagesStore } from "@/stores/messages";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import type { WireMessage } from "@/lib/api";
 import type { ChatListItem } from "./message-items";
 
@@ -105,6 +105,7 @@ export function NavRail({
   // 点击刻度：定位到该条目起点（测量缓存 itemStart，未测量项为估值，落点随精化收敛）+
   // 目标行 1.5s 一次性高亮。跳转后虚拟行由 virtualizer 异步重挂（scroll 事件不随 scrollTop
   // 赋值同步），rAF 轮询至多 20 帧等目标行出现在 DOM 再点亮；连点先清上一次（不留悬挂定时器）。
+  const t = useT();
   const onTickClick = (tick: NavTick) => {
     const m = virtualizer.measurementsCache[tick.index];
     if (m) virtualizer.scrollToOffset(m.start, { align: "start" });

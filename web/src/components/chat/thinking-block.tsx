@@ -5,7 +5,7 @@
 // touchmove（passive 监听，不阻断手势）即停跟随，手动重新展开复位跟随。
 import { useEffect, useRef, useState } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 
 export function ThinkingBlock({ thinking, live }: { thinking: string; live: boolean }) {
@@ -43,6 +43,7 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
     };
   }, [open]);
 
+  const t = useT();
   const count = thinking.length;
 
   return (

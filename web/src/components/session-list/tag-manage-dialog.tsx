@@ -8,7 +8,7 @@ import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Trash2, X } from "lucide-rea
 import { api, ApiError } from "@/lib/api";
 import type { TagDefinition } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -37,6 +37,7 @@ type Scope = "global" | "project";
 
 export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDialogProps) {
   const showToast = useUiStore((s) => s.showToast);
+  const t = useT();
   const isProject = typeof scope === "object";
   const project = isProject ? scope.projectPath : "";
   const groupScope: Scope = isProject ? "project" : "global";

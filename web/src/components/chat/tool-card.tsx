@@ -12,7 +12,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
 import { codeTextOf, RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeToolCall } from "./tool-card-data";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
 
 // W5-27 首屏拆分：diff 视图（react-diff-view）按需加载，未展开过 diff 的会话不下载该模块
@@ -55,6 +55,7 @@ export function ToolCard({
     return entries ? findToolResultMessage(entries, toolCallId) : null;
   });
 
+  const t = useT();
   const args = run && run.args != null ? run.args : (partArgs ?? null);
   const isError = resultMessage?.isError === true;
   const resultText = resultTextOf(resultMessage, run?.result);

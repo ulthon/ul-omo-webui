@@ -18,7 +18,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { api, ApiError, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import {
   initialDirTree,
   isAbsoluteInput,
@@ -49,6 +50,7 @@ interface DirRowProps {
 }
 
 function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle, registeredPaths }: DirRowProps) {
+  const t = useT();
   const expanded = data.expanded.has(path);
   const loading = data.loading.has(path);
   const children = data.children.get(path);
@@ -162,7 +164,7 @@ export function DirectoryTree({
         })
         .catch((err: unknown) => {
           setData((prev) => treeLoadFailed(prev, path));
-          setLoadError(err instanceof Error ? err.message : t("fileTree.tree.loadFailed"));
+          setLoadError(err instanceof Error ? err.message : tSnap("fileTree.tree.loadFailed"));
         });
     },
     [fetchDir],
@@ -186,6 +188,7 @@ export function DirectoryTree({
     [data.expanded, data.children, data.loading, load],
   );
 
+  const t = useT();
   const root = data.children.get("");
   const rootLoading = data.loading.has("");
 
@@ -272,6 +275,7 @@ function PickerBody({
   fetchDir?: DirTreeFetcher;
   registeredPaths?: ReadonlySet<string>;
 }) {
+  const t = useT();
   const fetchDirFn = fetchDir ?? api.fsBrowse;
   const [pathInput, setPathInput] = useState("/");
   const [entries, setEntries] = useState<FsBrowseEntry[]>([]);
@@ -338,7 +342,7 @@ function PickerBody({
           }
         });
     },
-    [fetchDirFn, browsedKey, notFound, listError],
+    [fetchDirFn, browsedKey, notFound, listError, t],
   );
   const browseRef = useRef(browse);
   useEffect(() => {

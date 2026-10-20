@@ -13,7 +13,7 @@ import { useMemo } from "react";
 import { CircleCheck, CircleSlash, ListTodo, Loader2, Square, X } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { findToolResultMessage, parseTodoSnapshot, type TodoPhase, type TodoStatus } from "./todo-list-data";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 /** 折叠记忆 localStorage 键（"1"=开 / "0"=关；无记录=未交互过，由调用方按视口取默认值） */
 const PANEL_PREF_KEY = "ul-omo-webui:todo-panel-open";
@@ -76,6 +76,7 @@ function PanelStatusIcon({ status }: { status: TodoStatus }) {
 }
 
 function PanelPhaseGroup({ phase }: { phase: TodoPhase }) {
+  const t = useT();
   return (
     <section>
       <div className="mb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground/80">{phase.name}</div>
@@ -120,6 +121,7 @@ function PanelEmpty({ text }: { text: string }) {
 export function TodoPanel({ sessionId, onClose }: { sessionId: string | null; onClose?: () => void }) {
   const entries = useMessagesStore((s) => (sessionId ? s.bySession[sessionId]?.entries : undefined));
   const phases = useMemo(() => (entries ? extractLatestTodoPhases(entries) : null), [entries]);
+  const t = useT();
   const total = phases ? phases.reduce((n, p) => n + p.tasks.length, 0) : 0;
   const done = phases ? phases.reduce((n, p) => n + p.tasks.filter((t) => t.status === "completed").length, 0) : 0;
 

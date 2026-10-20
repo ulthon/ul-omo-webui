@@ -17,7 +17,8 @@ import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels } from "@/lib/bootstrap";
 import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（await 之后/promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -169,7 +170,7 @@ export function SessionList() {
       setSearchResults(res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(t("sessionList.list.searchFailed"), "error");
+        useUiStore.getState().showToast(tSnap("sessionList.list.searchFailed"), "error");
       }
     } finally {
       setSearching(false);
@@ -189,6 +190,7 @@ export function SessionList() {
     if (q !== "") void runSearch(q);
   }, [searchInput, runSearch]);
 
+  const t = useT();
   const toggleGroup = (project: string) => {
     const next = !isGroupExpanded(project, currentProject, groupOverrides[project]);
     setGroupOverrides((s) => ({ ...s, [project]: next }));
@@ -336,7 +338,7 @@ export function SessionList() {
         useUiStore.getState().showToast(t("sessionList.list.saveManualOrderFailed"), "error");
       }
     }
-  }, []);
+  }, [t]);
 
   /** 把某项目移到当前展示序的目标位（当前项目组置顶规则不动——kv 序仅作用于其余组） */
   const moveProjectTo = useCallback(

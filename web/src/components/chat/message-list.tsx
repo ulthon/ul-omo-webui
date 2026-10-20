@@ -10,7 +10,7 @@ import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, type ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
@@ -129,6 +129,7 @@ export function MessageList({
   }, [scrollToBottom]);
 
   // 打开会话 / 从空到有内容：定位到底部（测量异步完成，两段式补齐）
+  const t = useT();
   const hasItems = mergedItems.length > 0;
   useEffect(() => {
     if (!hasItems) return;

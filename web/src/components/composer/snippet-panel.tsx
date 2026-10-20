@@ -6,7 +6,8 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, MessageSquareText, Settings2 } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+// tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
+import { t as tSnap, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { snippetPreview } from "./snippet-logic";
@@ -74,6 +75,7 @@ export function SnippetEntryList({
   onInsert: (content: string) => void;
   onSendNow: (content: string) => void;
 }) {
+  const t = useT();
   return (
     <section data-testid={`snippet-group-${scope}`}>
       <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">{label}</h3>
@@ -136,13 +138,14 @@ function SnippetList({
         if (!cancelled) setData(res);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : tSnap("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
     };
   }, [project]);
 
+  const t = useT();
   const empty = data !== null && data.global.length === 0 && (!project || data.project.length === 0);
 
   return (

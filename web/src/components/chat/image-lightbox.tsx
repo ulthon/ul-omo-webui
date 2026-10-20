@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { WirePart } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { ImageOff, X } from "lucide-react";
 
 /** 灯箱：fixed 全屏遮罩 + 图片适配视口；点遮罩或 Esc 关闭；关闭按钮 44px 触控达标 */
@@ -19,6 +19,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string;
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const t = useT();
   return createPortal(
     <div
       role="dialog"
@@ -49,6 +50,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string;
 /** 内联图片 part：缩略展示（限制最大高度），点击进灯箱看大图 */
 export function ImagePart({ part }: { part: WirePart }) {
   const [open, setOpen] = useState(false);
+  const t = useT();
   const data = typeof part.data === "string" ? part.data : "";
   const mimeType = typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "image/png";
   if (!data) return null;
@@ -71,6 +73,7 @@ export function ImagePart({ part }: { part: WirePart }) {
 
 /** 工具产出图占位（image_ref）：get_media 无 REST 路由，按 verification/05 降级——提示不阻塞渲染 */
 export function ImageRefPlaceholder() {
+  const t = useT();
   return (
     <div className="my-1.5 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
       <ImageOff className="size-3.5 shrink-0" />

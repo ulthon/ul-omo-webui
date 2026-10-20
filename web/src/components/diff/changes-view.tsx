@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, CircleCheck, FolderGit2, RefreshCw } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
-import { t } from "@/i18n/i18n";
+import { t, useT } from "@/i18n/i18n";
 import type { FileData } from "react-diff-view";
 import { cleanStatusPath, matchDiffFile, parseGitDiff, statusInfo, type StatusInfo } from "./diff-utils";
 import { FileDiff } from "./diff-view";
@@ -113,6 +113,8 @@ export function ChangesView() {
   const project = useUiStore((s) => s.currentProject);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [reloadSeq, setReloadSeq] = useState(0);
+  // 订阅 locale（切换即重渲染）；模块级 fileMissingNote 仍走快照 t——重渲染时取新态
+  const t = useT();
 
   const load = useCallback(async () => {
     if (!project) {

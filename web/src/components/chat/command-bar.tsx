@@ -5,7 +5,7 @@
 // 命令门链（commands.ts → chat-view → api.prompt）不随显隐变化，输入拦截继续兜底。
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { CHAT_COMMANDS, type ChatCommand } from "./commands";
 import { compactToastText, runCompact } from "./compact-run";
@@ -14,6 +14,7 @@ export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessi
   const showToast = useUiStore((s) => s.showToast);
   const [pending, setPending] = useState<string | null>(null);
 
+  const t = useT();
   const send = async (cmd: ChatCommand) => {
     if (!cmd.supported || busy || hydrationLocked || pending !== null) return;
     setPending(cmd.name);

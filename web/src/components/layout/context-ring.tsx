@@ -12,7 +12,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost, formatTokens, toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { onUsageRefresh } from "@/components/chat/compact-run";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 
 const RADIUS = 15.5;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -33,6 +33,7 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
+  const t = useT();
   const running = streaming || hasPendingPermission;
 
   // 快照：会话打开拉取（切换会话 props 变更即重拉；拉取期间保留旧值防闪烁）

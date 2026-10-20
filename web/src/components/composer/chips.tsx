@@ -11,7 +11,7 @@ import type { ModelInfo } from "@/lib/api";
 import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
 import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
-import { t } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -53,6 +53,7 @@ function ModelPickerBody({ close }: { close: () => void }) {
     return needle ? favoriteModels.filter((v) => v.toLowerCase().includes(needle)) : favoriteModels;
   }, [favoriteModels, query]);
 
+  const t = useT();
   const selectModel = (value: string) => {
     if (useUiStore.getState().selectedModel === value) return;
     useUiStore.getState().setSelectedModel(value);
@@ -147,6 +148,7 @@ export function ModelChip() {
   // 卸载即复位打开态：切走「对话」页签等场景下 Ctrl+P 置位的残留不在回页时突然弹出
   useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
 
+  const t = useT();
   const noModels = modelsLoaded && models.length === 0;
   const label = noModels
     ? t("composer.chips.noModels")
@@ -193,6 +195,7 @@ export function CapsuleModelTag() {
   // 卸载即复位（与 ModelChip 同款；桌面↔手机断点切换时防残留打开态）
   useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
 
+  const t = useT();
   const noModels = modelsLoaded && models.length === 0;
   const full = selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : null);
   const label = noModels ? t("composer.chips.noModelShort") : full !== null ? shortModelName(full) : "…";
@@ -237,6 +240,7 @@ export function ThinkingChip() {
   const options = useMemo(() => thinkingLevelOptions(selectedModelInfo), [selectedModelInfo]);
 
   // 模型未下发 supportedThinkingLevels（或过滤后为空）→ 整体不渲染（非禁用）
+  const t = useT();
   if (options.length === 0) return null;
 
   const select = (level: string) => {
