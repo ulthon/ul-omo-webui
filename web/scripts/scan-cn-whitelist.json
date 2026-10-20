@@ -1,0 +1,22 @@
+[
+  {
+    "path": "components/composer/composer-logic.ts",
+    "reason": "附件标记与图片校验文案（任务3 白名单：粘贴转附件路径提示）"
+  },
+  {
+    "path": "components/session-list/session-item.tsx",
+    "reason": "紧凑时间与行内状态标题（任务3 白名单：Ns/Nm/Nh/Nd 紧凑档不汉化、行内状态词）"
+  },
+  {
+    "path": "components/chat/compact-run.ts",
+    "reason": "引擎透传（任务3 白名单：压缩事件数据格式化为展示文本）"
+  },
+  {
+    "path": "components/chat/todo-list-data.ts",
+    "reason": "引擎透传（任务3 白名单：引擎 todo 清单名的兜底词）"
+  },
+  {
+    "path": "components/chat/tool-card-data.ts",
+    "reason": "引擎透传（任务3 白名单：引擎 diff 统计数据格式化文本）"
+  }
+]

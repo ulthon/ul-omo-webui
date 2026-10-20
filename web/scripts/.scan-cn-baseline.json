@@ -1,0 +1,3201 @@
+{
+  "generatedAt": "2026-10-20T18:32:39.487Z",
+  "total": 639,
+  "entries": [
+    {
+      "file": "src/components/chat/chat-view.tsx",
+      "line": 35,
+      "text": "<p className= text-sm text-muted-foreground >从左侧选择会话，或新建一个会话开始对话</p>"
+    },
+    {
+      "file": "src/components/chat/chat-view.tsx",
+      "line": 211,
+      "text": "<div className= flex h-full items-center justify-center text-sm text-muted-foreground >加载消息…</div>"
+    },
+    {
+      "file": "src/components/chat/chat-view.tsx",
+      "line": 217,
+      "text": "<p className= text-sm text-muted-foreground >消息加载失败，请检查服务是否可用</p>"
+    },
+    {
+      "file": "src/components/chat/chat-view.tsx",
+      "line": 223,
+      "text": "重试"
+    },
+    {
+      "file": "src/components/chat/command-bar.tsx",
+      "line": 27,
+      "text": "showToast(err instanceof ApiError ? err.message :  命令发送失败 ,  error );"
+    },
+    {
+      "file": "src/components/chat/command-bar.tsx",
+      "line": 46,
+      "text": "title={cmd.supported ?  发送   cmd.label   :  引擎不支持：  cmd.note  }"
+    },
+    {
+      "file": "src/components/chat/commands.ts",
+      "line": 25,
+      "text": "note:  压缩上下文：引擎协议面 compact 实证可用（spike 直调 session.compact），webui 端点直调 ,"
+    },
+    {
+      "file": "src/components/chat/commands.ts",
+      "line": 31,
+      "text": "note:  清空上下文：引擎未注册该命令，直发会被模型当作普通消息 ,"
+    },
+    {
+      "file": "src/components/chat/commands.ts",
+      "line": 37,
+      "text": "note:  新建会话：引擎未注册该命令，请用侧栏「新建会话」 ,"
+    },
+    {
+      "file": "src/components/chat/commands.ts",
+      "line": 43,
+      "text": "note:  撤销上一条：引擎未注册该命令，直发会被模型当作普通消息 ,"
+    },
+    {
+      "file": "src/components/chat/commands.ts",
+      "line": 79,
+      "text": "引擎不支持命令   cmd.label ：  cmd.note （实证记录见 docs/verification/05） ,"
+    },
+    {
+      "file": "src/components/chat/image-lightbox.tsx",
+      "line": 38,
+      "text": "aria-label= 关闭预览"
+    },
+    {
+      "file": "src/components/chat/image-lightbox.tsx",
+      "line": 55,
+      "text": "const alt =  消息图片 ;"
+    },
+    {
+      "file": "src/components/chat/image-lightbox.tsx",
+      "line": 61,
+      "text": "aria-label= 查看大图"
+    },
+    {
+      "file": "src/components/chat/image-lightbox.tsx",
+      "line": 76,
+      "text": "工具产出图片暂不可查看"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 53,
+      "text": "return <p className= break-all text-xs tabular-nums text-muted-foreground/70 >库路径：{libraryPath}</p>;"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 75,
+      "text": "<span data-testid= memory-telemetry-today  title= 今日 committed 记忆运行数 >"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 76,
+      "text": "今日 {telemetry.todayCount} 条"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 78,
+      "text": "<span data-testid= memory-telemetry-total  title= facts 条目总数 >"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 79,
+      "text": "库 {telemetry.totalEntries} 条"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 81,
+      "text": "<span data-testid= memory-telemetry-files  title= facts + system 文件数 >"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 82,
+      "text": "{telemetry.fileCount} 个文件"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 85,
+      "text": "最近落条 {telemetry.lastEntryAt ? relativeTime(telemetry.lastEntryAt) :  — }"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 87,
+      "text": "<span data-testid= memory-telemetry-system  title= repo/system/*.md 磁盘字节和 >"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 88,
+      "text": "system 文件体积 {formatBytes(telemetry.systemBytes)}"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 110,
+      "text": "<p className= text-xs text-muted-foreground >（该文件暂无条目）</p>"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 123,
+      "text": "<p className= text-xs text-muted-foreground >（空文件）</p>"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 169,
+      "text": "if (!project) return <PanelMessage title= 未选择会话  hint= 选择会话或项目后浏览其记忆库  />;"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 175,
+      "text": "<p className= text-sm text-muted-foreground >记忆不可用</p>"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 181,
+      "text": "重试"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 186,
+      "text": "body = <div className= flex h-full items-center justify-center text-sm text-muted-foreground >加载记忆…</div>;"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 191,
+      "text": "title= 该项目尚无记忆库"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 192,
+      "text": "hint= 记忆按项目目录分库，与同目录 CLI 共用；同目录会话产生记忆后自动建库。"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 200,
+      "text": "title= 该目录暂无记忆条目"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 201,
+      "text": "hint= 记忆按项目目录分库，与同目录 CLI 共用。"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 226,
+      "text": "浏览项目：{projectLabel(project)}"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 231,
+      "text": "aria-label= 刷新记忆"
+    },
+    {
+      "file": "src/components/chat/memory-panel.tsx",
+      "line": 232,
+      "text": "title= 刷新记忆"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 43,
+      "text": "showToast(ok ?  已复制原文  :  复制失败（浏览器未授权剪贴板） , ok ? undefined :  error );"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 54,
+      "text": "showToast( 已创建重试分支，正在重新生成… );"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 60,
+      "text": "showToast(err instanceof ApiError ? err.message :  重试失败 ,  error );"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 74,
+      "text": "aria-label= 消息操作"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 82,
+      "text": "复制原文"
+    },
+    {
+      "file": "src/components/chat/message-actions.tsx",
+      "line": 86,
+      "text": "重试（从此消息重新生成）"
+    },
+    {
+      "file": "src/components/chat/message-bubble.tsx",
+      "line": 50,
+      "text": "排队中"
+    },
+    {
+      "file": "src/components/chat/message-bubble.tsx",
+      "line": 61,
+      "text": "<span>{live ?  正在回复  :  助手 }</span>"
+    },
+    {
+      "file": "src/components/chat/message-bubble.tsx",
+      "line": 69,
+      "text": "<span className= rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive >已中断</span>"
+    },
+    {
+      "file": "src/components/chat/message-list.tsx",
+      "line": 151,
+      "text": "暂无消息，发送第一条消息开始对话"
+    },
+    {
+      "file": "src/components/chat/message-list.tsx",
+      "line": 180,
+      "text": "同步历史…"
+    },
+    {
+      "file": "src/components/chat/message-list.tsx",
+      "line": 197,
+      "text": "回到底部"
+    },
+    {
+      "file": "src/components/chat/nav-rail.tsx",
+      "line": 163,
+      "text": "aria-label={ 跳转到：  tick.title  }"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 13,
+      "text": "select:  权限请求 ,"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 14,
+      "text": "confirm:  确认操作 ,"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 15,
+      "text": "input:  需要输入 ,"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 16,
+      "text": "editor:  需要编辑 ,"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 52,
+      "text": "showToast( 已拒绝，请在下方填写反馈 ,  info );"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 55,
+      "text": "showToast(err instanceof Error ? err.message :  应答失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 68,
+      "text": "showToast(err instanceof Error ? err.message :  取消失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 85,
+      "text": "第 {position}/{total} 个待处理"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 121,
+      "text": "总是允许 {parsePermissionTool(request.title)}（本会话前端自动放行）"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 136,
+      "text": "确认"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 145,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 172,
+      "text": "提交"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 193,
+      "text": "提交全文"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 200,
+      "text": "<span className= text-[11px] text-muted-foreground >不应答将阻塞当前回合</span>"
+    },
+    {
+      "file": "src/components/chat/permission-card.tsx",
+      "line": 209,
+      "text": "忽略并取消"
+    },
+    {
+      "file": "src/components/chat/permission-queue.tsx",
+      "line": 26,
+      "text": "showToast( 已自动允许   tool （总是允许） ,  info );"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 78,
+      "text": "showToast(err instanceof Error ? err.message :  应答失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 88,
+      "text": "showToast( 请至少回答一个问题或填写补充说明 ,  error );"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 117,
+      "text": "助手提问"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 120,
+      "text": "第 {position}/{total} 个待处理"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 126,
+      "text": "<span>等待回答</span>"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 128,
+      "text": "<span>可稍后回答</span>"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 134,
+      "text": "{expired ?  已超时  : deadlineLabel}"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 191,
+      "text": "placeholder= 或输入自定义答案（可选）"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 206,
+      "text": "placeholder= 还有什么要补充的？（可选，提交给助手）"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 215,
+      "text": "{request.waitForAnswer ?  不应答将挂起当前回合（超时自动继续）  :  回合已继续，回答将作为新消息送达 }"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 226,
+      "text": "忽略"
+    },
+    {
+      "file": "src/components/chat/question-card.tsx",
+      "line": 235,
+      "text": "提交回答"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 40,
+      "text": "showToast(err instanceof Error ? err.message :  排队撤销失败 ,  error );"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 49,
+      "text": "<span className= shrink-0 tabular-nums >{list.length} 条待发</span>"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 52,
+      "text": "回合已结束，将在下次发送时执行"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 68,
+      "text": "清空"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 76,
+      "text": "title={item.mode ===  steer  ?  插入：下一回合边界并入当前工作  :  跟答：当前回合做完后执行 }"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 79,
+      "text": "{item.mode ===  steer  ?  插入  :  跟答 }"
+    },
+    {
+      "file": "src/components/chat/queue-bar.tsx",
+      "line": 85,
+      "text": "aria-label= 撤销该条"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 95,
+      "text": "if (!sessionId) return <PanelMessage title= 未选择会话  />;"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 96,
+      "text": "if (failed) return <PanelMessage title= 用量不可用  hint= 统计服务暂时无法访问，稍后自动恢复  />;"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 105,
+      "text": "<StatSection title= 累计 Tokens  testid= stat-tokens >"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 108,
+      "text": "<StatRow label= 输入  value={formatTokens(tokens.input)} testid= stat-tokens-input  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 109,
+      "text": "<StatRow label= 输出  value={formatTokens(tokens.output)} testid= stat-tokens-output  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 110,
+      "text": "<StatRow label= 总计  value={formatTokens(tokens.total)} testid= stat-tokens-total  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 113,
+      "text": "<p className= text-xs text-muted-foreground >用量统计中…</p>"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 117,
+      "text": "<StatSection title= 缓存命中  testid= stat-cache >"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 120,
+      "text": "<StatRow label= 缓存读  value={formatTokens(tokens.cacheRead)} testid= stat-cache-read  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 121,
+      "text": "<StatRow label= 缓存写  value={formatTokens(tokens.cacheWrite)} testid= stat-cache-write  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 124,
+      "text": "<p className= text-xs text-muted-foreground >用量统计中…</p>"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 128,
+      "text": "<StatSection title= 上下文水位  testid= stat-context >"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 131,
+      "text": "<StatRow label= 占用  value={   Math.round(ctx.percent) % } testid= stat-context-percent  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 146,
+      "text": "<p className= text-xs text-muted-foreground >暂无上下文数据</p>"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 150,
+      "text": "<StatSection title= 成本  testid= stat-cost >"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 151,
+      "text": "<StatRow label= 累计费用  value={formatCost(stats?.cost ?? 0)} testid= stat-cost-value  />"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 154,
+      "text": "<StatSection title= 回合速度  testid= stat-speed >"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 158,
+      "text": "label={ 平均（  turns.length  回合） }"
+    },
+    {
+      "file": "src/components/chat/stat-panel.tsx",
+      "line": 179,
+      "text": "暂无数据（回合结束后出现）"
+    },
+    {
+      "file": "src/components/chat/status-bar.tsx",
+      "line": 144,
+      "text": "{running ?  运行中  :  空闲 }"
+    },
+    {
+      "file": "src/components/chat/status-bar.tsx",
+      "line": 155,
+      "text": "↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)} 缓存"
+    },
+    {
+      "file": "src/components/chat/status-bar.tsx",
+      "line": 157,
+      "text": "{stats.context ?   · 上下文   Math.round(stats.context.percent) %  :   }"
+    },
+    {
+      "file": "src/components/chat/status-bar.tsx",
+      "line": 162,
+      "text": "{failed ?  用量不可用  :  用量统计中… }"
+    },
+    {
+      "file": "src/components/chat/thinking-block.tsx",
+      "line": 57,
+      "text": "{live ?  思考中  :  思考过程 }"
+    },
+    {
+      "file": "src/components/chat/thinking-block.tsx",
+      "line": 58,
+      "text": "{count > 0 ?   …   count  字  :  … }"
+    },
+    {
+      "file": "src/components/chat/thinking-block.tsx",
+      "line": 68,
+      "text": "{thinking ||  （暂无内容） }"
+    },
+    {
+      "file": "src/components/chat/todo-list.tsx",
+      "line": 50,
+      "text": "{status ===  in_progress  && <span className= shrink-0 text-[11px] text-primary >进行中</span>}"
+    },
+    {
+      "file": "src/components/chat/todo-list.tsx",
+      "line": 52,
+      "text": "<span className= shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground >已放弃</span>"
+    },
+    {
+      "file": "src/components/chat/todo-list.tsx",
+      "line": 62,
+      "text": "<ul className= space-y-0.5  aria-label={ 任务组：  phase.name  }>"
+    },
+    {
+      "file": "src/components/chat/todo-list.tsx",
+      "line": 113,
+      "text": "{done}/{total} 已完成"
+    },
+    {
+      "file": "src/components/chat/todo-list.tsx",
+      "line": 127,
+      "text": "{running ?  运行中  : isError ?  失败  :  完成 }"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 81,
+      "text": "<ul className= space-y-0.5  aria-label={ 任务组：  phase.name  }>"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 129,
+      "text": "<span className= min-w-0 flex-1 truncate text-sm font-medium >任务清单</span>"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 132,
+      "text": "{done}/{total} 已完成"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 138,
+      "text": "aria-label= 收起任务面板"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 140,
+      "text": "title= 收起任务面板"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 156,
+      "text": "<PanelEmpty text= 未选择会话  />"
+    },
+    {
+      "file": "src/components/chat/todo-panel.tsx",
+      "line": 158,
+      "text": "<PanelEmpty text= 本会话还没有 todo 清单  />"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 113,
+      "text": "{running ?  运行中  : isError ?  失败  :  完成 }"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 123,
+      "text": "<div className= mb-1 text-[11px] font-medium text-muted-foreground/80 >{codeText ?  代码  :  参数 }</div>"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 131,
+      "text": "<div className= text-[11px] font-medium text-muted-foreground/80 >结果</div>"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 133,
+      "text": "<div role= group  aria-label= 结果视图切换  className= flex items-center rounded-md border p-0.5 >"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 146,
+      "text": "{mode ===  diff  ?  Diff  :  文本 }"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 158,
+      "text": "<Suspense fallback={<div className= p-2 text-xs text-muted-foreground >加载 diff 视图…</div>}>"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 174,
+      "text": "{showFull ?  收起结果  :  展开全部 }"
+    },
+    {
+      "file": "src/components/chat/tool-card.tsx",
+      "line": 181,
+      "text": "{running ?  等待工具返回…  : isError ?  （无结果文本）  :  （无文本结果） }"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 67,
+      "text": "placeholder= 搜索模型…"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 75,
+      "text": "无匹配模型"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 82,
+      "text": "收藏"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 151,
+      "text": "?  无可用模型"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 152,
+      "text": ": (selectedModel ?? (models.length > 0 ?    models[0].provider /  models[0].id   :  加载中… ));"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 197,
+      "text": "const label = noModels ?  无模型  : full !== null ? shortModelName(full) :  … ;"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 211,
+      "text": "aria-label={ 当前模型   full ??    ，点击切换 }"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 252,
+      "text": "title={ 思考深度：  selectedThinkingLevel ??  默认   }"
+    },
+    {
+      "file": "src/components/composer/chips.tsx",
+      "line": 257,
+      "text": "{selectedThinkingLevel ??  默认 }"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 368,
+      "text": "setError( /compact 不接受参数：请直接发送 /compact );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 454,
+      "text": "setError( 该会话正在被另一个窗口处理中，请等待其完成后再发送 );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 479,
+      "text": "showToast(err instanceof Error ? err.message :  中断失败 ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 504,
+      "text": "showToast( 图片读取失败 ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 510,
+      "text": "showToast( 最多   MAX_IMAGES  张图片 ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 513,
+      "text": "if (accepted.length > room) showToast( 最多   MAX_IMAGES  张图片，已保留前   room  张 ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 567,
+      "text": "showToast(err instanceof Error ? err.message :  附件保存失败 ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 581,
+      "text": "showToast(err instanceof Error ? err.message :  附件清理失败（48h 后自动清理） ,  error );"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 722,
+      "text": "会话处理中，暂不能发送"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 731,
+      "text": "停止生成"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 747,
+      "text": "<span className= shrink-0 >大段文本（{formatPasteKb(pasteOffer.bytes)}）：</span>"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 754,
+      "text": "原样插入"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 762,
+      "text": "作为附件发送"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 770,
+      "text": "忽略"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 782,
+      "text": "aria-label= 更早一条"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 792,
+      "text": "<span className= hidden shrink-0 sm:inline >Esc 退出</span>"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 796,
+      "text": "aria-label= 更新一条"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 811,
+      "text": "alt= 待发送图片"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 816,
+      "text": "aria-label= 移除图片"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 842,
+      "text": "aria-label= 移除附件"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 861,
+      "text": "aria-label= 输入历史"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 862,
+      "text": "title= 输入历史（↑ 翻阅）"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 874,
+      "text": "aria-label= 引用文件"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 875,
+      "text": "title= 引用文件（插入 @路径）"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 885,
+      "text": "aria-label= 添加图片"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 886,
+      "text": "title= 添加图片（可粘贴截图）"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 900,
+      "text": "aria-label= 常用语"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 901,
+      "text": "title= 常用语"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1027,
+      "text": "aria-label={queueMode ===  followUp  ?  排队模式：跟答  :  排队模式：插入 }"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1030,
+      "text": "?  排队模式：跟答（当前回合做完后执行）。点击切换为插入"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1031,
+      "text": ":  排队模式：插入（下一回合边界并入当前工作）。点击切换为跟答"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1045,
+      "text": "aria-label= 停止生成"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1046,
+      "text": "title= 停止当前回合（排队项保留，将在下次发送时执行）"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1107,
+      "text": "aria-label= 更多"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1108,
+      "text": "title= 更多：历史、@、图片"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1122,
+      "text": "placeholder= 输入消息，Enter 发送，Shift+Enter 换行"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1134,
+      "text": "aria-label={queueAvailable ?  排队发送  :  发送 }"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1135,
+      "text": "title={queueAvailable ?  回合进行中：发送将排队（当前回合结束后执行）  :  发送 }"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1168,
+      "text": "placeholder= 输入消息，Enter 发送，Shift+Enter 换行"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1193,
+      "text": "aria-label={queueAvailable ?  排队发送  :  发送 }"
+    },
+    {
+      "file": "src/components/composer/composer.tsx",
+      "line": 1194,
+      "text": "title={queueAvailable ?  回合进行中：发送将排队（当前回合结束后执行）  :  发送 }"
+    },
+    {
+      "file": "src/components/composer/slash-hints.tsx",
+      "line": 14,
+      "text": "extension:  引擎命令 ,"
+    },
+    {
+      "file": "src/components/composer/slash-hints.tsx",
+      "line": 15,
+      "text": "skill:  技能 ,"
+    },
+    {
+      "file": "src/components/composer/slash-hints.tsx",
+      "line": 16,
+      "text": "prompt:  用户提示 ,"
+    },
+    {
+      "file": "src/components/composer/slash-hints.tsx",
+      "line": 52,
+      "text": "<div className= overflow-y-auto p-1.5  role= listbox  aria-label= 斜杠命令提示 >"
+    },
+    {
+      "file": "src/components/composer/slash-hints.tsx",
+      "line": 54,
+      "text": "<p className= px-2 py-2 text-xs text-muted-foreground  data-testid= slash-empty >无匹配命令</p>"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 53,
+      "text": "if (!cancelled) setLoadError(err instanceof ApiError ? err.message :  加载失败 );"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 74,
+      "text": "{!data && !loadError && <p className= px-1 py-1 text-xs text-muted-foreground/60 >加载中…</p>}"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 82,
+      "text": "还没有常用语，可在「查看全部」中添加"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 90,
+      "text": "label={ 项目常用语（  project.split( / ).filter(Boolean).pop() ?? project ） }"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 99,
+      "text": "label= 全局常用语"
+    },
+    {
+      "file": "src/components/composer/snippet-dropdown.tsx",
+      "line": 116,
+      "text": "查看全部"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 37,
+      "text": "if (content.trim() ===   ) return  内容不能为空 ;"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 38,
+      "text": "if (isSnippetOverLimit(content)) return  内容超过 4KB 上限 ;"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 48,
+      "text": "if (!canEdit) return fail( 无当前项目，无法添加项目常用语 );"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 69,
+      "text": "if (!window.confirm( 删除该常用语？ )) return;"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 94,
+      "text": "从输入历史导入"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 99,
+      "text": "{entries.length === 0 && <li className= px-2 py-2 text-xs text-muted-foreground/60 >暂无常用语</li>}"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 121,
+      "text": "aria-label= 确认修改"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 131,
+      "text": "aria-label= 取消修改"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 148,
+      "text": "aria-label={ 上移：  snippetPreview(e.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 159,
+      "text": "aria-label={ 下移：  snippetPreview(e.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 170,
+      "text": "aria-label={ 编辑：  snippetPreview(e.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 181,
+      "text": "aria-label={ 删除：  snippetPreview(e.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 195,
+      "text": "placeholder={ 新增  scope ===  global  ?  全局  :  项目  常用语 }"
+    },
+    {
+      "file": "src/components/composer/snippet-group.tsx",
+      "line": 211,
+      "text": "添加"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 37,
+      "text": "if (!cancelled) setLoadError(err instanceof ApiError ? err.message :  加载输入历史失败 );"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 67,
+      "text": "aria-label= 返回管理"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 72,
+      "text": "<DialogTitle className= text-base font-medium >从输入历史导入</DialogTitle>"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 75,
+      "text": "勾选该项目输入历史（新在前）导入为项目级常用语；超过 4KB 的条目无法导入。"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 78,
+      "text": "{!parts && <p className= p-3 text-xs text-muted-foreground/60 >加载中…</p>}"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 80,
+      "text": "<p className= p-3 text-xs text-muted-foreground/60 >该项目暂无输入历史</p>"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 93,
+      "text": "aria-label={ 选择：  snippetPreview(item.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 110,
+      "text": "超限"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 122,
+      "text": "{parts ?  已选   checked.size  条  :   }"
+    },
+    {
+      "file": "src/components/composer/snippet-import.tsx",
+      "line": 134,
+      "text": "导入所选"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 32,
+      "text": "if (!cancelled) setError(err instanceof ApiError ? err.message :  加载失败 );"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 43,
+      "text": "setError( 无当前项目，无法保存项目常用语 );"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 57,
+      "text": "setError(err instanceof ApiError ? err.message :  保存失败 );"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 88,
+      "text": "aria-label= 返回常用语面板"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 93,
+      "text": "<DialogTitle className= text-base font-medium >管理常用语</DialogTitle>"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 98,
+      "text": "label={ 项目常用语（  projectName ??  无当前项目  ） }"
+    },
+    {
+      "file": "src/components/composer/snippet-manage.tsx",
+      "line": 108,
+      "text": "label= 全局常用语"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 80,
+      "text": "<p className= px-1 py-1 text-xs text-muted-foreground/60 >暂无</p>"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 98,
+      "text": "aria-label={ 直接发送：  snippetPreview(entry.content, 20)  }"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 138,
+      "text": "if (!cancelled) setLoadError(err instanceof ApiError ? err.message :  加载失败 );"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 150,
+      "text": "<DialogTitle className= text-base font-medium >常用语</DialogTitle>"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 160,
+      "text": "管理"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 163,
+      "text": "{!data && !loadError && <p className= text-xs text-muted-foreground/60 >加载中…</p>}"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 175,
+      "text": "<p>还没有常用语，把常用指令存起来一键插入或发送</p>"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 177,
+      "text": "去管理"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 186,
+      "text": "label={ 项目常用语（  project.split( / ).filter(Boolean).pop() ?? project ） }"
+    },
+    {
+      "file": "src/components/composer/snippet-panel.tsx",
+      "line": 195,
+      "text": "label= 全局常用语"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 54,
+      "text": "if (entry.status.includes( ? )) return  未跟踪文件：尚未纳入 Git 管理，暂无 diff 内容。 ;"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 55,
+      "text": "return  该文件改动已暂存（staged），暂无未暂存的工作区 diff。 ;"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 159,
+      "text": "<span className= shrink-0 text-sm font-medium >未提交变更</span>"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 161,
+      "text": "<span className= min-w-0 truncate text-xs text-muted-foreground >{state.entries.length} 个文件</span>"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 165,
+      "text": "diff 过大已截断"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 170,
+      "text": "aria-label= 刷新变更"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 179,
+      "text": "<CenteredHint text= 请先添加项目  />"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 181,
+      "text": "<CenteredHint text= 加载变更…  />"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 184,
+      "text": "<p className= text-sm text-muted-foreground >变更加载失败：{state.message}</p>"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 190,
+      "text": "重试"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 196,
+      "text": "title= 无 Git 仓库"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 197,
+      "text": "hint= 当前项目目录不是 git 仓库，没有变更可查看"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 202,
+      "text": "title= 工作区干净"
+    },
+    {
+      "file": "src/components/diff/changes-view.tsx",
+      "line": 203,
+      "text": "hint= 没有未提交的变更"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 65,
+      "text": "if (x ===  ?  || y ===  ? ) return { code:  ?? , label:  未跟踪 , tone:  untracked  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 66,
+      "text": "if (x ===  !  || y ===  ! ) return { code:  ! , label:  已忽略 , tone:  untracked  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 68,
+      "text": "if ( ADU .includes(x) &&  ADU .includes(y)) return { code:  UU , label:  冲突 , tone:  conflict  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 72,
+      "text": "return { code:  A , label:  新增 , tone:  add  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 74,
+      "text": "return { code:  M , label:  修改 , tone:  modify  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 76,
+      "text": "return { code:  D , label:  删除 , tone:  delete  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 78,
+      "text": "return { code:  R , label:  重命名 , tone:  rename  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 80,
+      "text": "return { code:  C , label:  复制 , tone:  rename  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 82,
+      "text": "return { code:  T , label:  类型变更 , tone:  modify  };"
+    },
+    {
+      "file": "src/components/diff/diff-utils.ts",
+      "line": 87,
+      "text": "return pick(x) ?? pick(y) ?? { code: xy.trim() ||  - , label:  变更 , tone:  modify  };"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 16,
+      "text": "add:  新增 ,"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 17,
+      "text": "modify:  修改 ,"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 18,
+      "text": "delete:  删除 ,"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 19,
+      "text": "rename:  重命名 ,"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 20,
+      "text": "copy:  复制 ,"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 31,
+      "text": "if (file.isBinary) return  二进制文件，无文本 diff ;"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 32,
+      "text": "if (file.type ===  rename ) return  纯重命名（内容未变） ;"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 33,
+      "text": "return  无文本差异（二进制或仅元数据变更） ;"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 49,
+      "text": "{diffFilePath(file) ||  diff 片段 }"
+    },
+    {
+      "file": "src/components/diff/diff-view.tsx",
+      "line": 78,
+      "text": "return <div className= diff-empty >无法解析 diff 内容</div>;"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 79,
+      "text": "aria-label={   expanded ?  收起  :  展开     entry.name  }"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 115,
+      "text": "已添加"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 164,
+      "text": "setLoadError(err instanceof Error ? err.message :  目录加载失败 );"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 192,
+      "text": "<div data-testid= directory-tree  role= tree  aria-label= 服务器目录  className= min-h-0 >"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 203,
+      "text": "<div className= p-3 text-sm text-muted-foreground >目录为空</div>"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 306,
+      "text": "setListError( 路径必须是绝对路径（如 /home/user/proj 或 D:  projects  proj） );"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 325,
+      "text": "setListError(res.error ===  eacces  ?  目录不可读  : null);"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 333,
+      "text": "setListError( 路径不存在：  target （可新建并添加） );"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 336,
+      "text": "setListError(err instanceof Error ? err.message :  目录加载失败 );"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 380,
+      "text": "setCreateError(err instanceof Error ? err.message :  创建失败，请重试 );"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 399,
+      "text": "<DialogTitle>浏览目录</DialogTitle>"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 401,
+      "text": "输入路径回车跳转，单击选中、双击进入；已添加的项目置灰标记，仍可双击进入"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 412,
+      "text": "placeholder= 如 /home/user/my-project 或 D:  rojects  y-project"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 415,
+      "text": "aria-label= 目录路径"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 438,
+      "text": "显示隐藏目录"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 441,
+      "text": "<div className= min-h-0 flex-1 overflow-auto rounded-lg border p-1  data-testid= dir-picker-list  role= listbox  aria-la"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 448,
+      "text": "{listError === null && entries.length > 0 ?  （均为隐藏目录，可打开上方开关显示）  :  目录为空 }"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 461,
+      "text": "title={registered ?  已添加：仍可双击进入  : undefined}"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 483,
+      "text": "已添加"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 494,
+      "text": "{confirmState ? confirmState.target :  尚未选择目录 }"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 503,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/file-tree/directory-tree.tsx",
+      "line": 516,
+      "text": "{confirmState?.kind ===  create  ? (creating ?  创建中…  :  新建并添加 ) :  选择此目录 }"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 98,
+      "text": "引用文件"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 100,
+      "text": "<DialogDescription className= text-xs >选择文件插入 @ 路径引用（只读预览）</DialogDescription>"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 114,
+      "text": "placeholder= 模糊搜索文件名或路径…"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 120,
+      "text": "aria-label= 清空搜索"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 142,
+      "text": "正在索引文件…"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 145,
+      "text": "无匹配文件"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 193,
+      "text": "返回文件列表"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 201,
+      "text": "选择文件查看只读预览"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 212,
+      "text": "索引中（搜索渐进可用）"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 215,
+      "text": "已索引   allPaths.length  项"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 220,
+      "text": "搜索时 Enter 插入首个命中"
+    },
+    {
+      "file": "src/components/file-tree/file-picker.tsx",
+      "line": 228,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 40,
+      "text": "const message = err instanceof Error ? err.message :  文件加载失败 ;"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 61,
+      "text": "{state.data.truncated ?   · 已截断  :   }"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 72,
+      "text": "插入引用"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 86,
+      "text": "预览加载失败"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 100,
+      "text": "<p className= text-sm >图片文件（{mime}）</p>"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 102,
+      "text": "只读接口不下发二进制内容，暂无法内联显示；完整大小 {formatBytes(data.size)}"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 110,
+      "text": "<p className= text-sm >二进制文件，不渲染内容</p>"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 121,
+      "text": "<p className= text-sm >空文件</p>"
+    },
+    {
+      "file": "src/components/file-tree/file-preview.tsx",
+      "line": 129,
+      "text": "文件较大（完整 {formatBytes(data.size)}），仅显示前 2 MB。预览为只读，请用本地编辑器打开原文件查看完整内容。"
+    },
+    {
+      "file": "src/components/file-tree/file-tree.tsx",
+      "line": 141,
+      "text": "showToast(err instanceof Error ? err.message :  目录加载失败 ,  error );"
+    },
+    {
+      "file": "src/components/file-tree/file-tree.tsx",
+      "line": 185,
+      "text": "<div className= p-3 text-sm text-muted-foreground >目录为空</div>"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 136,
+      "text": "setError(err instanceof ApiError ? err.message :  添加失败，请重试 );"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 152,
+      "text": "<DialogTitle>添加项目</DialogTitle>"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 154,
+      "text": "输入服务器上的项目目录绝对路径，服务端校验存在性与合法性。绝对路径（/… 或 Windows 盘符 D:\\…）可自动补全目录。"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 168,
+      "text": "placeholder= 如 /home/user/my-project 或 D:  rojects  y-project"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 178,
+      "text": "aria-label= 目录建议"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 214,
+      "text": "浏览…"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 221,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/layout/add-project-dialog.tsx",
+      "line": 224,
+      "text": "{submitting ?  添加中…  :  添加 }"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 87,
+      "text": "aria-label={ 上下文水位   Math.round(pct) %，点开明细 }"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 88,
+      "text": "title={ 上下文   Math.round(pct) % }"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 127,
+      "text": "{running ?  运行中  :  空闲 }"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 129,
+      "text": "<span className= ml-auto truncate text-muted-foreground >上下文水位</span>"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 132,
+      "text": "<DetailRow label= 累计  value={   formatTokens(tokens.total)  tok } testid= context-ring-tok  />"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 134,
+      "text": "label= 输入 / 输出"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 139,
+      "text": "label= 缓存"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 143,
+      "text": "<DetailRow label= 成本  value={formatCost(stats.cost)} testid= context-ring-cost  />"
+    },
+    {
+      "file": "src/components/layout/context-ring.tsx",
+      "line": 144,
+      "text": "<DetailRow label= 上下文  value={   Math.round(pct) % } testid= context-ring-ctx  />"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 33,
+      "text": "{ id:  todo , label:  任务  },"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 34,
+      "text": "{ id:  changes , label:  变更  },"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 35,
+      "text": "{ id:  notes , label:  笔记  },"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 36,
+      "text": "{ id:  stats , label:  统计  },"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 37,
+      "text": "{ id:  memory , label:  记忆  },"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 72,
+      "text": "aria-label= 打开 Git 外链"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 73,
+      "text": "title={ Git 外链：  gitUrl  }"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 84,
+      "text": "aria-label= 打开文件管理外链"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 85,
+      "text": "title={ 文件管理外链：  filesUrl  }"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 129,
+      "text": "<div role= tablist  aria-label= 右栏视图  className= flex shrink-0 items-center gap-1 border-b px-2 py-1.5 >"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 164,
+      "text": "<Suspense fallback={<RailLoading text={tab ===  notes  ?  加载笔记视图…  :  加载变更视图… } />}>"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 192,
+      "text": "if (!window.confirm( 笔记有未保存的修改，离开将丢失。确定离开吗？ )) return;"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 237,
+      "text": "aria-label= 右栏"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 245,
+      "text": "aria-label= 拖拽调整右栏宽度"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 264,
+      "text": "aria-label= 右栏（已折叠）"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 269,
+      "text": "aria-label= 展开右栏"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 270,
+      "text": "title= 展开右栏"
+    },
+    {
+      "file": "src/components/layout/right-rail.tsx",
+      "line": 283,
+      "text": "aria-label= 右栏"
+    },
+    {
+      "file": "src/components/layout/sidebar.tsx",
+      "line": 21,
+      "text": "<span className= text-sm font-medium >会话</span>"
+    },
+    {
+      "file": "src/components/layout/sidebar.tsx",
+      "line": 33,
+      "text": "aria-label= 关闭会话抽屉"
+    },
+    {
+      "file": "src/components/layout/sidebar.tsx",
+      "line": 34,
+      "text": "title= 关闭"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 71,
+      "text": "{ value:  full-access , label:  full-access（全部自动放行）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 72,
+      "text": "{ value:  workspace , label:  workspace（项目内读写与命令放行，项目外访问询问）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 73,
+      "text": "{ value:  accept-edits , label:  accept-edits（编辑放行，命令与项目外访问询问）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 74,
+      "text": "{ value:  auto , label:  auto（安全操作自动放行，其余询问）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 75,
+      "text": "{ value:  read-only , label:  read-only（只读放行，编辑与命令询问）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 76,
+      "text": "{ value:  ask , label:  ask（全部询问）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 104,
+      "text": "ui.showToast( 权限预设已保存，重启项目引擎后生效 ,  info );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 106,
+      "text": "showError(err,  保存权限预设失败 );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 118,
+      "text": "useUiStore.getState().showToast( 项目引擎已重启 ,  info );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 120,
+      "text": "showError(err,  重启失败，请重试 );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 130,
+      "text": "权限预设{currentProject && <span className= ml-1.5 font-normal text-muted-foreground  title={currentProject}>{basename(curre"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 141,
+      "text": "<option value=  >默认（自动放行）</option>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 149,
+      "text": "<p className= text-sm text-muted-foreground >尚未选择项目，先在顶栏选择或添加一个项目。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 151,
+      "text": "<p className= text-xs text-muted-foreground >预设随引擎启动参数生效，变更后需重启项目引擎。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 161,
+      "text": "{restarting ?  重启中…  :  重启引擎 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 173,
+      "text": "<DialogTitle>重启项目引擎</DialogTitle>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 177,
+      "text": "将停止并重建「{currentProject ? basename(currentProject) :   }」的引擎进程："
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 178,
+      "text": "进行中的回合会中断，会话状态在下次访问时自动重建。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 180,
+      "text": "<p>引擎无响应或卡死时可用此操作恢复。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 186,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 189,
+      "text": "{restarting ?  重启中…  :  确认重启 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 231,
+      "text": "ui.showToast( 已移除项目注册 ,  info );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 234,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  移除失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 255,
+      "text": "ui.showToast(hidden ?  已隐藏项目，可在  已隐藏  筛选中恢复  :  已恢复显示项目 ,  info );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 258,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  操作失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 277,
+      "text": "取消隐藏"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 290,
+      "text": "隐藏"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 298,
+      "text": "<p className= text-sm font-medium >项目管理</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 300,
+      "text": "<div className= flex shrink-0 items-center rounded-md border p-0.5  role= tablist  aria-label= 项目可见性筛选  data-testid= pro"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 309,
+      "text": "正常 {projects.length - hiddenCount}"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 319,
+      "text": "已隐藏 {hiddenCount}"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 324,
+      "text": "<p className= text-sm text-muted-foreground >尚无已注册项目。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 326,
+      "text": "<p className= text-sm text-muted-foreground >{view ===  hidden  ?  没有已隐藏的项目。  :  全部项目均已隐藏。 }</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 340,
+      "text": "title= 项目目录已不存在"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 342,
+      "text": "已丢失"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 346,
+      "text": "<span className= shrink-0 text-[10px] leading-none text-muted-foreground >当前</span>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 358,
+      "text": "移除"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 375,
+      "text": "<DialogTitle>移除项目</DialogTitle>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 378,
+      "text": "<p>将移除「{pending ? basename(pending) :   }」的项目注册。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 380,
+      "text": "若移除的是当前项目，将回到空会话状态；项目内会话数据不受影响，重新添加可恢复置顶/改名/标签。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 387,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 396,
+      "text": "{removing ?  移除中…  :  确认移除 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 411,
+      "text": "<DialogTitle>隐藏项目</DialogTitle>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 414,
+      "text": "<p>将隐藏「{pendingHide ? basename(pendingHide) :   }」：侧栏分组不再显示。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 416,
+      "text": "若隐藏的是当前项目，将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在 已隐藏 筛选中恢复。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 423,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 432,
+      "text": "{hiding ?  隐藏中…  :  确认隐藏 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 447,
+      "text": "{ value:  activity , label:  活动时间（默认）  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 448,
+      "text": "{ value:  added , label:  添加时间  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 449,
+      "text": "{ value:  manual , label:  手动拖拽  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 464,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  保存排序设置失败 ,  error );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 474,
+      "text": "<p className= text-sm font-medium >侧栏</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 475,
+      "text": "<p className= text-xs text-muted-foreground >项目分组排序</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 476,
+      "text": "<div role= radiogroup  aria-label= 项目分组排序  data-testid= project-sort-group  className= space-y-1 >"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 493,
+      "text": "按添加时间排序时，升级前注册的历史项目以最近打开时间为准；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 516,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  保存对话设置失败 ,  error );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 526,
+      "text": "<p className= text-sm font-medium >对话</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 535,
+      "text": "思考块默认展开"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 538,
+      "text": "开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 547,
+      "text": "{ value:  zh-CN , label:  中文  },"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 566,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  保存语言设置失败 ,  error );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 576,
+      "text": "<p className= text-sm font-medium >语言</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 577,
+      "text": "<div role= radiogroup  aria-label= 界面语言  data-testid= language-group  className= space-y-1 >"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 597,
+      "text": "<p className= text-xs text-muted-foreground >切换立即生效，登录后全设备同步。</p>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 622,
+      "text": "setError(err instanceof ApiError ? err.message :  保存失败，请重试 );"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 632,
+      "text": "<DialogTitle>设置</DialogTitle>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 634,
+      "text": "外链指向反代挂载的自托管工具（如 cgit、filebrowser），留空则隐藏对应入口；项目区管理当前项目的权限预设与引擎进程。"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 640,
+      "text": "Git 外链地址"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 646,
+      "text": "placeholder= https://git.example.com 或 /git"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 652,
+      "text": "文件管理外链地址"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 658,
+      "text": "placeholder= https://files.example.com 或 /files"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 666,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 669,
+      "text": "{submitting ?  保存中…  :  保存 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 690,
+      "text": "<DropdownMenuLabel>项目</DropdownMenuLabel>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 692,
+      "text": "<div className= px-2 py-1.5 text-sm text-muted-foreground >尚无项目，先添加一个</div>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 715,
+      "text": "添加项目…"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 759,
+      "text": "?  无可用模型"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 760,
+      "text": ": (selectedModel ?? (models.length > 0 ?    models[0].provider /  models[0].id   :  加载中… ));"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 770,
+      "text": "<Button variant= ghost  size= icon  className= lg:hidden  aria-label= 打开侧栏  onClick={toggleDrawer}>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 782,
+      "text": "aria-label= 会话与项目，点按切换项目"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 799,
+      "text": "{currentProject ? basename(currentProject) :  选择项目 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 815,
+      "text": "{currentProject ? basename(currentProject) :  选择项目 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 836,
+      "text": "aria-label= 打开任务面板"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 847,
+      "text": "aria-label= 设置"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 855,
+      "text": "title={connection ===  online  ?  已连接  :  重连中 }"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 867,
+      "text": "title={noModels ?  引擎未提供可用模型，发送已禁用  : (selectedModel ?? undefined)}"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 874,
+      "text": "<DropdownMenuLabel>模型</DropdownMenuLabel>"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 900,
+      "text": "aria-label= 设置"
+    },
+    {
+      "file": "src/components/layout/topbar.tsx",
+      "line": 908,
+      "text": "title={connection ===  online  ?  已连接  :  重连中 }"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 119,
+      "text": "if (dirty && !window.confirm( 有未保存的修改，确定放弃吗？ )) return;"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 143,
+      "text": "setSaveError( 标题不能为空 );"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 171,
+      "text": "if (noteId === null || !window.confirm( 删除笔记「  note?.title ??    」？可在回收站恢复。 )) return;"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 196,
+      "text": "if (!window.confirm( 恢复到   relTime(version.savedAt)  的版本？当前正文将被覆盖（可再从版本历史找回）。 )) return;"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 226,
+      "text": "<button type= button  onClick={back} aria-label= 返回笔记列表  data-testid= note-back-btn  className={ICON_BTN}>"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 230,
+      "text": "{draft ?  新建笔记  : (note?.title ??   )}"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 236,
+      "text": "编辑"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 240,
+      "text": "<button type= button  data-testid= note-more-btn  aria-label= 笔记操作  className={ICON_BTN}>"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 247,
+      "text": "历史版本"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 256,
+      "text": "删除笔记"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 265,
+      "text": "预览"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 274,
+      "text": "<p className= text-sm text-muted-foreground >笔记加载失败：{loadError}</p>"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 283,
+      "text": "重试"
+    },
+    {
+      "file": "src/components/notes/note-detail.tsx",
+      "line": 287,
+      "text": "<div className= flex h-full items-center justify-center p-6 text-sm text-muted-foreground >加载笔记…</div>"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 26,
+      "text": "placeholder= 标题"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 27,
+      "text": "aria-label= 笔记标题"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 34,
+      "text": "placeholder= 标签（逗号分隔，可留空）"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 35,
+      "text": "aria-label= 笔记标签"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 42,
+      "text": "placeholder= 正文（支持 Markdown）"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 43,
+      "text": "aria-label= 笔记正文"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 52,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/notes/note-edit-form.tsx",
+      "line": 55,
+      "text": "{saving ?  保存中…  :  保存 }"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 18,
+      "text": "<span className= text-xs font-medium >历史版本</span>"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 19,
+      "text": "{versions !== null && <span className= text-[10px] text-muted-foreground >{versions.length} 个</span>}"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 20,
+      "text": "<button type= button  onClick={onClose} aria-label= 收起历史版本  className= ml-auto flex size-8 items-center justify-center r"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 25,
+      "text": "<p className= text-xs text-destructive >版本加载失败：{error}</p>"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 27,
+      "text": "<p className= text-xs text-muted-foreground >加载版本…</p>"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 29,
+      "text": "<p className= text-xs text-muted-foreground >暂无历史版本</p>"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 36,
+      "text": "<p className= truncate text-xs >{v.preview ||  （空内容） }</p>"
+    },
+    {
+      "file": "src/components/notes/note-versions.tsx",
+      "line": 39,
+      "text": "恢复"
+    },
+    {
+      "file": "src/components/notes/notes-api.ts",
+      "line": 43,
+      "text": "throw new ApiError(401,  unauthorized ,  未登录或会话已过期 );"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 34,
+      "text": "return <div className= flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground >加载回收站…</di"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 41,
+      "text": "<p className= text-sm font-medium >回收站为空</p>"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 42,
+      "text": "<p className= mt-1 text-xs text-muted-foreground >软删除的笔记会出现在这里</p>"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 53,
+      "text": "<p className= text-[10px] text-muted-foreground >删除于 {relTime(note.deletedAt)}</p>"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 55,
+      "text": "<button type= button  onClick={() => onRestore(note)} aria-label={ 恢复   note.title  } className= flex size-11 shrink-0 i"
+    },
+    {
+      "file": "src/components/notes/notes-trash.tsx",
+      "line": 58,
+      "text": "<button type= button  onClick={() => onPurge(note)} aria-label={ 彻底删除   note.title  } className= flex size-11 shrink-0 i"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 84,
+      "text": "if (!window.confirm( 删除笔记「  note.title 」？可在回收站恢复。 )) return;"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 97,
+      "text": "showToast( 已恢复「  note.title 」 );"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 105,
+      "text": "if (!window.confirm( 彻底删除「  note.title 」？此操作不可恢复（含全部历史版本）。 )) return;"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 108,
+      "text": "showToast( 已彻底删除「  note.title 」 );"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 154,
+      "text": "<button type= button  onClick={() => setTrashMode(false)} aria-label= 返回笔记列表  data-testid= note-trash-back  className={I"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 157,
+      "text": "<span className= text-sm font-medium >回收站</span>"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 170,
+      "text": "<span className= text-sm font-medium >笔记</span>"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 171,
+      "text": "{ready && <span className= text-xs text-muted-foreground >{visibleNotes.length} 条</span>}"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 181,
+      "text": "新建笔记"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 186,
+      "text": "<button type= button  data-testid= note-more-btn  aria-label= 笔记更多操作  className={ICON_BTN}>"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 193,
+      "text": "回收站"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 201,
+      "text": "<CenteredHint text= 加载笔记…  />"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 204,
+      "text": "<p className= text-sm text-muted-foreground >笔记加载失败：{state.message}</p>"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 206,
+      "text": "重试"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 210,
+      "text": "<EmptyState icon={<StickyNote className= size-10 text-muted-foreground/40  />} title= 暂无笔记  hint= 为当前项目记录第一篇笔记 >"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 212,
+      "text": "新建笔记"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 219,
+      "text": "全部"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 229,
+      "text": "<CenteredHint text={activeTag === null ?  没有笔记  :  没有匹配该标签的笔记 } />"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 249,
+      "text": "<button type= button  onClick={() => void removeNote(note)} aria-label={ 删除   note.title  } className= flex size-11 shri"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 268,
+      "text": "<span className= text-sm font-medium >笔记</span>"
+    },
+    {
+      "file": "src/components/notes/notes-view.tsx",
+      "line": 270,
+      "text": "<CenteredHint text= 请先添加项目  />"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 68,
+      "text": "trimmed ===    ? session.name ?? (session.firstMessage ? session.firstMessage.slice(0, 80) :  (空会话) ) : trimmed;"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 71,
+      "text": "showToast(trimmed ===    ?  已恢复自动命名  :  已重命名 );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 75,
+      "text": "setError(err instanceof ApiError ? err.message :  重命名失败 );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 88,
+      "text": "showToast( 会话已删除 );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 92,
+      "text": "setError(err instanceof ApiError ? err.message :  删除失败 );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 115,
+      "text": "message: err instanceof ApiError ? err.message :  删除失败 ,"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 124,
+      "text": "showToast( 已删除   ids.length  个会话 );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 127,
+      "text": "setError(   failed.length  个会话删除失败：  failed.map((f) => f.title).join( 、 )  );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 128,
+      "text": "showToast( 已删除   ids.length - failed.length /  ids.length  个，其余失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 141,
+      "text": "<DialogTitle>批量删除会话</DialogTitle>"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 143,
+      "text": "将删除 {ids.length} 个会话的记录、元数据与引擎侧文件，终端 omo -r 也不再可见。此操作不可撤销。"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 153,
+      "text": "<li className= text-muted-foreground >…等共 {titles.length} 个</li>"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 164,
+      "text": "我确认删除全部 {ids.length} 个会话（超过 {BULK_DELETE_CONFIRM_THRESHOLD} 个需强化确认）"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 167,
+      "text": "{progress && <p className= text-sm text-muted-foreground >删除中 {progress.done}/{progress.total}…</p>}"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 180,
+      "text": "{busy ?  取消  :  关闭 }"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 188,
+      "text": "{busy ?  删除中…  :  删除   ids.length  个 }"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 202,
+      "text": "<DialogTitle>重命名会话</DialogTitle>"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 203,
+      "text": "<DialogDescription>留空提交可恢复自动命名。</DialogDescription>"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 211,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 214,
+      "text": "{busy ?  保存中…  :  保存 }"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 224,
+      "text": "<DialogTitle>删除会话</DialogTitle>"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 226,
+      "text": "将删除会话记录与元数据，引擎侧文件一并移除，终端 omo -r 也不再可见。此操作不可撤销。"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 235,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/session-list/dialogs.tsx",
+      "line": 238,
+      "text": "{busy ?  删除中…  :  删除 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 171,
+      "text": "useUiStore.getState().showToast( 搜索失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 250,
+      "text": "title:  新会话 ,"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 273,
+      "text": "useUiStore.getState().showToast( 会话已创建，发送首条消息后保存 );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 275,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  创建失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 317,
+      "text": "ui.showToast(hidden ?  已隐藏项目，可在设置的项目管理中恢复  :  已恢复显示项目 ,  info );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 320,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  操作失败，请重试 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 335,
+      "text": "useUiStore.getState().showToast( 保存手动排序失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 488,
+      "text": "setBatchProgress({ label: archived ?  归档中  :  取消归档中 , done: i, total: ids.length });"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 495,
+      "text": "setBatchProgress({ label: archived ?  归档中  :  取消归档中 , done: ids.length, total: ids.length });"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 500,
+      "text": "useUiStore.getState().showToast( 已  archived ?  归档  :  取消归档     ids.length  个会话 );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 504,
+      "text": ".showToast(   ids.length - failed.length /  ids.length  成功，  failed.length  个失败（见网络日志） ,  error );"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 533,
+      "text": "const archivedLabel = archived ===  false  ?  未归档  : archived ===  true  ?  已归档  :  含归档 ;"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 579,
+      "text": "新建会话"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 586,
+      "text": "placeholder= 搜索全部项目的会话…"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 592,
+      "text": "aria-label= 清空搜索"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 612,
+      "text": "批量"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 622,
+      "text": "<DropdownMenuItem onSelect={() => switchFilter({ archived:  false  })}>未归档</DropdownMenuItem>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 623,
+      "text": "<DropdownMenuItem onSelect={() => switchFilter({ archived:  true  })}>已归档</DropdownMenuItem>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 624,
+      "text": "<DropdownMenuItem onSelect={() => switchFilter({ archived:  all  })}>全部</DropdownMenuItem>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 638,
+      "text": "{tagFilter.length > 0 ?  标签 ×  tagFilter.length   :  标签 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 643,
+      "text": "<div className= px-2 py-1.5 text-xs text-muted-foreground >暂无标签</div>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 662,
+      "text": "管理标签"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 676,
+      "text": "title= 移除该过滤标签"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 691,
+      "text": "<span className= text-muted-foreground >已选 {selectedIds.size}</span>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 693,
+      "text": "全选"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 704,
+      "text": "{archived ===  true  ?  取消归档  :  归档 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 717,
+      "text": "打标签"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 727,
+      "text": "删除"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 735,
+      "text": "完成"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 745,
+      "text": "<div className= px-2 py-6 text-center text-sm text-muted-foreground >搜索中…</div>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 747,
+      "text": "<div className= px-2 py-6 text-center text-sm text-muted-foreground >无匹配会话</div>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 777,
+      "text": "最近会话"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 868,
+      "text": "{isCurrent && <span className= shrink-0 text-[10px] text-muted-foreground/60 >当前</span>}"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 879,
+      "text": "aria-label={   basename(projectPath)  分组菜单 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 893,
+      "text": "上移"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 900,
+      "text": "下移"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 916,
+      "text": "隐藏该项目"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 924,
+      "text": "管理标签"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 932,
+      "text": "aria-label={ 在   basename(projectPath)  新建会话 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 933,
+      "text": "title={ 在   basename(projectPath)  新建会话 }"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 947,
+      "text": "<div className= px-2 py-4 text-center text-xs text-muted-foreground >加载中…</div>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 951,
+      "text": "<p className= text-xs text-muted-foreground >暂无会话</p>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 988,
+      "text": "<DialogTitle>隐藏项目</DialogTitle>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 991,
+      "text": "<p>将隐藏「{hidePending ? basename(hidePending) :   }」：侧栏分组不再显示。</p>"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 993,
+      "text": "它是当前项目，隐藏后将回到空会话状态；会话数据与置顶/改名/标签不受影响，可随时在设置的项目管理中恢复。"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 1000,
+      "text": "取消"
+    },
+    {
+      "file": "src/components/session-list/session-list.tsx",
+      "line": 1009,
+      "text": "{hiding ?  隐藏中…  :  确认隐藏 }"
+    },
+    {
+      "file": "src/components/session-list/tag-badge.tsx",
+      "line": 30,
+      "text": "useUiStore.getState().showToast( 已清理失效标签 );"
+    },
+    {
+      "file": "src/components/session-list/tag-badge.tsx",
+      "line": 32,
+      "text": "useUiStore.getState().showToast(err instanceof ApiError ? err.message :  清理失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/tag-badge.tsx",
+      "line": 46,
+      "text": "title={orphan ?  标签「  t.name 」定义已删除，点击清理  :  标签：  t.name  }"
+    },
+    {
+      "file": "src/components/session-list/tag-badge.tsx",
+      "line": 68,
+      "text": "title={ 还有   extra  个标签 }"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 71,
+      "text": "showToast(err instanceof ApiError ? err.message :  标签保存失败 ,  error );"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 88,
+      "text": "?  已为   targets.length  个会话  on ?  打上  :  移除  标签「  ref.name 」"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 89,
+      "text": ":    targets.length - failedIds.length /  targets.length  成功，  failedIds.length  个失败 ,"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 144,
+      "text": "批量标签（{sessions.length} 个会话）：勾选立即保存到全部选中会话"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 149,
+      "text": "暂无标签，可在「管理…」中添加"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 153,
+      "text": "{renderGroup( global ,  全局标签 )}"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 154,
+      "text": "{renderGroup( project ,  项目标签 )}"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 159,
+      "text": "打标中 {progress.done}/{progress.total}…"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 168,
+      "text": "title={manageScope === null ?  选中会话跨项目，无法确定管理域  : undefined}"
+    },
+    {
+      "file": "src/components/session-list/tag-dropdown.tsx",
+      "line": 173,
+      "text": "管理…"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 67,
+      "text": "setError(err instanceof ApiError ? err.message :  保存失败 );"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 77,
+      "text": "setError( 标签名不能为空 );"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 89,
+      "text": "setError( 标签名不能为空 );"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 97,
+      "text": "showToast( 已重命名「  editing.from 」→「  to 」；已挂载旧标签的会话将显示为失效标签（灰显），可在列表中清理 );"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 104,
+      "text": "showToast( 已删除标签「  name 」；挂载记录保留为失效标签（灰显），可在列表中清理 );"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 117,
+      "text": "{isProject ?  项目标签（  project.split( / ).filter(Boolean).pop() ?? project ）  :  全局标签 }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 120,
+      "text": "{entries.length === 0 && <li className= px-2 py-2 text-xs text-muted-foreground/60 >暂无标签</li>}"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 148,
+      "text": "aria-label= 确认重命名"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 158,
+      "text": "aria-label= 取消重命名"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 175,
+      "text": "aria-label={ 上移   d.name  }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 186,
+      "text": "aria-label={ 下移   d.name  }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 197,
+      "text": "aria-label={ 重命名   d.name  }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 208,
+      "text": "aria-label={ 删除   d.name  }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 222,
+      "text": "placeholder={ 新增  isProject ?  项目  :  全局  标签 }"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 242,
+      "text": "添加"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 253,
+      "text": "<DialogTitle>管理标签</DialogTitle>"
+    },
+    {
+      "file": "src/components/session-list/tag-manage-dialog.tsx",
+      "line": 255,
+      "text": "重命名/删除定义不影响已有挂载记录——会话上的旧标签将显示为失效标签（灰显），可点击清理。"
+    },
+    {
+      "file": "src/i18n/i18n.ts",
+      "line": 123,
+      "text": "if (import.meta.env.DEV) console.warn( [i18n] 缺键:   key  );"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 4,
+      "text": "cancel:  取消 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 5,
+      "text": "close:  关闭 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 6,
+      "text": "save:  保存 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 7,
+      "text": "delete:  删除 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 8,
+      "text": "loadFailed:  加载失败 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 9,
+      "text": "loading:  加载中 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 10,
+      "text": "relJustNow:  刚刚 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 11,
+      "text": "relMinutes:  {n} 分钟前 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 12,
+      "text": "relHours:  {n} 小时前 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 13,
+      "text": "relDays:  {n} 天前 ,"
+    },
+    {
+      "file": "src/i18n/zh.ts",
+      "line": 14,
+      "text": "itemCount: { one:  1 项 , other:  {n} 项  },"
+    },
+    {
+      "file": "src/lib/api.ts",
+      "line": 314,
+      "text": "throw new ApiError(401,  unauthorized ,  未登录或会话已过期 );"
+    },
+    {
+      "file": "src/lib/api.ts",
+      "line": 415,
+      "text": "throw new ApiError(400,  no_models_available ,  无可用模型，无法发送（请检查引擎模型配置） );"
+    },
+    {
+      "file": "src/lib/api.ts",
+      "line": 511,
+      "text": "throw new ApiError(401,  unauthorized ,  未登录或会话已过期 );"
+    },
+    {
+      "file": "src/lib/bootstrap.ts",
+      "line": 35,
+      "text": "useUiStore.getState().showToast( 会话列表加载失败 ,  error );"
+    },
+    {
+      "file": "src/lib/bootstrap.ts",
+      "line": 106,
+      "text": "ui.showToast( 更新最近打开时间失败 ,  error );"
+    },
+    {
+      "file": "src/lib/bootstrap.ts",
+      "line": 150,
+      "text": "console.info( [ul-omo-webui] 上次项目路径已不存在，跳过自动打开: , latest.projectPath);"
+    },
+    {
+      "file": "src/lib/events.ts",
+      "line": 301,
+      "text": "if (!res.body) throw new Error( sse fetch 无响应体 );"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 150,
+      "text": "return identity !==    ?  已绑定记忆库   identity   :  已绑定记忆库 ;"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 153,
+      "text": "return  本轮已计入记忆 ;"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 155,
+      "text": "return  记忆投影已固定 ;"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 157,
+      "text": "return  收到 kibitzer 提示 ;"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 159,
+      "text": "return  收到 memorian 提示 ;"
+    },
+    {
+      "file": "src/lib/memory-entries.ts",
+      "line": 161,
+      "text": "return  记忆提示 ;"
+    },
+    {
+      "file": "src/lib/preferences.ts",
+      "line": 31,
+      "text": "useUiStore.getState().showToast( 保存模型偏好失败 ,  error );"
+    },
+    {
+      "file": "src/lib/preferences.ts",
+      "line": 58,
+      "text": "useUiStore.getState().showToast( 保存思考级别偏好失败 ,  error );"
+    },
+    {
+      "file": "src/pages/login.tsx",
+      "line": 46,
+      "text": "setError(err instanceof ApiError && err.status === 401 ?  密码错误  :  登录失败，请重试 );"
+    },
+    {
+      "file": "src/pages/login.tsx",
+      "line": 55,
+      "text": "<p className= mt-1 text-sm text-muted-foreground >输入访问密码登录</p>"
+    },
+    {
+      "file": "src/pages/login.tsx",
+      "line": 61,
+      "text": "placeholder= 密码"
+    },
+    {
+      "file": "src/pages/login.tsx",
+      "line": 67,
+      "text": "{submitting ?  登录中…  :  登录 }"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 197,
+      "text": "aria-label= 打开 Git 外链"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 198,
+      "text": "title={ Git 外链：  gitUrl  }"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 209,
+      "text": "aria-label= 打开文件管理外链"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 210,
+      "text": "title={ 文件管理外链：  filesUrl  }"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 222,
+      "text": "加载中…"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 226,
+      "text": "<p className= text-sm text-muted-foreground >加载失败，请检查服务是否可用</p>"
+    },
+    {
+      "file": "src/pages/shell.tsx",
+      "line": 228,
+      "text": "重试"
+    },
+    {
+      "file": "src/stores/sessions.ts",
+      "line": 152,
+      "text": "useUiStore.getState().showToast( 会话列表加载失败 ,  error );"
+    }
+  ]
+}
