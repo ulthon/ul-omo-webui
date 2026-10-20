@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Package,
 } from "lucide-react";
+import { useT } from "@/i18n/i18n";
 import { api, type FsTreeEntry } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -110,6 +111,7 @@ export function FileTree({
   onSelect: (path: string) => void;
 }) {
   const showToast = useUiStore((s) => s.showToast);
+  const t = useT();
   // Map/Set 装在同一个对象里整体替换，保证浅比较触发重渲染；根目录（""）挂载即在加载中
   const [data, setData] = useState<TreeData>(() => ({
     children: new Map(),
@@ -183,7 +185,7 @@ export function FileTree({
           <LoaderCircle className="size-4 animate-spin" />
         </div>
       ) : root === null ? (
-        <div className="p-3 text-sm text-muted-foreground">目录为空</div>
+        <div className="p-3 text-sm text-muted-foreground">{t("fileTree.tree.empty")}</div>
       ) : (
         root.map((entry) => (
           <TreeRow

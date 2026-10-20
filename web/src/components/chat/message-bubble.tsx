@@ -5,15 +5,16 @@ import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
-import { useT } from "@/i18n/i18n";
+import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 
-function formatTime(timestamp: string | null): string | null {
+// locale 显式传入（任务12）：避免 toLocaleTimeString([]) 依赖宿主隐式 locale
+function formatTime(timestamp: string | null, locale: string): string | null {
   if (!timestamp) return null;
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function BubbleShell({
@@ -37,7 +38,8 @@ export function BubbleShell({
   children: React.ReactNode;
 }) {
   const t = useT();
-  const time = formatTime(timestamp);
+  const locale = useLocaleStore((s) => s.locale);
+  const time = formatTime(timestamp, locale);
   if (role === "user") {
     return (
       <div className="group flex w-full items-center justify-end gap-1">

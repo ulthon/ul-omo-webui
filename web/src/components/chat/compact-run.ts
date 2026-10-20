@@ -2,6 +2,7 @@
 // 直调压缩端点 → 游标增量刷新消息 → 广播 usage 刷新（水位环/状态条重拉权威快照）。
 // 错误不上捕获（原样上抛 ApiError），由调用方行内/toast 明示——失败保留输入语义在
 // 调用方落地。
+import { fmtInt } from "@/i18n/i18n";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import type { CompactReceipt } from "@/lib/api";
@@ -45,8 +46,9 @@ export async function runCompact(sessionId: string): Promise<CompactReceipt> {
 /** 压缩结果 toast 文案：压缩前后水位对比（tokensAfter 缺省时用压缩后 usage 快照） */
 export function compactToastText(receipt: CompactReceipt): string {
   const after = receipt.tokensAfter ?? receipt.usage.contextUsage?.tokens;
-  const before = receipt.tokensBefore.toLocaleString();
+  // fmtInt 显式按当前 locale 千分位（任务12）：不用无参 toLocaleString() 依赖宿主环境
+  const before = fmtInt(receipt.tokensBefore);
   return after !== undefined
-    ? `上下文已压缩：${before} → ${after.toLocaleString()} tokens`
+    ? `上下文已压缩：${before} → ${fmtInt(after)} tokens`
     : `上下文已压缩（压缩前 ${before} tokens）`;
 }
