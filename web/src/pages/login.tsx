@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
+import { applyInitialLocale } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+// 首帧语言先行值（任务2）：登录页 kv 不可达，localStorage/navigator 探测即设。
+// 本模块被 main.tsx 静态引入，应用启动时（含主布局）先于首帧渲染执行，无闪烁；
+// 探测值不落 localStorage（不冒充显式选择），登录后 bootstrap 以 kv 校正。
+applyInitialLocale();
 
 export function LoginPage() {
   const [password, setPassword] = useState("");

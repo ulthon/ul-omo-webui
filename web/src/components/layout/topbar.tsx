@@ -14,6 +14,7 @@ import type { ModelInfo } from "@/lib/api";
 import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
+import { LANGUAGE_KV, useLocaleStore, type Locale } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
@@ -541,6 +542,64 @@ export function ConversationSection() {
   );
 }
 
+/** 语言档位选项：标签用各语言自我称谓，硬编码双语（设置弹层文案的目录迁移属任务4） */
+const LANGUAGE_OPTIONS: ReadonlyArray<{ value: Locale; label: string }> = [
+  { value: "zh-CN", label: "中文" },
+  { value: "en", label: "English" },
+];
+
+/** 设置面板"语言"分区（任务2）：界面语言二档单选（中文/English），档位存 meta_kv
+ * ui.language（字符串值契约），改档即 PUT；PUT 成功后 setLocale（同步 document.lang
+ * 与 localStorage 镜像）。kv 为权威存储，localStorage 仅作登录页先行值缓存。 */
+export function LanguageSection() {
+  const locale = useLocaleStore((s) => s.locale);
+  const [saving, setSaving] = useState(false);
+
+  const changeLocale = async (next: Locale) => {
+    if (next === locale || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [LANGUAGE_KV]: next });
+      useLocaleStore.getState().setLocale(next);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(err instanceof ApiError ? err.message : "保存语言设置失败", "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">语言</p>
+        <div role="radiogroup" aria-label="界面语言" data-testid="language-group" className="space-y-1">
+          {LANGUAGE_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7"
+              data-testid={`language-option-${opt.value}`}
+            >
+              <input
+                type="radio"
+                name="ui-language"
+                value={opt.value}
+                checked={locale === opt.value}
+                disabled={saving}
+                onChange={() => void changeLocale(opt.value)}
+                className="size-4 accent-primary"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">切换立即生效，登录后全设备同步。</p>
+      </div>
+    </div>
+  );
+}
+
 function SettingsForm({ onDone }: { onDone: () => void }) {
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
@@ -615,6 +674,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <ProjectManagementSection />
       <SidebarSortSection />
       <ConversationSection />
+      <LanguageSection />
     </>
   );
 }

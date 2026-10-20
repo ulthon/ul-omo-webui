@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
 import { THINKING_EXPANDED_KV, parseThinkingExpanded, useUiStore } from "@/stores/ui";
+import { LANGUAGE_KV, parseLocale, useLocaleStore } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 取 last_opened_at 最新的项目（服务端已按 DESC 排序，这里再兜底一次 NULL 排序差异） */
@@ -131,6 +132,10 @@ export async function bootstrap(): Promise<void> {
     ui.setProjectOrder(parseManualProjectOrder(settings[PROJECT_ORDER_KV]) ?? []);
     // 思考块默认展开（docs08-r5 任务 13）：键缺失/非 "true" 一律回退 false（缺省折叠）
     ui.setThinkingDefaultExpanded(parseThinkingExpanded(settings[THINKING_EXPANDED_KV]));
+    // 界面语言（任务2）：kv 为准——键存在且合法才 setLocale（同步 document.lang 并回写
+    // localStorage 镜像）；键缺失/非法值不动当前语言（保留 localStorage/navigator 先行值）
+    const kvLocale = parseLocale(settings[LANGUAGE_KV]);
+    if (kvLocale) useLocaleStore.getState().setLocale(kvLocale);
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {
       // 静默：无外链配置时入口不渲染，属预期形态
