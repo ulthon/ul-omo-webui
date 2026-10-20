@@ -377,7 +377,8 @@ export function Composer({
           const receipt = await runCompact(sessionId);
           clearDraft();
           setHistory(null);
-          showToast(compactToastText(receipt), "info");
+          const toast = compactToastText(receipt);
+          showToast(t(toast.key, toast.vars), "info");
           onSent();
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err));

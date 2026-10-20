@@ -1,6 +1,6 @@
 // chat 域词条（zh-CN）：web/src/components/chat/ 各组件用户可见文案，zh 值为迁移前逐字原文。
-// 纯函数模块（compact-run/tool-card-data/commands 等）与引擎 wire 传入文案（权限卡
-// title/message、notify 载荷）不在本域，保持原样不译。
+// 纯函数模块（tool-card-data/commands 等）与引擎 wire 传入文案（权限卡
+// title/message、notify 载荷）不在本域，保持原样不译；compact-run 为本地拼装 toast（终验 F2 修复入域）。
 export const chat = {
   // tool-card.tsx 工具调用卡片
   toolcard: {
@@ -194,6 +194,11 @@ export const chat = {
     chars: " … {n} 字",
     ellipsis: "…",
     empty: "（暂无内容）",
+  },
+  // compact-run.ts 压缩成功 toast（终验 F2：本地拼装文案入域，{key, vars} 渲染）
+  compact: {
+    done: "上下文已压缩：{before} → {after} tokens",
+    doneBefore: "上下文已压缩（压缩前 {before} tokens）",
   },
   // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
   commands: {

@@ -5,6 +5,7 @@
 // 端点契约见 server/src/api/routes-notes.ts（todo 5）：列表 {notes:[...]} 无 content、
 // 创建 201、详情 {note:{...}}（projectPath 以 project 键输出）、updatedAt/createdAt 可 null。
 import { ApiError, redirectToLogin } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 
 export interface NoteListItem {
   id: string;
@@ -40,7 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 401) {
     redirectToLogin();
-    throw new ApiError(401, "unauthorized", "未登录或会话已过期");
+    throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
   }
   if (!res.ok) {
     let code = "unknown";

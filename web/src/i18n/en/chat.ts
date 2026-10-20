@@ -195,6 +195,11 @@ export const chat = {
     ellipsis: "…",
     empty: "(no content)",
   },
+  // compact-run.ts compact success toast (final-wave F2: locally assembled copy)
+  compact: {
+    done: "Context compacted: {before} → {after} tokens",
+    doneBefore: "Context compacted ({before} tokens before)",
+  },
   // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
   commands: {
     compactNote: "Compact context: verified working over the engine protocol surface (spike calls session.compact directly); the webui endpoint is called directly",

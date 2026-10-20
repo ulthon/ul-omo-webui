@@ -8,14 +8,6 @@
     "reason": "紧凑时间与行内状态标题（任务3 白名单：Ns/Nm/Nh/Nd 紧凑档不汉化、行内状态词）"
   },
   {
-    "path": "components/chat/compact-run.ts",
-    "reason": "引擎透传（任务3 白名单：压缩事件数据格式化为展示文本）"
-  },
-  {
-    "path": "components/notes/notes-api.ts",
-    "reason": "内部诊断（任务12 白名单：未登录异常 Error 消息，非 UI 文案，走 apiErrorMessage 兜底）"
-  },
-  {
     "path": "lib/bootstrap.ts",
     "reason": "内部诊断（任务12 白名单：启动期 console.info 日志，用户不可见）"
   },

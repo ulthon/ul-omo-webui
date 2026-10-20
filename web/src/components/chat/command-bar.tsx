@@ -22,7 +22,8 @@ export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessi
     try {
       if (cmd.name === "compact") {
         const receipt = await runCompact(sessionId);
-        showToast(compactToastText(receipt), "info");
+        const toast = compactToastText(receipt);
+        showToast(t(toast.key, toast.vars), "info");
       } else {
         await api.prompt(sessionId, { text: cmd.label });
       }
