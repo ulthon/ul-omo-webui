@@ -6,6 +6,7 @@
 // 全部为纯函数，供组件与 bun 单测共用。
 import { parseDiff } from "react-diff-view";
 import type { FileData } from "react-diff-view";
+import type { MessageKey } from "@/i18n/i18n";
 
 export type { FileData };
 
@@ -53,8 +54,8 @@ export function extractParseableDiff(text: string): string | null {
 export interface StatusInfo {
   /** 徽标短码（"M" / "??" / "UU" 等） */
   code: string;
-  /** 中文标签 */
-  label: string;
+  /** 中文标签（任务 10：字典键 diff.status.*，组件层 t() 渲染） */
+  label: MessageKey;
   /** 色调语义，组件层映射为类名 */
   tone: "add" | "modify" | "delete" | "rename" | "untracked" | "conflict";
 }
@@ -62,29 +63,29 @@ export interface StatusInfo {
 export function statusInfo(xy: string): StatusInfo {
   const x = xy[0] ?? " ";
   const y = xy[1] ?? " ";
-  if (x === "?" || y === "?") return { code: "??", label: "未跟踪", tone: "untracked" };
-  if (x === "!" || y === "!") return { code: "!", label: "已忽略", tone: "untracked" };
+  if (x === "?" || y === "?") return { code: "??", label: "diff.status.untracked", tone: "untracked" };
+  if (x === "!" || y === "!") return { code: "!", label: "diff.status.ignored", tone: "untracked" };
   // 未合并对（AA/DD/UU/AU/UA/DU/UD）：两位都是 A/D/U 即冲突
-  if ("ADU".includes(x) && "ADU".includes(y)) return { code: "UU", label: "冲突", tone: "conflict" };
+  if ("ADU".includes(x) && "ADU".includes(y)) return { code: "UU", label: "diff.status.conflict", tone: "conflict" };
   const pick = (c: string): StatusInfo | null => {
     switch (c) {
       case "A":
-        return { code: "A", label: "新增", tone: "add" };
+        return { code: "A", label: "diff.status.added", tone: "add" };
       case "M":
-        return { code: "M", label: "修改", tone: "modify" };
+        return { code: "M", label: "diff.status.modified", tone: "modify" };
       case "D":
-        return { code: "D", label: "删除", tone: "delete" };
+        return { code: "D", label: "diff.status.deleted", tone: "delete" };
       case "R":
-        return { code: "R", label: "重命名", tone: "rename" };
+        return { code: "R", label: "diff.status.renamed", tone: "rename" };
       case "C":
-        return { code: "C", label: "复制", tone: "rename" };
+        return { code: "C", label: "diff.status.copied", tone: "rename" };
       case "T":
-        return { code: "T", label: "类型变更", tone: "modify" };
+        return { code: "T", label: "diff.status.typeChanged", tone: "modify" };
       default:
         return null;
     }
   };
-  return pick(x) ?? pick(y) ?? { code: xy.trim() || "-", label: "变更", tone: "modify" };
+  return pick(x) ?? pick(y) ?? { code: xy.trim() || "-", label: "diff.status.changed", tone: "modify" };
 }
 
 /** porcelain 行 path 字段清洗：`old => new` 重命名形态取 new 侧；C 风格引号路径去引号 */

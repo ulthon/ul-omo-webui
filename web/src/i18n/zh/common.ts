@@ -11,4 +11,13 @@ export const common = {
   relHours: "{n} 小时前",
   relDays: "{n} 天前",
   itemCount: { one: "1 项", other: "{n} 项" },
+  // lib 层散点（任务 10）：非组件模块（api/bootstrap/preferences/stores）产出的用户可见文案
+  lib: {
+    unauthorized: "未登录或会话已过期",
+    noModelsSend: "无可用模型，无法发送（请检查引擎模型配置）",
+    sessionListLoadFailed: "会话列表加载失败",
+    updateLastOpenedFailed: "更新最近打开时间失败",
+    saveModelPrefFailed: "保存模型偏好失败",
+    saveThinkingPrefFailed: "保存思考级别偏好失败",
+  },
 } as const;

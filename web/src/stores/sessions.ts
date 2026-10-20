@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { writeSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 
 export type ArchivedFilter = "true" | "false" | "all";
 
@@ -149,7 +150,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       useSessionsStore.getState().setSessions(currentProject, res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast("会话列表加载失败", "error");
+        useUiStore.getState().showToast(t("common.lib.sessionListLoadFailed"), "error");
       }
     } finally {
       useSessionsStore.getState().setLoading(false);

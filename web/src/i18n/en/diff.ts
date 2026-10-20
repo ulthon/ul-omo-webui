@@ -7,6 +7,19 @@ export const diff = {
     rename: "Rename",
     copy: "Copy",
   },
+  // statusInfo status-code labels (task 10): statusInfo returns {code, label: key, tone}
+  status: {
+    untracked: "Untracked",
+    ignored: "Ignored",
+    conflict: "Conflict",
+    added: "Added",
+    modified: "Modified",
+    deleted: "Deleted",
+    renamed: "Renamed",
+    copied: "Copied",
+    typeChanged: "Type changed",
+    changed: "Changed",
+  },
   view: {
     binary: "Binary file, no text diff",
     pureRename: "Pure rename (content unchanged)",

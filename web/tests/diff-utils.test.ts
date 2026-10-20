@@ -77,12 +77,12 @@ describe("extractParseableDiff", () => {
 
 describe("statusInfo", () => {
   test("常规状态映射", () => {
-    expect(statusInfo(" M")).toEqual({ code: "M", label: "修改", tone: "modify" });
-    expect(statusInfo("M ")).toEqual({ code: "M", label: "修改", tone: "modify" });
-    expect(statusInfo("A ")).toEqual({ code: "A", label: "新增", tone: "add" });
-    expect(statusInfo("D ")).toEqual({ code: "D", label: "删除", tone: "delete" });
-    expect(statusInfo("R ")).toEqual({ code: "R", label: "重命名", tone: "rename" });
-    expect(statusInfo("??")).toEqual({ code: "??", label: "未跟踪", tone: "untracked" });
+    expect(statusInfo(" M")).toEqual({ code: "M", label: "diff.status.modified", tone: "modify" });
+    expect(statusInfo("M ")).toEqual({ code: "M", label: "diff.status.modified", tone: "modify" });
+    expect(statusInfo("A ")).toEqual({ code: "A", label: "diff.status.added", tone: "add" });
+    expect(statusInfo("D ")).toEqual({ code: "D", label: "diff.status.deleted", tone: "delete" });
+    expect(statusInfo("R ")).toEqual({ code: "R", label: "diff.status.renamed", tone: "rename" });
+    expect(statusInfo("??")).toEqual({ code: "??", label: "diff.status.untracked", tone: "untracked" });
   });
 
   test("未合并对判冲突，混合态取信息量大侧", () => {

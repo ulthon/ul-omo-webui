@@ -40,4 +40,19 @@ export const fileTree = {
     emptyFile: "空文件",
     tooLarge: "文件较大（完整 {size}），仅显示前 2 MB。预览为只读，请用本地编辑器打开原文件查看完整内容。",
   },
+  // file-picker.tsx @ 文件选择器（任务 10 编排补入）
+  picker: {
+    title: "引用文件",
+    description: "选择文件插入 @ 路径引用（只读预览）",
+    searchPlaceholder: "模糊搜索文件名或路径…",
+    clearSearch: "清空搜索",
+    indexing: "正在索引文件…",
+    noMatch: "无匹配文件",
+    backToList: "返回文件列表",
+    previewEmpty: "选择文件查看只读预览",
+    indexingStatus: "索引中（搜索渐进可用）",
+    indexedCount: { one: "已索引 {n} 项", other: "已索引 {n} 项" },
+    enterHint: "搜索时 Enter 插入首个命中",
+    cancel: "取消",
+  },
 } as const;

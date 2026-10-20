@@ -36,4 +36,19 @@ export const fileTree = {
     emptyFile: "Empty file",
     tooLarge: "File is large (full size {size}); only the first 2 MB is shown. Preview is read-only, open the original file in a local editor to view the full content.",
   },
+  // file-picker.tsx @ file picker (task 10)
+  picker: {
+    title: "Reference files",
+    description: "Pick a file to insert an @ path reference (read-only preview)",
+    searchPlaceholder: "Fuzzy-search file names or paths…",
+    clearSearch: "Clear search",
+    indexing: "Indexing files…",
+    noMatch: "No matching files",
+    backToList: "Back to file list",
+    previewEmpty: "Select a file for a read-only preview",
+    indexingStatus: "Indexing (search available progressively)",
+    indexedCount: { one: "{n} path indexed", other: "{n} paths indexed" },
+    enterHint: "Press Enter while searching to insert the first match",
+    cancel: "Cancel",
+  },
 } as const;

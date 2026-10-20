@@ -35,6 +35,7 @@ const MARKER_TONE: Record<MemoryMarker["weight"], string> = {
 
 export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { marker: MemoryMarker }) {
   const [open, setOpen] = useState(false);
+  const t = useT();
   const Icon = MARKER_ICONS[marker.kind];
   return (
     <div data-testid="memory-marker" data-kind={marker.kind} data-weight={marker.weight} className="my-0.5">
@@ -45,7 +46,7 @@ export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { m
         className={`inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted lg:min-h-0 ${MARKER_TONE[marker.weight]}`}
       >
         <Icon className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate">{marker.summary}</span>
+        <span className="truncate">{t(marker.summary.key, marker.summary.vars)}</span>
         {marker.detail !== "" && (
           <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
         )}

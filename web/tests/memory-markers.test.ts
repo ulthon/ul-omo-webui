@@ -115,12 +115,14 @@ describe("memoryMarkerOf 派生", () => {
     expect(m).not.toBeNull();
     expect(m?.kind).toBe("sessionBinding");
     expect(m?.weight).toBe("weak");
-    expect(m?.summary).toBe("已绑定记忆库 r4-mem-proj-02b644df");
+    expect(m?.summary).toEqual({ key: "chat.memoryMarkers.boundWith", vars: { identity: "r4-mem-proj-02b644df" } });
     expect(m?.detail).toContain("r4-mem-proj-02b644df");
   });
 
   test("accepted-turns / projection-pin 摘要与权重", () => {
-    expect(memoryMarkerOf(customEntry("omo-memory:accepted-turns", {}))?.summary).toBe("本轮已计入记忆");
+    expect(memoryMarkerOf(customEntry("omo-memory:accepted-turns", {}))?.summary).toEqual({
+      key: "chat.memoryMarkers.acceptedTurns",
+    });
     expect(memoryMarkerOf(customEntry("omo-memory:projection-pin", {}))?.weight).toBe("weakest");
   });
 
@@ -225,7 +227,10 @@ describe("store entry_appended 白名单入列", () => {
     frame({ type: "entry_appended", entry, sessionId: "rpc-1" }, 2);
     const entries = useMessagesStore.getState().bySession["d-13"].entries;
     expect(entries.length).toBe(1);
-    expect(memoryMarkerOf(entries[0])?.summary).toBe("已绑定记忆库 lib-1");
+    expect(memoryMarkerOf(entries[0])?.summary).toEqual({
+      key: "chat.memoryMarkers.boundWith",
+      vars: { identity: "lib-1" },
+    });
   });
 
   test("非白名单 custom 条目不入列（senpi-task.usage 形态即 spike 列表外类型）", () => {

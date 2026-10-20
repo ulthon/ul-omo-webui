@@ -11,4 +11,13 @@ export const common = {
   relHours: "{n} hours ago",
   relDays: "{n} days ago",
   itemCount: { one: "{n} item", other: "{n} items" },
+  // lib-layer strings (task 10): user-visible copy produced by non-component modules
+  lib: {
+    unauthorized: "Not signed in or session expired",
+    noModelsSend: "No available models; cannot send (check the engine model configuration)",
+    sessionListLoadFailed: "Failed to load session list",
+    updateLastOpenedFailed: "Failed to update last-opened time",
+    saveModelPrefFailed: "Failed to save model preference",
+    saveThinkingPrefFailed: "Failed to save thinking level preference",
+  },
 } as const;

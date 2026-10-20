@@ -67,6 +67,7 @@ function CenteredHint({ text }: { text: string }) {
 /** 单文件折叠行：展开态独立持有（key 随项目容器重挂自然复位），点击就地展开/收起 hunk */
 function ChangeRow({ entry, file }: { entry: ChangeEntry; file: FileData | null }) {
   const [open, setOpen] = useState(false);
+  const t = useT();
   const info = statusInfo(entry.status);
   return (
     <div className="border-b last:border-b-0">
@@ -83,7 +84,7 @@ function ChangeRow({ entry, file }: { entry: ChangeEntry; file: FileData | null 
         />
         <span
           className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${TONE_CLASS[info.tone]}`}
-          title={info.label}
+          title={t(info.label.key)}
         >
           {info.code}
         </span>

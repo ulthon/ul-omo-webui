@@ -7,13 +7,15 @@
 // - /clear /new /undo 仍无稳定会话级调用面：prompt 直发被模型当普通消息并伪造"已执行"
 //   ——判不支持：按钮禁用 + 输入拦截明示，绝不静默直发。
 import { ApiError } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 
 export interface ChatCommand {
   /** 命令名（不含斜杠，小写） */
   name: string;
   label: string;
   supported: boolean;
-  /** 不支持时的明示文案 */
+  /** 不支持时的明示文案（任务 10：getter 懒取词，避免模块加载期求值；组件/门读到的
+   *  已是当前语言渲染后的字符串，对外契约不变） */
   note: string;
 }
 
@@ -22,25 +24,33 @@ export const CHAT_COMMANDS: ChatCommand[] = [
     name: "compact",
     label: "/compact",
     supported: true,
-    note: "压缩上下文：引擎协议面 compact 实证可用（spike 直调 session.compact），webui 端点直调",
+    get note() {
+      return t("chat.commands.compactNote");
+    },
   },
   {
     name: "clear",
     label: "/clear",
     supported: false,
-    note: "清空上下文：引擎未注册该命令，直发会被模型当作普通消息",
+    get note() {
+      return t("chat.commands.clearNote");
+    },
   },
   {
     name: "new",
     label: "/new",
     supported: false,
-    note: "新建会话：引擎未注册该命令，请用侧栏「新建会话」",
+    get note() {
+      return t("chat.commands.newNote");
+    },
   },
   {
     name: "undo",
     label: "/undo",
     supported: false,
-    note: "撤销上一条：引擎未注册该命令，直发会被模型当作普通消息",
+    get note() {
+      return t("chat.commands.undoNote");
+    },
   },
 ];
 
@@ -76,7 +86,7 @@ export function makeCommandGate(commands: ChatCommand[]): (text: string) => void
     throw new ApiError(
       501,
       "command_unsupported",
-      `引擎不支持命令 ${cmd.label}：${cmd.note}（实证记录见 docs/verification/05）`,
+      t("chat.commands.gateMessage", { label: cmd.label, note: cmd.note }),
     );
   };
 }

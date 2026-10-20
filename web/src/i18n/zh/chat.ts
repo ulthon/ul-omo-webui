@@ -195,4 +195,22 @@ export const chat = {
     ellipsis: "…",
     empty: "（暂无内容）",
   },
+  // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
+  commands: {
+    compactNote: "压缩上下文：引擎协议面 compact 实证可用（spike 直调 session.compact），webui 端点直调",
+    clearNote: "清空上下文：引擎未注册该命令，直发会被模型当作普通消息",
+    newNote: "新建会话：引擎未注册该命令，请用侧栏「新建会话」",
+    undoNote: "撤销上一条：引擎未注册该命令，直发会被模型当作普通消息",
+    gateMessage: "引擎不支持命令 {label}：{note}（实证记录见 docs/verification/05）",
+  },
+  // memory-entries.ts 记忆标记摘要（任务 10）：summary 改 {key, vars} 纯数据
+  memoryMarkers: {
+    bound: "已绑定记忆库",
+    boundWith: "已绑定记忆库 {identity}",
+    acceptedTurns: "本轮已计入记忆",
+    projectionPin: "记忆投影已固定",
+    kibitzerNudged: "收到 kibitzer 提示",
+    memorianNudged: "收到 memorian 提示",
+    memoryNotice: "记忆提示",
+  },
 } as const;

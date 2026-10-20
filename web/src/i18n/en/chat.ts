@@ -195,4 +195,22 @@ export const chat = {
     ellipsis: "…",
     empty: "(no content)",
   },
+  // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
+  commands: {
+    compactNote: "Compact context: verified working over the engine protocol surface (spike calls session.compact directly); the webui endpoint is called directly",
+    clearNote: "Clear context: not registered by the engine; sending it directly would be treated by the model as a plain message",
+    newNote: "New session: not registered by the engine; use \"New session\" in the sidebar",
+    undoNote: "Undo last message: not registered by the engine; sending it directly would be treated by the model as a plain message",
+    gateMessage: "Engine does not support command {label}: {note} (see docs/verification/05 for the verification record)",
+  },
+  // memory-entries.ts marker summaries (task 10): summary is {key, vars} plain data
+  memoryMarkers: {
+    bound: "Memory library bound",
+    boundWith: "Memory library bound {identity}",
+    acceptedTurns: "Counted into memory this turn",
+    projectionPin: "Memory projection pinned",
+    kibitzerNudged: "kibitzer nudge received",
+    memorianNudged: "memorian nudge received",
+    memoryNotice: "Memory notice",
+  },
 } as const;

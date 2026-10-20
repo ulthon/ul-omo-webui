@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { FileTree } from "./file-tree";
 import { FilePreview } from "./file-preview";
 import { baseName, collectProjectPaths, filterPaths } from "./file-tree-logic";
+import { useT } from "@/i18n/i18n";
 
 export function FilePickerDialog({
   open,
@@ -50,6 +51,7 @@ function PickerBody({
   const [selected, setSelected] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const t = useT();
 
   // 挂载即后台扫描路径全集（有界）；失败静默（树导航不受影响）
   useEffect(() => {
@@ -95,9 +97,9 @@ function PickerBody({
         <DialogHeader className="shrink-0 gap-1.5">
           <DialogTitle className="flex items-center gap-1.5 text-sm">
             <AtSign className="size-4 text-muted-foreground" />
-            引用文件
+            {t("fileTree.picker.title")}
           </DialogTitle>
-          <DialogDescription className="text-xs">选择文件插入 @ 路径引用（只读预览）</DialogDescription>
+          <DialogDescription className="text-xs">{t("fileTree.picker.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="relative shrink-0">
@@ -111,13 +113,13 @@ function PickerBody({
               setHighlight(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="模糊搜索文件名或路径…"
+            placeholder={t("fileTree.picker.searchPlaceholder")}
             className="h-11 w-full rounded-lg border border-input bg-transparent pr-9 pl-9 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
           {searching && (
             <button
               type="button"
-              aria-label="清空搜索"
+              aria-label={t("fileTree.picker.clearSearch")}
               onClick={() => setQuery("")}
               className="absolute top-1/2 right-2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted"
             >
@@ -139,10 +141,10 @@ function PickerBody({
                   {allPaths === null ? (
                     <span className="flex items-center justify-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
-                      正在索引文件…
+                      {t("fileTree.picker.indexing")}
                     </span>
                   ) : (
-                    "无匹配文件"
+                    t("fileTree.picker.noMatch")
                   )}
                 </div>
               ) : (
@@ -190,7 +192,7 @@ function PickerBody({
                   className="flex h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border text-sm transition-colors hover:bg-muted lg:hidden"
                 >
                   <X className="size-4" />
-                  返回文件列表
+                  {t("fileTree.picker.backToList")}
                 </button>
                 <div className="min-h-0 flex-1 lg:max-h-none">
                   <FilePreview key={selected} project={project} path={selected} onInsert={pick} />
@@ -198,7 +200,7 @@ function PickerBody({
               </div>
             ) : (
               <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted-foreground">
-                选择文件查看只读预览
+                {t("fileTree.picker.previewEmpty")}
               </div>
             )}
           </div>
@@ -209,15 +211,15 @@ function PickerBody({
             {allPaths === null ? (
               <>
                 <LoaderCircle className="size-3 animate-spin" />
-                索引中（搜索渐进可用）
+                {t("fileTree.picker.indexingStatus")}
               </>
             ) : (
-              `已索引 ${allPaths.length} 项`
+              t("fileTree.picker.indexedCount", { n: allPaths.length })
             )}
           </span>
           <span className="hidden items-center gap-1 sm:flex">
             <CornerDownLeft className="size-3" />
-            搜索时 Enter 插入首个命中
+            {t("fileTree.picker.enterHint")}
           </span>
           <button
             type="button"
@@ -225,7 +227,7 @@ function PickerBody({
             onClick={onClose}
             className="flex h-11 items-center rounded-lg border px-3 transition-colors hover:bg-muted"
           >
-            取消
+            {t("fileTree.picker.cancel")}
           </button>
         </div>
     </>

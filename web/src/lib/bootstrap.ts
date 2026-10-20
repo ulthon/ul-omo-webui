@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
 import { THINKING_EXPANDED_KV, parseThinkingExpanded, useUiStore } from "@/stores/ui";
-import { LANGUAGE_KV, parseLocale, useLocaleStore } from "@/i18n/i18n";
+import { LANGUAGE_KV, parseLocale, useLocaleStore, t } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 取 last_opened_at 最新的项目（服务端已按 DESC 排序，这里再兜底一次 NULL 排序差异） */
@@ -32,7 +32,7 @@ export async function refreshSessions(): Promise<void> {
     useSessionsStore.getState().setSessions(currentProject, res.sessions);
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {
-      useUiStore.getState().showToast("会话列表加载失败", "error");
+      useUiStore.getState().showToast(t("common.lib.sessionListLoadFailed"), "error");
     }
   } finally {
     useSessionsStore.getState().setLoading(false);
@@ -103,7 +103,7 @@ export async function openProject(path: string): Promise<void> {
     await api.patchProjectMeta({ path, lastOpenedAt: new Date().toISOString() });
   } catch (err) {
     if (!(err instanceof ApiError && err.status === 401)) {
-      ui.showToast("更新最近打开时间失败", "error");
+      ui.showToast(t("common.lib.updateLastOpenedFailed"), "error");
     }
   }
 

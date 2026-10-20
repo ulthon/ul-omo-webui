@@ -3,6 +3,7 @@
 // prompt 的模型防呆/偏好注入读 ui store（ui.ts 对 api.ts 仅类型引用，无运行时环）。
 import { useUiStore } from "@/stores/ui";
 import { effectiveThinkingLevel } from "@/lib/thinking-level";
+import { t } from "@/i18n/i18n";
 
 // ---------- 领域类型 ----------
 
@@ -311,7 +312,7 @@ async function request<T>(path: string, init?: RequestInit & RequestOptions): Pr
   }
   if (res.status === 401) {
     if (init?.authRedirect !== false) redirectToLogin();
-    throw new ApiError(401, "unauthorized", "未登录或会话已过期");
+    throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
   }
   if (!res.ok) {
     let code = "unknown";
@@ -412,7 +413,7 @@ export const api = {
     // 不发请求；输入区捕获 ApiError 后行内展示。
     const ui = useUiStore.getState();
     if (ui.modelsLoaded && ui.models.length === 0) {
-      throw new ApiError(400, "no_models_available", "无可用模型，无法发送（请检查引擎模型配置）");
+      throw new ApiError(400, "no_models_available", t("common.lib.noModelsSend"));
     }
     // 命令门（todo 24）：/ 前缀命中不支持命令时抛 ApiError（chat-view 注册的 commandGate）
     promptGate?.(body.text);
@@ -508,7 +509,7 @@ export const api = {
     }
     if (res.status === 401) {
       redirectToLogin();
-      throw new ApiError(401, "unauthorized", "未登录或会话已过期");
+      throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
     }
     if (!res.ok) {
       let code = "unknown";

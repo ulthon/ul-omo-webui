@@ -17,6 +17,19 @@ export const diff = {
     fragment: "diff 片段",
     parseFailed: "无法解析 diff 内容",
   },
+  // statusInfo 状态码标签（任务 10）：statusInfo 返回 {code, label: key, tone}
+  status: {
+    untracked: "未跟踪",
+    ignored: "已忽略",
+    conflict: "冲突",
+    added: "新增",
+    modified: "修改",
+    deleted: "删除",
+    renamed: "重命名",
+    copied: "复制",
+    typeChanged: "类型变更",
+    changed: "变更",
+  },
   // changes-view 未提交变更页签
   changes: {
     untrackedNote: "未跟踪文件：尚未纳入 Git 管理，暂无 diff 内容。",

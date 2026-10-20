@@ -9,6 +9,7 @@
 // senpi.todo-first-turn、omo-model-profile:applied 等引擎内部状态）一律不渲染、不入列。
 // 载荷只做窄化读取（wire 原样透传，形态从宽），异常形态降级为通用摘要，不臆造字段。
 import type { WireEntry } from "@/lib/api";
+import type { MessageKey } from "@/i18n/i18n";
 
 /** entry 通道白名单（type:"custom" 条目的 customType；entry_appended 放行与渲染共用） */
 export const MEMORY_ENTRY_TYPES: ReadonlySet<string> = new Set([
@@ -37,13 +38,19 @@ export type MemoryMarkerKind =
  *  notice=提示卡（message 通道 kibitzer/memorian/notice）。 */
 export type MemoryMarkerWeight = "weak" | "weakest" | "notice";
 
+/** 摘要纯数据形态（任务 10）：组件层 t(summary.key, summary.vars) 渲染 */
+export interface MemoryMarkerSummary {
+  key: MessageKey;
+  vars?: Record<string, unknown>;
+}
+
 export interface MemoryMarker {
   /** 锚定条目 id（并入 items 时的排序锚点 + React key） */
   entryId: string;
   kind: MemoryMarkerKind;
   weight: MemoryMarkerWeight;
-  /** 一句话摘要（标记块常显文案） */
-  summary: string;
+  /** 一句话摘要（标记块常显文案；{key, vars} 纯数据） */
+  summary: MemoryMarkerSummary;
   /** 展开原文（data JSON 或 content 文本；空串 = 无可展开内容） */
   detail: string;
   /** 渲染去重键（仅 sessionBinding 设 identity：引擎每回合重写 binding 条目，同一 identity
@@ -143,24 +150,26 @@ function markerMeta(customType: string): { kind: MemoryMarkerKind; weight: Memor
   }
 }
 
-function summaryOf(customType: string, payload: Record<string, unknown> | null): string {
+function summaryOf(customType: string, payload: Record<string, unknown> | null): MemoryMarkerSummary {
   switch (customType) {
     case "senpi-memory.session-binding": {
       const identity = payload !== null && typeof payload.identity === "string" ? payload.identity : "";
-      return identity !== "" ? `已绑定记忆库 ${identity}` : "已绑定记忆库";
+      return identity !== ""
+        ? { key: "chat.memoryMarkers.boundWith", vars: { identity } }
+        : { key: "chat.memoryMarkers.bound" };
     }
     case "omo-memory:accepted-turns":
-      return "本轮已计入记忆";
+      return { key: "chat.memoryMarkers.acceptedTurns" };
     case "omo-memory:projection-pin":
-      return "记忆投影已固定";
+      return { key: "chat.memoryMarkers.projectionPin" };
     case "omo-kibitzer:nudged":
-      return "收到 kibitzer 提示";
+      return { key: "chat.memoryMarkers.kibitzerNudged" };
     case "omo-memorian:nudged":
-      return "收到 memorian 提示";
+      return { key: "chat.memoryMarkers.memorianNudged" };
     case "omo-memory:notice":
-      return "记忆提示";
+      return { key: "chat.memoryMarkers.memoryNotice" };
     default:
-      return "";
+      return { key: "chat.memoryMarkers.memoryNotice" };
   }
 }
 

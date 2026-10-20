@@ -4,6 +4,7 @@
 // 与输入区 chip 两个选择面共用同一条持久化路径；delayMs 形参仅供单测加速。
 import { api, ApiError } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 
 export const PREFERENCE_DEBOUNCE_MS = 600;
 
@@ -28,7 +29,7 @@ export function scheduleModelPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_MS)
       })
       .catch((err: unknown) => {
         if (!(err instanceof ApiError && err.status === 401)) {
-          useUiStore.getState().showToast("保存模型偏好失败", "error");
+          useUiStore.getState().showToast(t("common.lib.saveModelPrefFailed"), "error");
         }
       });
   }, delayMs);
@@ -55,7 +56,7 @@ export function scheduleThinkingPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_
       })
       .catch((err: unknown) => {
         if (!(err instanceof ApiError && err.status === 401)) {
-          useUiStore.getState().showToast("保存思考级别偏好失败", "error");
+          useUiStore.getState().showToast(t("common.lib.saveThinkingPrefFailed"), "error");
         }
       });
   }, delayMs);
