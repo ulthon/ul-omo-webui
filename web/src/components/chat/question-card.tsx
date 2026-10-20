@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleHelp, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { QUESTION_EXPIRY_GRACE_MS, useQuestionsStore, type QuestionRequest } from "@/stores/questions";
 
@@ -75,7 +76,7 @@ export function QuestionCard({
       await api.respondPermission(sessionId, { requestId: request.id, ...payload });
       useQuestionsStore.getState().removeRequest(sessionId, request.id);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "应答失败，请重试", "error");
+      showToast(err instanceof Error ? err.message : t("chat.questionCard.submitFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -85,7 +86,7 @@ export function QuestionCard({
     const answers = buildAnswers();
     const trimmedComment = comment.trim();
     if (Object.keys(answers).length === 0 && !trimmedComment) {
-      showToast("请至少回答一个问题或填写补充说明", "error");
+      showToast(t("chat.questionCard.needAnswer"), "error");
       return;
     }
     void respond(
@@ -114,24 +115,24 @@ export function QuestionCard({
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <CircleHelp className="size-4 shrink-0 text-primary" aria-hidden />
         <span className="text-sm font-medium">
-          助手提问
+          {t("chat.questionCard.title")}
           {total > 1 && (
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              第 {position}/{total} 个待处理
+              {t("chat.questionCard.position", { position, total })}
             </span>
           )}
         </span>
         <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           {request.waitForAnswer ? (
-            <span>等待回答</span>
+            <span>{t("chat.questionCard.waiting")}</span>
           ) : (
-            <span>可稍后回答</span>
+            <span>{t("chat.questionCard.later")}</span>
           )}
           <span
             data-testid="question-countdown"
             className={expired ? "font-medium text-destructive" : "tabular-nums"}
           >
-            {expired ? "已超时" : deadlineLabel}
+            {expired ? t("chat.questionCard.expired") : deadlineLabel}
           </span>
         </span>
       </div>
@@ -188,7 +189,7 @@ export function QuestionCard({
                   data-testid={`question-text-${q.id}`}
                   value={texts[q.id] ?? ""}
                   disabled={busy || expired}
-                  placeholder="或输入自定义答案（可选）"
+                  placeholder={t("chat.questionCard.customPlaceholder")}
                   onChange={(e) => setTexts((prev) => ({ ...prev, [q.id]: e.target.value }))}
                   className="min-h-11 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                 />
@@ -203,7 +204,7 @@ export function QuestionCard({
             value={comment}
             rows={2}
             disabled={busy || expired}
-            placeholder="还有什么要补充的？（可选，提交给助手）"
+            placeholder={t("chat.questionCard.commentPlaceholder")}
             onChange={(e) => setComment(e.target.value)}
             className="w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
           />
@@ -212,7 +213,7 @@ export function QuestionCard({
 
       <div className="flex items-center justify-between border-t px-3 py-1.5">
         <span className="text-[11px] text-muted-foreground">
-          {request.waitForAnswer ? "不应答将挂起当前回合（超时自动继续）" : "回合已继续，回答将作为新消息送达"}
+          {request.waitForAnswer ? t("chat.questionCard.pendingHint") : t("chat.questionCard.continuedHint")}
         </span>
         <div className="flex items-center gap-1">
           <button
@@ -223,7 +224,7 @@ export function QuestionCard({
             className="flex min-h-11 items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
             <X className="size-3" />
-            忽略
+            {t("chat.questionCard.ignore")}
           </button>
           <button
             type="button"
@@ -232,7 +233,7 @@ export function QuestionCard({
             onClick={submit}
             className="min-h-11 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/80 disabled:opacity-50"
           >
-            提交回答
+            {t("chat.questionCard.submit")}
           </button>
         </div>
       </div>

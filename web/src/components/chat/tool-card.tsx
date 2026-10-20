@@ -12,6 +12,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
 import { codeTextOf, RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeToolCall } from "./tool-card-data";
+import { t } from "@/i18n/i18n";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
 
 // W5-27 首屏拆分：diff 视图（react-diff-view）按需加载，未展开过 diff 的会话不下载该模块
@@ -110,7 +111,7 @@ export function ToolCard({
           ) : (
             <CircleCheck className="size-3 shrink-0" />
           )}
-          {running ? "运行中" : isError ? "失败" : "完成"}
+          {running ? t("chat.toolcard.statusRunning") : isError ? t("chat.toolcard.statusFailed") : t("chat.toolcard.statusDone")}
         </span>
         <ChevronDown
           className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
@@ -120,7 +121,7 @@ export function ToolCard({
         <div className="space-y-2 border-t px-3 py-2">
           {argsPretty || codeText ? (
             <section>
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground/80">{codeText ? "代码" : "参数"}</div>
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground/80">{codeText ? t("chat.toolcard.code") : t("chat.toolcard.args")}</div>
               <pre className="max-h-40 overflow-y-auto rounded-md bg-muted/40 px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
                 {codeText || argsPretty}
               </pre>
@@ -128,9 +129,9 @@ export function ToolCard({
           ) : null}
           <section>
             <div className="mb-1 flex items-center gap-2">
-              <div className="text-[11px] font-medium text-muted-foreground/80">结果</div>
+              <div className="text-[11px] font-medium text-muted-foreground/80">{t("chat.toolcard.result")}</div>
               {diffText != null && (
-                <div role="group" aria-label="结果视图切换" className="flex items-center rounded-md border p-0.5">
+                <div role="group" aria-label={t("chat.toolcard.resultViewToggle")} className="flex items-center rounded-md border p-0.5">
                   {(["diff", "text"] as const).map((mode) => (
                     <button
                       key={mode}
@@ -143,7 +144,7 @@ export function ToolCard({
                           : "text-muted-foreground hover:bg-muted/50"
                       }`}
                     >
-                      {mode === "diff" ? "Diff" : "文本"}
+                      {mode === "diff" ? "Diff" : t("chat.toolcard.textView")}
                     </button>
                   ))}
                 </div>
@@ -155,7 +156,7 @@ export function ToolCard({
                   data-testid="tool-diff-view"
                   className="max-h-64 overflow-y-auto rounded-md bg-muted/20 p-1.5"
                 >
-                  <Suspense fallback={<div className="p-2 text-xs text-muted-foreground">加载 diff 视图…</div>}>
+                  <Suspense fallback={<div className="p-2 text-xs text-muted-foreground">{t("chat.toolcard.loadingDiff")}</div>}>
                     <DiffView diffText={diffText} />
                   </Suspense>
                 </div>
@@ -171,14 +172,14 @@ export function ToolCard({
                       aria-expanded={showFull}
                       className="mt-0.5 inline-flex min-h-11 items-center gap-1 text-xs text-primary transition-colors hover:underline"
                     >
-                      {showFull ? "收起结果" : "展开全部"}
+                      {showFull ? t("chat.toolcard.collapse") : t("chat.toolcard.expand")}
                     </button>
                   ) : null}
                 </>
               )
             ) : (
               <div className="text-xs text-muted-foreground/70">
-                {running ? "等待工具返回…" : isError ? "（无结果文本）" : "（无文本结果）"}
+                {running ? t("chat.toolcard.waiting") : isError ? t("chat.toolcard.noResult") : t("chat.toolcard.noTextResult")}
               </div>
             )}
           </section>

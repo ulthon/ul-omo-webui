@@ -12,6 +12,7 @@ import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry } from "@/lib/api";
 import { addMessageUsage, formatCost, formatTokens, toUsageStats, type UsageStats } from "./status-bar-data";
+import { t } from "@/i18n/i18n";
 import { onUsageRefresh } from "./compact-run";
 
 function entryId(entry: WireEntry): string | null {
@@ -141,7 +142,7 @@ export function StatusBar({ sessionId }: { sessionId: string }) {
           aria-hidden
         />
         <span data-testid="status-run-state" className="shrink-0">
-          {running ? "运行中" : "空闲"}
+          {running ? t("chat.statusBar.running") : t("chat.statusBar.idle")}
         </span>
         {stats && tokens ? (
           <span className="ml-auto flex min-w-0 items-center gap-2 tabular-nums">
@@ -152,14 +153,17 @@ export function StatusBar({ sessionId }: { sessionId: string }) {
               {formatCost(stats.cost)}
             </span>
             <span data-testid="status-detail" className="hidden whitespace-nowrap sm:inline">
-              ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)} 缓存
-              {formatTokens(tokens.cacheRead + tokens.cacheWrite)}
-              {stats.context ? ` · 上下文 ${Math.round(stats.context.percent)}%` : ""}
+              {t("chat.statusBar.detail", {
+                input: formatTokens(tokens.input),
+                output: formatTokens(tokens.output),
+                cache: formatTokens(tokens.cacheRead + tokens.cacheWrite),
+              })}
+              {stats.context ? t("chat.statusBar.context", { n: Math.round(stats.context.percent) }) : ""}
             </span>
           </span>
         ) : (
           <span className="ml-auto min-w-0 truncate">
-            {failed ? "用量不可用" : "用量统计中…"}
+            {failed ? t("chat.statusBar.usageFailed") : t("chat.statusBar.usageLoading")}
           </span>
         )}
       </div>

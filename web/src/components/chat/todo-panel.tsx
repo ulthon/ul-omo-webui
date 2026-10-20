@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { CircleCheck, CircleSlash, ListTodo, Loader2, Square, X } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { findToolResultMessage, parseTodoSnapshot, type TodoPhase, type TodoStatus } from "./todo-list-data";
+import { t } from "@/i18n/i18n";
 
 /** 折叠记忆 localStorage 键（"1"=开 / "0"=关；无记录=未交互过，由调用方按视口取默认值） */
 const PANEL_PREF_KEY = "ul-omo-webui:todo-panel-open";
@@ -78,7 +79,7 @@ function PanelPhaseGroup({ phase }: { phase: TodoPhase }) {
   return (
     <section>
       <div className="mb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground/80">{phase.name}</div>
-      <ul className="space-y-0.5" aria-label={`任务组：${phase.name}`}>
+      <ul className="space-y-0.5" aria-label={t("chat.todo.groupLabel", { name: phase.name })}>
         {phase.tasks.map((task, i) => {
           const done = task.status === "completed" || task.status === "abandoned";
           return (
@@ -126,18 +127,18 @@ export function TodoPanel({ sessionId, onClose }: { sessionId: string | null; on
     <div data-testid="todo-panel" className="flex h-full min-h-0 flex-col">
       <header className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1">
         <ListTodo className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">任务清单</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{t("chat.todo.panelTitle")}</span>
         {phases && (
           <span className="shrink-0 text-xs text-muted-foreground">
-            {done}/{total} 已完成
+            {t("chat.todo.progress", { done, total })}
           </span>
         )}
         {onClose && (
           <button
             type="button"
-            aria-label="收起任务面板"
+            aria-label={t("chat.todo.collapse")}
             data-testid="todo-panel-close"
-            title="收起任务面板"
+            title={t("chat.todo.collapse")}
             onClick={onClose}
             className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground lg:size-9"
           >
@@ -153,9 +154,9 @@ export function TodoPanel({ sessionId, onClose }: { sessionId: string | null; on
             ))}
           </div>
         ) : sessionId == null ? (
-          <PanelEmpty text="未选择会话" />
+          <PanelEmpty text={t("chat.todo.noSession")} />
         ) : (
-          <PanelEmpty text="本会话还没有 todo 清单" />
+          <PanelEmpty text={t("chat.todo.empty")} />
         )}
       </div>
     </div>

@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import { useMessagesStore } from "@/stores/messages";
+import { t } from "@/i18n/i18n";
 import type { WireMessage } from "@/lib/api";
 import type { ChatListItem } from "./message-items";
 
@@ -160,7 +161,7 @@ export function NavRail({
             type="button"
             data-testid="nav-rail-tick"
             title={tick.title}
-            aria-label={`跳转到：${tick.title}`}
+            aria-label={t("chat.navRail.jumpTo", { title: tick.title })}
             onClick={() => onTickClick(tick)}
             className="pointer-events-auto absolute right-0.5 h-1.5 w-2 -translate-y-1/2 rounded-full bg-border transition-colors hover:bg-primary"
             style={{ top: `${(m.start / totalSize) * 100}%` }}

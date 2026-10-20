@@ -5,6 +5,7 @@
 // 命令门链（commands.ts → chat-view → api.prompt）不随显隐变化，输入拦截继续兜底。
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { CHAT_COMMANDS, type ChatCommand } from "./commands";
 import { compactToastText, runCompact } from "./compact-run";
@@ -24,7 +25,7 @@ export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessi
         await api.prompt(sessionId, { text: cmd.label });
       }
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "命令发送失败", "error");
+      showToast(err instanceof ApiError ? err.message : t("chat.commandBar.sendFailed"), "error");
     } finally {
       setPending(null);
     }
@@ -43,7 +44,7 @@ export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessi
           type="button"
           data-testid={`cmd-${cmd.name}`}
           disabled={!cmd.supported || busy || hydrationLocked || pending !== null}
-          title={cmd.supported ? `发送 ${cmd.label}` : `引擎不支持：${cmd.note}`}
+          title={cmd.supported ? t("chat.commandBar.sendTitle", { label: cmd.label }) : t("chat.commandBar.unsupportedTitle", { note: cmd.note })}
           aria-disabled={!cmd.supported}
           onClick={() => void send(cmd)}
           className="rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors enabled:hover:bg-muted enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"

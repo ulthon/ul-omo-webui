@@ -14,6 +14,7 @@ import {
   type TurnSpeedStats,
   type UsageStats,
 } from "./status-bar-data";
+import { t } from "@/i18n/i18n";
 
 /** 回合速度展示值：≥100 取整，否则 1 位小数（tok/s 量级不锁具体精度） */
 function fmtSpeed(v: number): string {
@@ -92,8 +93,8 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
     setReloadTick((t) => t + 1);
   }, [runState]);
 
-  if (!sessionId) return <PanelMessage title="未选择会话" />;
-  if (failed) return <PanelMessage title="用量不可用" hint="统计服务暂时无法访问，稍后自动恢复" />;
+  if (!sessionId) return <PanelMessage title={t("chat.statPanel.noSession")} />;
+  if (failed) return <PanelMessage title={t("chat.statPanel.unavailable")} hint={t("chat.statPanel.unavailableHint")} />;
 
   const tokens = stats?.tokens ?? null;
   const ctx = stats?.context ?? null;
@@ -102,33 +103,33 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div data-testid="stat-panel" className="h-full space-y-3 overflow-y-auto p-3">
-      <StatSection title="累计 Tokens" testid="stat-tokens">
+      <StatSection title={t("chat.statPanel.tokensTitle")} testid="stat-tokens">
         {tokens ? (
           <div className="space-y-1">
-            <StatRow label="输入" value={formatTokens(tokens.input)} testid="stat-tokens-input" />
-            <StatRow label="输出" value={formatTokens(tokens.output)} testid="stat-tokens-output" />
-            <StatRow label="总计" value={formatTokens(tokens.total)} testid="stat-tokens-total" />
+            <StatRow label={t("chat.statPanel.input")} value={formatTokens(tokens.input)} testid="stat-tokens-input" />
+            <StatRow label={t("chat.statPanel.output")} value={formatTokens(tokens.output)} testid="stat-tokens-output" />
+            <StatRow label={t("chat.statPanel.total")} value={formatTokens(tokens.total)} testid="stat-tokens-total" />
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">用量统计中…</p>
+          <p className="text-xs text-muted-foreground">{t("chat.statPanel.loading")}</p>
         )}
       </StatSection>
 
-      <StatSection title="缓存命中" testid="stat-cache">
+      <StatSection title={t("chat.statPanel.cacheTitle")} testid="stat-cache">
         {tokens ? (
           <div className="space-y-1">
-            <StatRow label="缓存读" value={formatTokens(tokens.cacheRead)} testid="stat-cache-read" />
-            <StatRow label="缓存写" value={formatTokens(tokens.cacheWrite)} testid="stat-cache-write" />
+            <StatRow label={t("chat.statPanel.cacheRead")} value={formatTokens(tokens.cacheRead)} testid="stat-cache-read" />
+            <StatRow label={t("chat.statPanel.cacheWrite")} value={formatTokens(tokens.cacheWrite)} testid="stat-cache-write" />
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">用量统计中…</p>
+          <p className="text-xs text-muted-foreground">{t("chat.statPanel.loading")}</p>
         )}
       </StatSection>
 
-      <StatSection title="上下文水位" testid="stat-context">
+      <StatSection title={t("chat.statPanel.contextTitle")} testid="stat-context">
         {ctx ? (
           <>
-            <StatRow label="占用" value={`${Math.round(ctx.percent)}%`} testid="stat-context-percent" />
+            <StatRow label={t("chat.statPanel.contextUsage")} value={`${Math.round(ctx.percent)}%`} testid="stat-context-percent" />
             <div
               className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
               role="progressbar"
@@ -143,19 +144,19 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
             </p>
           </>
         ) : (
-          <p className="text-xs text-muted-foreground">暂无上下文数据</p>
+          <p className="text-xs text-muted-foreground">{t("chat.statPanel.noContext")}</p>
         )}
       </StatSection>
 
-      <StatSection title="成本" testid="stat-cost">
-        <StatRow label="累计费用" value={formatCost(stats?.cost ?? 0)} testid="stat-cost-value" />
+      <StatSection title={t("chat.statPanel.costTitle")} testid="stat-cost">
+        <StatRow label={t("chat.statPanel.costTotal")} value={formatCost(stats?.cost ?? 0)} testid="stat-cost-value" />
       </StatSection>
 
-      <StatSection title="回合速度" testid="stat-speed">
+      <StatSection title={t("chat.statPanel.speedTitle")} testid="stat-speed">
         {turns.length > 0 ? (
           <>
             <StatRow
-              label={`平均（${turns.length} 回合）`}
+              label={t("chat.statPanel.avgTurns", { n: turns.length })}
               value={`${fmtSpeed(speed?.averageTokPerSec ?? 0)} tok/s`}
               testid="stat-speed-average"
             />
@@ -176,7 +177,7 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
           </>
         ) : (
           <p data-testid="stat-speed-empty" className="text-xs text-muted-foreground">
-            暂无数据（回合结束后出现）
+            {t("chat.statPanel.noData")}
           </p>
         )}
       </StatSection>

@@ -5,6 +5,7 @@ import { memo } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
+import { t } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 
@@ -47,7 +48,7 @@ export function BubbleShell({
               data-testid="queued-badge"
               className="mb-1 block w-fit rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[11px] leading-4"
             >
-              排队中
+              {t("chat.messageBubble.queued")}
             </span>
           )}
           {children}
@@ -58,7 +59,7 @@ export function BubbleShell({
   return (
     <div className="group w-full" data-streaming={live ? "true" : undefined}>
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-        <span>{live ? "正在回复" : "助手"}</span>
+        <span>{live ? t("chat.messageBubble.live") : t("chat.messageBubble.assistant")}</span>
         {/* 模型短名常驻（2026-10-15 可见性缺口 ②；docs08-r5 任务 12 放宽到 live 态）：逐条可知
             由哪只模型作答，替代 B11 切换点分隔线（连续同模型段零标记的盲区）；流式态与
             "正在回复"并存，settle 态不变；无 model 字段（老数据/裸流）不渲染不误报 */}
@@ -66,7 +67,7 @@ export function BubbleShell({
         {live && <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />}
         {time && <span>{time}</span>}
         {interrupted && (
-          <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">已中断</span>
+          <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">{t("chat.messageBubble.interrupted")}</span>
         )}
         {actions}
       </div>

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { WirePart } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { ImageOff, X } from "lucide-react";
 
 /** 灯箱：fixed 全屏遮罩 + 图片适配视口；点遮罩或 Esc 关闭；关闭按钮 44px 触控达标 */
@@ -35,7 +36,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string;
       <button
         type="button"
         onClick={onClose}
-        aria-label="关闭预览"
+        aria-label={t("chat.lightbox.close")}
         className="absolute right-3 top-3 flex size-11 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
       >
         <X className="size-5" />
@@ -52,13 +53,13 @@ export function ImagePart({ part }: { part: WirePart }) {
   const mimeType = typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "image/png";
   if (!data) return null;
   const src = `data:${mimeType};base64,${data}`;
-  const alt = "消息图片";
+  const alt = t("chat.lightbox.imageAlt");
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="查看大图"
+        aria-label={t("chat.lightbox.viewLarge")}
         className="block max-w-full cursor-zoom-in overflow-hidden rounded-lg border"
       >
         <img src={src} alt={alt} loading="lazy" className="max-h-64 w-auto max-w-full object-contain" />
@@ -73,7 +74,7 @@ export function ImageRefPlaceholder() {
   return (
     <div className="my-1.5 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
       <ImageOff className="size-3.5 shrink-0" />
-      工具产出图片暂不可查看
+      {t("chat.lightbox.refUnavailable")}
     </div>
   );
 }

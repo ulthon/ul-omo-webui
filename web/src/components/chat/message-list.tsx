@@ -10,6 +10,7 @@ import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n/i18n";
 import { mergeMemoryItems, type ChatListItem } from "./message-items";
 import { EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
@@ -148,7 +149,7 @@ export function MessageList({
       >
         {mergedItems.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            暂无消息，发送第一条消息开始对话
+            {t("chat.messageList.empty")}
           </div>
         ) : (
           <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>
@@ -177,7 +178,7 @@ export function MessageList({
 
       {syncing && (
         <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
-          同步历史…
+          {t("chat.messageList.syncing")}
         </div>
       )}
 
@@ -194,7 +195,7 @@ export function MessageList({
           }}
         >
           <ArrowDown className="size-3.5" />
-          回到底部
+          {t("chat.messageList.jumpToBottom")}
         </Button>
       )}
     </div>

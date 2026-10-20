@@ -15,6 +15,7 @@ import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { Composer } from "@/components/composer/composer";
 import { CommandBar } from "./command-bar";
 import { useHydrationRunLock } from "./hydration-lock";
@@ -32,7 +33,7 @@ function EmptyHint() {
     <div className="flex h-full items-center justify-center p-6">
       <div className="flex flex-col items-center gap-3 text-center">
         <MessagesSquare className="size-10 text-muted-foreground/40" />
-        <p className="text-sm text-muted-foreground">从左侧选择会话，或新建一个会话开始对话</p>
+        <p className="text-sm text-muted-foreground">{t("chat.chatView.emptyHint")}</p>
       </div>
     </div>
   );
@@ -208,19 +209,19 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   if (loadState === "loading") {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">加载消息…</div>
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("chat.chatView.loading")}</div>
     );
   }
   if (loadState === "error") {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="text-sm text-muted-foreground">消息加载失败，请检查服务是否可用</p>
+        <p className="text-sm text-muted-foreground">{t("chat.chatView.loadFailed")}</p>
         <button
           type="button"
           onClick={() => setRetrySeq((n) => n + 1)}
           className="rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
         >
-          重试
+          {t("chat.chatView.retry")}
         </button>
       </div>
     );

@@ -11,6 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +41,7 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
 
   const onCopy = async () => {
     const ok = await copyText(messageRawText(entry.message as WireMessage));
-    showToast(ok ? "已复制原文" : "复制失败（浏览器未授权剪贴板）", ok ? undefined : "error");
+    showToast(ok ? t("chat.messageActions.copied") : t("chat.messageActions.copyFailed"), ok ? undefined : "error");
   };
 
   const onRetry = async () => {
@@ -51,13 +52,13 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
       // 切到 fork 会话（human 视图不列 fork 子会话，"全部活动"视图按血缘归组可见）+ 列表刷新
       useSessionsStore.getState().select(forked.session.id);
       void refreshSessions();
-      showToast("已创建重试分支，正在重新生成…");
+      showToast(t("chat.messageActions.retryBranchCreated"));
       // 重试语义：fork 的新会话是该消息之前的上下文，自动重发原消息触发新一轮生成
       if (forked.text) {
         await api.prompt(forked.session.id, { text: forked.text });
       }
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "重试失败", "error");
+      showToast(err instanceof ApiError ? err.message : t("chat.messageActions.retryFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -71,7 +72,7 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
           variant="ghost"
           size="icon"
           className="size-11 shrink-0 text-muted-foreground opacity-100 transition-opacity data-[state=open]:opacity-100 lg:size-5 lg:opacity-0 lg:group-hover:opacity-100"
-          aria-label="消息操作"
+          aria-label={t("chat.messageActions.menuLabel")}
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MoreVertical className="size-3.5" />}
         </Button>
@@ -79,11 +80,11 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
       <DropdownMenuContent align={align} className="w-48">
         <DropdownMenuItem onSelect={() => void onCopy()}>
           <Copy className="mr-2 size-4" />
-          复制原文
+          {t("chat.messageActions.copy")}
         </DropdownMenuItem>
         <DropdownMenuItem disabled={busy || !forkTarget} onSelect={() => void onRetry()}>
           <RotateCcw className="mr-2 size-4" />
-          重试（从此消息重新生成）
+          {t("chat.messageActions.retry")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

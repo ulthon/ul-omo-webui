@@ -1,2 +1,198 @@
-// chat 域词条（zh-CN）：占位，待 Wave-2 按域抽取填充。
-export const chat = {} as const;
+// chat 域词条（zh-CN）：web/src/components/chat/ 各组件用户可见文案，zh 值为迁移前逐字原文。
+// 纯函数模块（compact-run/tool-card-data/commands 等）与引擎 wire 传入文案（权限卡
+// title/message、notify 载荷）不在本域，保持原样不译。
+export const chat = {
+  // tool-card.tsx 工具调用卡片
+  toolcard: {
+    statusRunning: "运行中",
+    statusFailed: "失败",
+    statusDone: "完成",
+    code: "代码",
+    args: "参数",
+    result: "结果",
+    resultViewToggle: "结果视图切换",
+    textView: "文本",
+    loadingDiff: "加载 diff 视图…",
+    collapse: "收起结果",
+    expand: "展开全部",
+    waiting: "等待工具返回…",
+    noResult: "（无结果文本）",
+    noTextResult: "（无文本结果）",
+  },
+  // status-bar.tsx 会话状态条
+  statusBar: {
+    running: "运行中",
+    idle: "空闲",
+    detail: "↑{input} ↓{output} 缓存{cache}",
+    context: " · 上下文 {n}%",
+    usageFailed: "用量不可用",
+    usageLoading: "用量统计中…",
+  },
+  // message-bubble.tsx 消息气泡
+  messageBubble: {
+    queued: "排队中",
+    live: "正在回复",
+    assistant: "助手",
+    interrupted: "已中断",
+  },
+  // queue-bar.tsx 排队条
+  queue: {
+    cancelFailed: "排队撤销失败",
+    pendingCount: { one: "1 条待发", other: "{n} 条待发" },
+    suspendedHint: "回合已结束，将在下次发送时执行",
+    clear: "清空",
+    steerTitle: "插入：下一回合边界并入当前工作",
+    followTitle: "跟答：当前回合做完后执行",
+    steer: "插入",
+    follow: "跟答",
+    removeItem: "撤销该条",
+  },
+  // todo-list.tsx / todo-panel.tsx 任务清单
+  todo: {
+    inProgress: "进行中",
+    abandoned: "已放弃",
+    groupLabel: "任务组：{name}",
+    progress: "{done}/{total} 已完成",
+    statusRunning: "运行中",
+    statusFailed: "失败",
+    statusDone: "完成",
+    panelTitle: "任务清单",
+    collapse: "收起任务面板",
+    noSession: "未选择会话",
+    empty: "本会话还没有 todo 清单",
+  },
+  // stat-panel.tsx 统计页签
+  statPanel: {
+    noSession: "未选择会话",
+    unavailable: "用量不可用",
+    unavailableHint: "统计服务暂时无法访问，稍后自动恢复",
+    tokensTitle: "累计 Tokens",
+    input: "输入",
+    output: "输出",
+    total: "总计",
+    loading: "用量统计中…",
+    cacheTitle: "缓存命中",
+    cacheRead: "缓存读",
+    cacheWrite: "缓存写",
+    contextTitle: "上下文水位",
+    contextUsage: "占用",
+    noContext: "暂无上下文数据",
+    costTitle: "成本",
+    costTotal: "累计费用",
+    speedTitle: "回合速度",
+    avgTurns: { one: "平均（1 回合）", other: "平均（{n} 回合）" },
+    noData: "暂无数据（回合结束后出现）",
+  },
+  // memory-panel.tsx 记忆页签
+  memoryPanel: {
+    libraryPath: "库路径：{path}",
+    todayTitle: "今日 committed 记忆运行数",
+    today: { one: "今日 1 条", other: "今日 {n} 条" },
+    totalTitle: "facts 条目总数",
+    total: { one: "库 1 条", other: "库 {n} 条" },
+    filesTitle: "facts + system 文件数",
+    files: { one: "1 个文件", other: "{n} 个文件" },
+    lastEntry: "最近落条 {time}",
+    systemTitle: "repo/system/*.md 磁盘字节和",
+    systemSize: "system 文件体积 {size}",
+    fileEmpty: "（该文件暂无条目）",
+    docEmpty: "（空文件）",
+    noSession: "未选择会话",
+    noSessionHint: "选择会话或项目后浏览其记忆库",
+    unavailable: "记忆不可用",
+    retry: "重试",
+    loading: "加载记忆…",
+    noLibraryTitle: "该项目尚无记忆库",
+    noLibraryHint: "记忆按项目目录分库，与同目录 CLI 共用；同目录会话产生记忆后自动建库。",
+    noEntriesTitle: "该目录暂无记忆条目",
+    noEntriesHint: "记忆按项目目录分库，与同目录 CLI 共用。",
+    browsing: "浏览项目：{project}",
+    refresh: "刷新记忆",
+  },
+  // question-card.tsx 提问卡片
+  questionCard: {
+    submitFailed: "应答失败，请重试",
+    needAnswer: "请至少回答一个问题或填写补充说明",
+    title: "助手提问",
+    position: "第 {position}/{total} 个待处理",
+    waiting: "等待回答",
+    later: "可稍后回答",
+    expired: "已超时",
+    customPlaceholder: "或输入自定义答案（可选）",
+    commentPlaceholder: "还有什么要补充的？（可选，提交给助手）",
+    pendingHint: "不应答将挂起当前回合（超时自动继续）",
+    continuedHint: "回合已继续，回答将作为新消息送达",
+    ignore: "忽略",
+    submit: "提交回答",
+  },
+  // permission-card.tsx 权限卡片 chrome（引擎传入的 title/message 不在域内）
+  permissionCard: {
+    kindSelect: "权限请求",
+    kindConfirm: "确认操作",
+    kindInput: "需要输入",
+    kindEditor: "需要编辑",
+    deniedToast: "已拒绝，请在下方填写反馈",
+    submitFailed: "应答失败，请重试",
+    cancelFailed: "取消失败，请重试",
+    position: "第 {position}/{total} 个待处理",
+    alwaysAllow: "总是允许 {tool}（本会话前端自动放行）",
+    confirm: "确认",
+    cancel: "取消",
+    submit: "提交",
+    submitAll: "提交全文",
+    blockHint: "不应答将阻塞当前回合",
+    dismiss: "忽略并取消",
+  },
+  // chat-view.tsx 对话主视图
+  chatView: {
+    emptyHint: "从左侧选择会话，或新建一个会话开始对话",
+    loading: "加载消息…",
+    loadFailed: "消息加载失败，请检查服务是否可用",
+    retry: "重试",
+  },
+  // command-bar.tsx 斜杠命令按钮行
+  commandBar: {
+    sendFailed: "命令发送失败",
+    sendTitle: "发送 {label}",
+    unsupportedTitle: "引擎不支持：{note}",
+  },
+  // image-lightbox.tsx 图片灯箱
+  lightbox: {
+    close: "关闭预览",
+    imageAlt: "消息图片",
+    viewLarge: "查看大图",
+    refUnavailable: "工具产出图片暂不可查看",
+  },
+  // message-actions.tsx 消息操作菜单
+  messageActions: {
+    copied: "已复制原文",
+    copyFailed: "复制失败（浏览器未授权剪贴板）",
+    retryBranchCreated: "已创建重试分支，正在重新生成…",
+    retryFailed: "重试失败",
+    menuLabel: "消息操作",
+    copy: "复制原文",
+    retry: "重试（从此消息重新生成）",
+  },
+  // message-list.tsx 虚拟化消息列表
+  messageList: {
+    empty: "暂无消息，发送第一条消息开始对话",
+    syncing: "同步历史…",
+    jumpToBottom: "回到底部",
+  },
+  // nav-rail.tsx 右缘导航轨
+  navRail: {
+    jumpTo: "跳转到：{title}",
+  },
+  // permission-queue.tsx 权限队列容器
+  permissionQueue: {
+    autoAllowed: "已自动允许 {tool}（总是允许）",
+  },
+  // thinking-block.tsx 思考折叠块
+  thinkingBlock: {
+    live: "思考中",
+    title: "思考过程",
+    chars: " … {n} 字",
+    ellipsis: "…",
+    empty: "（暂无内容）",
+  },
+} as const;

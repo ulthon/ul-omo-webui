@@ -11,7 +11,7 @@ import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystem
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { formatRelativeTime } from "@/i18n/i18n";
+import { formatRelativeTime, t } from "@/i18n/i18n";
 
 /** 路径末段（项目显示名；根路径 "/" 的空末段回退全路径） */
 function projectLabel(project: string): string {
@@ -50,7 +50,7 @@ function PanelMessage({
 
 /** 库路径说明行（空态/遥测卡共享：诚实告知分库位置） */
 function LibraryHint({ libraryPath }: { libraryPath: string }) {
-  return <p className="break-all text-xs tabular-nums text-muted-foreground/70">库路径：{libraryPath}</p>;
+  return <p className="break-all text-xs tabular-nums text-muted-foreground/70">{t("chat.memoryPanel.libraryPath", { path: libraryPath })}</p>;
 }
 
 /** 相对时间走统一 i18n 实现（CLI 遥测行 "4m ago" 同语义；时钟轻微超前按刚刚处理） */
@@ -72,20 +72,22 @@ function TelemetryCard({ telemetry, libraryPath }: { telemetry: MemoryTelemetry;
   return (
     <div data-testid="memory-telemetry" className="shrink-0 space-y-1.5 border-b px-3 py-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span data-testid="memory-telemetry-today" title="今日 committed 记忆运行数">
-          今日 {telemetry.todayCount} 条
+        <span data-testid="memory-telemetry-today" title={t("chat.memoryPanel.todayTitle")}>
+          {t("chat.memoryPanel.today", { n: telemetry.todayCount })}
         </span>
-        <span data-testid="memory-telemetry-total" title="facts 条目总数">
-          库 {telemetry.totalEntries} 条
+        <span data-testid="memory-telemetry-total" title={t("chat.memoryPanel.totalTitle")}>
+          {t("chat.memoryPanel.total", { n: telemetry.totalEntries })}
         </span>
-        <span data-testid="memory-telemetry-files" title="facts + system 文件数">
-          {telemetry.fileCount} 个文件
+        <span data-testid="memory-telemetry-files" title={t("chat.memoryPanel.filesTitle")}>
+          {t("chat.memoryPanel.files", { n: telemetry.fileCount })}
         </span>
         <span data-testid="memory-telemetry-last" title={telemetry.lastEntryAt ?? ""}>
-          最近落条 {telemetry.lastEntryAt ? relativeTime(telemetry.lastEntryAt) : "—"}
+          {t("chat.memoryPanel.lastEntry", {
+            time: telemetry.lastEntryAt ? relativeTime(telemetry.lastEntryAt) : "—",
+          })}
         </span>
-        <span data-testid="memory-telemetry-system" title="repo/system/*.md 磁盘字节和">
-          system 文件体积 {formatBytes(telemetry.systemBytes)}
+        <span data-testid="memory-telemetry-system" title={t("chat.memoryPanel.systemTitle")}>
+          {t("chat.memoryPanel.systemSize", { size: formatBytes(telemetry.systemBytes) })}
         </span>
       </div>
       <LibraryHint libraryPath={libraryPath} />
@@ -107,7 +109,7 @@ function FactsGroup({ group }: { group: MemoryFactsGroup }) {
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-muted-foreground">（该文件暂无条目）</p>
+        <p className="text-xs text-muted-foreground">{t("chat.memoryPanel.fileEmpty")}</p>
       )}
     </section>
   );
@@ -120,7 +122,7 @@ function SystemDoc({ doc }: { doc: MemorySystemDoc }) {
       {doc.body ? (
         <p className="whitespace-pre-wrap text-sm">{doc.body}</p>
       ) : (
-        <p className="text-xs text-muted-foreground">（空文件）</p>
+        <p className="text-xs text-muted-foreground">{t("chat.memoryPanel.docEmpty")}</p>
       )}
     </section>
   );
@@ -166,30 +168,30 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
   const failed = project !== null && failedFor === project;
   const stale = project === null || data === null || data.project !== project;
 
-  if (!project) return <PanelMessage title="未选择会话" hint="选择会话或项目后浏览其记忆库" />;
+  if (!project) return <PanelMessage title={t("chat.memoryPanel.noSession")} hint={t("chat.memoryPanel.noSessionHint")} />;
 
   let body: ReactNode;
   if (failed) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-        <p className="text-sm text-muted-foreground">记忆不可用</p>
+        <p className="text-sm text-muted-foreground">{t("chat.memoryPanel.unavailable")}</p>
         <button
           type="button"
           onClick={() => setReloadTick((t) => t + 1)}
           className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
         >
-          重试
+          {t("chat.memoryPanel.retry")}
         </button>
       </div>
     );
   } else if (stale) {
-    body = <div className="flex h-full items-center justify-center text-sm text-muted-foreground">加载记忆…</div>;
+    body = <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("chat.memoryPanel.loading")}</div>;
   } else if (!data.exists) {
     body = (
       <PanelMessage
         testid="memory-empty-library"
-        title="该项目尚无记忆库"
-        hint="记忆按项目目录分库，与同目录 CLI 共用；同目录会话产生记忆后自动建库。"
+        title={t("chat.memoryPanel.noLibraryTitle")}
+        hint={t("chat.memoryPanel.noLibraryHint")}
         footer={<LibraryHint libraryPath={data.libraryPath} />}
       />
     );
@@ -197,8 +199,8 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
     body = (
       <PanelMessage
         testid="memory-empty-entries"
-        title="该目录暂无记忆条目"
-        hint="记忆按项目目录分库，与同目录 CLI 共用。"
+        title={t("chat.memoryPanel.noEntriesTitle")}
+        hint={t("chat.memoryPanel.noEntriesHint")}
         footer={<LibraryHint libraryPath={data.libraryPath} />}
       />
     );
@@ -223,13 +225,13 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           className="min-w-0 truncate text-xs text-muted-foreground"
           title={project}
         >
-          浏览项目：{projectLabel(project)}
+          {t("chat.memoryPanel.browsing", { project: projectLabel(project) })}
         </span>
         <button
           type="button"
           data-testid="memory-refresh"
-          aria-label="刷新记忆"
-          title="刷新记忆"
+          aria-label={t("chat.memoryPanel.refresh")}
+          title={t("chat.memoryPanel.refresh")}
           onClick={() => setReloadTick((t) => t + 1)}
           className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
         >

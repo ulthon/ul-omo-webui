@@ -5,6 +5,7 @@
 // touchmove（passive 监听，不阻断手势）即停跟随，手动重新展开复位跟随。
 import { useEffect, useRef, useState } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 
 export function ThinkingBlock({ thinking, live }: { thinking: string; live: boolean }) {
@@ -54,8 +55,8 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
       >
         <BrainCircuit className="size-3.5 shrink-0" data-icon="inline-start" />
         <span className="truncate">
-          {live ? "思考中" : "思考过程"}
-          {count > 0 ? ` … ${count} 字` : "…"}
+          {live ? t("chat.thinkingBlock.live") : t("chat.thinkingBlock.title")}
+          {count > 0 ? t("chat.thinkingBlock.chars", { n: count }) : t("chat.thinkingBlock.ellipsis")}
         </span>
         <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -65,7 +66,7 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
           data-testid="thinking-body"
           className="mt-1 max-h-64 overflow-y-auto rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground"
         >
-          {thinking || "（暂无内容）"}
+          {thinking || t("chat.thinkingBlock.empty")}
         </div>
       )}
     </div>

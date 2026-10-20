@@ -5,15 +5,17 @@
 import { useState } from "react";
 import { ShieldAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { parsePermissionTool, usePermissionsStore, type PermissionRequest } from "@/stores/permissions";
 import { autoAllowKey } from "@/stores/permissions";
 
-const METHOD_LABEL: Record<PermissionRequest["method"], string> = {
-  select: "权限请求",
-  confirm: "确认操作",
-  input: "需要输入",
-  editor: "需要编辑",
+/** 四型标题键（t() 须在渲染期调用，模块级 Record 只存键名字面量） */
+const METHOD_KEY: Record<PermissionRequest["method"], `chat.permissionCard.kind${"Select" | "Confirm" | "Input" | "Editor"}`> = {
+  select: "chat.permissionCard.kindSelect",
+  confirm: "chat.permissionCard.kindConfirm",
+  input: "chat.permissionCard.kindInput",
+  editor: "chat.permissionCard.kindEditor",
 };
 
 export function PermissionCard({
@@ -49,10 +51,10 @@ export function PermissionCard({
       await api.respondPermission(sessionId, { requestId: request.id, ...payload });
       usePermissionsStore.getState().removeRequest(sessionId, request.id);
       if (payload.value === "Deny with feedback") {
-        showToast("已拒绝，请在下方填写反馈", "info");
+        showToast(t("chat.permissionCard.deniedToast"), "info");
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "应答失败，请重试", "error");
+      showToast(err instanceof Error ? err.message : t("chat.permissionCard.submitFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -65,7 +67,7 @@ export function PermissionCard({
       await api.respondPermission(sessionId, { requestId: request.id, cancelled: true });
       usePermissionsStore.getState().removeRequest(sessionId, request.id);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "取消失败，请重试", "error");
+      showToast(err instanceof Error ? err.message : t("chat.permissionCard.cancelFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -79,10 +81,10 @@ export function PermissionCard({
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <ShieldAlert className="size-4 shrink-0 text-amber-600" aria-hidden />
         <span className="text-sm font-medium">
-          {METHOD_LABEL[request.method]}
+          {t(METHOD_KEY[request.method])}
           {total > 1 && (
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              第 {position}/{total} 个待处理
+              {t("chat.permissionCard.position", { position, total })}
             </span>
           )}
         </span>
@@ -118,7 +120,7 @@ export function PermissionCard({
                   checked={alwaysAllow}
                   onChange={(e) => setAlwaysAllow(e.target.checked)}
                 />
-                总是允许 {parsePermissionTool(request.title)}（本会话前端自动放行）
+                {t("chat.permissionCard.alwaysAllow", { tool: parsePermissionTool(request.title) })}
               </label>
             )}
           </div>
@@ -133,7 +135,7 @@ export function PermissionCard({
               onClick={() => void respond({ confirmed: true })}
               className="min-h-11 flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/80 disabled:opacity-50"
             >
-              确认
+              {t("chat.permissionCard.confirm")}
             </button>
             <button
               type="button"
@@ -142,7 +144,7 @@ export function PermissionCard({
               onClick={() => void respond({ confirmed: false })}
               className="min-h-11 flex-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-muted disabled:opacity-50"
             >
-              取消
+              {t("chat.permissionCard.cancel")}
             </button>
           </div>
         )}
@@ -169,7 +171,7 @@ export function PermissionCard({
               onClick={() => void respond({ value: inputValue })}
               className="min-h-11 w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/80 disabled:opacity-50"
             >
-              提交
+              {t("chat.permissionCard.submit")}
             </button>
           </div>
         )}
@@ -190,14 +192,14 @@ export function PermissionCard({
               onClick={() => void respond({ value: editorValue })}
               className="min-h-11 w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/80 disabled:opacity-50"
             >
-              提交全文
+              {t("chat.permissionCard.submitAll")}
             </button>
           </div>
         )}
       </div>
 
       <div className="flex items-center justify-between border-t px-3 py-1.5">
-        <span className="text-[11px] text-muted-foreground">不应答将阻塞当前回合</span>
+        <span className="text-[11px] text-muted-foreground">{t("chat.permissionCard.blockHint")}</span>
         <button
           type="button"
           disabled={busy}
@@ -206,7 +208,7 @@ export function PermissionCard({
           className="flex min-h-11 items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
         >
           <X className="size-3" />
-          忽略并取消
+          {t("chat.permissionCard.dismiss")}
         </button>
       </div>
     </div>

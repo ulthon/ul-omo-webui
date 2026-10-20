@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { ToolCard } from "./tool-card";
 import { findToolResultMessage, parseTodoSnapshot, type TodoPhase, type TodoStatus } from "./todo-list-data";
+import { t } from "@/i18n/i18n";
 
 function TaskStatusIcon({ status }: { status: TodoStatus }) {
   const className = "mt-0.5 size-3.5 shrink-0";
@@ -47,9 +48,9 @@ function TodoTaskRow({ task }: { task: { content: string; status: TodoStatus } }
       >
         {content}
       </span>
-      {status === "in_progress" && <span className="shrink-0 text-[11px] text-primary">进行中</span>}
+      {status === "in_progress" && <span className="shrink-0 text-[11px] text-primary">{t("chat.todo.inProgress")}</span>}
       {status === "abandoned" && (
-        <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">已放弃</span>
+        <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{t("chat.todo.abandoned")}</span>
       )}
     </li>
   );
@@ -59,7 +60,7 @@ function TodoPhaseGroup({ phase }: { phase: TodoPhase }) {
   return (
     <section>
       <div className="mb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground/80">{phase.name}</div>
-      <ul className="space-y-0.5" aria-label={`任务组：${phase.name}`}>
+      <ul className="space-y-0.5" aria-label={t("chat.todo.groupLabel", { name: phase.name })}>
         {phase.tasks.map((task, i) => (
           <TodoTaskRow key={i} task={task} />
         ))}
@@ -110,7 +111,7 @@ export function TodoList({
         <ListTodo className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 font-mono text-xs font-medium">{name}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {done}/{total} 已完成
+          {t("chat.todo.progress", { done, total })}
         </span>
         <span
           className={`flex shrink-0 items-center gap-1 text-xs ${
@@ -124,7 +125,7 @@ export function TodoList({
           ) : (
             <CircleCheck className="size-3 shrink-0" />
           )}
-          {running ? "运行中" : isError ? "失败" : "完成"}
+          {running ? t("chat.todo.statusRunning") : isError ? t("chat.todo.statusFailed") : t("chat.todo.statusDone")}
         </span>
       </div>
       <div className="space-y-2.5 border-t px-3 py-2">

@@ -3,6 +3,7 @@
 // "Allow once" 并出队，不弹卡（与引擎 Allow always 并存，语义见 permissions.ts 注释）。
 import { useEffect } from "react";
 import { api } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { autoAllowKey, parsePermissionTool, usePermissionsStore } from "@/stores/permissions";
 import { PermissionCard } from "./permission-card";
@@ -23,7 +24,7 @@ function AutoAllowResolver({ sessionId }: { sessionId: string }) {
       .then(() => {
         if (cancelled) return;
         usePermissionsStore.getState().removeRequest(sessionId, head.id);
-        showToast(`已自动允许 ${tool}（总是允许）`, "info");
+        showToast(t("chat.permissionQueue.autoAllowed", { tool }), "info");
       })
       .catch(() => {
         // 静默保留卡片，人工应答
