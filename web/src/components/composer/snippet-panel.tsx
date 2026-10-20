@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, MessageSquareText, Settings2 } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { snippetPreview } from "./snippet-logic";
@@ -77,7 +78,7 @@ export function SnippetEntryList({
     <section data-testid={`snippet-group-${scope}`}>
       <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">{label}</h3>
       {entries.length === 0 ? (
-        <p className="px-1 py-1 text-xs text-muted-foreground/60">暂无</p>
+        <p className="px-1 py-1 text-xs text-muted-foreground/60">{t("composer.snippet.noEntries")}</p>
       ) : (
         <ul className="rounded-md border">
           {entries.map((entry, i) => (
@@ -95,7 +96,7 @@ export function SnippetEntryList({
               <button
                 type="button"
                 data-testid={`snippet-send-${scope}-${i}`}
-                aria-label={`直接发送：${snippetPreview(entry.content, 20)}`}
+                aria-label={t("composer.snippet.sendAria", { preview: snippetPreview(entry.content, 20) })}
                 disabled={actionDisabled}
                 onClick={() => onSendNow(entry.content)}
                 className="flex w-11 shrink-0 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
@@ -135,7 +136,7 @@ function SnippetList({
         if (!cancelled) setData(res);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : "加载失败");
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -147,7 +148,7 @@ function SnippetList({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex items-center gap-1.5">
-        <DialogTitle className="text-base font-medium">常用语</DialogTitle>
+        <DialogTitle className="text-base font-medium">{t("composer.snippet.panelTitle")}</DialogTitle>
         <Button
           type="button"
           variant="ghost"
@@ -157,10 +158,10 @@ function SnippetList({
           data-testid="snippet-manage-open"
         >
           <Settings2 className="size-3.5" />
-          管理
+          {t("composer.snippet.manage")}
         </Button>
       </div>
-      {!data && !loadError && <p className="text-xs text-muted-foreground/60">加载中…</p>}
+      {!data && !loadError && <p className="text-xs text-muted-foreground/60">{t("composer.snippet.loading")}</p>}
       {loadError && (
         <p className="text-xs text-destructive" data-testid="snippet-error">
           {loadError}
@@ -172,9 +173,9 @@ function SnippetList({
           data-testid="snippet-empty"
         >
           <MessageSquareText className="size-8 text-muted-foreground/40" aria-hidden />
-          <p>还没有常用语，把常用指令存起来一键插入或发送</p>
+          <p>{t("composer.snippet.emptyIntro")}</p>
           <Button type="button" variant="outline" onClick={onManage} data-testid="snippet-empty-manage">
-            去管理
+            {t("composer.snippet.goManage")}
           </Button>
         </div>
       )}
@@ -183,7 +184,7 @@ function SnippetList({
           {project && (
             <SnippetEntryList
               scope="project"
-              label={`项目常用语（${project.split("/").filter(Boolean).pop() ?? project}）`}
+              label={t("composer.snippet.projectGroup", { name: project.split("/").filter(Boolean).pop() ?? project })}
               entries={data.project}
               actionDisabled={actionDisabled}
               onInsert={onInsert}
@@ -192,7 +193,7 @@ function SnippetList({
           )}
           <SnippetEntryList
             scope="global"
-            label="全局常用语"
+            label={t("composer.snippet.globalGroup")}
             entries={data.global}
             actionDisabled={actionDisabled}
             onInsert={onInsert}

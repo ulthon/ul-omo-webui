@@ -8,14 +8,8 @@
 // 锚定档不变。
 import { Fragment } from "react";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
+import { t } from "@/i18n/i18n";
 import { flattenSlashItems, type SlashItem, type SlashSection } from "./composer-logic";
-
-const SECTION_LABELS: Record<SlashSection, string> = {
-  extension: "引擎命令",
-  skill: "技能",
-  prompt: "用户提示",
-  webui: "WebUI",
-};
 
 const SECTION_ORDER: readonly SlashSection[] = ["extension", "skill", "prompt", "webui"];
 
@@ -33,6 +27,13 @@ export function SlashHints({
   onSelect: (item: SlashItem) => void;
   onClose: () => void;
 }) {
+  // 渲染期取词（模块级常量会冻结 import 时的语言档）；webui 段名非中文，直渲染字面量
+  const sectionLabels: Record<SlashSection, string> = {
+    extension: t("composer.slashHints.extension"),
+    skill: t("composer.slashHints.skill"),
+    prompt: t("composer.slashHints.prompt"),
+    webui: "WebUI",
+  };
   const total = flattenSlashItems(groups).length;
   const rows: Array<{ section: SlashSection; item: SlashItem; index: number }> = [];
   let index = 0;
@@ -49,9 +50,9 @@ export function SlashHints({
       mobilePresentation="inline"
       data-testid="slash-hints"
     >
-      <div className="overflow-y-auto p-1.5" role="listbox" aria-label="斜杠命令提示">
+      <div className="overflow-y-auto p-1.5" role="listbox" aria-label={t("composer.slashHints.listboxLabel")}>
         {total === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground" data-testid="slash-empty">无匹配命令</p>
+          <p className="px-2 py-2 text-xs text-muted-foreground" data-testid="slash-empty">{t("composer.slashHints.empty")}</p>
         ) : (
           rows.map((row, i) => {
             const showHeader = i === 0 || rows[i - 1]!.section !== row.section;
@@ -59,7 +60,7 @@ export function SlashHints({
               <Fragment key={row.item.name}>
                 {showHeader && (
                   <p className="px-2 pb-0.5 pt-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    {SECTION_LABELS[row.section]}
+                    {sectionLabels[row.section]}
                   </p>
                 )}
                 <button

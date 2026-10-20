@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { snippetActionDisabled } from "./snippet-logic";
 import { SnippetEntryList } from "./snippet-panel";
@@ -50,7 +51,7 @@ export function SnippetDropdown({
         if (!cancelled) setData(res);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : "加载失败");
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -71,7 +72,7 @@ export function SnippetDropdown({
       mobilePresentation={mobilePresentation}
     >
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
-        {!data && !loadError && <p className="px-1 py-1 text-xs text-muted-foreground/60">加载中…</p>}
+        {!data && !loadError && <p className="px-1 py-1 text-xs text-muted-foreground/60">{t("composer.snippet.loading")}</p>}
         {loadError && (
           <p className="px-1 py-1 text-xs text-destructive" data-testid="snippet-error">
             {loadError}
@@ -79,7 +80,7 @@ export function SnippetDropdown({
         )}
         {empty && (
           <p className="px-1 py-6 text-center text-xs text-muted-foreground" data-testid="snippet-dropdown-empty">
-            还没有常用语，可在「查看全部」中添加
+            {t("composer.snippet.emptyDropdown")}
           </p>
         )}
         {data && (
@@ -87,7 +88,7 @@ export function SnippetDropdown({
             {project && (
               <SnippetEntryList
                 scope="project"
-                label={`项目常用语（${project.split("/").filter(Boolean).pop() ?? project}）`}
+                label={t("composer.snippet.projectGroup", { name: project.split("/").filter(Boolean).pop() ?? project })}
                 entries={data.project}
                 actionDisabled={actionDisabled}
                 onInsert={onInsert}
@@ -96,7 +97,7 @@ export function SnippetDropdown({
             )}
             <SnippetEntryList
               scope="global"
-              label="全局常用语"
+              label={t("composer.snippet.globalGroup")}
               entries={data.global}
               actionDisabled={actionDisabled}
               onInsert={onInsert}
@@ -113,7 +114,7 @@ export function SnippetDropdown({
           className="flex min-h-9 w-full cursor-pointer items-center justify-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ChevronUp className="size-3.5" />
-          查看全部
+          {t("composer.snippet.viewAll")}
         </button>
       </div>
     </AnchoredPanel>

@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
@@ -365,7 +366,7 @@ export function Composer({
       const compactParsed = parseSlashCommand(trimmed);
       if (compactParsed?.name === "compact") {
         if (compactParsed.args !== "") {
-          setError("/compact 不接受参数：请直接发送 /compact");
+          setError(t("composer.compactNoArgs"));
           return;
         }
         setSending(true);
@@ -451,7 +452,7 @@ export function Composer({
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) {
           // 兜底文案（spike 指引 4）：正常"发送撞回合"已转排队，409 仅剩外部驱动/状态漂移
-          setError("该会话正在被另一个窗口处理中，请等待其完成后再发送");
+          setError(t("composer.sessionBusy"));
         } else {
           setError(err instanceof Error ? err.message : String(err));
         }
@@ -476,7 +477,7 @@ export function Composer({
     try {
       await api.abort(sessionId);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "中断失败", "error");
+      showToast(err instanceof Error ? err.message : t("composer.interruptFailed"), "error");
     } finally {
       onAborted();
     }
@@ -501,16 +502,16 @@ export function Composer({
             mimeType: file.type || "image/png",
           });
         } catch {
-          showToast("图片读取失败", "error");
+          showToast(t("composer.imageReadFailed"), "error");
         }
       }
       if (accepted.length === 0) return;
       const room = MAX_IMAGES - imagesRef.current.length;
       if (room <= 0) {
-        showToast(`最多 ${MAX_IMAGES} 张图片`, "error");
+        showToast(t("composer.imageLimit", { n: MAX_IMAGES }), "error");
         return;
       }
-      if (accepted.length > room) showToast(`最多 ${MAX_IMAGES} 张图片，已保留前 ${room} 张`, "error");
+      if (accepted.length > room) showToast(t("composer.imageLimitKept", { n: MAX_IMAGES, kept: room }), "error");
       setImagesBoth([...imagesRef.current, ...accepted.slice(0, room)]);
     },
     [showToast, setImagesBoth],
@@ -564,7 +565,7 @@ export function Composer({
         const res = await api.postAttachment(sessionId, { content });
         setAttachmentsBoth([...attachmentsRef.current, { id: `att-${++attachmentSeq}`, name: res.name, path: res.path }]);
       } catch (err) {
-        showToast(err instanceof Error ? err.message : "附件保存失败", "error");
+        showToast(err instanceof Error ? err.message : t("composer.attachmentSaveFailed"), "error");
       }
     },
     [sessionId, setAttachmentsBoth, showToast],
@@ -578,7 +579,7 @@ export function Composer({
       setAttachmentsBoth(attachmentsRef.current.filter((a) => a.id !== id));
       if (target) {
         void api.removeAttachment(sessionId, target.path).catch((err: unknown) => {
-          showToast(err instanceof Error ? err.message : "附件清理失败（48h 后自动清理）", "error");
+          showToast(err instanceof Error ? err.message : t("composer.attachmentCleanupFailed"), "error");
         });
       }
     },
@@ -719,7 +720,7 @@ export function Composer({
       <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 pb-[max(env(safe-area-inset-bottom),8px)] text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
-          会话处理中，暂不能发送
+          {t("composer.lockedHint")}
         </span>
         <button
           type="button"
@@ -728,7 +729,7 @@ export function Composer({
           className="flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-xs text-destructive transition-colors hover:bg-destructive/10"
         >
           <Square className="size-3" />
-          停止生成
+          {t("composer.stopGeneration")}
         </button>
       </div>
     );
@@ -744,14 +745,14 @@ export function Composer({
       data-testid="paste-offer-bar"
       className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
     >
-      <span className="shrink-0">大段文本（{formatPasteKb(pasteOffer.bytes)}）：</span>
+      <span className="shrink-0">{t("composer.pasteLabel", { size: formatPasteKb(pasteOffer.bytes) })}</span>
       <button
         type="button"
         data-testid="paste-insert"
         onClick={() => insertPasteContent(pasteOffer.content)}
         className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
       >
-        原样插入
+        {t("composer.pasteInsert")}
       </button>
       <button
         type="button"
@@ -759,7 +760,7 @@ export function Composer({
         onClick={() => void attachPasteContent(pasteOffer.content)}
         className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
       >
-        作为附件发送
+        {t("composer.pasteAttach")}
       </button>
       <button
         type="button"
@@ -767,7 +768,7 @@ export function Composer({
         onClick={() => setPasteOffer(null)}
         className="min-h-8 rounded-md border px-2 text-muted-foreground transition-colors hover:bg-muted"
       >
-        忽略
+        {t("composer.pasteDismiss")}
       </button>
     </div>
   ) : null;
@@ -779,7 +780,7 @@ export function Composer({
       <button
         type="button"
         data-testid="history-prev"
-        aria-label="更早一条"
+        aria-label={t("composer.historyOlder")}
         onClick={historyOlder}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
       >
@@ -789,11 +790,11 @@ export function Composer({
         {history.index + 1}/{history.items.length}
       </span>
       <span className="min-w-0 flex-1 truncate">{historyPreview(history.items[history.index])}</span>
-      <span className="hidden shrink-0 sm:inline">Esc 退出</span>
+      <span className="hidden shrink-0 sm:inline">{t("composer.historyEscHint")}</span>
       <button
         type="button"
         data-testid="history-next"
-        aria-label="更新一条"
+        aria-label={t("composer.historyNewer")}
         onClick={historyNewer}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted"
       >
@@ -808,12 +809,12 @@ export function Composer({
           <div key={img.id} data-testid="image-thumb" className="relative size-16 shrink-0">
             <img
               src={`data:${img.mimeType};base64,${img.data}`}
-              alt="待发送图片"
+              alt={t("composer.pendingImageAlt")}
               className="size-16 rounded-lg border object-cover"
             />
             <button
               type="button"
-              aria-label="移除图片"
+              aria-label={t("composer.imageRemove")}
               data-testid="image-thumb-remove"
               onClick={() => removeImage(img.id)}
               className="absolute -top-2.5 -right-2.5 flex size-11 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:text-destructive"
@@ -839,7 +840,7 @@ export function Composer({
             </span>
             <button
               type="button"
-              aria-label="移除附件"
+              aria-label={t("composer.attachmentRemove")}
               data-testid="attachment-chip-remove"
               onClick={() => removeAttachment(att.id)}
               className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
@@ -858,8 +859,8 @@ export function Composer({
       <button
         type="button"
         data-testid="history-btn"
-        aria-label="输入历史"
-        title="输入历史（↑ 翻阅）"
+        aria-label={t("composer.historyAria")}
+        title={t("composer.historyTitle")}
         aria-pressed={history !== null}
         onClick={() => (history ? closeHistory() : void openHistory())}
         className={`flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-muted ${
@@ -871,8 +872,8 @@ export function Composer({
       <button
         type="button"
         data-testid="at-btn"
-        aria-label="引用文件"
-        title="引用文件（插入 @路径）"
+        aria-label={t("composer.fileRefAria")}
+        title={t("composer.fileRefTitle")}
         disabled={!project}
         onClick={() => openPicker(null)}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
@@ -882,8 +883,8 @@ export function Composer({
       <button
         type="button"
         data-testid="image-btn"
-        aria-label="添加图片"
-        title="添加图片（可粘贴截图）"
+        aria-label={t("composer.imageAddAria")}
+        title={t("composer.imageAddTitle")}
         onClick={() => fileInputRef.current?.click()}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
       >
@@ -897,8 +898,8 @@ export function Composer({
     <button
       type="button"
       data-testid="snippet-btn"
-      aria-label="常用语"
-      title="常用语"
+      aria-label={t("composer.snippetButton")}
+      title={t("composer.snippetButton")}
       aria-expanded={snippetDropdownOpen}
       onClick={(e) => {
         setSnippetAnchor(e.currentTarget);
@@ -1024,11 +1025,11 @@ export function Composer({
       <button
         type="button"
         data-testid="queue-mode-btn"
-        aria-label={queueMode === "followUp" ? "排队模式：跟答" : "排队模式：插入"}
+        aria-label={queueMode === "followUp" ? t("composer.queueFollowUpAria") : t("composer.queueInsertAria")}
         title={
           queueMode === "followUp"
-            ? "排队模式：跟答（当前回合做完后执行）。点击切换为插入"
-            : "排队模式：插入（下一回合边界并入当前工作）。点击切换为跟答"
+            ? t("composer.queueFollowUpTitle")
+            : t("composer.queueInsertTitle")
         }
         onClick={toggleQueueMode}
         className={buttonClass}
@@ -1042,8 +1043,8 @@ export function Composer({
       <button
         type="button"
         data-testid="abort-btn"
-        aria-label="停止生成"
-        title="停止当前回合（排队项保留，将在下次发送时执行）"
+        aria-label={t("composer.stopGeneration")}
+        title={t("composer.stopTitle")}
         onClick={() => void abort()}
         className={buttonClass}
       >
@@ -1104,8 +1105,8 @@ export function Composer({
             <button
               type="button"
               data-testid="composer-more-btn"
-              aria-label="更多"
-              title="更多：历史、@、图片"
+              aria-label={t("composer.moreAria")}
+              title={t("composer.moreTitle")}
               aria-expanded={toolsOpen}
               onClick={() => setToolsOpen((v) => !v)}
               className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
@@ -1119,7 +1120,7 @@ export function Composer({
               data-testid="composer-input"
               value={text}
               rows={1}
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder={t("composer.placeholder")}
               disabled={sending}
               onChange={(e) => applyText(e.target.value)}
               onKeyDown={onKeyDown}
@@ -1131,8 +1132,8 @@ export function Composer({
             <button
               type="button"
               data-testid="send-btn"
-              aria-label={queueAvailable ? "排队发送" : "发送"}
-              title={queueAvailable ? "回合进行中：发送将排队（当前回合结束后执行）" : "发送"}
+              aria-label={queueAvailable ? t("composer.sendQueuedAria") : t("composer.sendAria")}
+              title={queueAvailable ? t("composer.sendQueuedTitle") : t("composer.sendAria")}
               disabled={!canSend}
               onClick={() => void send()}
               className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
@@ -1165,7 +1166,7 @@ export function Composer({
         data-testid="composer-input"
         value={text}
         rows={1}
-        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+        placeholder={t("composer.placeholder")}
         disabled={sending}
         onChange={(e) => applyText(e.target.value)}
         onKeyDown={onKeyDown}
@@ -1190,8 +1191,8 @@ export function Composer({
           <button
             type="button"
             data-testid="send-btn"
-            aria-label={queueAvailable ? "排队发送" : "发送"}
-            title={queueAvailable ? "回合进行中：发送将排队（当前回合结束后执行）" : "发送"}
+            aria-label={queueAvailable ? t("composer.sendQueuedAria") : t("composer.sendAria")}
+            title={queueAvailable ? t("composer.sendQueuedTitle") : t("composer.sendAria")}
             disabled={!canSend}
             onClick={() => void send()}
             className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${

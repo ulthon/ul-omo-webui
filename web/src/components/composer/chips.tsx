@@ -11,6 +11,7 @@ import type { ModelInfo } from "@/lib/api";
 import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
 import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
+import { t } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -64,7 +65,7 @@ function ModelPickerBody({ close }: { close: () => void }) {
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索模型…"
+          placeholder={t("composer.chips.searchPlaceholder")}
           data-testid="model-chip-search"
           className="h-8 text-sm"
         />
@@ -72,14 +73,14 @@ function ModelPickerBody({ close }: { close: () => void }) {
       <div className="max-h-72 overflow-y-auto">
         {groups.length === 0 && favList.length === 0 && (
           <p className="px-2 py-3 text-center text-xs text-muted-foreground" data-testid="model-chip-empty">
-            无匹配模型
+            {t("composer.chips.noMatch")}
           </p>
         )}
         {favList.length > 0 && (
           <div>
             <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-muted-foreground">
               <Star className="size-3" />
-              收藏
+              {t("composer.chips.favorites")}
             </div>
             {favList.map((value) => (
               <button
@@ -148,8 +149,8 @@ export function ModelChip() {
 
   const noModels = modelsLoaded && models.length === 0;
   const label = noModels
-    ? "无可用模型"
-    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : "加载中…"));
+    ? t("composer.chips.noModels")
+    : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : t("composer.chips.loading")));
 
   return (
     <Popover
@@ -194,7 +195,7 @@ export function CapsuleModelTag() {
 
   const noModels = modelsLoaded && models.length === 0;
   const full = selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : null);
-  const label = noModels ? "无模型" : full !== null ? shortModelName(full) : "…";
+  const label = noModels ? t("composer.chips.noModelShort") : full !== null ? shortModelName(full) : "…";
 
   return (
     <Popover
@@ -208,7 +209,7 @@ export function CapsuleModelTag() {
           type="button"
           data-testid="capsule-model-tag"
           disabled={noModels}
-          aria-label={`当前模型 ${full ?? ""}，点击切换`}
+          aria-label={t("composer.chips.currentModelAria", { model: full ?? "" })}
           title={full ?? undefined}
           className="flex max-w-[38vw] items-center gap-0.5 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] leading-none text-muted-foreground shadow-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
         >
@@ -249,12 +250,12 @@ export function ThinkingChip() {
         <button
           type="button"
           data-testid="thinking-chip"
-          title={`思考深度：${selectedThinkingLevel ?? "默认"}`}
+          title={t("composer.chips.thinkingTitle", { level: selectedThinkingLevel ?? t("composer.chips.defaultLevel") })}
           className={`${CHIP_CLASS} shrink`}
         >
           <Brain className="size-3.5 shrink-0" aria-hidden />
           <span className="truncate" data-testid="thinking-chip-label">
-            {selectedThinkingLevel ?? "默认"}
+            {selectedThinkingLevel ?? t("composer.chips.defaultLevel")}
           </span>
           <ChevronDown className="size-3 shrink-0" aria-hidden />
         </button>

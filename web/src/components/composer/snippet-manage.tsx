@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { SnippetGroupEditor } from "./snippet-group";
@@ -29,7 +30,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
         if (!cancelled) setEntries(res);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : "加载失败");
+        if (!cancelled) setError(err instanceof ApiError ? err.message : t("composer.snippet.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -40,7 +41,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
   const putScope = async (scope: Scope, next: SnippetEntry[]): Promise<boolean> => {
     if (busy) return false;
     if (scope === "project" && !project) {
-      setError("无当前项目，无法保存项目常用语");
+      setError(t("composer.snippet.noProjectSave"));
       return false;
     }
     setBusy(true);
@@ -54,7 +55,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
       setEntries((prev) => ({ global: prev?.global ?? [], project: prev?.project ?? [], [scope]: res.snippets }));
       return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "保存失败");
+      setError(err instanceof ApiError ? err.message : t("composer.snippet.saveFailed"));
       return false;
     } finally {
       setBusy(false);
@@ -85,17 +86,17 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
           variant="ghost"
           size="icon-sm"
           onClick={onBack}
-          aria-label="返回常用语面板"
+          aria-label={t("composer.snippet.backToPanel")}
           data-testid="snippet-manage-back"
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <DialogTitle className="text-base font-medium">管理常用语</DialogTitle>
+        <DialogTitle className="text-base font-medium">{t("composer.snippet.manageTitle")}</DialogTitle>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-0.5">
         <SnippetGroupEditor
           scope="project"
-          label={`项目常用语（${projectName ?? "无当前项目"}）`}
+          label={t("composer.snippet.projectGroup", { name: projectName ?? t("composer.snippet.noProject") })}
           entries={entries?.project ?? []}
           busy={busy}
           canEdit={Boolean(project)}
@@ -105,7 +106,7 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
         />
         <SnippetGroupEditor
           scope="global"
-          label="全局常用语"
+          label={t("composer.snippet.globalGroup")}
           entries={entries?.global ?? []}
           busy={busy}
           canEdit

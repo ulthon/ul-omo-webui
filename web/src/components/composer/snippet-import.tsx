@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
 import { api, ApiError, type InputHistoryItem } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { isSnippetOverLimit, partitionImportable, snippetPreview } from "./snippet-logic";
@@ -34,7 +35,7 @@ export function SnippetImport({
         if (!cancelled) setItems(res.items);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : "加载输入历史失败");
+        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : t("composer.snippet.importLoadFailed"));
       });
     return () => {
       cancelled = true;
@@ -64,20 +65,18 @@ export function SnippetImport({
           variant="ghost"
           size="icon-sm"
           onClick={onBack}
-          aria-label="返回管理"
+          aria-label={t("composer.snippet.backToManage")}
           data-testid="snippet-import-back"
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <DialogTitle className="text-base font-medium">从输入历史导入</DialogTitle>
+        <DialogTitle className="text-base font-medium">{t("composer.snippet.importTitle")}</DialogTitle>
       </div>
-      <p className="text-xs text-muted-foreground">
-        勾选该项目输入历史（新在前）导入为项目级常用语；超过 4KB 的条目无法导入。
-      </p>
+      <p className="text-xs text-muted-foreground">{t("composer.snippet.importIntro")}</p>
       <div className="min-h-0 flex-1 overflow-y-auto rounded-md border" data-testid="snippet-import-list">
-        {!parts && <p className="p-3 text-xs text-muted-foreground/60">加载中…</p>}
+        {!parts && <p className="p-3 text-xs text-muted-foreground/60">{t("composer.snippet.loading")}</p>}
         {parts && parts.importable.length === 0 && parts.oversized.length === 0 && (
-          <p className="p-3 text-xs text-muted-foreground/60">该项目暂无输入历史</p>
+          <p className="p-3 text-xs text-muted-foreground/60">{t("composer.snippet.importEmptyHistory")}</p>
         )}
         {parts && items && (
           <ul>
@@ -90,7 +89,7 @@ export function SnippetImport({
                     <input
                       type="checkbox"
                       data-testid={`snippet-import-check-${i}`}
-                      aria-label={`选择：${snippetPreview(item.content, 20)}`}
+                      aria-label={t("composer.snippet.select", { preview: snippetPreview(item.content, 20) })}
                       disabled={over || busy}
                       checked={checked.has(i)}
                       onChange={() => toggle(i)}
@@ -107,7 +106,7 @@ export function SnippetImport({
                         className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-destructive"
                         data-testid={`snippet-import-over-${i}`}
                       >
-                        超限
+                        {t("composer.snippet.overLimit")}
                       </span>
                     )}
                   </label>
@@ -119,7 +118,7 @@ export function SnippetImport({
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground" data-testid="snippet-import-count">
-          {parts ? `已选 ${checked.size} 条` : ""}
+          {parts ? t("composer.snippet.selectedCount", { n: checked.size }) : ""}
         </span>
         <Button
           type="button"
@@ -131,7 +130,7 @@ export function SnippetImport({
           data-testid="snippet-import-confirm"
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          导入所选
+          {t("composer.snippet.importSelected")}
         </Button>
       </div>
       {loadError && (

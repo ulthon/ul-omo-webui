@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ArrowDown, ArrowUp, History, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { SnippetEntry } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n/i18n";
 import { isSnippetOverLimit, moveSnippet, snippetPreview } from "./snippet-logic";
 
 export function SnippetGroupEditor({
@@ -34,8 +35,8 @@ export function SnippetGroupEditor({
   const [error, setError] = useState<string | null>(null);
 
   const validateContent = (content: string): string | null => {
-    if (content.trim() === "") return "内容不能为空";
-    if (isSnippetOverLimit(content)) return "内容超过 4KB 上限";
+    if (content.trim() === "") return t("composer.snippet.contentRequired");
+    if (isSnippetOverLimit(content)) return t("composer.snippet.contentOverLimit");
     return null;
   };
 
@@ -45,7 +46,7 @@ export function SnippetGroupEditor({
   };
 
   const addSnippet = async () => {
-    if (!canEdit) return fail("无当前项目，无法添加项目常用语");
+    if (!canEdit) return fail(t("composer.snippet.noProjectAdd"));
     const problem = validateContent(newValue);
     if (problem) return fail(problem);
     if (await onSubmit([...entries, { content: newValue, sort: 0 }])) setNewValue("");
@@ -66,7 +67,7 @@ export function SnippetGroupEditor({
 
   const removeSnippet = async (index: number) => {
     if (!canEdit) return;
-    if (!window.confirm("删除该常用语？")) return;
+    if (!window.confirm(t("composer.snippet.confirmDelete"))) return;
     if (await onSubmit(entries.filter((_, i) => i !== index))) setEditing(null);
   };
 
@@ -91,12 +92,12 @@ export function SnippetGroupEditor({
             data-testid="snippet-import-open"
           >
             <History className="size-3.5" />
-            从输入历史导入
+            {t("composer.snippet.importTitle")}
           </Button>
         )}
       </div>
       <ul className="rounded-md border">
-        {entries.length === 0 && <li className="px-2 py-2 text-xs text-muted-foreground/60">暂无常用语</li>}
+        {entries.length === 0 && <li className="px-2 py-2 text-xs text-muted-foreground/60">{t("composer.snippet.noEntriesManage")}</li>}
         {entries.map((e, i) => {
           const isEditing = editing?.index === i;
           return (
@@ -118,7 +119,7 @@ export function SnippetGroupEditor({
                     className="size-11 shrink-0 lg:size-7"
                     disabled={busy}
                     onClick={confirmEdit}
-                    aria-label="确认修改"
+                    aria-label={t("composer.snippet.confirmEdit")}
                   >
                     <Pencil className="size-3.5" />
                   </Button>
@@ -128,7 +129,7 @@ export function SnippetGroupEditor({
                     size="sm"
                     className="size-11 shrink-0 lg:size-7"
                     onClick={() => setEditing(null)}
-                    aria-label="取消修改"
+                    aria-label={t("composer.snippet.cancelEdit")}
                   >
                     <X className="size-3.5" />
                   </Button>
@@ -145,7 +146,7 @@ export function SnippetGroupEditor({
                     className="size-11 shrink-0 lg:size-7"
                     disabled={busy || !canEdit || i === 0}
                     onClick={() => move(i, -1)}
-                    aria-label={`上移：${snippetPreview(e.content, 20)}`}
+                    aria-label={t("composer.snippet.moveUp", { preview: snippetPreview(e.content, 20) })}
                   >
                     <ArrowUp className="size-3.5" />
                   </Button>
@@ -156,7 +157,7 @@ export function SnippetGroupEditor({
                     className="size-11 shrink-0 lg:size-7"
                     disabled={busy || !canEdit || i === entries.length - 1}
                     onClick={() => move(i, 1)}
-                    aria-label={`下移：${snippetPreview(e.content, 20)}`}
+                    aria-label={t("composer.snippet.moveDown", { preview: snippetPreview(e.content, 20) })}
                   >
                     <ArrowDown className="size-3.5" />
                   </Button>
@@ -167,7 +168,7 @@ export function SnippetGroupEditor({
                     className="size-11 shrink-0 lg:size-7"
                     disabled={busy || !canEdit}
                     onClick={() => setEditing({ index: i, value: e.content })}
-                    aria-label={`编辑：${snippetPreview(e.content, 20)}`}
+                    aria-label={t("composer.snippet.editItem", { preview: snippetPreview(e.content, 20) })}
                   >
                     <Pencil className="size-3.5" />
                   </Button>
@@ -178,7 +179,7 @@ export function SnippetGroupEditor({
                     className="size-11 shrink-0 text-destructive hover:text-destructive lg:size-7"
                     disabled={busy || !canEdit}
                     onClick={() => void removeSnippet(i)}
-                    aria-label={`删除：${snippetPreview(e.content, 20)}`}
+                    aria-label={t("composer.snippet.removeItem", { preview: snippetPreview(e.content, 20) })}
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
@@ -192,7 +193,7 @@ export function SnippetGroupEditor({
         <textarea
           value={newValue}
           onChange={(ev) => setNewValue(ev.target.value)}
-          placeholder={`新增${scope === "global" ? "全局" : "项目"}常用语`}
+          placeholder={scope === "global" ? t("composer.snippet.newGlobalPlaceholder") : t("composer.snippet.newProjectPlaceholder")}
           rows={2}
           disabled={!canEdit}
           className="min-h-11 flex-1 resize-y rounded border border-input bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring disabled:opacity-50"
@@ -208,7 +209,7 @@ export function SnippetGroupEditor({
           data-testid={`snippet-add-${scope}`}
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          添加
+          {t("composer.snippet.add")}
         </Button>
       </div>
       {error && (
