@@ -1,16 +1,21 @@
-// 源语言字典（zh-CN）：唯一事实来源，其他语言用 satisfies 锁定相同键集。
+// 源语言字典（zh-CN）聚合：唯一事实来源，其他语言用 satisfies 锁定相同键集。
+// 各域拆分至 zh/ 目录下独立文件，便于按域并行编辑；此处仅组装，键形状与拆分前一致。
+import { common } from "./zh/common";
+import { login } from "./zh/login";
+import { chat } from "./zh/chat";
+import { composer } from "./zh/composer";
+import { sessionList } from "./zh/sessionList";
+import { notes } from "./zh/notes";
+import { diff } from "./zh/diff";
+import { fileTree } from "./zh/fileTree";
+
 export const zh = {
-  common: {
-    cancel: "取消",
-    close: "关闭",
-    save: "保存",
-    delete: "删除",
-    loadFailed: "加载失败",
-    loading: "加载中",
-    relJustNow: "刚刚",
-    relMinutes: "{n} 分钟前",
-    relHours: "{n} 小时前",
-    relDays: "{n} 天前",
-    itemCount: { one: "1 项", other: "{n} 项" },
-  },
+  common,
+  login,
+  chat,
+  composer,
+  sessionList,
+  notes,
+  diff,
+  fileTree,
 } as const;
