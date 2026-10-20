@@ -8,17 +8,28 @@
 import { Fragment, useMemo } from "react";
 import { Decoration, Diff, Hunk } from "react-diff-view";
 import type { FileData } from "react-diff-view";
+import { t } from "@/i18n/i18n";
 import { parseGitDiff } from "./diff-utils";
 import "react-diff-view/style/index.css";
 import "./diff.css";
 
-const TYPE_LABEL: Record<string, string> = {
-  add: "新增",
-  modify: "修改",
-  delete: "删除",
-  rename: "重命名",
-  copy: "复制",
-};
+/** 文件状态词按当前语言取词（原 TYPE_LABEL 静态映射改为取词函数，缺省透传原始类型） */
+function typeLabel(type: string): string {
+  switch (type) {
+    case "add":
+      return t("diff.type.add");
+    case "modify":
+      return t("diff.type.modify");
+    case "delete":
+      return t("diff.type.delete");
+    case "rename":
+      return t("diff.type.rename");
+    case "copy":
+      return t("diff.type.copy");
+    default:
+      return type;
+  }
+}
 
 /** 文件头行展示路径（删除文件 parseDiff 的 newPath 是 /dev/null，取 oldPath） */
 export function diffFilePath(file: FileData): string {
@@ -28,9 +39,9 @@ export function diffFilePath(file: FileData): string {
 /** 无内容 hunk 时的说明；有内容返回 null */
 export function diffEmptyReason(file: FileData): string | null {
   if (file.hunks.length > 0) return null;
-  if (file.isBinary) return "二进制文件，无文本 diff";
-  if (file.type === "rename") return "纯重命名（内容未变）";
-  return "无文本差异（二进制或仅元数据变更）";
+  if (file.isBinary) return t("diff.view.binary");
+  if (file.type === "rename") return t("diff.view.pureRename");
+  return t("diff.view.noTextDiff");
 }
 
 export function FileDiff({ file, viewType }: { file: FileData; viewType: "unified" | "split" }) {
@@ -46,10 +57,10 @@ export function FileDiff({ file, viewType }: { file: FileData; viewType: "unifie
     <div className="overflow-hidden rounded-md border" data-testid="file-diff">
       <div className="flex items-center gap-2 border-b bg-muted/40 px-2.5 py-1">
         <span className="truncate font-mono text-[11px] text-muted-foreground">
-          {diffFilePath(file) || "diff 片段"}
+          {diffFilePath(file) || t("diff.view.fragment")}
         </span>
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/70">
-          {TYPE_LABEL[file.type] ?? file.type}
+          {typeLabel(file.type)}
         </span>
       </div>
       <Diff hunks={file.hunks} diffType={file.type} viewType={viewType} className="diff-surface">
@@ -75,7 +86,7 @@ export function DiffView({
 }) {
   const files = useMemo(() => parseGitDiff(diffText), [diffText]);
   if (files.length === 0) {
-    return <div className="diff-empty">无法解析 diff 内容</div>;
+    return <div className="diff-empty">{t("diff.view.parseFailed")}</div>;
   }
   return (
     <div className="space-y-2">

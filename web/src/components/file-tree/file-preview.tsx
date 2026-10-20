@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Ban, FileText, FileWarning, ImageIcon, LoaderCircle } from "lucide-react";
 import { api, type FsFileResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { baseName, formatBytes, imageMimeOf } from "./file-tree-logic";
 
 type PreviewState =
@@ -37,7 +38,7 @@ export function FilePreview({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : "文件加载失败";
+        const message = err instanceof Error ? err.message : t("fileTree.preview.loadFailed");
         setState({ kind: "error", message });
         showToast(message, "error");
       });
@@ -58,7 +59,7 @@ export function FilePreview({
           {state.kind === "file" && (
             <span className="text-xs text-muted-foreground">
               {formatBytes(state.data.size)}
-              {state.data.truncated ? " · 已截断" : ""}
+              {state.data.truncated ? t("fileTree.preview.truncatedSuffix") : ""}
             </span>
           )}
         </div>
@@ -69,7 +70,7 @@ export function FilePreview({
             onClick={() => onInsert(path)}
             className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs text-primary-foreground transition-colors hover:bg-primary/80"
           >
-            插入引用
+            {t("fileTree.preview.insertRef")}
           </button>
         )}
       </div>
@@ -83,7 +84,7 @@ export function FilePreview({
         <div data-testid="preview-error" className="flex flex-col items-start gap-1 p-3 text-sm">
           <span className="flex items-center gap-1.5 text-destructive">
             <FileWarning className="size-4" />
-            预览加载失败
+            {t("fileTree.preview.loadFailedTitle")}
           </span>
           <span className="text-xs text-muted-foreground">{state.message}</span>
         </div>
@@ -97,9 +98,9 @@ export function FilePreview({
               return (
                 <div data-testid="preview-image-placeholder" className="flex flex-col items-center gap-2 p-6 text-center">
                   <ImageIcon className="size-10 text-muted-foreground/40" />
-                  <p className="text-sm">图片文件（{mime}）</p>
+                  <p className="text-sm">{t("fileTree.preview.imageFile", { mime })}</p>
                   <p className="text-xs text-muted-foreground">
-                    只读接口不下发二进制内容，暂无法内联显示；完整大小 {formatBytes(data.size)}
+                    {t("fileTree.preview.imageNoInline", { size: formatBytes(data.size) })}
                   </p>
                 </div>
               );
@@ -107,7 +108,7 @@ export function FilePreview({
             return (
               <div data-testid="preview-binary" className="flex flex-col items-center gap-2 p-6 text-center">
                 <Ban className="size-10 text-muted-foreground/40" />
-                <p className="text-sm">二进制文件，不渲染内容</p>
+                <p className="text-sm">{t("fileTree.preview.binaryFile")}</p>
                 <p className="text-xs text-muted-foreground">
                   {baseName(path)} · {formatBytes(data.size)}
                 </p>
@@ -118,7 +119,7 @@ export function FilePreview({
             return (
               <div data-testid="preview-empty" className="flex flex-col items-center gap-2 p-6 text-center">
                 <FileText className="size-10 text-muted-foreground/40" />
-                <p className="text-sm">空文件</p>
+                <p className="text-sm">{t("fileTree.preview.emptyFile")}</p>
               </div>
             );
           }
@@ -126,7 +127,7 @@ export function FilePreview({
             <div className="flex min-h-0 flex-col gap-2">
               {data.truncated && (
                 <div data-testid="preview-truncated" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
-                  文件较大（完整 {formatBytes(data.size)}），仅显示前 2 MB。预览为只读，请用本地编辑器打开原文件查看完整内容。
+                  {t("fileTree.preview.tooLarge", { size: formatBytes(data.size) })}
                 </div>
               )}
               {mime === "image/svg+xml" ? (

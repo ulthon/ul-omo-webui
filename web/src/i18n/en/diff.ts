@@ -1,2 +1,33 @@
-// diff 域词条（en）：占位，待 Wave-2 按域抽取填充。
-export const diff = {} as const;
+// diff 域词条（en）：与 zh/diff.ts 键集一致。
+export const diff = {
+  type: {
+    add: "Add",
+    modify: "Modify",
+    delete: "Delete",
+    rename: "Rename",
+    copy: "Copy",
+  },
+  view: {
+    binary: "Binary file, no text diff",
+    pureRename: "Pure rename (content unchanged)",
+    noTextDiff: "No text differences (binary or metadata-only change)",
+    fragment: "diff fragment",
+    parseFailed: "Failed to parse diff content",
+  },
+  changes: {
+    untrackedNote: "Untracked file: not yet managed by Git, no diff content.",
+    stagedNote: "Changes to this file are staged; there is no unstaged working-tree diff.",
+    title: "Uncommitted changes",
+    fileCount: { one: "{n} file", other: "{n} files" },
+    truncated: "Diff truncated (too large)",
+    refresh: "Refresh changes",
+    addProjectFirst: "Add a project first",
+    loading: "Loading changes…",
+    loadFailed: "Failed to load changes: {message}",
+    retry: "Retry",
+    noGitTitle: "No Git repository",
+    noGitHint: "The current project directory is not a git repository, so there are no changes to view",
+    cleanTitle: "Working tree clean",
+    cleanHint: "No uncommitted changes",
+  },
+} as const;

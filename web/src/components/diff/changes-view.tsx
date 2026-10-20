@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, CircleCheck, FolderGit2, RefreshCw } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import type { FileData } from "react-diff-view";
 import { cleanStatusPath, matchDiffFile, parseGitDiff, statusInfo, type StatusInfo } from "./diff-utils";
 import { FileDiff } from "./diff-view";
@@ -51,8 +52,8 @@ function EmptyState({ icon, title, hint }: { icon: ReactNode; title: string; hin
 
 /** 展开行在 diff 切分结果中缺席时的说明（untracked / 纯暂存） */
 function fileMissingNote(entry: ChangeEntry): string {
-  if (entry.status.includes("?")) return "未跟踪文件：尚未纳入 Git 管理，暂无 diff 内容。";
-  return "该文件改动已暂存（staged），暂无未暂存的工作区 diff。";
+  if (entry.status.includes("?")) return t("diff.changes.untrackedNote");
+  return t("diff.changes.stagedNote");
 }
 
 function CenteredHint({ text }: { text: string }) {
@@ -156,18 +157,18 @@ export function ChangesView() {
     <div className="flex h-full min-h-0 flex-col" data-testid="changes-view">
       {/* 工具条：标题 + 计数 + 截断提示 + 刷新（320-560 全档单行放得下；计数可截断保刷新钮不挤出去） */}
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
-        <span className="shrink-0 text-sm font-medium">未提交变更</span>
+        <span className="shrink-0 text-sm font-medium">{t("diff.changes.title")}</span>
         {ready && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{state.entries.length} 个文件</span>
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{t("diff.changes.fileCount", { n: state.entries.length })}</span>
         )}
         {ready && state.truncated && (
           <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-            diff 过大已截断
+            {t("diff.changes.truncated")}
           </span>
         )}
         <button
           type="button"
-          aria-label="刷新变更"
+          aria-label={t("diff.changes.refresh")}
           onClick={() => setReloadSeq((n) => n + 1)}
           className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
         >
@@ -176,31 +177,31 @@ export function ChangesView() {
       </div>
 
       {!project ? (
-        <CenteredHint text="请先添加项目" />
+        <CenteredHint text={t("diff.changes.addProjectFirst")} />
       ) : state.phase === "loading" ? (
-        <CenteredHint text="加载变更…" />
+        <CenteredHint text={t("diff.changes.loading")} />
       ) : state.phase === "error" ? (
         <div className="flex h-full flex-col items-center justify-center gap-3">
-          <p className="text-sm text-muted-foreground">变更加载失败：{state.message}</p>
+          <p className="text-sm text-muted-foreground">{t("diff.changes.loadFailed", { message: state.message })}</p>
           <button
             type="button"
             onClick={() => setReloadSeq((n) => n + 1)}
             className="rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
           >
-            重试
+            {t("diff.changes.retry")}
           </button>
         </div>
       ) : state.phase === "notGit" ? (
         <EmptyState
           icon={<FolderGit2 className="size-10 text-muted-foreground/40" />}
-          title="无 Git 仓库"
-          hint="当前项目目录不是 git 仓库，没有变更可查看"
+          title={t("diff.changes.noGitTitle")}
+          hint={t("diff.changes.noGitHint")}
         />
       ) : state.entries.length === 0 ? (
         <EmptyState
           icon={<CircleCheck className="size-10 text-muted-foreground/40" />}
-          title="工作区干净"
-          hint="没有未提交的变更"
+          title={t("diff.changes.cleanTitle")}
+          hint={t("diff.changes.cleanHint")}
         />
       ) : (
         // key 随项目重挂：切换项目后各行展开态整体复位，不残留上一项目的展开键

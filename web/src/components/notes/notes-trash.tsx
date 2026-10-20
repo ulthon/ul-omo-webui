@@ -2,6 +2,7 @@
 // 从 notes-view 拆出（250 LOC 上限）：独立加载态，恢复/删除逻辑由父组件经回调持有。
 import { useEffect, useState } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
+import { t } from "@/i18n/i18n";
 import { notesApi, type NoteListItem } from "./notes-api";
 import { relTime } from "./notes-logic";
 
@@ -31,15 +32,15 @@ export function TrashList({ project, reloadSeq, onRestore, onPurge }: TrashListP
   }, [project, reloadSeq]);
 
   if (notes === null) {
-    return <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">加载回收站…</div>;
+    return <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">{t("notes.trash.loading")}</div>;
   }
   if (notes.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <Trash2 className="size-10 text-muted-foreground/40" />
         <div>
-          <p className="text-sm font-medium">回收站为空</p>
-          <p className="mt-1 text-xs text-muted-foreground">软删除的笔记会出现在这里</p>
+          <p className="text-sm font-medium">{t("notes.trash.emptyTitle")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("notes.trash.emptyHint")}</p>
         </div>
       </div>
     );
@@ -50,12 +51,12 @@ export function TrashList({ project, reloadSeq, onRestore, onPurge }: TrashListP
         <div key={note.id} className="flex min-h-11 items-center gap-2 px-3 py-1.5" data-testid="trash-item">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm">{note.title}</p>
-            <p className="text-[10px] text-muted-foreground">删除于 {relTime(note.deletedAt)}</p>
+            <p className="text-[10px] text-muted-foreground">{t("notes.trash.deletedAt", { time: relTime(note.deletedAt) })}</p>
           </div>
-          <button type="button" onClick={() => onRestore(note)} aria-label={`恢复 ${note.title}`} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground lg:size-8">
+          <button type="button" onClick={() => onRestore(note)} aria-label={t("notes.trash.restoreItem", { title: note.title })} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground lg:size-8">
             <RotateCcw className="size-3.5" />
           </button>
-          <button type="button" onClick={() => onPurge(note)} aria-label={`彻底删除 ${note.title}`} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive lg:size-8">
+          <button type="button" onClick={() => onPurge(note)} aria-label={t("notes.trash.purgeItem", { title: note.title })} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive lg:size-8">
             <Trash2 className="size-3.5" />
           </button>
         </div>

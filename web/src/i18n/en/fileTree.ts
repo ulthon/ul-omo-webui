@@ -1,2 +1,39 @@
-// fileTree 域词条（en）：占位，待 Wave-2 按域抽取填充。
-export const fileTree = {} as const;
+// fileTree 域词条（en）：与 zh/fileTree.ts 键集一致。
+export const fileTree = {
+  tree: {
+    collapse: "Collapse",
+    expand: "Expand",
+    addedBadge: "Added",
+    loadFailed: "Failed to load directory",
+    serverTreeAria: "Server directories",
+    empty: "Directory is empty",
+    notAbsolute: "Path must be absolute (e.g. /home/user/proj or D:\\projects\\proj)",
+    notReadable: "Directory is not readable",
+    notFound: "Path not found: {path} (you can create and add it)",
+    createFailed: "Failed to create, please retry",
+    dialogTitle: "Browse directories",
+    dialogHint: "Type a path and press Enter to jump, click to select, double-click to enter; added projects are greyed out but can still be entered by double-click",
+    pathPlaceholder: "e.g. /home/user/my-project or D:\\projects\\my-project",
+    pathAria: "Directory path",
+    listAria: "Directory list",
+    showHidden: "Show hidden directories",
+    allHiddenNote: "(all entries are hidden directories; use the switch above to show them)",
+    addedTitle: "Added: can still be entered by double-click",
+    noSelection: "No directory selected yet",
+    cancel: "Cancel",
+    creating: "Creating…",
+    createAndAdd: "Create and add",
+    pickThis: "Choose this directory",
+  },
+  preview: {
+    loadFailed: "Failed to load file",
+    truncatedSuffix: " · truncated",
+    insertRef: "Insert reference",
+    loadFailedTitle: "Preview failed to load",
+    imageFile: "Image file ({mime})",
+    imageNoInline: "The read-only API does not deliver binary content, so it cannot be displayed inline; full size {size}",
+    binaryFile: "Binary file, content not rendered",
+    emptyFile: "Empty file",
+    tooLarge: "File is large (full size {size}); only the first 2 MB is shown. Preview is read-only, open the original file in a local editor to view the full content.",
+  },
+} as const;

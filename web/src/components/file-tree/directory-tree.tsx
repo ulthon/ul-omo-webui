@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { api, ApiError, type FsBrowseEntry, type FsBrowseResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import {
   initialDirTree,
   isAbsoluteInput,
@@ -76,7 +77,7 @@ function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle, regi
           <button
             type="button"
             data-testid={`dir-toggle-${path}`}
-            aria-label={`${expanded ? "收起" : "展开"} ${entry.name}`}
+            aria-label={`${expanded ? t("fileTree.tree.collapse") : t("fileTree.tree.expand")} ${entry.name}`}
             onClick={() => toggle(path)}
             className="flex w-8 shrink-0 items-center justify-center self-stretch text-muted-foreground transition-colors hover:bg-muted"
           >
@@ -112,7 +113,7 @@ function DirRow({ path, entry, depth, data, selectedPath, onSelect, toggle, regi
               data-testid={`dir-added-${path}`}
               className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
             >
-              已添加
+              {t("fileTree.tree.addedBadge")}
             </span>
           )}
         </button>
@@ -161,7 +162,7 @@ export function DirectoryTree({
         })
         .catch((err: unknown) => {
           setData((prev) => treeLoadFailed(prev, path));
-          setLoadError(err instanceof Error ? err.message : "目录加载失败");
+          setLoadError(err instanceof Error ? err.message : t("fileTree.tree.loadFailed"));
         });
     },
     [fetchDir],
@@ -189,7 +190,7 @@ export function DirectoryTree({
   const rootLoading = data.loading.has("");
 
   return (
-    <div data-testid="directory-tree" role="tree" aria-label="服务器目录" className="min-h-0">
+    <div data-testid="directory-tree" role="tree" aria-label={t("fileTree.tree.serverTreeAria")} className="min-h-0">
       {loadError && (
         <p data-testid="dir-tree-error" className="px-2 py-1 text-xs text-destructive">
           {loadError}
@@ -200,7 +201,7 @@ export function DirectoryTree({
           <LoaderCircle className="size-4 animate-spin" />
         </div>
       ) : !root || root.length === 0 ? (
-        <div className="p-3 text-sm text-muted-foreground">目录为空</div>
+        <div className="p-3 text-sm text-muted-foreground">{t("fileTree.tree.empty")}</div>
       ) : (
         root.map((entry) => (
           <DirRow
@@ -303,7 +304,7 @@ function PickerBody({
         seqRef.current += 1;
         inFlightRef.current = null;
         setBrowsing(false);
-        setListError("路径必须是绝对路径（如 /home/user/proj 或 D:\\projects\\proj）");
+        setListError(t("fileTree.tree.notAbsolute"));
         setNotFound(false);
         return;
       }
@@ -322,7 +323,7 @@ function PickerBody({
           setBrowsedKey(key);
           setBrowsing(false);
           setNotFound(false);
-          setListError(res.error === "eacces" ? "目录不可读" : null);
+          setListError(res.error === "eacces" ? t("fileTree.tree.notReadable") : null);
         })
         .catch((err: unknown) => {
           if (seq !== seqRef.current) return;
@@ -330,10 +331,10 @@ function PickerBody({
           setBrowsing(false);
           if (err instanceof ApiError && err.status === 404) {
             setNotFound(true);
-            setListError(`路径不存在：${target}（可新建并添加）`);
+            setListError(t("fileTree.tree.notFound", { path: target }));
           } else {
             setNotFound(false);
-            setListError(err instanceof Error ? err.message : "目录加载失败");
+            setListError(err instanceof Error ? err.message : t("fileTree.tree.loadFailed"));
           }
         });
     },
@@ -377,7 +378,7 @@ function PickerBody({
       useUiStore.getState().setProjects(projects);
       onConfirm(path);
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "创建失败，请重试");
+      setCreateError(err instanceof Error ? err.message : t("fileTree.tree.createFailed"));
     } finally {
       setCreating(false);
     }
@@ -396,9 +397,9 @@ function PickerBody({
   return (
     <>
       <DialogHeader className="shrink-0 gap-1.5">
-        <DialogTitle>浏览目录</DialogTitle>
+        <DialogTitle>{t("fileTree.tree.dialogTitle")}</DialogTitle>
         <DialogDescription className="text-xs">
-          输入路径回车跳转，单击选中、双击进入；已添加的项目置灰标记，仍可双击进入
+          {t("fileTree.tree.dialogHint")}
         </DialogDescription>
       </DialogHeader>
 
@@ -409,10 +410,10 @@ function PickerBody({
           setCreateError(null);
         }}
         onKeyDown={onPathKeyDown}
-        placeholder="如 /home/user/my-project 或 D:\projects\my-project"
+        placeholder={t("fileTree.tree.pathPlaceholder")}
         className="shrink-0 font-mono text-sm"
         data-testid="dir-picker-path"
-        aria-label="目录路径"
+        aria-label={t("fileTree.tree.pathAria")}
         aria-invalid={listError !== null || undefined}
         autoComplete="off"
         spellCheck={false}
@@ -435,17 +436,17 @@ function PickerBody({
           onChange={(e) => setShowHidden(e.target.checked)}
           data-testid="dir-picker-show-hidden"
         />
-        显示隐藏目录
+        {t("fileTree.tree.showHidden")}
       </label>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-1" data-testid="dir-picker-list" role="listbox" aria-label="目录列表">
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-1" data-testid="dir-picker-list" role="listbox" aria-label={t("fileTree.tree.listAria")}>
         {browsing ? (
           <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />
           </div>
         ) : visible.length === 0 ? (
           <div className="p-3 text-sm text-muted-foreground">
-            {listError === null && entries.length > 0 ? "（均为隐藏目录，可打开上方开关显示）" : "目录为空"}
+            {listError === null && entries.length > 0 ? t("fileTree.tree.allHiddenNote") : t("fileTree.tree.empty")}
           </div>
         ) : (
           visible.map((entry) => {
@@ -458,7 +459,7 @@ function PickerBody({
                 role="option"
                 aria-selected={selected === entry.path || undefined}
                 aria-disabled={registered || undefined}
-                title={registered ? "已添加：仍可双击进入" : undefined}
+                title={registered ? t("fileTree.tree.addedTitle") : undefined}
                 onClick={() => {
                   if (!registered) setSelected(entry.path);
                 }}
@@ -480,7 +481,7 @@ function PickerBody({
                     data-testid={`dir-added-${entry.path}`}
                     className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
                   >
-                    已添加
+                    {t("fileTree.tree.addedBadge")}
                   </span>
                 )}
               </div>
@@ -491,7 +492,7 @@ function PickerBody({
 
       <div className="flex shrink-0 flex-col gap-2">
         <p data-testid="dir-picker-selected" className="truncate font-mono text-xs text-muted-foreground">
-          {confirmState ? confirmState.target : "尚未选择目录"}
+          {confirmState ? confirmState.target : t("fileTree.tree.noSelection")}
         </p>
         <div className="flex items-center justify-end gap-2">
           <button
@@ -500,7 +501,7 @@ function PickerBody({
             onClick={onClose}
             className="flex h-11 items-center rounded-lg border px-4 text-sm transition-colors hover:bg-muted"
           >
-            取消
+            {t("fileTree.tree.cancel")}
           </button>
           <button
             type="button"
@@ -513,7 +514,11 @@ function PickerBody({
             }}
             className="flex h-11 items-center rounded-lg bg-primary px-4 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
           >
-            {confirmState?.kind === "create" ? (creating ? "创建中…" : "新建并添加") : "选择此目录"}
+            {confirmState?.kind === "create"
+              ? creating
+                ? t("fileTree.tree.creating")
+                : t("fileTree.tree.createAndAdd")
+              : t("fileTree.tree.pickThis")}
           </button>
         </div>
       </div>

@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Eye, History, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
+import { t } from "@/i18n/i18n";
 import { Markdown } from "@/components/chat/markdown";
 import {
   DropdownMenu,
@@ -116,7 +117,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
   }, [dirty]);
 
   const exitEdit = () => {
-    if (dirty && !window.confirm("有未保存的修改，确定放弃吗？")) return;
+    if (dirty && !window.confirm(t("notes.detail.discardConfirm"))) return;
     if (draft) {
       onClose();
       return;
@@ -140,7 +141,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
     if (!edit || saving) return;
     const title = edit.title.trim();
     if (title.length === 0) {
-      setSaveError("标题不能为空");
+      setSaveError(t("notes.detail.titleRequired"));
       return;
     }
     setSaving(true);
@@ -168,7 +169,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
   };
 
   const removeNote = async () => {
-    if (noteId === null || !window.confirm(`删除笔记「${note?.title ?? ""}」？可在回收站恢复。`)) return;
+    if (noteId === null || !window.confirm(t("notes.deleteConfirm", { title: note?.title ?? "" }))) return;
     try {
       await notesApi.remove(noteId);
       onChanged();
@@ -193,7 +194,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
 
   const restoreVersion = async (version: NoteVersionInfo) => {
     if (noteId === null) return;
-    if (!window.confirm(`恢复到 ${relTime(version.savedAt)} 的版本？当前正文将被覆盖（可再从版本历史找回）。`)) return;
+    if (!window.confirm(t("notes.detail.restoreVersionConfirm", { time: relTime(version.savedAt) }))) return;
     try {
       const { note: restored } = await notesApi.restoreVersion(noteId, version.id);
       setNote(restored);
@@ -223,28 +224,28 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
     <div className="flex h-full min-h-0 flex-col" data-testid="note-detail">
       {/* 面板头部：返回 + 标题 + 编辑/预览切换 + 次级菜单（历史版本/删除，仅预览态） */}
       <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5" data-testid="note-detail-header">
-        <button type="button" onClick={back} aria-label="返回笔记列表" data-testid="note-back-btn" className={ICON_BTN}>
+        <button type="button" onClick={back} aria-label={t("notes.backToList")} data-testid="note-back-btn" className={ICON_BTN}>
           <ArrowLeft className="size-4" />
         </button>
         <h2 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="note-detail-title">
-          {draft ? "新建笔记" : (note?.title ?? "")}
+          {draft ? t("notes.newNote") : (note?.title ?? "")}
         </h2>
         {!draft && mode === "view" && (
           <>
             <button type="button" onClick={startEdit} data-testid="note-mode-toggle" className={BTN_CLASS}>
               <Pencil className="size-3.5" />
-              编辑
+              {t("notes.detail.edit")}
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button type="button" data-testid="note-more-btn" aria-label="笔记操作" className={ICON_BTN}>
+                <button type="button" data-testid="note-more-btn" aria-label={t("notes.detail.moreActions")} className={ICON_BTN}>
                   <MoreVertical className="size-4" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-36">
                 <DropdownMenuItem onSelect={() => void openVersions()} data-testid="note-menu-versions">
                   <History className="mr-2 size-4" />
-                  历史版本
+                  {t("notes.detail.versionHistory")}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -253,7 +254,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
                   onSelect={() => void removeNote()}
                 >
                   <Trash2 className="mr-2 size-4" />
-                  删除笔记
+                  {t("notes.detail.deleteNote")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -262,7 +263,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
         {!draft && mode === "edit" && (
           <button type="button" onClick={exitEdit} data-testid="note-mode-toggle" className={BTN_CLASS}>
             <Eye className="size-3.5" />
-            预览
+            {t("notes.detail.preview")}
           </button>
         )}
       </div>
@@ -271,7 +272,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
         editForm
       ) : loadError !== null ? (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-muted-foreground">笔记加载失败：{loadError}</p>
+          <p className="text-sm text-muted-foreground">{t("notes.loadFailed", { message: loadError })}</p>
           <button
             type="button"
             onClick={() => {
@@ -280,11 +281,11 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
             }}
             className="rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
           >
-            重试
+            {t("notes.retry")}
           </button>
         </div>
       ) : note === null ? (
-        <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">加载笔记…</div>
+        <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">{t("notes.loading")}</div>
       ) : (
         <>
           {note.tags.length > 0 && (

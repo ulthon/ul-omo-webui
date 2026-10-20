@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NoteDetail } from "./note-detail";
 import { notesApi, type NoteListItem } from "./notes-api";
@@ -81,7 +82,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   };
 
   const removeNote = async (note: NoteListItem) => {
-    if (!window.confirm(`删除笔记「${note.title}」？可在回收站恢复。`)) return;
+    if (!window.confirm(t("notes.deleteConfirm", { title: note.title }))) return;
     try {
       await notesApi.remove(note.id);
       if (selectedNoteId === note.id) setSelectedNoteId(null);
@@ -94,7 +95,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   const restoreTrashed = async (note: NoteListItem) => {
     try {
       await notesApi.restore(note.id);
-      showToast(`已恢复「${note.title}」`);
+      showToast(t("notes.view.restoredToast", { title: note.title }));
       onChanged();
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : String(err), "error");
@@ -102,10 +103,10 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   };
 
   const purgeTrashed = async (note: NoteListItem) => {
-    if (!window.confirm(`彻底删除「${note.title}」？此操作不可恢复（含全部历史版本）。`)) return;
+    if (!window.confirm(t("notes.view.purgeConfirm", { title: note.title }))) return;
     try {
       await notesApi.remove(note.id, true);
-      showToast(`已彻底删除「${note.title}」`);
+      showToast(t("notes.view.purgedToast", { title: note.title }));
       onChanged();
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : String(err), "error");
@@ -151,10 +152,10 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="notes-view">
         <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5">
-          <button type="button" onClick={() => setTrashMode(false)} aria-label="返回笔记列表" data-testid="note-trash-back" className={ICON_BTN}>
+          <button type="button" onClick={() => setTrashMode(false)} aria-label={t("notes.backToList")} data-testid="note-trash-back" className={ICON_BTN}>
             <ArrowLeft className="size-4" />
           </button>
-          <span className="text-sm font-medium">回收站</span>
+          <span className="text-sm font-medium">{t("notes.trashLabel")}</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <TrashList key={reloadSeq} project={project} reloadSeq={reloadSeq} onRestore={(n) => void restoreTrashed(n)} onPurge={(n) => void purgeTrashed(n)} />
@@ -167,8 +168,8 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="notes-view">
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
-        <span className="text-sm font-medium">笔记</span>
-        {ready && <span className="text-xs text-muted-foreground">{visibleNotes.length} 条</span>}
+        <span className="text-sm font-medium">{t("notes.panelTitle")}</span>
+        {ready && <span className="text-xs text-muted-foreground">{t("notes.view.count", { n: visibleNotes.length })}</span>}
         <div className="ml-auto flex items-center gap-1">
           {ready && (
             <button
@@ -178,19 +179,19 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
               className={HEADER_BTN}
             >
               <NotebookPen className="size-4" />
-              新建笔记
+              {t("notes.newNote")}
             </button>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" data-testid="note-more-btn" aria-label="笔记更多操作" className={ICON_BTN}>
+              <button type="button" data-testid="note-more-btn" aria-label={t("notes.view.moreActions")} className={ICON_BTN}>
                 <MoreVertical className="size-4" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-36">
               <DropdownMenuItem onSelect={() => setTrashMode(true)} data-testid="note-menu-trash">
                 <Trash2 className="mr-2 size-4" />
-                回收站
+                {t("notes.trashLabel")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -198,25 +199,25 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       </div>
 
       {state.phase === "loading" ? (
-        <CenteredHint text="加载笔记…" />
+        <CenteredHint text={t("notes.loading")} />
       ) : state.phase === "error" ? (
         <div className="flex h-full flex-col items-center justify-center gap-3">
-          <p className="text-sm text-muted-foreground">笔记加载失败：{state.message}</p>
+          <p className="text-sm text-muted-foreground">{t("notes.loadFailed", { message: state.message })}</p>
           <button type="button" onClick={retry} className="rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-muted">
-            重试
+            {t("notes.retry")}
           </button>
         </div>
       ) : ready && allNotes.length === 0 && activeTag === null ? (
-        <EmptyState icon={<StickyNote className="size-10 text-muted-foreground/40" />} title="暂无笔记" hint="为当前项目记录第一篇笔记">
+        <EmptyState icon={<StickyNote className="size-10 text-muted-foreground/40" />} title={t("notes.view.emptyTitle")} hint={t("notes.view.emptyHint")}>
           <button type="button" onClick={() => setCreating(true)} data-testid="note-empty-new-btn" className="min-h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90">
-            新建笔记
+            {t("notes.newNote")}
           </button>
         </EmptyState>
       ) : (
         <>
           <div className="flex shrink-0 flex-wrap gap-1.5 border-b px-3 py-2" data-testid="notes-tag-chips">
             <button type="button" onClick={() => void selectTag(null)} aria-pressed={activeTag === null} data-testid="note-tag-chip-all" className={CHIP_CLASS(activeTag === null)}>
-              全部
+              {t("notes.view.filterAll")}
             </button>
             {tags.map((tag) => (
               <button key={tag} type="button" onClick={() => void selectTag(activeTag === tag ? null : tag)} aria-pressed={activeTag === tag} data-testid={`note-tag-chip-${tag}`} className={CHIP_CLASS(activeTag === tag)}>
@@ -226,7 +227,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto py-1" data-testid="notes-list">
             {visibleNotes.length === 0 ? (
-              <CenteredHint text={activeTag === null ? "没有笔记" : "没有匹配该标签的笔记"} />
+              <CenteredHint text={activeTag === null ? t("notes.view.noNotes") : t("notes.view.noTagMatch")} />
             ) : (
               visibleNotes.map((note) => (
                 <div key={note.id} className="flex min-h-11 items-center gap-2 pl-3 pr-1.5 transition-colors hover:bg-muted/40">
@@ -246,7 +247,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
                       <span className="text-[10px] text-muted-foreground">{relTime(note.updatedAt)}</span>
                     </span>
                   </button>
-                  <button type="button" onClick={() => void removeNote(note)} aria-label={`删除 ${note.title}`} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive">
+                  <button type="button" onClick={() => void removeNote(note)} aria-label={t("notes.view.deleteItem", { title: note.title })} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive">
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
@@ -265,9 +266,9 @@ export function NotesView({ dirtyRef }: { dirtyRef: { current: boolean } }) {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="notes-view">
         <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
-          <span className="text-sm font-medium">笔记</span>
+          <span className="text-sm font-medium">{t("notes.panelTitle")}</span>
         </div>
-        <CenteredHint text="请先添加项目" />
+        <CenteredHint text={t("notes.addProjectFirst")} />
       </div>
     );
   }
