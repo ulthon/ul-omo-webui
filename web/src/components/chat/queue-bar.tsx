@@ -11,6 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 
 /** 单条撤销：整队清空 + 保留项重新入队 + 快照对账（不依赖事件回传时序） */
 async function cancelQueuedItem(sessionId: string, target: QueueItem, items: QueueItem[]): Promise<void> {
@@ -39,7 +40,7 @@ export function QueueBar({ sessionId }: { sessionId: string }) {
     setBusy(true);
     action()
       .catch((err: unknown) => {
-        showToast(err instanceof Error ? err.message : t("chat.queue.cancelFailed"), "error");
+        showToast(apiErrorMessage(err, "chat.queue.cancelFailed"), "error");
       })
       .finally(() => setBusy(false));
   };

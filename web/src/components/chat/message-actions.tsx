@@ -3,7 +3,7 @@
 // 官配引擎无 continue_from_leaf 协议面），fork 重试为替代路径，代码层无该入口。
 import { useMemo, useState } from "react";
 import { Copy, Loader2, MoreVertical, RotateCcw } from "lucide-react";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { WireMessage } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { refreshSessions } from "@/lib/bootstrap";
@@ -12,6 +12,7 @@ import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +60,7 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
         await api.prompt(forked.session.id, { text: forked.text });
       }
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : t("chat.messageActions.retryFailed"), "error");
+      showToast(apiErrorMessage(err, "chat.messageActions.retryFailed"), "error");
     } finally {
       setBusy(false);
     }

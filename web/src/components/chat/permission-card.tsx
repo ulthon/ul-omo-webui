@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ShieldAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { parsePermissionTool, usePermissionsStore, type PermissionRequest } from "@/stores/permissions";
 import { autoAllowKey } from "@/stores/permissions";
@@ -55,7 +56,7 @@ export function PermissionCard({
         showToast(t("chat.permissionCard.deniedToast"), "info");
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t("chat.permissionCard.submitFailed"), "error");
+      showToast(apiErrorMessage(err, "chat.permissionCard.submitFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -68,7 +69,7 @@ export function PermissionCard({
       await api.respondPermission(sessionId, { requestId: request.id, cancelled: true });
       usePermissionsStore.getState().removeRequest(sessionId, request.id);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t("chat.permissionCard.cancelFailed"), "error");
+      showToast(apiErrorMessage(err, "chat.permissionCard.cancelFailed"), "error");
     } finally {
       setBusy(false);
     }

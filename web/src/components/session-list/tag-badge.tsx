@@ -3,11 +3,12 @@
 //（= 该会话整替去掉全部孤儿项）。样式对齐既有行内徽标（SourceBadge）的
 // border bg-muted 10px 形态。判定逻辑在 tag-data.ts（纯函数，单测锁定）。
 import { Tag, X } from "lucide-react";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { isOrphanTag, orphanTags, visibleTags } from "./tag-data";
 
 interface TagBadgesProps {
@@ -31,7 +32,7 @@ export function TagBadges({ session, definedKeys }: TagBadgesProps) {
       useSessionsStore.getState().patchSession(session.id, { tags: keep });
       useUiStore.getState().showToast(t("sessionList.tagBadge.cleaned"));
     } catch (err) {
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.tagBadge.cleanFailed"), "error");
+      useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.tagBadge.cleanFailed"), "error");
     }
   };
 

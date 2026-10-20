@@ -7,11 +7,12 @@
 // （同 AnchoredPanel 同间距规范：w-80 面板 + p-2 滚动区 + border-t 底栏 min-h-9 钮）。
 import { useState } from "react";
 import { Check, Settings2 } from "lucide-react";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { SessionListItem, TagRef } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
 import { tagKey, nextSessionTags, type TagDefs } from "./tag-data";
 import type { TagManageScope } from "./tag-manage-dialog";
@@ -70,7 +71,7 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
         useSessionsStore.getState().patchSession(s.id, { tags: res.tags });
       } catch (err) {
         failedIds.push(s.title || s.id);
-        showToast(err instanceof ApiError ? err.message : t("sessionList.tagDropdown.saveFailed"), "error");
+        showToast(apiErrorMessage(err, "sessionList.tagDropdown.saveFailed"), "error");
       }
       done++;
       if (targets.length > 1) setProgress({ done, total: targets.length });

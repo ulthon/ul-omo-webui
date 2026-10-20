@@ -11,6 +11,9 @@ export const notes = {
   deleteConfirm: "删除笔记「{title}」？可在回收站恢复。",
   loading: "加载笔记…",
   loadFailed: "笔记加载失败：{message}",
+  // 任务11：note-detail/notes-view 错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
+  actionFailed: "操作失败",
+  loadFailedBrief: "笔记加载失败",
   retry: "重试",
   // notes-view 列表态
   view: {

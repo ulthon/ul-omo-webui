@@ -4,8 +4,9 @@
 // 绝不落 api.prompt（模型会伪执行已压缩）；不支持项禁用死文案，数据驱动显隐，
 // 命令门链（commands.ts → chat-view → api.prompt）不随显隐变化，输入拦截继续兜底。
 import { useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { CHAT_COMMANDS, type ChatCommand } from "./commands";
 import { compactToastText, runCompact } from "./compact-run";
@@ -26,7 +27,7 @@ export function CommandBar({ sessionId, busy, hydrationLocked = false }: { sessi
         await api.prompt(sessionId, { text: cmd.label });
       }
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : t("chat.commandBar.sendFailed"), "error");
+      showToast(apiErrorMessage(err, "chat.commandBar.sendFailed"), "error");
     } finally {
       setPending(null);
     }

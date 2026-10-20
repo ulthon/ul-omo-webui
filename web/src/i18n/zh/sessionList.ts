@@ -1,6 +1,6 @@
 // sessionList 域词条（zh-CN）：web/src/components/session-list/ 各组件用户可见文案，
 // zh 值为迁移前逐字原文。紧凑时间（Ns/Nm/Nd、M/D）与未读徽标 99+ 为既有产品决策不进域；
-// session-item.tsx 的 showToast 直显点（任务11 递延）与 copyField 标签实参本次保持原样。
+// session-item.tsx 的 showToast 直显点与 copyField 标签实参已随任务11键化（item 域复制/失败兜底键）。
 export const sessionList = {
   // session-list.tsx 列表容器：工具条/归档过滤/批量条/分组头/隐藏项目确认弹窗
   list: {
@@ -78,6 +78,13 @@ export const sessionList = {
     exportHtml: "导出 HTML",
     tags: "标签",
     noChildren: "无子会话",
+    // 任务11 键化：行操作失败兜底（apiErrorMessage 未命中/纯 Error 时）与复制 toast
+    operationFailed: "操作失败",
+    exportFailed: "导出失败",
+    titleGenFailed: "标题生成失败",
+    copiedId: "已复制会话 ID",
+    copiedTitle: "已复制标题",
+    copyFailed: "复制失败（浏览器未授权剪贴板）",
   },
   // dialogs.tsx 重命名/删除/批量删除弹窗（批量删除确认句为整句单键插值）
   dialogs: {
@@ -89,6 +96,8 @@ export const sessionList = {
     deleteFailed: "删除失败",
     batchDeletedAll: { one: "已删除 {n} 个会话", other: "已删除 {n} 个会话" },
     batchDeleteFailedList: { one: "{n} 个会话删除失败：{titles}", other: "{n} 个会话删除失败：{titles}" },
+    // 任务11：失败标题串接分隔符按语言取词（zh 顿号 / en 逗号）
+    batchDeleteSep: "、",
     batchDeletedPartial: "已删除 {ok}/{total} 个，其余失败",
     batchDeleteTitle: "批量删除会话",
     batchDeleteDesc: {

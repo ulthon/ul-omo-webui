@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CircleHelp, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { QUESTION_EXPIRY_GRACE_MS, useQuestionsStore, type QuestionRequest } from "@/stores/questions";
 
@@ -77,7 +78,7 @@ export function QuestionCard({
       await api.respondPermission(sessionId, { requestId: request.id, ...payload });
       useQuestionsStore.getState().removeRequest(sessionId, request.id);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t("chat.questionCard.submitFailed"), "error");
+      showToast(apiErrorMessage(err, "chat.questionCard.submitFailed"), "error");
     } finally {
       setBusy(false);
     }

@@ -15,6 +15,7 @@ import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
@@ -88,9 +89,11 @@ function ProjectPermissionSection() {
   const [restarting, setRestarting] = useState(false);
 
   const t = useT();
-  const showError = (err: unknown, fallback: string) => {
+  /** 错误 toast 统一出口（任务11）：401 静默（登录态由全局跳转接管）；其余经 apiErrorMessage——
+   * 命中错误码映射出词典文案，未命中透传服务端原文，纯 Error/非 Error 走兜底键。 */
+  const showError = (err: unknown, fallbackKey: MessageKey) => {
     if (err instanceof ApiError && err.status === 401) return;
-    useUiStore.getState().showToast(err instanceof ApiError ? err.message : fallback, "error");
+    useUiStore.getState().showToast(apiErrorMessage(err, fallbackKey), "error");
   };
 
   const changePreset = async (value: string) => {
@@ -104,7 +107,7 @@ function ProjectPermissionSection() {
       ui.setProjects(ui.projects.map((p) => (p.projectPath === currentProject ? { ...p, permissionPreset: next } : p)));
       ui.showToast(t("login.topbar.presetSaved"), "info");
     } catch (err) {
-      showError(err, t("login.topbar.presetSaveFailed"));
+      showError(err, "login.topbar.presetSaveFailed");
     } finally {
       setSaving(false);
     }
@@ -118,7 +121,7 @@ function ProjectPermissionSection() {
       setRestartOpen(false);
       useUiStore.getState().showToast(t("login.topbar.engineRestarted"), "info");
     } catch (err) {
-      showError(err, t("login.topbar.restartFailed"));
+      showError(err, "login.topbar.restartFailed");
     } finally {
       setRestarting(false);
     }
@@ -232,7 +235,7 @@ export function ProjectManagementSection() {
       ui.showToast(t("login.topbar.removedToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.removeFailed"), "error");
+      useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.removeFailed"), "error");
     } finally {
       setRemoving(false);
     }
@@ -256,7 +259,7 @@ export function ProjectManagementSection() {
       ui.showToast(hidden ? t("login.topbar.hiddenToast") : t("login.topbar.unhiddenToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.operationFailed"), "error");
+      useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.operationFailed"), "error");
     } finally {
       setHiding(false);
     }
@@ -459,7 +462,7 @@ function SidebarSortSection() {
       useUiStore.getState().setProjectSort(mode);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.sortSaveFailed"), "error");
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.sortSaveFailed"), "error");
       }
     } finally {
       setSaving(false);
@@ -512,7 +515,7 @@ export function ConversationSection() {
       useUiStore.getState().setThinkingDefaultExpanded(expanded);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.chatSaveFailed"), "error");
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.chatSaveFailed"), "error");
       }
     } finally {
       setSaving(false);
@@ -563,7 +566,7 @@ export function LanguageSection() {
       useLocaleStore.getState().setLocale(next);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("login.topbar.langSaveFailed"), "error");
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.langSaveFailed"), "error");
       }
     } finally {
       setSaving(false);

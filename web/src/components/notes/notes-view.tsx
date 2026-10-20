@@ -8,9 +8,9 @@
 // key={project} 重挂重置全部选中/过滤/回收站态；重取（onChanged）保留旧数据不闪 loading。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
-import { ApiError } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NoteDetail } from "./note-detail";
 import { notesApi, type NoteListItem } from "./notes-api";
@@ -78,7 +78,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       if (tagReqRef.current === seq) setTagNotes(notes);
     } catch (err) {
       if (tagReqRef.current === seq) setTagNotes([]);
-      showToast(err instanceof ApiError ? err.message : String(err), "error");
+      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
     }
   };
 
@@ -89,7 +89,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       if (selectedNoteId === note.id) setSelectedNoteId(null);
       onChanged();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : String(err), "error");
+      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
     }
   };
 
@@ -99,7 +99,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       showToast(t("notes.view.restoredToast", { title: note.title }));
       onChanged();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : String(err), "error");
+      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
     }
   };
 
@@ -110,7 +110,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       showToast(t("notes.view.purgedToast", { title: note.title }));
       onChanged();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : String(err), "error");
+      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
     }
   };
 

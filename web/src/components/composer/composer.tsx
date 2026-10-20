@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
@@ -478,11 +479,11 @@ export function Composer({
     try {
       await api.abort(sessionId);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t("composer.interruptFailed"), "error");
+      showToast(apiErrorMessage(err, "composer.interruptFailed"), "error");
     } finally {
       onAborted();
     }
-  }, [sessionId, onAborted, showToast, t]);
+  }, [sessionId, onAborted, showToast]);
 
   // ---------- 图片 ----------
 
@@ -566,10 +567,10 @@ export function Composer({
         const res = await api.postAttachment(sessionId, { content });
         setAttachmentsBoth([...attachmentsRef.current, { id: `att-${++attachmentSeq}`, name: res.name, path: res.path }]);
       } catch (err) {
-        showToast(err instanceof Error ? err.message : t("composer.attachmentSaveFailed"), "error");
+        showToast(apiErrorMessage(err, "composer.attachmentSaveFailed"), "error");
       }
     },
-    [sessionId, setAttachmentsBoth, showToast, t],
+    [sessionId, setAttachmentsBoth, showToast],
   );
 
   /** chip 显式移除：本地即删 + fire DELETE（失败 toast；文件另有 48h 按龄清理兜底）。
@@ -580,11 +581,11 @@ export function Composer({
       setAttachmentsBoth(attachmentsRef.current.filter((a) => a.id !== id));
       if (target) {
         void api.removeAttachment(sessionId, target.path).catch((err: unknown) => {
-          showToast(err instanceof Error ? err.message : t("composer.attachmentCleanupFailed"), "error");
+          showToast(apiErrorMessage(err, "composer.attachmentCleanupFailed"), "error");
         });
       }
     },
-    [sessionId, setAttachmentsBoth, showToast, t],
+    [sessionId, setAttachmentsBoth, showToast],
   );
 
   // ---------- 输入历史 ----------

@@ -19,6 +19,7 @@ import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 // tSnap：异步续体（await 之后/promise 回调）取词用快照态；渲染期文本走 useT 响应式
 import { t as tSnap, useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -275,7 +276,7 @@ export function SessionList() {
       ui.setDrawerOpen(false);
       useUiStore.getState().showToast(t("sessionList.list.createdToast"));
     } catch (err) {
-      useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.list.createFailed"), "error");
+      useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.createFailed"), "error");
     } finally {
       setCreating(false);
     }
@@ -320,7 +321,7 @@ export function SessionList() {
       ui.showToast(hidden ? t("sessionList.list.projectHidden") : t("sessionList.list.projectShown"), "info");
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(err instanceof ApiError ? err.message : t("sessionList.list.operationFailed"), "error");
+        useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.operationFailed"), "error");
       }
     } finally {
       setHiding(false);

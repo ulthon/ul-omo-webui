@@ -9,6 +9,7 @@ import { sessionList } from "./en/sessionList";
 import { notes } from "./en/notes";
 import { diff } from "./en/diff";
 import { fileTree } from "./en/fileTree";
+import { errors } from "./en/errors";
 
 export const en = {
   common,
@@ -19,4 +20,5 @@ export const en = {
   notes,
   diff,
   fileTree,
+  errors,
 } satisfies MessageCatalogShape;

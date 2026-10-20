@@ -8,6 +8,9 @@ export const notes = {
   deleteConfirm: "Delete note \"{title}\"? You can restore it from the trash.",
   loading: "Loading notes…",
   loadFailed: "Failed to load note: {message}",
+  // 任务11：note-detail/notes-view 错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
+  actionFailed: "Operation failed",
+  loadFailedBrief: "Failed to load note",
   retry: "Retry",
   view: {
     count: { one: "{n} note", other: "{n} notes" },

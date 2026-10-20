@@ -77,6 +77,13 @@ export const sessionList = {
     exportHtml: "Export HTML",
     tags: "Tags",
     noChildren: "No sub-sessions",
+    // 任务11 键化：行操作失败兜底（apiErrorMessage 未命中/纯 Error 时）与复制 toast
+    operationFailed: "Operation failed",
+    exportFailed: "Export failed",
+    titleGenFailed: "Failed to generate title",
+    copiedId: "Session ID copied",
+    copiedTitle: "Title copied",
+    copyFailed: "Copy failed (clipboard access denied by browser)",
   },
   // dialogs.tsx 重命名/删除/批量删除弹窗
   dialogs: {
@@ -91,6 +98,8 @@ export const sessionList = {
       one: "Failed to delete 1 session: {titles}",
       other: "Failed to delete {n} sessions: {titles}",
     },
+    // 任务11：失败标题串接分隔符按语言取词（zh 顿号 / en 逗号）
+    batchDeleteSep: ", ",
     batchDeletedPartial: "Deleted {ok}/{total}; the rest failed",
     batchDeleteTitle: "Batch delete sessions",
     batchDeleteDesc: {

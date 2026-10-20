@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api, type FsTreeEntry } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { apiErrorMessage } from "@/i18n/errors";
 import { imageMimeOf } from "./file-tree-logic";
 
 export type TreeLoadState = "idle" | "loading" | "error";
@@ -138,7 +139,7 @@ export function FileTree({
             loading.delete(path);
             return { ...prev, expanded, loading };
           });
-          showToast(err instanceof Error ? err.message : "目录加载失败", "error");
+          showToast(apiErrorMessage(err, "fileTree.tree.loadFailed"), "error");
         });
     },
     [project, showToast],

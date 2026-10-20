@@ -3,9 +3,10 @@
 // 单条超限失败。勾选若干 → 导入为项目级常用语（父级经 putScope 整替 project scope）。
 import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
-import { api, ApiError, type InputHistoryItem } from "@/lib/api";
+import { api, type InputHistoryItem } from "@/lib/api";
 // tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
-import { t as tSnap, useT } from "@/i18n/i18n";
+import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { Button } from "@/components/ui/button";
 import { DialogTitle } from "@/components/ui/dialog";
 import { isSnippetOverLimit, partitionImportable, snippetPreview } from "./snippet-logic";
@@ -36,7 +37,7 @@ export function SnippetImport({
         if (!cancelled) setItems(res.items);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof ApiError ? err.message : tSnap("composer.snippet.importLoadFailed"));
+        if (!cancelled) setLoadError(apiErrorMessage(err, "composer.snippet.importLoadFailed"));
       });
     return () => {
       cancelled = true;

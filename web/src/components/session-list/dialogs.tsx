@@ -127,7 +127,10 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
       onClose();
     } else {
       setError(
-        t("sessionList.dialogs.batchDeleteFailedList", { n: failed.length, titles: failed.map((f) => f.title).join("、") }),
+        t("sessionList.dialogs.batchDeleteFailedList", {
+          n: failed.length,
+          titles: failed.map((f) => f.title).join(t("sessionList.dialogs.batchDeleteSep")),
+        }),
       );
       showToast(
         t("sessionList.dialogs.batchDeletedPartial", { ok: ids.length - failed.length, total: ids.length }),

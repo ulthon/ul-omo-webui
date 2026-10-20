@@ -10,8 +10,8 @@
 // （effect 只发请求不同步 setState——oxlint set-state-in-effect 消警模式，同 todo 20）。
 import { useEffect, useState } from "react";
 import { ArrowLeft, Eye, History, MoreVertical, Pencil, Trash2 } from "lucide-react";
-import { ApiError } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { Markdown } from "@/components/chat/markdown";
 import {
   DropdownMenu,
@@ -49,10 +49,6 @@ const BTN_CLASS = "flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 
 
 const ICON_BTN = "flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
 
-function errorMessage(err: unknown): string {
-  return err instanceof ApiError ? err.message : String(err);
-}
-
 export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, onClose }: NoteDetailProps) {
   const t = useT();
   const draft = noteId === null;
@@ -78,7 +74,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
         if (!stale) setNote(r.note);
       })
       .catch((err: unknown) => {
-        if (!stale) setLoadError(errorMessage(err));
+        if (!stale) setLoadError(apiErrorMessage(err, "notes.loadFailedBrief"));
       });
     return () => {
       stale = true;
@@ -163,7 +159,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
       setVersions(null);
       onChanged();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : String(err));
+      setSaveError(apiErrorMessage(err, "notes.actionFailed"));
     } finally {
       setSaving(false);
     }
@@ -176,7 +172,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
       onChanged();
       onClose();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : String(err));
+      setSaveError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 
@@ -189,7 +185,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
       const { versions: list } = await notesApi.versions(noteId);
       setVersions(list);
     } catch (err) {
-      setVersionsError(err instanceof Error ? err.message : String(err));
+      setVersionsError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 
@@ -206,7 +202,7 @@ export function NoteDetail({ project, noteId, dirtyRef, onChanged, onCreated, on
       setBaseline(null);
       onChanged();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : String(err));
+      setSaveError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 

@@ -15,7 +15,8 @@ import type { SessionListItem } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
-import { useT } from "@/i18n/i18n";
+import { useT, type MessageKey } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -182,7 +183,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
       });
       onChanged();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "操作失败", "error");
+      showToast(apiErrorMessage(err, "sessionList.item.operationFailed"), "error");
     } finally {
       setBusy(false);
     }
@@ -207,7 +208,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
       await api.exportSession(session.id, session.title);
       showToast("已导出 HTML");
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "导出失败", "error");
+      showToast(apiErrorMessage(err, "sessionList.item.exportFailed"), "error");
     } finally {
       setExporting(false);
     }
@@ -226,7 +227,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
       showToast("标题已生成");
       onChanged();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "标题生成失败", "error");
+      showToast(apiErrorMessage(err, "sessionList.item.titleGenFailed"), "error");
     } finally {
       setGeneratingTitle(false);
     }
@@ -237,10 +238,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
 
   /** 复制会话 ID / 标题（A8）：一律走降级助手（纯 HTTP 非安全源 navigator.clipboard 恒 undefined，
    * 禁止裸用 clipboard API），按返回布尔 toast。复制的是点击时刻的 props 快照值——
-   * 菜单打开期间会话被重命名不影响本次复制结果（stale 即语义）。 */
-  const copyField = async (text: string, label: string) => {
+   * 菜单打开期间会话被重命名不影响本次复制结果（stale 即语义）。
+   * 任务11 键化：成功 toast 文案由调用方传键（zh/en 各自出「已复制…」句），失败走 copyFailed 键。 */
+  const copyField = async (text: string, copiedKey: MessageKey) => {
     const ok = await copyText(text);
-    showToast(ok ? `已复制${label}` : "复制失败（浏览器未授权剪贴板）", ok ? undefined : "error");
+    showToast(ok ? t(copiedKey) : t("sessionList.item.copyFailed"), ok ? undefined : "error");
   };
 
   return (
@@ -369,12 +371,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               {session.archivedAt ? <ArchiveRestore className="mr-2 size-4" /> : <Archive className="mr-2 size-4" />}
               {session.archivedAt ? t("sessionList.item.unarchive") : t("sessionList.item.archive")}
             </DropdownMenuItem>
-            {/* 任务11 递延：copyField 的 label 实参随 toast 文案一并迁移，此处仅迁移菜单可见文案 */}
-            <DropdownMenuItem data-testid="item-copy-id" onSelect={() => void copyField(session.id, "会话 ID")}>
+            <DropdownMenuItem data-testid="item-copy-id" onSelect={() => void copyField(session.id, "sessionList.item.copiedId")}>
               <Hash className="mr-2 size-4" />
               {t("sessionList.item.copyId")}
             </DropdownMenuItem>
-            <DropdownMenuItem data-testid="item-copy-title" onSelect={() => void copyField(session.title, "标题")}>
+            <DropdownMenuItem data-testid="item-copy-title" onSelect={() => void copyField(session.title, "sessionList.item.copiedTitle")}>
               <Copy className="mr-2 size-4" />
               {t("sessionList.item.copyTitle")}
             </DropdownMenuItem>
