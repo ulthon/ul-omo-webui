@@ -8,7 +8,7 @@
  * 步骤：
  *  1. web 前端构建（npm run build in web/，--server-only 跳过——开发迭代用）
  *  2. 生成 server/src/static-assets.generated.ts（内嵌资产模块，gitignore）
- *  3. esbuild bundle server/src/index.ts → server/dist/index.js
+ *  3. esbuild bundle server/src/cli.ts → server/dist/index.js
  *
  * 运行环境要求：node >= 24（node:sqlite）。
  */
@@ -82,7 +82,7 @@ export const EMBEDDED_STATIC = {
 // ---- 3. esbuild bundle ----
 mkdirSync(join(REPO_ROOT, "server", "dist"), { recursive: true });
 const result = await esbuild.build({
-  entryPoints: [join(SERVER_SRC, "index.ts")],
+  entryPoints: [join(SERVER_SRC, "cli.ts")],
   bundle: true,
   platform: "node",
   target: "node24",
