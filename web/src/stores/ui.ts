@@ -125,9 +125,12 @@ export const useUiStore = create<UiState>()((set) => ({
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;
     set({ toast: { id, kind, text } });
-    toastTimer = setTimeout(() => {
-      set((s) => (s.toast?.id === id ? { toast: null } : s));
-    }, 3200);
+    // 仅 info 自动消失；error 持续展示直到用户点击关闭（遗漏错误比多看一眼代价高）
+    if (kind === "info") {
+      toastTimer = setTimeout(() => {
+        set((s) => (s.toast?.id === id ? { toast: null } : s));
+      }, 3200);
+    }
   },
   clearToast: () => {
     if (toastTimer) clearTimeout(toastTimer);

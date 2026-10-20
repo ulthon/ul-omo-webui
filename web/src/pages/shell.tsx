@@ -78,6 +78,7 @@ export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const toast = useUiStore((s) => s.toast);
+  const clearToast = useUiStore((s) => s.clearToast);
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
   const [booted, setBooted] = useState(false);
@@ -238,10 +239,12 @@ export function AppShell() {
         <RightRail open={todoPanelOpen} onToggle={toggleTodoPanel} sessionId={todoSessionId} />
       </div>
 
-      {/* 轻提示 */}
+      {/* 轻提示：info 3.2s 自动消失；error 常驻展示，点击关闭 */}
       {toast && (
-        <div
-          className={`fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border px-4 py-2 text-sm shadow-md ${
+        <button
+          type="button"
+          onClick={() => clearToast()}
+          className={`fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border px-4 py-2 text-sm shadow-md cursor-pointer ${
             toast.kind === "error"
               ? "border-destructive/30 bg-destructive text-destructive-foreground"
               : "bg-foreground text-background"
@@ -249,7 +252,7 @@ export function AppShell() {
           role="status"
         >
           {toast.text}
-        </div>
+        </button>
       )}
     </div>
   );
