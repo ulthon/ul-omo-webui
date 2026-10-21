@@ -678,7 +678,12 @@ export class EngineProcessManager {
     engine.idleTimer = setTimeout(() => {
       engine.idleTimer = null
       if (engine.state !== "ready" || !this.isIdle(engine)) return
-      if (this.now() - engine.lastActivityAt < this.opts.idleTimeoutMs) return
+      if (this.now() - engine.lastActivityAt < this.opts.idleTimeoutMs) {
+        // 定时器毫秒级抖动可能提前触发（remaining 与触发时 elapsed 踩同一边界）：
+        // 重排空闲检查而非 return 丢弃，否则该次回收被永久吞掉（实测竞态，见 task-2b 证据）
+        this.rescheduleIdleCheck(engine)
+        return
+      }
       this.emit({ type: "engine_reclaimed", projectPath: engine.projectPath, reason: "idle_timeout" })
       void this.stop(engine.projectPath).catch(() => {})
     }, remaining)

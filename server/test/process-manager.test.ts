@@ -430,6 +430,52 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
       cleanup(h)
     }
   })
+
+  test("定时器提前触发竞态：未到阈值时重排而非丢弃回收（回归 task-2b）", async () => {
+    let clock = Date.now()
+    const t0 = clock
+    const fakes: FakeRpcClient[] = []
+    const probe = new MemProbe()
+    const events: EngineManagerEvent[] = []
+    const registryPath = `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`
+    const m = new EngineProcessManager({
+      registryPath,
+      idleTimeoutMs: 80,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      stopGraceMs: 60,
+      crashPollMs: 20,
+      probe,
+      now: () => clock,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        probe.add(fake.pid, { cwd: PROJ })
+        const origStop = fake.stop.bind(fake)
+        fake.stop = async () => {
+          await origStop()
+          probe.procs.delete(fake.pid)
+        }
+        fakes.push(fake)
+        return fake
+      },
+    })
+    m.onEvent((e) => events.push(e))
+    try {
+      await m.ensureRunning(PROJ)
+      m.reportSessionActive(PROJ, "rpc-1")
+      m.reportSessionClosed(PROJ, "rpc-1")
+      // 时钟回拨模拟定时器毫秒级抖动提前触发：回调时 now-lastActivityAt 未到阈值
+      clock = t0 - 500
+      await sleep(200) // 首次回调已运行：旧代码在此永久丢弃回收；新代码重排（remaining=580）
+      clock = t0 + 1000 // 前拨越过阈值，重排后的定时器到点即回收
+      await waitFor(() => m.getStatus(PROJ)?.state === "stopped", 15000)
+      expect(fakes[0].stopCount).toBe(1)
+      expect(events.some((e) => e.type === "engine_reclaimed")).toBe(true)
+    } finally {
+      await m.stopAll().catch(() => {})
+      rmSync(registryPath, { force: true })
+    }
+  })
 })
 
 describe("优雅关停", () => {
