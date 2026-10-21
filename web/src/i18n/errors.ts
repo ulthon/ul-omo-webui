@@ -17,6 +17,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   attachment_escape: "errors.attachmentEscape",
   attachment_not_found: "errors.attachmentNotFound",
   compact_unsupported: "errors.compactUnsupported",
+  compact_timeout: "errors.compactTimeout",
   content_too_large: "errors.contentTooLarge",
   engine_not_ready: "errors.engineNotReady",
   fork_cancelled: "errors.forkCancelled",

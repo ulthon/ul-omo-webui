@@ -5,13 +5,13 @@
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, Bell, BookOpen, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, type ChatListItem } from "./message-items";
+import { mergeMemoryItems, type ChatListItem, type CompactionMarker } from "./message-items";
 import { CustomMessageBubble, EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
 
@@ -61,10 +61,40 @@ export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { m
   );
 });
 
+/** 压缩摘要标记块（docs08-r6 任务 18 ③）：Archive 图标 +「上下文已压缩：摘要首行」
+ *  常显，点击展开原文（summary 全文 + details JSON，details 缺失时仅全文）；
+ *  tokensBefore 存在时尾部带压缩前水位。样式与记忆标记同族（weak 弱标记）。 */
+export const CompactionMarkerBlock = memo(function CompactionMarkerBlock({ marker }: { marker: CompactionMarker }) {
+  const [open, setOpen] = useState(false);
+  const t = useT();
+  return (
+    <div data-testid="compaction-marker" className="my-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted lg:min-h-0 text-xs text-muted-foreground"
+      >
+        <Archive className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{t("chat.compact.marker", { summary: marker.summaryFirstLine })}</span>
+        {marker.detail !== "" && (
+          <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+        )}
+      </button>
+      {open && marker.detail !== "" && (
+        <div className="mt-0.5 max-h-48 overflow-y-auto rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">
+          {marker.detail}
+        </div>
+      )}
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
   if (item.kind === "customMessage") return <CustomMessageBubble sessionId={sessionId} entryId={item.entryId} />;
+  if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
 });
 
@@ -86,10 +116,14 @@ export function MessageList({
   const followRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
 
-  // 白名单 memory 条目并入 items（docs08-r4 任务 13）：entries 引用不变（流式 delta 只动
-  // streamingMessage）时 memo 不重算，无标记会话 mergeMemoryItems 原样返回不建数组
+  // 白名单 memory 条目与 compaction 条目并入 items（docs08-r4 任务 13 / 任务 18 ③）：
+  // entries 引用不变（流式 delta 只动 streamingMessage）时 memo 不重算，无标记会话
+  // mergeMemoryItems 原样返回不建数组
   const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
   const mergedItems = useMemo(() => mergeMemoryItems(items, entries ?? []), [items, entries]);
+  // 压缩进行态（docs08-r6 任务 18 ①）：compaction_start/progress 置位、end 消除
+  // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
+  const compacting = useMessagesStore((s) => s.bySession[sessionId]?.compacting ?? false);
 
   const virtualizer = useVirtualizer({
     count: mergedItems.length,
@@ -180,9 +214,21 @@ export function MessageList({
 
       <NavRail items={mergedItems} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
 
-      {syncing && (
-        <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
-          {t("chat.messageList.syncing")}
+      {(syncing || compacting) && (
+        <div className="pointer-events-none absolute top-2 left-1/2 flex -translate-x-1/2 flex-col items-center gap-1">
+          {compacting && (
+            <div
+              data-testid="compacting-banner"
+              className="rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm"
+            >
+              {t("chat.compact.ongoing")}
+            </div>
+          )}
+          {syncing && (
+            <div className="rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm">
+              {t("chat.messageList.syncing")}
+            </div>
+          )}
         </div>
       )}
 

@@ -3,9 +3,12 @@
  * 端点无参数（webui 只暴露裸 /compact）；回执形状 {sessionId, summary,
  * firstKeptEntryId, tokensBefore, tokensAfter?, usage}；网关可选面缺省 501；
  * 网关 ApiError 原样映射（409 already_processing / 404 session_not_found）。
+ * docs08-r6 任务 18 ④：同步等待期限（COMPACT_HTTP_TIMEOUT_MS）内未完成 →
+ * 504 compact_timeout（后台进行中文案）；期限内网关拒绝仍原样先到上抛
+ * （fire_and_forget_regression 防线：同步 await 链零改动）。
  * 运行时层（真实 ProjectRuntime：流式守卫/引擎错误形态映射）由 runtime-compact.test.ts 覆盖。
  */
-import { describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -29,6 +32,7 @@ import type {
   EngineUsageStats,
 } from "../src/adapter/engine-adapter"
 import { ApiError } from "../src/api/http"
+import { COMPACT_HTTP_TIMEOUT_MS } from "../src/api/routes-session"
 
 const COMPACT_RESULT: EngineCompactResult = {
   summary: "压缩摘要",
@@ -176,6 +180,53 @@ describe("POST /api/sessions/:id/compact（docs08-r5 任务 8）", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect("tokensAfter" in body).toBe(false);
+  });
+});
+
+describe("POST /api/sessions/:id/compact 超时映射（docs08-r6 任务 18 ④）", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("网关挂起超 COMPACT_HTTP_TIMEOUT_MS → 504 compact_timeout（后台进行中文案，不裸断连接）", async () => {
+    vi.useFakeTimers();
+    const gateway = new FakeGateway();
+    // 引擎侧压缩慢于 HTTP 期限：永不 resolve（后台仍在进行的模拟）
+    (gateway as { compact: (id: string) => Promise<never> }).compact = () => new Promise(() => {});
+    const resPromise = buildApp(gateway).request("/api/sessions/s1/compact", { method: "POST" });
+    // 让请求链微任务跑起来再推进期限时钟
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(COMPACT_HTTP_TIMEOUT_MS + 5);
+    const res = await resPromise;
+    expect(res.status).toBe(504);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("compact_timeout");
+    expect(body.error.message).toBe("压缩仍在后台进行，完成后水位自动刷新");
+  });
+
+  test("期限内完成不走超时（fake timers 下同步回执 200，fire_and_forget_regression：仍是同步 await 链）", async () => {
+    vi.useFakeTimers();
+    const app = buildApp(new FakeGateway());
+    const resPromise = app.request("/api/sessions/s1/compact", { method: "POST" });
+    await vi.advanceTimersByTimeAsync(COMPACT_HTTP_TIMEOUT_MS - 1000);
+    const res = await resPromise;
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.summary).toBe("压缩摘要");
+    expect(body.tokensBefore).toBe(32881);
+  });
+
+  test("期限内网关 409 拒绝仍原样先到上抛（超时映射不改变 409 语义，conflict_409_semantics）", async () => {
+    vi.useFakeTimers();
+    const gateway = new FakeGateway();
+    gateway.compactError = new ApiError(409, "already_processing", "回合进行中");
+    const resPromise = buildApp(gateway).request("/api/sessions/s1/compact", { method: "POST" });
+    await vi.advanceTimersByTimeAsync(0);
+    const res = await resPromise;
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("already_processing");
+    expect(body.error.message).toBe("回合进行中");
   });
 });
 

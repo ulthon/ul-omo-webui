@@ -15,6 +15,7 @@
 import { api } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
+import { broadcastUsageRefresh } from "@/components/chat/compact-run";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
@@ -357,6 +358,30 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     const model = typeof m === "object" && m !== null && typeof m.id === "string" && m.id ? m.id : "";
     const detail = typeof wire.detail === "string" && wire.detail ? wire.detail : "";
     useUiStore.getState().showToast(t("common.lib.modelChangeRejected", { model, detail }), "error");
+  }
+
+  // 压缩生命周期（docs08-r6 任务 18 ①②⑥，引擎事件形态实测：start 携 reason
+  //  threshold/overflow/manual，end 携 status completed/declined）：
+  // - start/progress → 消息流顶部「正在压缩上下文…」进行条置位（end 消除，帧丢失由
+  //   store 兑底回落）；主通道 applyWireEvent 对这两类静默忽略，此处分流。
+  // - start 且 reason!=manual（自动压缩，用户无感知触发）→ 轻提示 toast；重放窗口内
+  //   （replay_begin/done 包夹）不提示，防重连重播重复弹。
+  // - end → 进行条消除；status!=declined（实际压缩发生）时广播 usage 重拉（水位环/
+  //   状态条重拉权威快照，504 超时路径的后台完成补偿）。
+  if (wire.type === "compaction_start" || wire.type === "compaction_progress") {
+    useMessagesStore.getState().setCompacting(sessionId, true);
+    if (
+      wire.type === "compaction_start" &&
+      wire.reason !== "manual" &&
+      !useMessagesStore.getState().replayRecovering
+    ) {
+      useUiStore.getState().showToast(t("chat.compact.autoStarted"), "info");
+    }
+  } else if (wire.type === "compaction_end") {
+    useMessagesStore.getState().setCompacting(sessionId, false);
+    if (wire.status !== "declined") {
+      broadcastUsageRefresh();
+    }
   }
 
   // 提问卡片生命周期（q1）：updated 刷截止；resolved 终局出队（超时/取消/异端应答）

@@ -10,6 +10,7 @@ export const errors = {
   alreadyCompacted: "上下文已压缩过，无新的可压缩内容",
   nothingToCompact: "会话上下文还很小，暂无需压缩",
   compactUnsupported: "当前引擎不支持上下文压缩",
+  compactTimeout: "压缩仍在后台进行，完成后水位自动刷新",
   sessionNotFound: "会话不存在",
   sessionNotPersisted: "会话尚未落盘（空会话）",
   forkCancelled: "fork 被扩展取消",

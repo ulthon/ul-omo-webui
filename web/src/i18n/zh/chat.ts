@@ -220,14 +220,20 @@ export const chat = {
     ellipsis: "…",
     empty: "（暂无内容）",
   },
-  // compact-run.ts 压缩成功 toast（终验 F2：本地拼装文案入域，{key, vars} 渲染）
+  // compact-run.ts 压缩成功 toast（终验 F2：本地拼装文案入域，{key, vars} 渲染）。
+  // 任务 18（压缩过程感）：ongoing=进行条（event-dispatch compaction_start/progress）；
+  // marker=流内摘要标记块（message-items compactionMarkerOf 派生，{summary}=首行）；
+  // autoStarted=自动压缩轻提示（reason!=manual 的 start 帧 toast）
   compact: {
     done: "上下文已压缩：{before} → {after} tokens",
     doneBefore: "上下文已压缩（压缩前 {before} tokens）",
+    ongoing: "正在压缩上下文…",
+    marker: "上下文已压缩：{summary}",
+    autoStarted: "上下文接近上限，正在自动压缩…",
   },
   // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
   commands: {
-    compactNote: "压缩上下文：引擎协议面 compact 实证可用（spike 直调 session.compact），webui 端点直调",
+    compactNote: "压缩上下文：引擎协议直调（与 CLI 同入口）",
     clearNote: "清空上下文：引擎未注册该命令，直发会被模型当作普通消息",
     newNote: "新建会话：引擎未注册该命令，请用侧栏「新建会话」",
     undoNote: "撤销上一条：引擎未注册该命令，直发会被模型当作普通消息",

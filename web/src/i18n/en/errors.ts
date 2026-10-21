@@ -8,6 +8,7 @@ export const errors = {
   alreadyCompacted: "Context already compacted; nothing new to compact",
   nothingToCompact: "Session context is still small; no compaction needed",
   compactUnsupported: "Current engine does not support context compaction",
+  compactTimeout: "Compaction is still running in the background; the context level refreshes automatically once it finishes",
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
   forkCancelled: "Fork cancelled by the extension",

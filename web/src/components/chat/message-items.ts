@@ -6,15 +6,59 @@
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { memoryMarkerOf, type MemoryMarker } from "@/lib/memory-entries";
 
+/** 压缩摘要标记（docs08-r6 任务 18 ③）：顶层 type:"compaction" 条目派生。字段形态
+ *  钉死于 task-3 枚举（.omo/evidence/docs08-r6/task-3-enumeration.md §三）：summary
+ *  3/3 为字符串 markdown、details 3/3 为 senpi.compaction.summary.v1 同构——但引用
+ *  一律判空（同会话库内同族 custom 条目 post-compact-restoration 的 details 仅
+ *  1/3 存在，形态从宽是铁律），缺失降级不臆造。 */
+export interface CompactionMarker {
+  /** 锚定条目 id（并入 items 时的排序锚点 + React key） */
+  entryId: string;
+  /** 摘要首个非空行（常显一句；超长截断） */
+  summaryFirstLine: string;
+  /** 展开原文：summary 全文，details 存在时追加 JSON（缺失不追加不臆造） */
+  detail: string;
+  /** 压缩前水位（tokensBefore；task-3 实测 3/3 数字，缺省时标记块不展示水位段） */
+  tokensBefore: number | null;
+}
+
+/** 常显首行截断长度（超长摘要截断加省略号，展开可见全文） */
+const COMPACTION_SUMMARY_MAX = 80;
+
+/** 条目 → 压缩摘要标记（顶层 type:"compaction" 且有 id 才派生；summary/details/
+ *  tokensBefore 全部判空降级，并常返回可用标记） */
+export function compactionMarkerOf(entry: WireEntry): CompactionMarker | null {
+  if (entry.type !== "compaction" || typeof entry.id !== "string" || entry.id === "") return null;
+  const summary = typeof entry.summary === "string" ? entry.summary : "";
+  const firstLine = summary.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
+  const tokensBefore = typeof entry.tokensBefore === "number" ? entry.tokensBefore : null;
+  const marker: CompactionMarker = {
+    entryId: entry.id,
+    summaryFirstLine:
+      firstLine.length > COMPACTION_SUMMARY_MAX
+        ? `${firstLine.slice(0, COMPACTION_SUMMARY_MAX)}…`
+        : firstLine,
+    detail: summary,
+    tokensBefore,
+  };
+  // details 判空（task-3 实证同族条目可缺失）：存在且为对象才追加 JSON 原文
+  if (entry.details !== null && typeof entry.details === "object") {
+    marker.detail = `${marker.detail}\n\n${JSON.stringify(entry.details, null, 2)}`.trim();
+  }
+  return marker;
+}
+
 /** items 数组判别联合：entry=定格条目气泡；streaming=流式气泡；
  *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生）；
  *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
- *  这类条目此前无渲染分支——入列却无内容可渲染即空壳路径） */
+ *  这类条目此前无渲染分支——入列却无内容可渲染即空壳路径）；
+ *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生） */
 export type ChatListItem =
   | { key: string; kind: "entry"; entryId: string; interrupted: boolean }
   | { key: string; kind: "streaming" }
   | { key: string; kind: "memoryMarker"; marker: MemoryMarker }
-  | { key: string; kind: "customMessage"; entryId: string };
+  | { key: string; kind: "customMessage"; entryId: string }
+  | { key: string; kind: "compactionMarker"; marker: CompactionMarker };
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
 function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
@@ -63,12 +107,13 @@ export function buildMessageItems(
   return list;
 }
 
-/** 记忆标记并入 items（docs08-r4 任务 13）：白名单 memory 条目在其自身条目的流内位置
- *  （之后）插入 marker 项。items 顺序即 messageEntries 的顺序（buildMessageItems 保序），
- *  按 entries 下标归并即可；divider 锚点从 key 前缀还原，streaming 项无锚点恒最后。
- *  sessionBinding 按 identity 渲染去重（引擎每回合重写 binding 条目，同一 identity 只显示
- *  首次绑定）。无标记时原样返回（引用不变，订阅方不重算）。锚点不在 entries 的项
- *  （理论不发生）排最后、保序，防错位插队。 */
+/** 记忆标记与压缩摘要标记归并 items（docs08-r4 任务 13 建；docs08-r6 任务 18 ③
+ *  并入 compaction marker 同一归并）：白名单 memory 条目与顶层 compaction 条目在各自
+ *  条目的流内位置（之后）插入 marker 项。items 顺序即 messageEntries 的顺序
+ *  （buildMessageItems 保序），按 entries 下标归并即可；divider 锚点从 key 前缀还原，
+ *  streaming 项无锚点恒最后。sessionBinding 按 identity 渲染去重（引擎每回合重写
+ *  binding 条目，同一 identity 只显示首次绑定）。无标记时原样返回（引用不变，
+ *  订阅方不重算）。锚点不在 entries 的项（理论不发生）排最后、保序，防错位插队。 */
 export function mergeMemoryItems(items: ChatListItem[], entries: readonly WireEntry[]): ChatListItem[] {
   const ordOf = new Map<string, number>();
   entries.forEach((e, i) => {
@@ -79,6 +124,16 @@ export function mergeMemoryItems(items: ChatListItem[], entries: readonly WireEn
   const markers: Array<{ ord: number; seq: number; item: ChatListItem }> = [];
   let seq = 0;
   for (const e of entries) {
+    // 压缩摘要 marker（任务 18 ③）：顶层 type:"compaction" 条目，逐条忠实渲染（无去重）
+    const compaction = compactionMarkerOf(e);
+    if (compaction !== null) {
+      markers.push({
+        ord: ordOf.get(compaction.entryId) ?? LAST,
+        seq: seq++,
+        item: { key: `compaction-${compaction.entryId}`, kind: "compactionMarker", marker: compaction },
+      });
+      continue;
+    }
     const marker = memoryMarkerOf(e);
     if (marker === null) continue;
     if (marker.dedupeKey !== undefined) {

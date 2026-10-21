@@ -43,6 +43,12 @@ function parseThinkingLevel(raw: unknown): EngineThinkingLevel | undefined {
 
 const STREAMING_BEHAVIORS: ReadonlySet<string> = new Set(["steer", "followUp"]);
 
+/** 压缩 HTTP 同步等待期限（docs08-r6 任务 18 ④）：Bun.serve 空闲 ~12s 掐断连接
+ *  （title-gen 手动路径同例），期限内未完成即 504 compact_timeout 明示「仍在后台
+ *  进行」——引擎侧压缩不随 HTTP 放弃等待而取消（RPC 连接独立于 HTTP 连接），
+ *  compaction_end SSE 事件驱动前端重拉 usage 补偿（事件链见 web compact-run/event-dispatch）。 */
+export const COMPACT_HTTP_TIMEOUT_MS = 10_000;
+
 /** 排队语义枚举校验（docs08-r4 任务 11，与 parseThinkingLevel 同一解析惯例） */
 function parseStreamingBehavior(raw: unknown): EnginePromptInput["streamingBehavior"] {
   if (raw === undefined || raw === null || raw === "") return undefined;
@@ -360,21 +366,40 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   // 裸 /compact）；回执带压缩前后水位（tokensBefore/estimatedTokensAfter + 压缩后
   // usage 快照）供前端佐证真实生效。回合中 409 already_processing、无更多可压缩
   // 内容 409 already_compacted/nothing_to_compact（运行时层映射，前端明示不静默）。
+  // 超时映射（任务 18 ④，常量说明见模块级 COMPACT_HTTP_TIMEOUT_MS）。
   app.post("/api/sessions/:id/compact", route(async (c: Context) => {
     const id = requireParam(c, "id");
     // 可选面守卫（favoriteModels 同例）：测试装配 fake 可省略 compact
     if (!deps.engines.compact) {
       throw new ApiError(501, "compact_unsupported", "当前网关未实现压缩通道");
     }
-    const { result, usage } = await deps.engines.compact(id);
-    return c.json({
-      sessionId: id,
-      summary: result.summary,
-      firstKeptEntryId: result.firstKeptEntryId,
-      tokensBefore: result.tokensBefore,
-      ...(result.estimatedTokensAfter !== undefined ? { tokensAfter: result.estimatedTokensAfter } : {}),
-      usage,
-    });
+    // 同步 RPC 入口保留（fire-and-forget 红线：仍是 await 整链回执）；仅加超时映射——
+    // 期限内网关拒绝（409 already_processing 等）原样先到上抛，语义零改动；
+    // 超时后放弃等待，迟到成败静默吞掉（防 unhandled rejection，结果由事件流补偿）
+    const compactPromise = deps.engines.compact(id);
+    void compactPromise.catch(() => {});
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const { result, usage } = await Promise.race([
+        compactPromise,
+        new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(
+            () => reject(new ApiError(504, "compact_timeout", "压缩仍在后台进行，完成后水位自动刷新")),
+            COMPACT_HTTP_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      return c.json({
+        sessionId: id,
+        summary: result.summary,
+        firstKeptEntryId: result.firstKeptEntryId,
+        tokensBefore: result.tokensBefore,
+        ...(result.estimatedTokensAfter !== undefined ? { tokensAfter: result.estimatedTokensAfter } : {}),
+        usage,
+      });
+    } finally {
+      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+    }
   }));
 
   // 排队快照对账（docs08-r4 任务 11，spike 指引 2）：断线重连/初次渲染拉一次；

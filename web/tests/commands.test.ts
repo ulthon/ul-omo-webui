@@ -75,11 +75,15 @@ describe("makeCommandGate", () => {
 });
 
 describe("commandGate（实证表）", () => {
-  test("compact 翻案支持（docs08-r5 任务 8）：门放行（webui 端点直调，不经 prompt）", () => {
+  test("compact 翻案支持（docs08-r5 任务 8）：门放行（webui 端点直调，不经 prompt）；note 文案改写为引擎协议直调口径（docs08-r6 任务 18 ⑤，不再有未注册/spike 考古措辞）", () => {
     const compact = lookupCommand("compact");
     expect(compact?.supported).toBe(true);
     expect(() => commandGate("/compact")).not.toThrow();
     expect(() => commandGate("/compact extra")).not.toThrow();
+    expect(compact?.note).toContain("引擎协议直调");
+    expect(compact?.note).toContain("CLI");
+    expect(compact?.note).not.toContain("未注册");
+    expect(compact?.note).not.toContain("spike");
   });
 
   test("其余三命令不支持且命中即拦（clear/new/undo）", () => {

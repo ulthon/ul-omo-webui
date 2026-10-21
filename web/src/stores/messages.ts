@@ -39,6 +39,10 @@ export interface SessionMessages {
   streamingEntryId: string | null;
   /** 工具执行生命周期（事件驱动，todo 17 卡片消费） */
   toolRuns: Record<string, ToolRun>;
+  /** 压缩进行中（docs08-r6 任务 18 ①：compaction_start/progress 置位、compaction_end
+   *  消除；消息流顶部进行条与水位环区消费。end 帧丢失时由 COMPACTING_FALLBACK_MS
+   *  超时兑底回落，进行条不永挂） */
+  compacting: boolean;
 }
 
 /** SSE wire 事件（{projectPath, event} 的 event 部分），结构从宽、按 type 甄别 */
@@ -99,6 +103,9 @@ interface MessagesState {
   /** 恢复窗口置位/复位（docs08-r5 任务 5，event-dispatch 由 replay_begin/replay_done 转译） */
   beginReplayRecovery(): void;
   endReplayRecovery(): void;
+  /** 压缩进行位置位/消除（docs08-r6 任务 18 ①，event-dispatch 由 compaction_* 帧转译）；
+   *  true 布防超时兑底（end 帧丢失自愈），false/会话清理拆防 */
+  setCompacting(sessionId: string, compacting: boolean): void;
 }
 
 function emptySessionMessages(): SessionMessages {
@@ -111,6 +118,7 @@ function emptySessionMessages(): SessionMessages {
     streamingMessage: null,
     streamingEntryId: null,
     toolRuns: {},
+    compacting: false,
   };
 }
 
@@ -138,6 +146,34 @@ function syntheticId(msg: WireMessage): string {
 
 /** 本地乐观用户条目 id 前缀（appendLocalUserEntry 生成） */
 const LOCAL_ENTRY_PREFIX = "local-";
+
+/** 压缩进行态兑底时长（docs08-r6 任务 18 ①，stale_progress_bar 防线）：end 帧丢失
+ *  （连接断后重连重放不保证回放事件、服务重启等）时进行条不永挂——置位后该时长
+ *  无 end 帧即自动回落。取值需覆盖同步 RPC 期限（server COMPACT_HTTP_TIMEOUT_MS 10s）
+ *  + 引擎后台压缩完成的事件延迟（一次 LLM summarization 可达分钟级），取 90s。 */
+export const COMPACTING_FALLBACK_MS = 90_000;
+
+/** 各会话压缩进行态兑底定时器（setCompacting(true) 布防，end/清理拆防） */
+const compactingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function armCompactingFallback(sessionId: string): void {
+  disarmCompactingFallback(sessionId);
+  const timer = setTimeout(() => {
+    compactingTimers.delete(sessionId);
+    // 兑底回落：仅翻 false，不广播 usage（水位真相由 usage 轮询/下次事件校正）
+    useMessagesStore.getState().setCompacting(sessionId, false);
+  }, COMPACTING_FALLBACK_MS);
+  // bun 单测环境不挂住进程退出（同 event-dispatch sweepTimer 模式）
+  (timer as unknown as { unref?: () => void }).unref?.();
+  compactingTimers.set(sessionId, timer);
+}
+
+function disarmCompactingFallback(sessionId: string): void {
+  const timer = compactingTimers.get(sessionId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  compactingTimers.delete(sessionId);
+}
 
 /** "排队中"本地占位甄别（docs08-r4 任务 11）：appendLocalUserEntry 的 queuedMode 标记 */
 function isQueuedLocalEntry(entry: WireEntry): entry is WireEntry & { message: WireMessage } {
@@ -312,6 +348,20 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
     beginReplayRecovery: () => set({ replayRecovering: true }),
 
     endReplayRecovery: () => set({ replayRecovering: false }),
+
+    setCompacting: (sessionId, compacting) => {
+      // 兑底布防/拆防先于 set：false 路径下 timer 里的 setCompacting(false) 不可重入
+      if (compacting) {
+        armCompactingFallback(sessionId);
+      } else {
+        disarmCompactingFallback(sessionId);
+      }
+      set((s) => {
+        const cur = s.bySession[sessionId] ?? emptySessionMessages();
+        if (cur.compacting === compacting) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, compacting } } };
+      });
+    },
 
     setEntries: (sessionId, entries, cursor, leafId) =>
       set((s) => ({
@@ -636,6 +686,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         if (!(sessionId in s.bySession)) return s;
         const bySession = { ...s.bySession };
         delete bySession[sessionId];
+        disarmCompactingFallback(sessionId);
         return { bySession };
       }),
 

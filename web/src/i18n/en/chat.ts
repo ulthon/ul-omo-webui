@@ -219,14 +219,21 @@ export const chat = {
     ellipsis: "…",
     empty: "(no content)",
   },
-  // compact-run.ts compact success toast (final-wave F2: locally assembled copy)
+  // compact-run.ts compact success toast (final-wave F2: locally assembled copy).
+  // Task 18 (compaction progress feel): ongoing = banner (event-dispatch
+  // compaction_start/progress); marker = in-stream summary block (message-items
+  // compactionMarkerOf, {summary} = first line); autoStarted = auto-compaction
+  // toast (start frame with reason != manual)
   compact: {
     done: "Context compacted: {before} → {after} tokens",
     doneBefore: "Context compacted ({before} tokens before)",
+    ongoing: "Compacting context…",
+    marker: "Context compacted: {summary}",
+    autoStarted: "Context nearing its limit; auto-compaction in progress…",
   },
   // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
   commands: {
-    compactNote: "Compact context: verified working over the engine protocol surface (spike calls session.compact directly); the webui endpoint is called directly",
+    compactNote: "Compact context: direct call over the engine protocol (same entry point as the CLI)",
     clearNote: "Clear context: not registered by the engine; sending it directly would be treated by the model as a plain message",
     newNote: "New session: not registered by the engine; use \"New session\" in the sidebar",
     undoNote: "Undo last message: not registered by the engine; sending it directly would be treated by the model as a plain message",

@@ -18,6 +18,13 @@ export function onUsageRefresh(listener: UsageRefreshListener): () => void {
   };
 }
 
+/** 广播 usage 刷新（docs08-r6 任务 18 ②）：手动压缩回执之外的第二发射点——
+ *  compaction_end SSE 事件驱动（504 超时路径引擎侧仍在后台压缩，事件到达即重拉
+ *  权威快照，水位环/状态条自动更新）；与 runCompact 成功路径共用同一订阅面。 */
+export function broadcastUsageRefresh(): void {
+  for (const listener of usageListeners) listener();
+}
+
 /**
  * 执行压缩并刷新消息/usage。消息刷新走游标增量（compaction 条目非 message 形态，
  * 渲染层过滤后列表视觉零变化；条目集与引擎状态保持一致）；usage 广播给订阅面
@@ -39,7 +46,7 @@ export async function runCompact(sessionId: string): Promise<CompactReceipt> {
   } catch {
     // 消息刷新失败不阻塞压缩成功反馈（下次打开会话/触顶增量自然对齐）
   }
-  for (const listener of usageListeners) listener();
+  broadcastUsageRefresh();
   return receipt;
 }
 
