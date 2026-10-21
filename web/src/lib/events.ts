@@ -50,6 +50,10 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "question_resolved", // 提问卡片终局出队（answered/timed_out/cancelled/异端应答广播）
   "model_changed", // 引擎落定的会话模型回显（docs08-r6 任务 8 ⑤⑥）：写 appliedModels，不改选中偏好
   "model_change_rejected", // 切换被引擎拒绝（docs08-r6 任务 8 ③）：error toast，不动 runState
+  "error", // 引擎错误帧（分发层容错识别）：置 runState=error 状态点；wire 类型开放集的 *_error 尾缀族无法枚举，仅注册字面量类型
+  "compaction_start", // 上下文压缩开始帧（docs08-r6 任务 16）：注册保证 EventSource 模式下派发进 applyWireEvent 主通道
+  "compaction_progress", // 压缩进度帧：同上（主通道按未知类型容错忽略，注册为后续消费预留通路）
+  "compaction_end", // 压缩结束帧：同上
 ];
 
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */
