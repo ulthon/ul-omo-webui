@@ -8,24 +8,14 @@ import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
+import { isLongUserText } from "./user-text-collapse";
 
 // user 长文本折叠阈值（docs08-r6 任务 14）：仅 user 消息；assistant 回复永不折叠。
 // 判定用纯字符估算而非运行时测高：气泡宽度随视口/图片混排变化，测高在 SSR/测试环境不可用，
 // 字符阈值判定稳定可测；3 行视觉本身由 line-clamp-3 保证，阈值只决定是否出现展开钮。
 // 估算行数：按换行分段，每段按 ~40 字/行（user 气泡 85% 宽、text-sm 下中文 3 行量级）上取整，
-// 估算超过 3 行即折叠；短消息（含边界附近）不出钮，无 flicker。
-const USER_TEXT_CHARS_PER_LINE = 40;
-const USER_TEXT_MAX_LINES = 3;
-
-/** user 文本估算行数是否超过折叠阈值（导出仅供测试） */
-export function isLongUserText(text: string): boolean {
-  let lines = 0;
-  for (const seg of text.split("\n")) {
-    lines += Math.max(1, Math.ceil(seg.length / USER_TEXT_CHARS_PER_LINE));
-    if (lines > USER_TEXT_MAX_LINES) return true;
-  }
-  return false;
-}
+// 估算超过 3 行即折叠；短消息（含边界附近）不出钮，无 flicker。判定纯函数在
+// ./user-text-collapse 叶模块（fast-refresh lint 口径，单测直接驱动）。
 
 /** 展开态跨重渲染/虚拟列表重挂载保持（docs08-r6 任务 14）：以 entryId 为键的模块级记录；
  *  组件内 useState 管当次挂载，重挂载时从记录恢复，流式/兄弟更新不触碰。 */

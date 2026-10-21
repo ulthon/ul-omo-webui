@@ -7,7 +7,7 @@
  * .omo/evidence/docs08-r6/task-8-qa.md。
  */
 import { describe, expect, test } from "vitest";
-import { calibrateContextPercent } from "@/components/layout/context-ring";
+import { calibrateContextPercent } from "@/components/layout/context-percent";
 
 describe("calibrateContextPercent（引擎实测值优先，模型侧窗口兜底）", () => {
   test("引擎分母 1M（未随 setModel 更新）+ 所选模型 4K 窗口 → 以 4K 重算（2048/4096=50%）", () => {

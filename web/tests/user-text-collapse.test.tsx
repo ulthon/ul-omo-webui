@@ -17,7 +17,8 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 
-import { EntryBubble, isLongUserText } from "@/components/chat/message-bubble";
+import { EntryBubble } from "@/components/chat/message-bubble";
+import { isLongUserText } from "@/components/chat/user-text-collapse";
 import { useMessagesStore } from "@/stores/messages";
 import { useLocaleStore } from "@/i18n/i18n";
 import type { WireEntry } from "@/lib/api";
