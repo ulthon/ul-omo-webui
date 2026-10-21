@@ -160,12 +160,6 @@ export const chat = {
     loadFailed: "Failed to load messages; check that the service is available",
     retry: "Retry",
   },
-  // command-bar.tsx
-  commandBar: {
-    sendFailed: "Failed to send command",
-    sendTitle: "Send {label}",
-    unsupportedTitle: "Not supported by engine: {note}",
-  },
   // image-lightbox.tsx
   lightbox: {
     close: "Close preview",

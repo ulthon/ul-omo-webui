@@ -1,4 +1,4 @@
-// /compact 执行与刷新协调（docs08-r5 任务 8）。composer 与 command-bar 共用：
+// /compact 执行与刷新协调（docs08-r5 任务 8）。composer 与斜杠命令下拉共用：
 // 直调压缩端点 → 游标增量刷新消息 → 广播 usage 刷新（水位环/状态条重拉权威快照）。
 // 错误不上捕获（原样上抛 ApiError），由调用方行内/toast 明示——失败保留输入语义在
 // 调用方落地。

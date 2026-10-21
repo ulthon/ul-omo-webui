@@ -1,6 +1,6 @@
 // 提问卡片组件测试（q1）：渲染形态（选项/多选/倒计时/等待语义文案）、交互（选择/
-// 提交应答载荷、空应答拦截、取消应答、超时禁用）。happy-dom + createRoot 惯例同
-// command-bar.test.tsx；fetch mock 捕获应答 POST。
+// 提交应答载荷、空应答拦截、取消应答、超时禁用）。happy-dom + createRoot 惯例；
+// fetch mock 捕获应答 POST。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 

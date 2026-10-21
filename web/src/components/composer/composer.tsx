@@ -1106,14 +1106,14 @@ export function Composer({
     "flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
   );
 
-  // ---------- 手机档（<sm）胶囊输入区（docs08-r4 任务 7；docs08-r5 任务 9 OC 对标重排） ----------
-  // 参考在线 OpenChamber 390 实拍（.omo/evidence/docs08-r5/task-9-oc-390-*.png）：
-  // 贴底胶囊卡片，行1左端圆形功能钮 + 输入区 + 右端动作钮；低频功能收进菜单。
-  // 落地：胶囊内左端第一位 = 常用语独立钮（高频一步直达，OC ⊕ 同位同形态）；
-  // 第二位 "+" 收纳低频工具（历史/@/图片，展开行在胶囊上方，聚焦自动收起）；
-  // 右端内嵌发送钮（size-9，canSend 语义不变）。常用语下拉手机档 inline 流内
-  // 渲染于胶囊上方条区（与斜杠提示同区）。模型浮签保持胶囊右上常驻（等价 OC
-  // 行2 模型名右侧常显）。上方各条（粘贴选择/历史/图片/附件）形态不变；桌面档零改动。
+  // ---------- 手机档（<sm）上下结构输入区（docs08-r4 任务 7；docs08-r5 任务 9；
+  // ---------- docs08-r6 任务 13 重排：上行 textarea 整行宽（自适应增高），下行功能钮+发送） ----------
+  // 参考在线 OpenChamber 390 实拍（.omo/evidence/docs08-r5/task-9-oc-390-*.png 与
+  // docs08-r4-notes/openchamber-mobile-390-input.png）。任务 13 用户拍板：胶囊三圆钮
+  // 同行挤占输入宽度的形态退役，改为上下两行——上行 textarea 占满整行（自增高不变，
+  // 单行汉字容量提升）；下行常用语/收纳/排队切换 + 停止/发送。上方各条（粘贴选择/
+  // 历史/图片/附件）、聚焦收起、visualViewport 键盘、草稿、斜杠内联、图片附件条、
+  // 粘贴转附件全链路不变；桌面档零改动。
   if (isCompact) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
@@ -1130,49 +1130,51 @@ export function Composer({
             </div>
           </div>
         )}
-        {/* 斜杠提示（任务 7）与常用语下拉（任务 9）均为 inline 档：胶囊上方条区流内渲染 */}
+        {/* 斜杠提示（任务 7）与常用语下拉（任务 9）均为 inline 档：输入区上方条区流内渲染 */}
         {slashHintsNode}
         {snippetDropdownNode}
-        <div className="flex items-end gap-1.5">
-          <div
-            data-testid="composer-capsule"
-            className="relative flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+        {/* 上行：textarea 整行宽（testid 沿用 composer-capsule，等待提示/中断口等既有断言不随重排漂移）；
+            模型浮签保持右上角常驻（待生效徽标语义不变） */}
+        <div
+          data-testid="composer-capsule"
+          className="relative"
+        >
+          <div className="absolute -top-2.5 right-2 z-10">
+            <CapsuleModelTag pendingEffect={modelPendingEffect} />
+          </div>
+          <textarea
+            ref={textareaRefCb}
+            data-testid="composer-input"
+            value={text}
+            rows={1}
+            placeholder={t("composer.placeholder")}
+            disabled={sending}
+            onChange={(e) => applyText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onFocus={() => setToolsOpen(false)}
+            className="max-h-48 min-h-9 w-full resize-none overflow-y-auto rounded-xl border border-input bg-background px-2.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/50 disabled:opacity-50"
+          />
+        </div>
+        {/* 下行：常用语一步直达 + 低频工具收纳靠左；排队切换/停止/发送靠右 */}
+        <div className="flex items-center gap-1">
+          {snippetButtonSm}
+          <button
+            type="button"
+            data-testid="composer-more-btn"
+            aria-label={t("composer.moreAria")}
+            title={t("composer.moreTitle")}
+            aria-expanded={toolsOpen}
+            onClick={() => setToolsOpen((v) => !v)}
+            className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
+              toolsOpen ? "bg-muted text-foreground" : "text-muted-foreground"
+            }`}
           >
-            {/* 模型浮签（2026-10-15 可见性缺口 ①③）：胶囊右上角常驻当前模型短名，点开
-                直达选择弹层；取式样浮签不占行宽，textarea 宽度不受影响。待生效徽标
-                （docs08-r6 任务 8 ④）：流式/排队期所选模型尚未注入时明示「待可发送时生效」。 */}
-            <div className="absolute -top-2.5 right-2 z-10">
-              <CapsuleModelTag pendingEffect={modelPendingEffect} />
-            </div>
-            {/* 常用语独立钮（docs08-r5 任务 9）：高频一步直达，点开即上方 inline 下拉 */}
-            {snippetButtonSm}
-            <button
-              type="button"
-              data-testid="composer-more-btn"
-              aria-label={t("composer.moreAria")}
-              title={t("composer.moreTitle")}
-              aria-expanded={toolsOpen}
-              onClick={() => setToolsOpen((v) => !v)}
-              className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted ${
-                toolsOpen ? "bg-muted text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              <Plus className="size-5" />
-            </button>
-            <textarea
-              ref={textareaRefCb}
-              data-testid="composer-input"
-              value={text}
-              rows={1}
-              placeholder={t("composer.placeholder")}
-              disabled={sending}
-              onChange={(e) => applyText(e.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={onPaste}
-              onFocus={() => setToolsOpen(false)}
-              className="max-h-48 min-h-9 w-full flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
-            />
+            <Plus className="size-5" />
+          </button>
+          <div className="ml-auto flex items-center gap-1">
             {queueModeToggleSm}
+            {stopButtonSm}
             <button
               type="button"
               data-testid="send-btn"
@@ -1187,7 +1189,6 @@ export function Composer({
               <ArrowUp className="size-5" />
             </button>
           </div>
-          {stopButtonSm}
         </div>
         {fileInputNode}
         {errorLine}

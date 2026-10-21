@@ -3,7 +3,9 @@
 // 并发锁：会话回合中（本地 SSE 流式态，含另一窗口驾驶的会话）输入禁用；prompt 撞上
 // 409 already_processing 时给出明确提示（verification/05 P2-11：引擎无跨进程锁，webui 自律单驱动）。
 // 中断定格：abort 后 settleStreaming 把半截内容定格进 entries，气泡带"已中断"标注直至下一次发送。
-// todo 24：/ 命令门注册（拦截不支持命令直通模型）+ 命令按钮行 + 底部 token/费用状态条。
+// todo 24：/ 命令门注册（拦截不支持命令直通模型）+ 底部 token/费用状态条；
+// docs08-r6 任务 13：命令按钮行（command-bar）整文件退役，命令门链（commands.ts →
+// api.prompt）与 /compact 斜杠下拉静态段保留，按钮显隐不再参与功能面。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
 import { api, setPromptGate } from "@/lib/api";
@@ -15,7 +17,6 @@ import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { Composer } from "@/components/composer/composer";
-import { CommandBar } from "./command-bar";
 import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList } from "./message-list";
@@ -72,9 +73,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   // 输入锁拆解（docs08-r4 任务 11）：权限锁（hasPendingPermission）与流式态分离——
   // 权限锁禁一切输入动作（P0-2 实证：挂起权限回合不结束）；流式态输入可用、发送变
-  // 排队（Composer 双信号下传）。CommandBar 维持原 composerLocked 单布尔口径不变。
+  // 排队（Composer 双信号下传）。
   const t = useT();
-  const composerLocked = streaming || hasPendingPermission;
 
   // 运行态水合锁（docs08-r5 任务 6）：刷新/会话打开起默认按「进行中」阻塞，首个权威
   // 运行态信号（runStates 写入 / 探询 active / 探询完成仍 unknown）解锁，不回锁。
@@ -231,7 +231,6 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
           <QueueBar sessionId={sessionId} />
-          <CommandBar sessionId={sessionId} busy={composerLocked} hydrationLocked={hydrationLocked} />
           {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传入处并入 runState
               running/waiting 显式并集（knownRunning 虽已含，此处按计划定死保守并集，
               中断口宁多勿少，防 hydration-lock 口径演进回归） */}

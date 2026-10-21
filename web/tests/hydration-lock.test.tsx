@@ -2,7 +2,7 @@
 // 悲观默认按「进行中」阻塞。覆盖计划验收路径：
 //   水合期锁定；runStates 写入 running → 解锁且排队态可用；active=true/false → 解锁；
 //   探询完成仍 null（引擎不可用）→ 解锁；重挂载（再次刷新）重置水合窗口；
-//   组件级：Composer 与 CommandBar 两接线点均受 hydrationLocked 控制。
+//   组件级：Composer 接线点受 hydrationLocked 控制（docs08-r6 任务 13：CommandBar 已随组件退役）。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -18,7 +18,6 @@ const { createElement } = await import("react");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useHydrationRunLock } = await import("@/components/chat/hydration-lock");
 const { Composer } = await import("@/components/composer/composer");
-const { CommandBar } = await import("@/components/chat/command-bar");
 const { useMessagesStore } = await import("@/stores/messages");
 const { useUiStore } = await import("@/stores/ui");
 const { useQueueStore } = await import("@/stores/queue");
@@ -213,18 +212,5 @@ describe("Composer 接线（hydrationLocked）", () => {
     expect(sendBtn2.disabled).toBe(false);
     expect(modeBtn).not.toBeNull();
     await queuedView.unmount();
-  });
-});
-
-describe("CommandBar 接线（hydrationLocked）", () => {
-  test("水合期命令直发禁用；解锁恢复", async () => {
-    const first = await render(createElement(CommandBar, { sessionId: "s1", busy: false, hydrationLocked: true }));
-    const btn = first.container.querySelector("[data-testid=cmd-compact]") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
-    await first.unmount();
-    const second = await render(createElement(CommandBar, { sessionId: "s1", busy: false, hydrationLocked: false }));
-    const btn2 = second.container.querySelector("[data-testid=cmd-compact]") as HTMLButtonElement;
-    expect(btn2.disabled).toBe(false);
-    await second.unmount();
   });
 });

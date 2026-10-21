@@ -161,12 +161,6 @@ export const chat = {
     loadFailed: "消息加载失败，请检查服务是否可用",
     retry: "重试",
   },
-  // command-bar.tsx 斜杠命令按钮行
-  commandBar: {
-    sendFailed: "命令发送失败",
-    sendTitle: "发送 {label}",
-    unsupportedTitle: "引擎不支持：{note}",
-  },
   // image-lightbox.tsx 图片灯箱
   lightbox: {
     close: "关闭预览",

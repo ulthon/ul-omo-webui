@@ -8,7 +8,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { readSessionUrl, writeSessionUrl } from "@/lib/session-url";
 import { useSessionsStore } from "@/stores/sessions";
 
-// bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错（command-bar 同款守卫）
+// bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错（同款守卫）
 if (!(globalThis as { window?: unknown }).window) {
   GlobalRegistrator.register();
 }
