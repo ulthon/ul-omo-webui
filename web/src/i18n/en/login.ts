@@ -38,6 +38,7 @@ export const login = {
     rail: "Right rail",
     railCollapsed: "Right rail (collapsed)",
     expandRail: "Expand right rail",
+    collapseRail: "Collapse right rail",
     resizeHandle: "Drag to resize the right rail",
     openGitLink: "Open Git link",
     gitLinkTitle: "Git link: {url}",

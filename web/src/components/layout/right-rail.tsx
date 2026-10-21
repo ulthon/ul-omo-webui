@@ -15,8 +15,8 @@
 // 替代 R4 的 flex-1 等分——等分下 3 字标签（子代理）会 nowrap 溢出按钮盒，六页签所需宽
 // 度已不可等分容纳）。触控目标高度 min-h-11 保持；不换行不截断语义保留（溢出改滚动）。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
-import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
+import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { FolderOpen, GitBranch, ListTodo, X } from "lucide-react";
 import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { SubagentPanel } from "@/components/chat/subagent-panel";
@@ -200,6 +200,19 @@ export function RightRail({
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
 
   const t = useT();
+  // F-C：手机抽屉 Escape 关闭（仅 <lg 生效，桌面展开档不受影响）。
+  // 抽屉打开时挂 document keydown，桌面视口（matchMedia lg 命中）直接放行。
+  useEffect(() => {
+    if (!open) return;
+    const onDrawerKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (window.matchMedia("(min-width: 1024px)").matches) return;
+      onToggle();
+    };
+    document.addEventListener("keydown", onDrawerKeyDown);
+    return () => document.removeEventListener("keydown", onDrawerKeyDown);
+  }, [open, onToggle]);
+
   const switchTab = (next: RightRailTab) => {
     if (tab === "notes" && next !== "notes" && notesDirtyRef.current) {
       if (!window.confirm(t("login.rightRail.confirmLeaveNotes"))) return;
@@ -289,9 +302,22 @@ export function RightRail({
         </aside>
       )}
 
+      {/* F-C：手机抽屉背板（仅 <lg 显示，z-[44] 低于抽屉 z-[45]），点击关闭；
+          桌面档 lg:hidden 隐藏，桌面布局零改动 */}
+      {open && (
+        <div
+          data-testid="right-rail-drawer-backdrop"
+          aria-hidden="true"
+          onClick={onToggle}
+          className="fixed inset-0 z-[44] bg-black/40 lg:hidden"
+        />
+      )}
+
       {/* 手机（<lg）：固定右缘抽屉，镜像左栏模式（inset-y-0 维持——iOS 软键盘收缩会
           截断抽屉底部）；z-[45] 高于左抽屉 z-40、低于 toast z-50（沿用 W5-15 结论）。
-          A6：头部承载自第二层行迁入的 git/files 外链（桌面折叠条不受影响） */}
+          A6：头部承载自第二层行迁入的 git/files 外链（桌面折叠条不受影响）。
+          F-C：头部行补全页签通用关闭钮（沿 TodoPanel 收起钮形态），修复非 Tasks
+          页签无关闭口抽屉困局 */}
       <aside
         aria-label={t("login.rightRail.rail")}
         data-testid="right-rail-drawer"
@@ -299,6 +325,18 @@ export function RightRail({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <div className="flex shrink-0 items-center justify-end border-b px-2 py-1">
+          <button
+            type="button"
+            aria-label={t("login.rightRail.collapseRail")}
+            data-testid="right-rail-drawer-close"
+            title={t("login.rightRail.collapseRail")}
+            onClick={onToggle}
+            className="flex size-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
         <DrawerExternalLinks />
         <RailTabBar tab={tab} onSwitch={switchTab} />
         <div className="min-h-0 flex-1">

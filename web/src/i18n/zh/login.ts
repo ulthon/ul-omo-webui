@@ -40,6 +40,7 @@ export const login = {
     rail: "右栏",
     railCollapsed: "右栏（已折叠）",
     expandRail: "展开右栏",
+    collapseRail: "收起右栏",
     resizeHandle: "拖拽调整右栏宽度",
     openGitLink: "打开 Git 外链",
     gitLinkTitle: "Git 外链：{url}",
