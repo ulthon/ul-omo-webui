@@ -27,6 +27,12 @@ const {
 
 const SID = "qa-todo-list";
 
+// store 自 2026-10-15 起不再把 message 通道的 toolResult 帧入列（结构化清单由
+// todo-list-data 按 toolCallId 从 entries 关联承担）；测试按真实通路走 entries 增量通道。
+function appendStored(id, message) {
+  useMessagesStore.getState().appendEntries(SID, [storedEntry(id, message)]);
+}
+
 function renderTodo(toolCallId, name = "todo", args = undefined, live = false) {
   return renderToStaticMarkup(<TodoList sessionId={SID} toolCallId={toolCallId} name={name} args={args} live={live} />);
 }
@@ -78,7 +84,7 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
     expect(runningHtml).toContain("运行中");
     expect(runningHtml).not.toContain("data-status="); // 无快照 → 通用卡片通路
 
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-1", EVO_RESULT_1));
+    appendStored("entry-evo-1", EVO_RESULT_1);
     const html = renderTodo(EVO_CALL_1_ID, "todo", EVO_START_1.args);
     expect(html).toContain("todo");
     expect(html).toContain("清单");
@@ -94,11 +100,11 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
 
   test("details 幂等刷新：同 entry id 覆盖新快照 → 勾选状态随事件更新", () => {
     useMessagesStore.getState().applyWireEvent(SID, EVO_START_1);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-1", EVO_RESULT_1));
+    appendStored("entry-evo-1", EVO_RESULT_1);
     expect(renderTodo(EVO_CALL_1_ID)).toContain('data-status="in_progress"');
     // 同 id upsert（引擎幂等刷新 / SSE 重放）：快照推进到第 2 步（同一 toolCallId 的新 details）
     const refreshed = { ...EVO_RESULT_2, toolCallId: EVO_CALL_1_ID };
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-1", refreshed));
+    appendStored("entry-evo-1", refreshed);
     const html = renderTodo(EVO_CALL_1_ID);
     expect(html).toContain('data-status="completed"');
     expect(html).toContain("1/2 已完成");
@@ -108,7 +114,7 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
 
   test("abandoned 终态渲染：删除线 + 已放弃徽标（多轮演进第 3 步）", () => {
     useMessagesStore.getState().applyWireEvent(SID, EVO_START_3);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-3", EVO_RESULT_3_ABANDONED));
+    appendStored("entry-evo-3", EVO_RESULT_3_ABANDONED);
     const html = renderTodo(EVO_CALL_3_ID);
     expect(html).toContain('data-status="abandoned"');
     expect(html).toContain("已放弃");
@@ -118,11 +124,11 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
 
   test("多轮 todo 演进：历史卡片保留各轮快照，最新卡片显示最新态", () => {
     useMessagesStore.getState().applyWireEvent(SID, EVO_START_1);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-1", EVO_RESULT_1));
+    appendStored("entry-evo-1", EVO_RESULT_1);
     useMessagesStore.getState().applyWireEvent(SID, EVO_START_2);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-2", EVO_RESULT_2));
+    appendStored("entry-evo-2", EVO_RESULT_2);
     useMessagesStore.getState().applyWireEvent(SID, EVO_START_3);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-evo-3", EVO_RESULT_3_ABANDONED));
+    appendStored("entry-evo-3", EVO_RESULT_3_ABANDONED);
     const first = renderTodo(EVO_CALL_1_ID);
     const second = renderTodo(EVO_CALL_2_ID);
     const third = renderTodo(EVO_CALL_3_ID);
@@ -141,7 +147,7 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
       toolName: "todo",
       args: { op: "init" },
     });
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-mp", MULTIPHASE_RESULT));
+    appendStored("entry-mp", MULTIPHASE_RESULT);
     const html = renderTodo(MULTIPHASE_RESULT.toolCallId);
     expect(html).toContain("调研");
     expect(html).toContain("实现");
@@ -178,13 +184,13 @@ describe("todo-list 事件驱动渲染（fixture 三步演进）", () => {
       toolName: "todo",
       args: { op: "list" },
     });
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-nd", {
+    appendStored("entry-nd", {
       role: "toolResult",
       toolCallId: "call_todo_nodetails",
       toolName: "todo",
       content: [{ type: "text", text: "没有结构化数据的结果" }],
       isError: false,
-    }));
+    });
     const html = renderTodo("call_todo_nodetails");
     expect(html).toContain('data-tool-call="call_todo_nodetails"');
     expect(html).toContain("todo");

@@ -129,7 +129,8 @@ describe("TodoPanel 渲染", () => {
       role: "assistant",
       content: [{ type: "toolCall", id: EVO_CALL_2_ID, name: "todo", arguments: { op: "done" } }],
     } });
-    store.applyWireEvent(SID, messageEntry("r2", EVO_RESULT_2));
+    // store 自 2026-10-15 起不再把 message 通道的 toolResult 帧入列，按真实通路走 entries 增量
+    store.appendEntries(SID, [storedEntry("r2", EVO_RESULT_2)]);
 
     const second = renderToStaticMarkup(<TodoPanel sessionId={SID} />);
     expect(second).toContain("1/2 已完成");

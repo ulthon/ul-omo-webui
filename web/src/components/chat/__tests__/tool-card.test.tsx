@@ -32,11 +32,16 @@ const {
   BASH_START,
   BASH_RESULT_DENIED,
   UNKNOWN_START,
-  messageEntry,
   storedEntry,
 } = await import("./fixtures/tool-events");
 
 const SID = "qa-tool-card";
+
+// store 自 2026-10-15 起不再把 message 通道的 toolResult 帧入列（可见呈现由 ToolCard
+// 按 toolCallId 从 entries 关联承担）；测试按真实通路走 entries 增量通道。
+function appendStored(id, message) {
+  useMessagesStore.getState().appendEntries(SID, [storedEntry(id, message)]);
+}
 
 function renderCard(props) {
   return renderToStaticMarkup(
@@ -277,7 +282,7 @@ describe("tool-card 运行状态流转（fixture 事件驱动）", () => {
 
   test("toolResult 定格 → 完成（结果就绪，运行态消失）", () => {
     useMessagesStore.getState().applyWireEvent(SID, TODO_START);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-1", TODO_RESULT_MESSAGE));
+    appendStored("entry-1", TODO_RESULT_MESSAGE);
     const html = renderCard({ toolCallId: TODO_START.toolCallId, name: TODO_START.toolName, args: TODO_START.args });
     expect(html).toContain("完成");
     expect(html).not.toContain("运行中");
@@ -296,7 +301,7 @@ describe("tool-card 运行状态流转（fixture 事件驱动）", () => {
 
   test("isError:true（bash 被拒）→ 失败态 + destructive 强调", () => {
     useMessagesStore.getState().applyWireEvent(SID, BASH_START);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-2", BASH_RESULT_DENIED));
+    appendStored("entry-2", BASH_RESULT_DENIED);
     const html = renderCard({ toolCallId: BASH_START.toolCallId, name: BASH_START.toolName, args: BASH_START.args });
     expect(html).toContain("失败");
     expect(html).toContain("text-destructive");
@@ -308,7 +313,7 @@ describe("tool-card 运行状态流转（fixture 事件驱动）", () => {
   test("同会话多工具并存：状态各自独立（todo 运行中 / bash 失败）", () => {
     useMessagesStore.getState().applyWireEvent(SID, TODO_START_DONE);
     useMessagesStore.getState().applyWireEvent(SID, BASH_START);
-    useMessagesStore.getState().applyWireEvent(SID, messageEntry("entry-3", BASH_RESULT_DENIED));
+    appendStored("entry-3", BASH_RESULT_DENIED);
     const runningHtml = renderCard({ toolCallId: TODO_START_DONE.toolCallId, name: TODO_START_DONE.toolName, args: TODO_START_DONE.args });
     expect(runningHtml).toContain("运行中");
     const doneHtml = renderCard({ toolCallId: BASH_START.toolCallId, name: BASH_START.toolName, args: BASH_START.args });
