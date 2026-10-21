@@ -60,9 +60,16 @@ export function isRunStateSweepArmed(): boolean {
  *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。 */
 const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
 
-/** question 帧的 questions 数组窄化（wire 从宽甄别：异形条目跳过，全空则不入队） */
+/** question 帧的 questions 数组窄化（wire 从宽甄别：异形条目跳过，全空则不入队）；
+ * 丢弃路径在 DEBUG_SSE 下留诊断（ul_omo_debug_sse=1 或 ?debugSse=1）——否则
+ * question 帧静默消失无从排查（引擎侧 questions 载荷漂移的直接线索）。 */
 function narrowQuestionSpecs(raw: unknown): QuestionSpec[] | null {
-  if (!Array.isArray(raw) || raw.length === 0) return null;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    if (sseDebugEnabled()) {
+      console.debug(`[sse-dispatch] question questions 载荷丢弃：非数组或空（${Array.isArray(raw) ? "empty" : typeof raw}）`)
+    }
+    return null
+  }
   const out: QuestionSpec[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
@@ -82,7 +89,13 @@ function narrowQuestionSpecs(raw: unknown): QuestionSpec[] | null {
       multiSelect: q.multiSelect === true,
     });
   }
-  return out.length > 0 ? out : null;
+  if (out.length === 0) {
+    if (sseDebugEnabled()) {
+      console.debug(`[sse-dispatch] question questions 全部异形丢弃：count=${raw.length}`)
+    }
+    return null
+  }
+  return out
 }
 
 /** 页面可见性（bun 单测环境无 document，按可见兜底） */

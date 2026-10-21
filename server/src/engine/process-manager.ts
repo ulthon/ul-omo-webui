@@ -39,6 +39,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { isCompiledBinary, releaseRoot, selfDir } from "../runtime-paths"
 import { PidRegistry } from "./pid-registry"
+import { RPC_CLIENT_CAPABILITIES_ENV } from "./rpc-capabilities"
 import {
   linuxProcProbe,
   reapOrphanEngines,
@@ -406,6 +407,11 @@ export class EngineProcessManager {
       SENPI_CODING_AGENT_DIR: this.agentDir,
       OMO_NATIVE: "1",
       PI_OFFLINE: "1",
+      // 客户端能力声明（docs08-r6 任务 5）：本函数是生产组合（engine-runtime
+      // clientFactory）实际走的 spawn 路径，引擎在 rpc-mode 启动时读一次该 env；
+      // stdio 下 set_client_info 的能力面是静默空操作，env 缺失即提问卡片降级。
+      // 单一来源见 ./rpc-capabilities.ts（与 senpi-adapter 自建 RpcClient 共用）。
+      ...RPC_CLIENT_CAPABILITIES_ENV,
     }
     const args = ["--extension", pluginDir, "--multi-session"]
     // 按项目附加参数（权限预设等 meta_kv 派生；缺省无附加）

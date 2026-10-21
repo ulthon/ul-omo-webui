@@ -5,6 +5,7 @@
 import { describe, expect, test } from "vitest"
 import { readFileSync } from "node:fs"
 import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
+import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
 
 const FIXTURES = new URL("./fixtures/protocol/", import.meta.url).pathname
@@ -182,6 +183,28 @@ function makeAdapter(fake: FakeRpcClient): SenpiAdapter {
     clientFactory: () => fake,
   })
 }
+
+describe("spawn env 能力声明（docs08-r6 任务 5）", () => {
+  test("createClient env 引用共享常量（与 process-manager 生产 spawn 路径同源）", async () => {
+    let captured: RpcClientOptions | undefined
+    const fake = new FakeRpcClient()
+    const adapter = new SenpiAdapter({
+      projectDir: "/tmp/opencode/w2-7-proj",
+      agentDir: "/root/.pi/agent",
+      engineCliPath: "/fake/cli.js",
+      pluginDir: "/fake/plugin",
+      clientFactory: (o) => {
+        captured = o
+        return fake
+      },
+    })
+    await adapter.start()
+    // stdio 能力唯一通道：自建 RpcClient 的 env 必须与共享常量一致（勿硬编码）
+    expect(captured?.env?.SENPI_RPC_CLIENT_CAPABILITIES).toBe(RPC_CLIENT_CAPABILITIES_ENV.SENPI_RPC_CLIENT_CAPABILITIES)
+    // 握手仍走 set_client_info（stdio 下仅宽度信令，能力面静默空操作）
+    expect(fake.calls.some((c) => c.method === "set_client_info")).toBe(true)
+  })
+})
 
 describe("SenpiAdapter 未启动错误路径", () => {
   test("start 前 prompt/messages/abort/openSession 报 not_started", async () => {

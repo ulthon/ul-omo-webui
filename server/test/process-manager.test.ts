@@ -10,6 +10,7 @@ import { describe, expect, test, vi } from "vitest"
 vi.setConfig({ testTimeout: 30_000 })
 import { rmSync } from "node:fs"
 import { EngineProcessManager, resolveEnginePaths, type EngineManagerEvent } from "../src/engine/process-manager"
+import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { FakeRpcClient, MemProbe } from "./mocks"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -110,6 +111,10 @@ describe("spawn 规范（verification/01、03 实证）", () => {
       expect(opts.env?.SENPI_CODING_AGENT_DIR).toBe(opts.env?.OMO_CODING_AGENT_DIR)
       expect(opts.env?.OMO_NATIVE).toBe("1")
       expect(opts.env?.PI_OFFLINE).toBe("1")
+      // docs08-r6 任务 5：生产 spawn 路径必须携带能力声明 env（引擎 rpc-mode 启动
+      // 读一次；stdio 下 set_client_info 能力面是静默空操作，env 是唯一通道）
+      expect(opts.env?.SENPI_RPC_CLIENT_CAPABILITIES).toBe(RPC_CLIENT_CAPABILITIES_ENV.SENPI_RPC_CLIENT_CAPABILITIES)
+      expect(opts.env?.SENPI_RPC_CLIENT_CAPABILITIES).toContain("question")
       expect(typeof opts.onDisconnect).toBe("function")
     } finally {
       await h.manager.stopAll()

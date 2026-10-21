@@ -21,6 +21,7 @@ import { existsSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { isCompiledBinary, releaseRoot } from "../runtime-paths"
 import { resolveEnginePaths } from "../engine/process-manager"
+import { RPC_CLIENT_CAPABILITIES_ENV, RPC_CLIENT_CAPABILITY_LIST } from "../engine/rpc-capabilities"
 import { RpcClient, SessionManager } from "@code-yeongyu/senpi"
 import type { SessionInfo } from "@code-yeongyu/senpi"
 import {
@@ -315,12 +316,11 @@ export class SenpiAdapter implements EngineAdapter {
         OMO_CODING_AGENT_DIR: this.options.agentDir,
         SENPI_CODING_AGENT_DIR: this.options.agentDir,
         OMO_NATIVE: "1",
-        // stdio 宿主的客户端能力通道（rpc-mode.js:130，逗号分隔）：set_client_info
-        // 对 stdio 连接是静默空操作（session-command-router 无 currentConnection），
-        // 能力必须经 env 下发。question（q1 提问卡片）使 ask-user 走结构化
-        // method:"question" 帧；不声明则引擎 degradeQuestion 降级为 select/input
-        // 对话框链（multiSelect 与逐问自由文本在降级中丢失）。
-        SENPI_RPC_CLIENT_CAPABILITIES: "extension_events,question",
+        // stdio 宿主的客户端能力通道：引擎 rpc-mode 启动读一次 env（逗号分隔），
+        // set_client_info 对 stdio 连接是静默空操作，能力必须经 env 下发——
+        // 常量单一来源 engine/rpc-capabilities.ts（与 process-manager 生产
+        // spawn 路径共用，勿两处硬编码）。
+        ...RPC_CLIENT_CAPABILITIES_ENV,
       },
       provider: this.options.provider,
       model: this.options.modelId,
@@ -343,11 +343,11 @@ export class SenpiAdapter implements EngineAdapter {
     this.starting = (async () => {
       const client = this.createClient()
       await withTimeout(client.start(), START_TIMEOUT_MS, "引擎启动")
-      // 能力协商（q1 提问卡片）：声明 "question" 后 ask-user 工具走结构化
-      // method:"question" 帧（waitForAnswer/questions/deadline 一体下发）；
-      // 不声明则引擎 degradeQuestion 降级为 select/input 对话框链（multiSelect
-      // 与逐问自由文本在降级中丢失）。前端 QuestionCard 与本能力必须同版本上线。
-      await withTimeout(client.setClientInfo(80, ["extension_events", "question"]), 20000, "set_client_info")
+      // stdio 下不设置能力，仅宽度信令：set_client_info 的能力声明对 stdio 连接是
+      // 静默空操作（connection-handler 按 currentConnection 路由，stdio 启动无连接
+      // 句柄），能力实际经 spawn env SENPI_RPC_CLIENT_CAPABILITIES 下发（单一来源
+      // engine/rpc-capabilities.ts）。宽度 80 对齐 CLI 终端列宽，供引擎渲染回退。
+      await withTimeout(client.setClientInfo(80, [...RPC_CLIENT_CAPABILITY_LIST]), 20000, "set_client_info")
       // 冷启动就绪轮询（docs/verification/03 坑 1）：get_protocol_info 成功才算就绪
       // send 是 RpcClient 内部方法，spike 已实证此用法（verification/03）。
       const send = (client as unknown as { send: (m: unknown) => Promise<{ success: boolean }> }).send.bind(client)

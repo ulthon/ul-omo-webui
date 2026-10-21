@@ -46,6 +46,8 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "thinking_level_changed", // 引擎落定的思考档回显（W2 todo 8：仅选中会话同步 chip）
   "replay_begin", // 服务端重放窗口标记（docs08-r5 任务 5）：包夹重放序列，转译恢复窗口置位
   "replay_done", // 同上：窗口复位；两帧仅出现在重放路径，实时扇出零改动
+  "question_updated", // 提问卡片截止刷新（q1）：白名单漏列则 EventSource 不派发，倒计时永不更新
+  "question_resolved", // 提问卡片终局出队（answered/timed_out/cancelled/异端应答广播）
 ];
 
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */
