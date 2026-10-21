@@ -46,6 +46,9 @@ export interface SessionListItem {
   lastRead: string | null;
   /** true|false=引擎活跃探询结果；null=引擎未就绪未知 */
   active: boolean | null;
+  /** 服务端三态真相源（docs08-r6 任务 11）：running|waiting|idle；null=引擎未就绪。
+  *  可选以兼容旧服务端响应（缺席时 resync 不动，交无活动清扫兑底） */
+  runState?: "running" | "waiting" | "idle" | null;
   /** 会话标签（server todo 3 落地前为 undefined，消费侧用 tags?.length 防御） */
   tags?: Array<{ scope: string; name: string }>;
 }

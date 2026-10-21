@@ -2,8 +2,8 @@
 //   - setRunState 写活动时刻；该会话任何 SSE 帧刷新时刻（同态 setRunState 与 touchRunStateAt 两路）
 //   - 周期清扫（store 动作，显式注入 now）：running >10min、waiting >30min 无活动回落 idle；
 //     事件刷新把活动基准前推，活跃会话不被回落；error/idle 与无账本条目不碰
-//   - 游标回退（服务重启强信号）触发 GET /api/sessions 重同步：active 三态
-//     （null 不动 / false→idle / true+队列→waiting / true→running；列表缺席不动）
+//   - 游标回退（服务重启强信号）触发 GET /api/sessions 重同步：服务端 runState 三态
+//     直接对齐（docs08-r6 任务 11：null/列表缺席不动；running/waiting/idle 对齐；同态不刷账本）
 // 时刻控制：bun setSystemTime 定格 at 写入，清扫以显式 now 注入（确定性，不依赖真定时器）。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionListItem } from "@/lib/api";
@@ -14,7 +14,10 @@ import { RUNNING_STALE_MS, useSessionsStore, WAITING_STALE_MS } from "@/stores/s
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-function makeSession(id: string, active: boolean | null = false): SessionListItem {
+function makeSession(
+  id: string,
+  runState: "running" | "waiting" | "idle" | null = "idle",
+): SessionListItem {
   return {
     id,
     path: `/store/sessions/${id}.jsonl`,
@@ -31,7 +34,8 @@ function makeSession(id: string, active: boolean | null = false): SessionListIte
     archivedAt: null,
     unreadCount: 0,
     lastRead: null,
-    active,
+    active: runState === "running" || runState === "waiting",
+    runState,
   };
 }
 
@@ -181,7 +185,7 @@ describe("无活动超时清扫", () => {
   });
 });
 
-describe("游标回退（服务重启）触发运行态重同步", () => {
+describe("游标回退（服务重启）触发运行态重同步（docs08-r6 任务 11：服务端 runState 真相源）", () => {
   /** mock fetch：/api/sessions? 返回聚合快照，其余（GET messages 重取兜底）返回空页 */
   function mockFetchRessync(sessions: SessionListItem[]): { listUrl(): string } {
     const state = { url: "" };
@@ -202,15 +206,16 @@ describe("游标回退（服务重启）触发运行态重同步", () => {
     return { listUrl: () => state.url };
   }
 
-  test("active 三态校准：null 不动 / false→idle（含 error）/ true+队列→waiting / true→running；列表缺席不动", async () => {
+  test("runState 三态对齐：waiting/running/idle 直接对齐；null 与列表缺席不动；error 落 idle；本地权限队列不参与", async () => {
     const snapshot: SessionListItem[] = [
-      makeSession("d-run", true),
-      makeSession("d-wait", true),
-      makeSession("d-err", false),
-      makeSession("d-idle", false),
-      makeSession("d-null", null),
-      makeSession("d-off", false),
-      makeSession("d-quiet", true),
+      makeSession("d-run", "running"),
+      makeSession("d-wait", "waiting"),
+      makeSession("d-runq", "running"), // 服务端 running：本地权限队列非空也不再改判 waiting（真相源）
+      makeSession("d-err", "idle"), // 服务端 idle：前端 error 一并对齐（服务端已无回合在途）
+      makeSession("d-idle", "idle"),
+      makeSession("d-null", null), // 引擎未就绪：不动
+      makeSession("d-off", "idle"),
+      makeSession("d-quiet", "running"), // 服务端仍 running：本地已落 idle 也提升（真相源）
       // d-absent 故意缺席：跨端已删等场景
     ];
     const { listUrl } = mockFetchRessync(snapshot);
@@ -230,10 +235,13 @@ describe("游标回退（服务重启）触发运行态重同步", () => {
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-f" }, "d-off"), 7);
     dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-g" }, "d-quiet"), 8);
     dispatchSseEvent("agent_end", frame({ type: "agent_end", sessionId: "rpc-g" }, "d-quiet"), 9);
-    dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-h" }, "d-absent"), 10);
+    dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-i" }, "d-runq"), 10);
+    usePermissionsStore.getState().pushRequest("d-runq", { id: "r2", method: "confirm", title: "Permission required: bash" });
+    dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-h" }, "d-absent"), 11);
     expect(useSessionsStore.getState().runStates).toEqual({
       "d-run": "running",
       "d-wait": "waiting",
+      "d-runq": "running",
       "d-err": "error",
       "d-idle": "idle",
       "d-null": "running",
@@ -248,17 +256,42 @@ describe("游标回退（服务重启）触发运行态重同步", () => {
     await tick();
 
     const rs = useSessionsStore.getState().runStates;
-    expect(rs["d-run"]).toBe("running"); // true 且无队列 → running（幂等）
-    expect(rs["d-wait"]).toBe("waiting"); // true 且队列非空 → 保持 waiting（强置 running 是语义回退）
-    expect(rs["d-err"]).toBe("idle"); // false → 非 idle 一律落 idle
-    expect(rs["d-idle"]).toBe("idle"); // false → 已 idle 不动
-    expect(rs["d-null"]).toBe("running"); // null（引擎未就绪）→ 不动
-    expect(rs["d-off"]).toBe("idle"); // false → running 落 idle
-    expect(rs["d-quiet"]).toBe("running"); // true → idle 提升 running（重启时回合实际在途）
+    expect(rs["d-run"]).toBe("running"); // 服务端 running：同态幂等
+    expect(rs["d-wait"]).toBe("waiting"); // 服务端 waiting：直接对齐
+    expect(rs["d-runq"]).toBe("running"); // 本地权限队列不参与推导（旧 active+队列启发式退役）
+    expect(rs["d-err"]).toBe("idle"); // 服务端 idle：error 一并对齐
+    expect(rs["d-idle"]).toBe("idle"); // 同态幂等
+    expect(rs["d-null"]).toBe("running"); // runState null（引擎未就绪）→ 不动（原 active===null 不动规则保留）
+    expect(rs["d-off"]).toBe("idle"); // 服务端 idle：running 落 idle
+    expect(rs["d-quiet"]).toBe("running"); // 服务端 running：idle 提升（重启时回合实际在途）
     expect(rs["d-absent"]).toBe("running"); // 列表缺席 → 不动
     const url = listUrl();
     expect(url).toContain("archived=all"); // 聚合端点（覆盖全项目 + 归档）
     expect(url).not.toContain("project=");
+  });
+
+  test("同态对齐不刷活动账本（重同步不推迟无活动清扫兜底）", async () => {
+    mockFetchRessync([makeSession("d-1", "running")]);
+    vi.setSystemTime(1000);
+    dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-a" }, "d-1"), 5);
+    const at = ledger()["d-1"]!;
+    vi.setSystemTime(at + 60_000);
+    dispatchSseEvent("message_update", frame({ type: "message_update", sessionId: "rpc-z" }, "d-z"), 1); // 游标回退
+    await tick();
+    await tick();
+    expect(useSessionsStore.getState().runStates["d-1"]).toBe("running");
+    expect(ledger()["d-1"]).toBe(at); // 同态不重写：活动时刻不被重同步推后
+  });
+
+  test("旧服务端未下发 runState 字段：全体不动（退化为无活动清扫兜底）", async () => {
+    const snapshot: SessionListItem[] = [{ ...makeSession("d-1", "idle"), runState: undefined }];
+    mockFetchRessync(snapshot);
+    vi.setSystemTime(1000);
+    dispatchSseEvent("agent_start", frame({ type: "agent_start", sessionId: "rpc-a" }, "d-1"), 5);
+    dispatchSseEvent("message_update", frame({ type: "message_update", sessionId: "rpc-z" }, "d-z"), 1); // 游标回退
+    await tick();
+    await tick();
+    expect(useSessionsStore.getState().runStates["d-1"]).toBe("running"); // 行无字段 → 不动
   });
 
   test("重同步失败静默：状态原样保留，交无活动清扫兜底", async () => {

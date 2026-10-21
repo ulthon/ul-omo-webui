@@ -47,6 +47,24 @@ import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 
+/** 会话运行态三态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
+ *  语义与前端 SSE 驱动的 runStates 同口径（agent_start → running；四型权限/阻塞型
+ *  question → waiting；落定 → idle），error 属前端独有态（服务端不合成）。 */
+export type ServerSessionRunState = "running" | "waiting" | "idle";
+
+/** runState 三态推导（纯函数，全组合断言见 server/test/run-state.test.ts）：
+ *  permission / question 任一非空 → waiting（等待用户输入压制 running——与前端
+ *  SSE 语义同口径：权限门挂起回合不结束，强置 running 是语义回退）；否则
+ *  streaming 占用 → running；其余 idle。 */
+export function deriveSessionRunState(sources: {
+  streaming: boolean;
+  permission: boolean;
+  question: boolean;
+}): ServerSessionRunState {
+  if (sources.permission || sources.question) return "waiting";
+  return sources.streaming ? "running" : "idle";
+}
+
 /** 路由层依赖的引擎网关面（真实实现 = EngineRuntimeRegistry；单测注入 fake） */
 export interface EngineGateway {
   /** 项目历史会话列表（SDK 直读会话库，不触发引擎 spawn） */
@@ -139,6 +157,14 @@ export interface EngineGateway {
    * 前端 `active` 字段语义 = 回合进行中（todo 15 实证修复）。
    */
   peekActiveSessionPaths(project: string): Promise<string[] | null>;
+  /**
+   * 引擎就绪时的运行态三态快照（docs08-r6 任务 11，GET /api/sessions 行 runState 供源）：
+   * sessionPath → running|waiting|idle，仅回合进行中会话入表（单驱动至多一条），
+   * 就绪且空闲返回空表（未入表 = idle），未就绪返回 null（不触发 spawn，与
+   * peekActiveSessionPaths 同口径）。可选面（favoriteModels 同例）：真实注册表实现之；
+   * 旧 fake 缺席时路由退回 peekActiveSessionPaths（active 照发，runState 恒 null）。
+   */
+  peekRunStates?(project: string): Promise<Map<string, ServerSessionRunState> | null>;
   /**
    * 重建项目引擎进程（stop → ensureRunning）：spawn 参数级配置（权限预设等）
    * 变更后的生效口。会话态随之失效（下次访问懒加载重建）。
@@ -376,6 +402,10 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
       client.sendExtensionUIResponse(response as never),
     getAvailableModels: () => client.getAvailableModels(),
     getAvailableThinkingLevels: () => client.getAvailableThinkingLevels(),
+    // 会话状态快照（get_state；pendingQuestions q1 对账与 docs08-r6 任务 11 runState
+    // 三态推导供源）。此前清单漏此方法（同上 QA 教训：必须随 SenpiRpcClient 同步），
+    // 注册表路径下 pendingQuestions 运行时缺 getState——补齐。
+    getState: () => client.getState(),
     // 斜杠命令面（docs08-r3 任务 19）：宿主 RpcClient 已解包 data.commands
     getCommands: () => client.getCommands(),
     getSessionStats: () => client.getSessionStats(),
@@ -714,6 +744,30 @@ class ProjectRuntime {
       // 探询失败不阻塞 active 判定
     }
     return this.streamingPath ? [this.streamingPath] : [];
+  }
+
+  /** 运行态三态探询（docs08-r6 任务 11，EngineGateway.peekRunStates 供源）：只读现有
+   *  状态三源推导——streamingId 占用（activeSessionPaths 同源同帧，单驱动至多一条）；
+   *  引擎快照 pendingPermissions 非空（项目级记账，单驱动下 webui 回合至多一个，
+   *  与流式会话归属一致；异端会话的权限无会话归属可用，作用域限流式会话行）；
+   *  流式会话 pendingQuestions 非空（阻塞型提问挂起回合）。仅回合在途才发这一次
+   *  get_state（经 questionsList：ensure 前置 isReady 已就绪不 spawn、switchTo 对
+   *  流式会话幂等），列表刷新零常态 RPC；失败按无未决提问降级不炸列表。
+   *  未就绪返回 null（不触发 spawn，active 同口径）。 */
+  async peekRunStates(): Promise<Map<string, ServerSessionRunState> | null> {
+    if (!this.isReady()) return null;
+    const paths = await this.activeSessionPaths();
+    const out = new Map<string, ServerSessionRunState>();
+    if (paths.length === 0 || this.streamingId === null) return out;
+    const permission = (this.manager.getStatus(this.projectPath)?.pendingPermissions.length ?? 0) > 0;
+    let question = false;
+    try {
+      question = (await this.questionsList(this.streamingId)).length > 0;
+    } catch {
+      // get_state 失败按无未决提问降级：runState 落 running，不因探询失败炸整个列表
+    }
+    out.set(paths[0], deriveSessionRunState({ streaming: true, permission, question }));
+    return out;
   }
 
   /** 活跃会话行的 handle→durableSessionId 回填（list_sessions 行两个字段都有，权威来源） */
@@ -1369,6 +1423,12 @@ export class EngineRuntimeRegistry implements EngineGateway {
     const rt = this.runtimes.get(project);
     if (!rt || !rt.isReady()) return null;
     return rt.activeSessionPaths();
+  }
+
+  async peekRunStates(project: string): Promise<Map<string, ServerSessionRunState> | null> {
+    const rt = this.runtimes.get(project);
+    if (!rt || !rt.isReady()) return null;
+    return rt.peekRunStates();
   }
 
   /** wire sessionId（routing handle）→ durable id（SSE 信封注入用）。

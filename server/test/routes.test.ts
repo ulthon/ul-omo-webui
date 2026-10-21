@@ -369,6 +369,36 @@ describe("GET /api/sessions 合并与过滤", () => {
     expect(body.sessions[0].active).toBe(true);
     rmSync(proj, { recursive: true, force: true });
   });
+
+  test("runState 字段（docs08-r6 任务 11）：可选面就绪时行下发三态；缺席退回 active-only；未就绪 null", async () => {
+    proj = mkdtempSync(join(tmpdir(), "routes-list-"));
+    // 可选面缺席（旧 fake）：退回 peekActiveSessionPaths——active 照发，runState 恒 null
+    const plain = new FakeGateway();
+    plain.sessions = [summary({ id: "s1", path: "/p/s1.jsonl" })];
+    plain.activePaths = ["/p/s1.jsonl"];
+    const plainApp = buildApp(plain).app;
+    let body = await (await req(plainApp, `/api/sessions?project=${encodeURIComponent(proj)}`)).json();
+    expect(body.sessions[0]).toMatchObject({ active: true, runState: null });
+
+    // 可选面在位：未就绪 null/null；就绪时流式中会话 waiting、其余行 idle
+    class RunStateGateway extends FakeGateway {
+      runStateMap: Map<string, "running" | "waiting" | "idle"> | null = null;
+      peekRunStates = async (): Promise<Map<string, "running" | "waiting" | "idle"> | null> =>
+        this.runStateMap;
+    }
+    const rich = new RunStateGateway();
+    rich.sessions = [summary({ id: "s1", path: "/p/s1.jsonl" }), summary({ id: "s2", path: "/p/s2.jsonl" })];
+    const { app } = buildApp(rich);
+    const list = async (): Promise<{ sessions: Array<{ id: string; active: boolean | null; runState: string | null }> }> =>
+      (await req(app, `/api/sessions?project=${encodeURIComponent(proj)}`)).json();
+    body = await list();
+    expect(body.sessions[0]).toMatchObject({ active: null, runState: null });
+    rich.runStateMap = new Map([["/p/s1.jsonl", "waiting"]]);
+    body = await list();
+    expect(body.sessions.find((s: { id: string }) => s.id === "s1")).toMatchObject({ active: true, runState: "waiting" });
+    expect(body.sessions.find((s: { id: string }) => s.id === "s2")).toMatchObject({ active: false, runState: "idle" });
+    rmSync(proj, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------- 会话操作与错误形状
@@ -1555,6 +1585,10 @@ class FakeEngineClient implements EngineClientLike {
   closed = 0;
   /** get_state 的 isStreaming 返回值（收尾监视测试用） */
   fakeStreaming = false;
+  /** get_state 的 pendingQuestions 返回值（runState 三态推导测试用） */
+  fakePendingQuestions: Array<Record<string, unknown>> = [];
+  /** getState 调用计数（runState 推导 over-fetch 断言用：无回合时零 get_state） */
+  stateCalls = 0;
   /** stop() 时的旁路钩子（测试模拟进程随 stop 退出：从探针摘除 pid）。 */
   onStop?: () => void;
 
@@ -1627,7 +1661,8 @@ class FakeEngineClient implements EngineClientLike {
     return ["low"];
   }
   async getState(): Promise<Record<string, unknown>> {
-    return { isStreaming: this.fakeStreaming, messageCount: 2 };
+    this.stateCalls += 1;
+    return { isStreaming: this.fakeStreaming, messageCount: 2, pendingQuestions: this.fakePendingQuestions };
   }
   async getSessionStats(): Promise<Record<string, unknown>> {
     return {
@@ -1805,6 +1840,32 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
     await sleep(200); // 越过轮询+宽限窗口
     expect(syntheticEvents).toEqual([]);
+  });
+
+  test("(r6-11) peekRunStates 三态推导：running / 权限 waiting / 提问 waiting / 落定空表 / 未就绪 null", async () => {
+    setup("durable-1");
+    // 未就绪（无运行时）：null——peek 语义不触发 spawn
+    expect(await registry.peekRunStates(proj)).toBeNull();
+    const created = await registry.createSession(proj, {});
+    // 就绪且无回合：空表（未入表 = idle，行级 idle 由路由层补）；且零 get_state——
+    // 列表刷新不加常态 RPC（over-fetch 纪律）
+    expect(await registry.peekRunStates(proj)).toEqual(new Map());
+    expect(client.stateCalls).toBe(0);
+    await registry.prompt(created.id, { text: "第一问" });
+    // streaming 占用、无权限无提问 → running
+    expect(await registry.peekRunStates(proj)).toEqual(new Map([[created.sessionPath, "running"]]));
+    // 权限挂起（项目级 pendingPermissions 记账，wire 事件驱动）→ waiting
+    client.emit({ type: "extension_ui_request", method: "confirm", id: "perm-1", sessionId: "routing-1" });
+    expect(await registry.peekRunStates(proj)).toEqual(new Map([[created.sessionPath, "waiting"]]));
+    // 应答落定（reportPermissionAnswered 清账）→ 回 running
+    await registry.permissionRespond(created.id, "perm-1", { confirmed: true });
+    expect(await registry.peekRunStates(proj)).toEqual(new Map([[created.sessionPath, "running"]]));
+    // 阻塞型提问挂起（get_state pendingQuestions 非空）→ waiting
+    client.fakePendingQuestions = [{ type: "extension_ui_request", method: "question", id: "q-1" }];
+    expect(await registry.peekRunStates(proj)).toEqual(new Map([[created.sessionPath, "waiting"]]));
+    // 回合落定 → 空表
+    client.emit({ type: "agent_end", sessionId: "routing-1" });
+    expect(await registry.peekRunStates(proj)).toEqual(new Map());
   });
 
   test("(a) 收尾事件缺席 + get_state 空闲 → 宽限后合成 agent_settled（synthetic:true）", async () => {

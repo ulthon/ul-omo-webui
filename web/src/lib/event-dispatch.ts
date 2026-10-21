@@ -168,30 +168,23 @@ export function resyncQueues(): void {
 
 /** 服务重启（游标回退）后的运行态重同步（W1 缺陷 #3）：与 refetchLoadedSessions 并行
  * fire-and-forget——refetchSession 本身逐会话发射，没有「全部完成」时刻可耦合。
- * GET /api/sessions 聚合快照按 active 三态校准既有 runStates（仅列表命中且引擎就绪者）：
- *   active === null（引擎未就绪）→ 不动；
- *   active === false → 非 idle 一律落 idle（含 error——服务端已无回合在途）；
- *   active === true 且权限队列非空 → waiting（权限回合在途，强置 running 是语义回退）；
- *   active === true 其余 → running。
- * 列表缺席的会话（跨端已删等）不动，交无活动清扫兜底；快照竞态（快照 true 但回合
- * 恰在拉取后落定）短暂误 running 可接受——10min 无活动清扫自愈。失败静默同 refetch。 */
+ * GET /api/sessions 聚合快照按服务端 runState 三态直接对齐（docs08-r6 任务 11：
+ * 服务端为真相源，三源推导见 EngineGateway.peekRunStates）：
+ *   runState === null / 列表缺席（引擎未就绪 / 跨端已删）→ 不动；
+ *   running / waiting / idle → 直接对齐（含 error——服务端已无回合在途；同态不重写，
+ *   不刷活动账本时刻，不推迟清扫兜底）；旧服务端未下发字段时全体不动，交清扫兜底。
+ * 快照竞态（快照 running 但回合恰在拉取后落定）短暂误 running 可接受——10min 无
+ * 活动清扫自愈。失败静默同 refetch。 */
 function resyncRunStatesFromServer(): void {
   api
     .listSessions({ archived: "all" })
     .then(({ sessions }) => {
       const byId = new Map(sessions.map((item) => [item.id, item]));
       const store = useSessionsStore.getState();
-      const queues = usePermissionsStore.getState().bySession;
       for (const [id, state] of Object.entries(store.runStates)) {
-        const active = byId.get(id)?.active;
-        if (active !== true && active !== false) continue; // 缺席 / null（引擎未就绪）不动
-        if (!active) {
-          if (state !== "idle") store.setRunState(id, "idle");
-        } else if ((queues[id]?.length ?? 0) > 0) {
-          if (state !== "waiting") store.setRunState(id, "waiting");
-        } else if (state !== "running") {
-          store.setRunState(id, "running");
-        }
+        const server = byId.get(id)?.runState;
+        if (server !== "running" && server !== "waiting" && server !== "idle") continue; // 缺席 / null（引擎未就绪）不动
+        if (state !== server) store.setRunState(id, server);
       }
     })
     .catch(() => {

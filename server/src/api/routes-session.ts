@@ -19,7 +19,7 @@ import type { SessionMeta, SessionTagRef } from "../db/meta";
 import { resolveTitleLanguage, type TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
-import type { EngineGateway } from "./engine-runtime";
+import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { ApiError, parseJsonBody, requireParam, route } from "./http";
 import { validateProjectInput } from "./paths";
 
@@ -174,8 +174,12 @@ async function requireSessionProject(deps: ApiDeps, sessionId: string): Promise<
   return row.cwd;
 }
 
-/** 会话列表行（合并元数据 + active 探询后的形态） */
-type SessionListRow = ReturnType<typeof mergeSessionRow> & { active: boolean | null };
+/** 会话列表行（合并元数据 + active/runState 探询后的形态） */
+type SessionListRow = ReturnType<typeof mergeSessionRow> & {
+  active: boolean | null;
+  /** 服务端三态真相源（docs08-r6 任务 11）：running|waiting|idle；引擎未就绪为 null */
+  runState: ServerSessionRunState | null;
+};
 
 /** 置顶优先，其余按最后活动时间倒序（todo 15 排序语义；聚合模式跨项目全局比较） */
 function byPinnedThenModified(a: { pinned: boolean; modified: string }, b: { pinned: boolean; modified: string }): number {
@@ -221,10 +225,15 @@ async function listProjectSessions(
   // null（不触发 spawn）。注意不是引擎 open 态——open 在回合结束后仍保留，
   // 按 open 判定会导致 active 永远 true（todo 15 实证，已修复）。
   // 状态点（运行中/等待权限/空闲/出错）仍以 SSE 状态事件为准（todo 15）。
-  const activePaths = await deps.engines.peekActiveSessionPaths(project);
+  // runState（docs08-r6 任务 11）= 服务端三态真相源（waiting 压制 running 的映射
+  // 见 deriveSessionRunState）：水合探询与前端 resync 据此对账。可选面缺席
+  // （旧 fake）退回 peekActiveSessionPaths——active 照发，runState 恒 null。
+  const runStates = await deps.engines.peekRunStates?.(project);
+  const activePaths = runStates ? [...runStates.keys()] : await deps.engines.peekActiveSessionPaths(project);
   return sessions.map((s) => ({
     ...s,
     active: activePaths ? activePaths.includes(s.path) : null,
+    runState: runStates ? (runStates.get(s.path) ?? "idle") : null,
   }));
 }
 

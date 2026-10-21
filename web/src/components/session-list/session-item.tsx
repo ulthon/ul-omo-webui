@@ -47,18 +47,29 @@ export function formatRelative(iso: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-function StatusDot({ runState, active }: { runState: SessionRunState | null; active: boolean | null }) {
-  // runStates 一旦有值即权威（SSE 见过事件）；null 才回落引擎探询的 active（不回落，仅初始参考）
+function StatusDot({
+  runState,
+  server,
+  active,
+}: {
+  runState: SessionRunState | null;
+  server: SessionRunState | null;
+  active: boolean | null;
+}) {
+  // 权威链（docs08-r6 任务 11）：SSE runStates 一旦有值即权威（SSE 见过事件）；缺席才
+  // 回落服务端行 runState（水合探询/列表刷新下发——提问回合刷新页面即显 waiting 不闪
+  // idle）；再缺席才回落引擎探询 active（不回落，仅初始参考）
+  const effective = runState ?? server;
   const t = useT();
   let cls = "bg-muted-foreground/30";
   let title = t("sessionList.item.statusIdle");
-  if (runState === "waiting") {
+  if (effective === "waiting") {
     cls = "bg-amber-500 animate-pulse";
     title = t("sessionList.item.statusWaiting");
-  } else if (runState === "error") {
+  } else if (effective === "error") {
     cls = "bg-destructive";
     title = t("sessionList.item.statusError");
-  } else if (runState === "running" || (runState === null && active === true)) {
+  } else if (effective === "running" || (effective === null && active === true)) {
     cls = "bg-sky-500 animate-pulse";
     title = t("sessionList.item.statusRunning");
   }
@@ -296,7 +307,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         ) : (
           <span className="size-7 shrink-0 lg:size-4" />
         )}
-        <StatusDot runState={runState} active={session.active} />
+        <StatusDot runState={runState} server={session.runState ?? null} active={session.active} />
 
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={handleSelect}>
           {/* min-w-9：极端挤压（超长标题+多徽标窄行）下标题保底 2 字符宽，
