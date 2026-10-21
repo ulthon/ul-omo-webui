@@ -56,10 +56,12 @@ interface SessionsState {
   setTagFilter(tags: string[]): void;
   select(id: string | null): void;
   setLoading(loading: boolean): void;
-  /** 整体替换某项目的列表（refetch 结果） */
+  /** 整体替换某项目的列表（refetch 结果）：仍在 aliasIds 的占位行不被服务端响应冲掉
+   * （mergeAliasRows 原位追回 + 按 path 去重，docs08-r6 任务 7） */
   setSessions(project: string, sessions: SessionListItem[]): void;
   /** 聚合响应写入（todo 9）：按 session.project 分组，整体替换 byProject——
-   * 全量 refetch 语义，单项目模式下残留的旧分组与已删除的项目不会滞留 */
+   * 全量 refetch 语义，单项目模式下残留的旧分组与已删除的项目不会滞留；
+   * 别名占位行同 setSessions 口径追回（含聚合响应消失的项目键，docs08-r6 任务 7） */
   setAllSessions(sessions: SessionListItem[]): void;
   /** 刷新会话列表：allMode 走聚合端点（无 project 参数），否则单项目（现状路径）。
    * 失败非 401 时 toast（与 bootstrap.refreshSessions 语义一致）。 */
@@ -96,6 +98,33 @@ function replaceIn(list: SessionListItem[], session: SessionListItem): SessionLi
   return [...list, session];
 }
 
+/** 整替合并保占位（docs08-r6 任务 7）：服务端列表整替后，把仍在 aliasIds 且不在服务端
+ * 列表（id 与 path 双查）的别名占位行按旧列表原索引追回（原位，相对次序保持）；服务端
+ * 已有同 path 行（首条消息落盘后刷新带回真实行）时弃别名行选 durable 行，防同路径双行。
+ * 仅认 aliasIds 集合：removeSession 清别名后残留的旧行不会被追回（已删会话不复活）。 */
+function mergeAliasRows(
+  prev: SessionListItem[],
+  next: SessionListItem[],
+  aliasIds: Record<string, true>,
+): SessionListItem[] {
+  const nextIds = new Set(next.map((s) => s.id));
+  const nextPaths = new Set(next.map((s) => s.path));
+  const restore: { index: number; row: SessionListItem }[] = [];
+  for (let i = 0; i < prev.length; i++) {
+    const row = prev[i];
+    if (!(row.id in aliasIds)) continue;
+    if (nextIds.has(row.id)) continue; // 服务端已含该行（如已落盘），整替即得，不追
+    if (nextPaths.has(row.path)) continue; // 同 path durable 行已在：弃别名行，防双行
+    restore.push({ index: i, row });
+  }
+  if (restore.length === 0) return next;
+  const merged = next.slice();
+  for (const { index, row } of restore) {
+    merged.splice(Math.min(index, merged.length), 0, row);
+  }
+  return merged;
+}
+
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
@@ -122,13 +151,26 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   setLoading: (loading) => set({ loading }),
 
   setSessions: (project, sessions) =>
-    set((s) => ({ byProject: { ...s.byProject, [project]: sessions } })),
+    set((s) => ({
+      byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, s.aliasIds) },
+    })),
 
   setAllSessions: (sessions) =>
-    set(() => {
+    set((s) => {
       const byProject: Record<string, SessionListItem[]> = {};
       for (const session of sessions) {
         (byProject[session.project] ??= []).push(session);
+      }
+      // 占位行追回（docs08-r6 任务 7）：聚合键内的按项目合并；聚合响应里消失的旧项目
+      // 键，若仍有别名占位行则以追回结果重建键（新建会话后立即切项目/搜索冲刷窗口行不丢）
+      for (const [project, list] of Object.entries(byProject)) {
+        const prev = s.byProject[project];
+        if (prev) byProject[project] = mergeAliasRows(prev, list, s.aliasIds);
+      }
+      for (const [project, prev] of Object.entries(s.byProject)) {
+        if (project in byProject) continue;
+        const restored = mergeAliasRows(prev, [], s.aliasIds);
+        if (restored.length > 0) byProject[project] = restored;
       }
       return { byProject };
     }),

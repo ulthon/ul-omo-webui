@@ -88,6 +88,73 @@ describe("setAllSessions 分组写入", () => {
   });
 });
 
+describe("整替合并保占位行（docs08-r6 任务 7）", () => {
+  test("setSessions 整替后仍别名且不在服务端列表的占位行原位追回", () => {
+    // 组件流同源：新建会话逐个 upsert 占位行并 markAliasId（alias-a、alias-c），
+    // b1 为服务端常规行；刷新整替只回 b1——两个占位行追回且保持原相对位置
+    // （alias-a 在 b1 前、alias-c 在 b1 后，非仅存在性断言）
+    const aliasA = { ...makeSession("alias-a", "/p1") };
+    const b1 = makeSession("b1", "/p1");
+    const aliasC = { ...makeSession("alias-c", "/p1") };
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", aliasA);
+    store.upsertSession("/p1", b1);
+    store.upsertSession("/p1", aliasC);
+    useSessionsStore.getState().markAliasId("alias-a");
+    useSessionsStore.getState().markAliasId("alias-c");
+    useSessionsStore.getState().setSessions("/p1", [b1]);
+    const ids = useSessionsStore.getState().byProject["/p1"].map((s) => s.id);
+    expect(ids).toEqual(["alias-a", "b1", "alias-c"]);
+  });
+
+  test("setSessions 同 path durable 行已在：弃别名行选 durable 行防双行", () => {
+    // 首条消息落盘后刷新：服务端以真实 id 回同一 sessionPath 行——别名行必须丢弃，
+    // 结果恰好一行且为 durable id（真触发 path 去重分支，非 id 命中旁路）
+    const alias = { ...makeSession("alias-a", "/p1"), path: "/p1/same.jsonl" };
+    const durable = { ...makeSession("durable-a", "/p1"), path: "/p1/same.jsonl" };
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", alias);
+    store.markAliasId("alias-a");
+    store.setSessions("/p1", [durable]);
+    const rows = useSessionsStore.getState().byProject["/p1"];
+    expect(rows.map((s) => s.id)).toEqual(["durable-a"]);
+    expect(rows.filter((s) => s.path === "/p1/same.jsonl")).toHaveLength(1);
+  });
+
+  test("setAllSessions 同口径：消失的项目键只重建别名占位行且原位追回", () => {
+    const alias = { ...makeSession("alias-a", "/p1") };
+    const b1 = makeSession("b1", "/p1");
+    const c1 = makeSession("c1", "/p2");
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", alias);
+    store.upsertSession("/p1", b1);
+    store.markAliasId("alias-a");
+    store.setAllSessions([b1, c1]);
+    const state = useSessionsStore.getState();
+    expect(state.byProject["/p1"].map((s) => s.id)).toEqual(["alias-a", "b1"]);
+    expect(state.byProject["/p2"].map((s) => s.id)).toEqual(["c1"]);
+    // 聚合响应完全不含别名行所在项目：仅重建该键，不残留非别名行
+    store.setAllSessions([c1]);
+    expect(Object.keys(useSessionsStore.getState().byProject).sort()).toEqual(["/p1", "/p2"]);
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["alias-a"]);
+  });
+
+  test("removeSession 清别名后整替不复活占位行（MUST NOT 绕过清别名语义）", () => {
+    const alias = makeSession("alias-a", "/p1");
+    const durable = makeSession("durable-b", "/p1");
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", alias);
+    store.markAliasId("alias-a");
+    store.removeSession("alias-a");
+    expect(useSessionsStore.getState().aliasIds["alias-a"]).toBeUndefined();
+    // 删除与刷新的并发窗口：陈旧 SSE upsert 把行重新插入列表，随后整替——
+    // 别名集合已清，追回分支不得复活该行
+    useSessionsStore.getState().upsertSession("/p1", alias);
+    useSessionsStore.getState().setSessions("/p1", [durable]);
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["durable-b"]);
+  });
+});
+
 describe("allMode 与 refreshSessions 分支", () => {
   test("allMode=true：调聚合端点（URL 无 project 参数），结果分组写入", async () => {
     let requestedUrl = "";
