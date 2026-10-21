@@ -30,6 +30,7 @@ export const login = {
     tabNotes: "Notes",
     tabStats: "Stats",
     tabMemory: "Memory",
+    tabAgents: "Agents",
     views: "Right rail views",
     loadingNotes: "Loading notes view…",
     loadingChanges: "Loading changes view…",

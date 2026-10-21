@@ -34,6 +34,7 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "message_end",
   "turn_end",
   "tool_execution_start",
+  "tool_execution_update", // 工具执行 LIVE 快照（docs08-r6 任务 17）：task 子代理实时进度（partialResult.details），store 侧并入 toolRuns
   "tool_execution_end",
   "agent_start",
   "agent_end",

@@ -1,7 +1,7 @@
 // 消息域：按会话的消息条目 / 分页游标 / part 级更新动作。
 // applyWireEvent 是 todo 14 SSE 客户端的统一分发入口，消化引擎 wire 事件的关键几类
-// （message_start/update/end、turn_end、tool_execution_start/end、agent_start/end/settled/idle），
-// 未知事件类型（omo 扩展的 setStatus/setWidget/notify、tool_hook_status 等噪音）一律容错忽略。
+// （message_start/update/end、turn_end、tool_execution_start/update/end、
+// agent_start/end/settled/idle），未知事件类型一律容错忽略。
 // 流式 assistant 消息独立存放（streamingMessage），delta 只更新单个对象；定格时并入 entries。
 // docs08-r5 任务 5（流式末段重播修复，任务 3 诊断定案）：entry_appended 消息条目消费
 // 真实 id 与槽内合成孪生身份归一（诊断杠杆 1）；服务端重放窗口标记（replay_begin/done）
@@ -18,6 +18,11 @@ export interface ToolRun {
   args: unknown;
   status: "running" | "done";
   result?: unknown;
+  /** 终帧错误标记（tool_execution_end 的 isError；子代理页签消费，任务 17） */
+  isError?: boolean;
+  /** 最新 LIVE 快照（tool_execution_update 的 partialResult；队列合并保最新 + ~250ms 节流
+   *  的尽力而为语义，勿按帧计数/勿假设逐帧到达——任务 4 spike 留档） */
+  partialResult?: unknown;
 }
 
 export interface SessionMessages {
@@ -452,6 +457,30 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           break;
         }
 
+        case "tool_execution_update": {
+          // LIVE 快照（docs08-r6 任务 17）：task 等嵌套执行工具经 onUpdate 回流的最新
+          // partialResult（spike：~250ms 节流 + 发送队列积压合并保最新——最新快照尽力而为，
+          // 快任务可能零中间帧）。只并快照与工具名，不动 status（终态以 end 帧为准，
+          // 乱序迟到帧不复活运行态）；嵌套子工具的 update 帧同路入账（toolCallId 独立，
+          // 消费侧按 toolName 过滤，ToolCard 按 part id 查询不受额外条目影响）。
+          const toolCallId = event.toolCallId;
+          if (typeof toolCallId !== "string") break;
+          set((s) => {
+            const cur = s.bySession[sessionId] ?? emptySessionMessages();
+            return {
+              bySession: {
+                ...s.bySession,
+                [sessionId]: upsertToolRun(cur, toolCallId, {
+                  toolCallId,
+                  toolName: typeof event.toolName === "string" ? event.toolName : "unknown",
+                  partialResult: event.partialResult,
+                }),
+              },
+            };
+          });
+          break;
+        }
+
         case "tool_execution_end": {
           const toolCallId = event.toolCallId;
           if (typeof toolCallId !== "string") break;
@@ -464,6 +493,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
                   toolCallId,
                   status: "done",
                   result: event.result,
+                  isError: event.isError === true,
                 }),
               },
             };

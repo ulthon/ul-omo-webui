@@ -1,4 +1,4 @@
-// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计/记忆五页签收敛到右栏。
+// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计/记忆/子代理六页签收敛到右栏。
 // 三处宿主由本组件统一渲染：桌面展开（lg 常驻，带拖宽分隔条）、桌面折叠窄条（w-10）、
 // 手机固定右缘抽屉（<lg，勿套 --app-height，镜像左栏模式）；开合状态与记忆
 // （ul-omo-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
@@ -10,13 +10,16 @@
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
 // 页签面板 lazy：变更/笔记按需加载（react-diff-view / notes 组件本体不进首屏），
 // 统计/记忆为静态轻组件（无重依赖，惰性反而闪 fallback）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
-// 五页签宽度（docs08-r4 任务 10 记录的 R4）：手机抽屉 320px 容器内 5×2 字标签，
-// px 收紧为 1.5 档（桌面 lg 恢复 px-2）+ nowrap，保证不换行不截断。
+// 六页签宽度（docs08-r6 任务 17 在 R4 五页签基础上加「子代理」）：桌面展开默认 384px 内
+// zh 全档自然宽不溢出；en 档及拖窄至 <340px 时页签条横向滚动（shrink-0 + overflow-x-auto，
+// 替代 R4 的 flex-1 等分——等分下 3 字标签（子代理）会 nowrap 溢出按钮盒，六页签所需宽
+// 度已不可等分容纳）。触控目标高度 min-h-11 保持；不换行不截断语义保留（溢出改滚动）。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
 import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FolderOpen, GitBranch, ListTodo } from "lucide-react";
 import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
+import { SubagentPanel } from "@/components/chat/subagent-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { useUiStore } from "@/stores/ui";
 import { useT, type MessageKey } from "@/i18n/i18n";
@@ -28,7 +31,7 @@ const NotesView = lazy(() =>
   import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
 );
 
-export type RightRailTab = "todo" | "changes" | "notes" | "stats" | "memory";
+export type RightRailTab = "todo" | "changes" | "notes" | "stats" | "memory" | "agents";
 
 // 页签标签键：完整点分路径字面量映射（i18n 死键检测要求键以字面量被引用）
 const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
@@ -37,9 +40,10 @@ const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
   notes: "login.rightRail.tabNotes",
   stats: "login.rightRail.tabStats",
   memory: "login.rightRail.tabMemory",
+  agents: "login.rightRail.tabAgents",
 };
 
-const TAB_IDS: RightRailTab[] = ["todo", "changes", "notes", "stats", "memory"];
+const TAB_IDS: RightRailTab[] = ["todo", "changes", "notes", "stats", "memory", "agents"];
 
 /** 宽度记忆 localStorage 键与拖宽边界（px） */
 const RAIL_WIDTH_KEY = "ul-omo-webui:right-rail-width";
@@ -48,7 +52,7 @@ const RAIL_WIDTH_MAX = 560;
 const RAIL_WIDTH_DEFAULT = 384;
 
 const TAB_CLASS = (active: boolean) =>
-  `min-h-11 min-w-0 flex-1 whitespace-nowrap rounded-lg px-1.5 py-1.5 text-sm transition-colors lg:min-h-9 lg:px-2 ${
+  `min-h-11 shrink-0 whitespace-nowrap rounded-lg px-1.5 py-1.5 text-sm transition-colors lg:min-h-9 lg:px-2 ${
     active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
   }`;
 
@@ -132,7 +136,7 @@ function RailLoading({ text }: { text: string }) {
 function RailTabBar({ tab, onSwitch }: { tab: RightRailTab; onSwitch: (tab: RightRailTab) => void }) {
   const t = useT();
   return (
-    <div role="tablist" aria-label={t("login.rightRail.views")} className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+    <div role="tablist" aria-label={t("login.rightRail.views")} className="flex shrink-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
       {TAB_IDS.map((id) => (
         <button
           key={id}
@@ -167,6 +171,7 @@ function RailBody({
   if (tab === "todo") return <TodoPanel sessionId={sessionId} onClose={onClose} />;
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
+  if (tab === "agents") return <SubagentPanel sessionId={sessionId} />;
   return (
     <Suspense fallback={<RailLoading text={tab === "notes" ? t("login.rightRail.loadingNotes") : t("login.rightRail.loadingChanges")} />}>
       {tab === "notes" ? <NotesView dirtyRef={notesDirtyRef} /> : <ChangesView />}

@@ -120,6 +120,24 @@ export const chat = {
     browsing: "Browsing: {project}",
     refresh: "Refresh memory",
   },
+  // subagent-panel.tsx (docs08-r6 task 17)
+  subagentPanel: {
+    noSession: "No session selected",
+    emptyTitle: "No subagent calls in this session yet",
+    emptyHint: "Subagents spawned via the task tool are aggregated here (live progress and final replies)",
+    statusRunning: "Running",
+    statusDone: "Completed",
+    statusFailed: "Failed",
+    responseTitle: "Final response",
+    responseEmpty: "(no final response text)",
+    promptTitle: "Prompt",
+    metricRuntime: "time {dur}",
+    metricTurns: "turns {n}",
+    metricToolCalls: "tools {n}",
+    metricTokens: "{n} tok",
+    metricOutput: "out {n}",
+    metricCache: "cache {pct}",
+  },
   // question-card.tsx
   questionCard: {
     submitFailed: "Failed to respond, please retry",

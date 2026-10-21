@@ -32,6 +32,7 @@ export const login = {
     tabNotes: "笔记",
     tabStats: "统计",
     tabMemory: "记忆",
+    tabAgents: "子代理",
     views: "右栏视图",
     loadingNotes: "加载笔记视图…",
     loadingChanges: "加载变更视图…",

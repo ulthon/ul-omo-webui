@@ -120,6 +120,24 @@ export const chat = {
     browsing: "浏览项目：{project}",
     refresh: "刷新记忆",
   },
+  // subagent-panel.tsx 子代理页签（docs08-r6 任务 17）
+  subagentPanel: {
+    noSession: "未选择会话",
+    emptyTitle: "本会话暂无子代理调用",
+    emptyHint: "会话经 task 工具派发子代理后在此聚合展示（运行中实时进度与终态回复）",
+    statusRunning: "运行中",
+    statusDone: "完成",
+    statusFailed: "失败",
+    responseTitle: "最终回复",
+    responseEmpty: "（无最终回复文本）",
+    promptTitle: "提示词",
+    metricRuntime: "用时 {dur}",
+    metricTurns: "回合 {n}",
+    metricToolCalls: "工具 {n}",
+    metricTokens: "{n} tok",
+    metricOutput: "输出 {n}",
+    metricCache: "缓存 {pct}",
+  },
   // question-card.tsx 提问卡片
   questionCard: {
     submitFailed: "应答失败，请重试",
