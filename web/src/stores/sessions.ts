@@ -29,6 +29,10 @@ interface SessionsState {
   byProject: Record<string, SessionListItem[]>;
   /** 会话运行态覆盖（SSE 事件写入，id → 状态；回合结束清除） */
   runStates: Record<string, SessionRunState>;
+  /** 会话生效模型（"provider/model"；docs08-r6 任务 8 ④⑤⑥）：SSE model_changed 回显
+   * 与 prompt 回执 appliedModel 双路写入；adoptSessionId 随换 key 迁移。不在此 = 未知
+   * （胶囊待生效徽标按「选中 ≠ 生效」判定、水位环 tooltip/分母校准降级处理）。 */
+  appliedModels: Record<string, string>;
   /** 运行态活动时刻账本（W1 缺陷 #3，与 runStates 同键并行）：setRunState 写入、
    * 该会话任何 SSE 事件刷新（touchRunStateAt），周期清扫据此判无活动超时回落。
    * 组件不消费本字段（状态点仍读 runStates，值形状因此不被破坏）。 */
@@ -75,6 +79,8 @@ interface SessionsState {
   removeSession(id: string): void;
   /** 运行态写入/清除（todo 15 event-dispatch 调用） */
   setRunState(id: string, state: SessionRunState): void;
+  /** 会话生效模型写入（幂等：同值不产生新引用，订阅者不重渲染） */
+  setAppliedModel(id: string, model: string): void;
   clearRunState(id: string): void;
   /** 该会话任一 SSE 事件的活动记账（event-dispatch 调用；无运行态时 no-op） */
   touchRunStateAt(id: string): void;
@@ -128,6 +134,7 @@ function mergeAliasRows(
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
+  appliedModels: {},
   runStateAt: {},
   q: "",
   archived: "false",
@@ -277,6 +284,9 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       };
     }),
 
+  setAppliedModel: (id, model) =>
+    set((s) => (s.appliedModels[id] === model ? s : { appliedModels: { ...s.appliedModels, [id]: model } })),
+
   clearRunState: (id) =>
     set((s) => {
       if (!(id in s.runStates)) return s;
@@ -324,6 +334,12 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       const selectedId = s.selectedId === oldId ? newId : s.selectedId;
       let runStates = s.runStates;
       let runStateAt = s.runStateAt;
+      let appliedModels = s.appliedModels;
+      if (oldId in s.appliedModels) {
+        appliedModels = { ...s.appliedModels };
+        appliedModels[newId] = appliedModels[oldId];
+        delete appliedModels[oldId];
+      }
       if (oldId in s.runStates) {
         runStates = { ...s.runStates };
         runStates[newId] = runStates[oldId];
@@ -340,8 +356,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         aliasIds = { ...s.aliasIds };
         delete aliasIds[oldId];
       }
-      return changed || selectedId !== s.selectedId || runStates !== s.runStates || aliasIds !== s.aliasIds
-        ? { byProject, selectedId, runStates, runStateAt, aliasIds }
+      return changed || selectedId !== s.selectedId || runStates !== s.runStates || appliedModels !== s.appliedModels || aliasIds !== s.aliasIds
+        ? { byProject, selectedId, runStates, runStateAt, appliedModels, aliasIds }
         : s;
     });
     // 选中态换 key：URL 同步换写真实 id（URL 里若是别名 id，此处原地纠正）

@@ -49,6 +49,7 @@ export const login = {
   contextRing: {
     ringLabel: "上下文水位 {pct}%，点开明细",
     ringTitle: "上下文 {pct}%",
+    ringTitleWithModel: "上下文 {pct}% · {model}",
     running: "运行中",
     idle: "空闲",
     usage: "上下文水位",

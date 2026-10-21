@@ -19,5 +19,6 @@ export const common = {
     updateLastOpenedFailed: "更新最近打开时间失败",
     saveModelPrefFailed: "保存模型偏好失败",
     saveThinkingPrefFailed: "保存思考级别偏好失败",
+    modelChangeRejected: "模型 {model} 切换被引擎拒绝（{detail}），当前模型不变",
   },
 } as const;

@@ -19,5 +19,6 @@ export const common = {
     updateLastOpenedFailed: "Failed to update last-opened time",
     saveModelPrefFailed: "Failed to save model preference",
     saveThinkingPrefFailed: "Failed to save thinking level preference",
+    modelChangeRejected: "Model switch to {model} was rejected by the engine ({detail}); current model unchanged",
   },
 } as const;

@@ -330,6 +330,9 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       sessionId: id,
       disposition: receipt.disposition,
       streaming: receipt.disposition !== "handled",
+      // setModel 成功的模型行归一 "provider/model"（docs08-r6 任务 8 ②：切换结果回执可观测）；
+      // 排队/未携带 model 时缺省（排队剥模型铁律——模型不随排队请求生效）
+      ...(typeof receipt.appliedModel === "string" && receipt.appliedModel ? { appliedModel: receipt.appliedModel } : {}),
       // 未落盘别名会话首条消息落盘后的真实 id（前端即时换 key；已落盘会话无此字段）
       ...(typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== id
         ? { durableSessionId: receipt.durableSessionId }

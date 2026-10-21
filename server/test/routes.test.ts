@@ -78,6 +78,8 @@ class FakeGateway implements EngineGateway {
   sessions: EngineSessionSummary[] = [];
   promptError: unknown = null;
   promptDurableId: string | null = null;
+  /** docs08-r6 任务 8 ②：非空时 prompt 回执携带 appliedModel（模拟 setModel 成功回模型行） */
+  promptAppliedModel: string | null = null;
   promptCalls: Array<{
     id: string;
     input: { text: string; model?: string; thinkingLevel?: EngineThinkingLevel; streamingBehavior?: "steer" | "followUp" };
@@ -124,9 +126,10 @@ class FakeGateway implements EngineGateway {
         streamingBehavior: input.streamingBehavior,
       },
     });
-    return this.promptDurableId
+    const base = this.promptDurableId
       ? { disposition: "started", durableSessionId: this.promptDurableId }
       : { disposition: "started" };
+    return this.promptAppliedModel ? { ...base, appliedModel: this.promptAppliedModel } : base;
   }
   async queueList(id: string): Promise<EngineQueueSnapshot> {
     this.queueCalls.push({ op: "list", id });
@@ -467,6 +470,31 @@ describe("会话操作路由", () => {
     });
     expect(empty.status).toBe(400);
     expect((await empty.json()).error.code).toBe("invalid_text");
+  });
+
+  test("prompt appliedModel 透传（docs08-r6 任务 8 ②）：setModel 成功回模型行、未携带 model 缺省", async () => {
+    const engines = new FakeGateway();
+    engines.promptAppliedModel = "zai-coding-cn/glm-4.7";
+    const { app } = buildApp(engines);
+
+    const res = await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hi", model: "zai-coding-cn/glm-4.7" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.appliedModel).toBe("zai-coding-cn/glm-4.7");
+
+    // 网关未回 appliedModel（未携带 model / 排队请求）：字段缺省不出现，非 null 占位
+    engines.promptAppliedModel = null;
+    const plain = await req(app, "/api/sessions/s1/prompt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "again" }),
+    });
+    expect(plain.status).toBe(200);
+    expect("appliedModel" in (await plain.json())).toBe(false);
   });
 
   test("prompt thinkingLevel 透传（W2 todo 7）：合法下传网关、缺省 undefined、非法 400", async () => {

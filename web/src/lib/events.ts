@@ -48,6 +48,8 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "replay_done", // 同上：窗口复位；两帧仅出现在重放路径，实时扇出零改动
   "question_updated", // 提问卡片截止刷新（q1）：白名单漏列则 EventSource 不派发，倒计时永不更新
   "question_resolved", // 提问卡片终局出队（answered/timed_out/cancelled/异端应答广播）
+  "model_changed", // 引擎落定的会话模型回显（docs08-r6 任务 8 ⑤⑥）：写 appliedModels，不改选中偏好
+  "model_change_rejected", // 切换被引擎拒绝（docs08-r6 任务 8 ③）：error toast，不动 runState
 ];
 
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */

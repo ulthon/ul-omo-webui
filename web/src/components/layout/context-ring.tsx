@@ -5,10 +5,11 @@
 // Popover 明细（tok/成本/输入输出/缓存/上下文/运行态），手机档承接退役状态栏的全部信息。
 // 无会话由宿主控制不挂载；无 contextUsage 数据（接口失败/无上下文窗口）整环隐藏。
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, shortModelName } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
+import { useUiStore } from "@/stores/ui";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCost, formatTokens, toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { onUsageRefresh } from "@/components/chat/compact-run";
@@ -16,6 +17,21 @@ import { useT } from "@/i18n/i18n";
 
 const RADIUS = 15.5;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+/** 水位环分母校准（docs08-r6 任务 8 ⑥）：引擎实测值优先——GET /api/models 所选模型的
+ * contextWindow 与引擎上报分母一致（setModel 后引擎已随模型更新）或模型侧无配置时，
+ * 按引擎 percent；不一致（引擎未随 setModel 更新 contextUsage.contextWindow，隔离实例
+ * 实测见 .omo/evidence/docs08-r6/task-8-qa.md）时以模型侧窗口为分母用 tokens 重算。
+ * 兜底分支不假装引擎值存在：tokens/模型窗口直接重算，而非沿用错误 percent。 */
+export function calibrateContextPercent(
+  context: { tokens: number; contextWindow: number; percent: number },
+  modelContextWindow: number | null | undefined,
+): number {
+  const clamp = (p: number): number => Math.min(100, Math.max(0, p));
+  if (typeof modelContextWindow !== "number" || !(modelContextWindow > 0)) return clamp(context.percent);
+  if (modelContextWindow === context.contextWindow) return clamp(context.percent);
+  return clamp((context.tokens / modelContextWindow) * 100);
+}
 
 function DetailRow({ label, value, testid }: { label: string; value: string; testid?: string }) {
   return (
@@ -33,10 +49,18 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
+  // 会话生效模型（docs08-r6 任务 8 ⑤⑥）：SSE model_changed / prompt 回执双路写入；
+  // 未知（null，未见回显）时 tooltip 不附模型短名、分母不校准（按引擎值）。
+  const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
+  const models = useUiStore((s) => s.models);
   const t = useT();
   const running = streaming || hasPendingPermission;
+  const appliedModelWindow = appliedModel
+    ? (models.find((m) => `${m.provider}/${m.id}` === appliedModel)?.contextWindow ?? null)
+    : null;
 
-  // 快照：会话打开拉取（切换会话 props 变更即重拉；拉取期间保留旧值防闪烁）
+  // 快照：会话打开拉取（切换会话 props 变更即重拉；拉取期间保留旧值防闪烁）；
+  // 生效模型变更（setModel 落定）也重拉——contextUsage 分母随模型而变
   useEffect(() => {
     let cancelled = false;
     api
@@ -48,7 +72,7 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, appliedModel]);
 
   // 回合落定沿（running→idle / runState→idle 边沿）刷新权威快照（status-bar 先例）
   const prevRunRef = useRef(runState);
@@ -78,7 +102,8 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
   if (!stats || !stats.context) return null;
   const ctx = stats.context;
   const tokens = stats.tokens;
-  const pct = Math.min(100, Math.max(0, ctx.percent));
+  // 分母校准（任务 8 ⑥）：模型侧窗口与引擎分母不一致时以模型侧重算
+  const pct = calibrateContextPercent(ctx, appliedModelWindow);
 
   return (
     <Popover>
@@ -87,7 +112,11 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
           type="button"
           data-testid="context-ring"
           aria-label={t("login.contextRing.ringLabel", { pct: Math.round(pct) })}
-          title={t("login.contextRing.ringTitle", { pct: Math.round(pct) })}
+          title={
+            appliedModel
+              ? t("login.contextRing.ringTitleWithModel", { pct: Math.round(pct), model: shortModelName(appliedModel) })
+              : t("login.contextRing.ringTitle", { pct: Math.round(pct) })
+          }
           className="relative flex size-9 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <svg viewBox="0 0 36 36" className="size-9 -rotate-90" aria-hidden>

@@ -104,6 +104,13 @@ export function Composer({
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const hasPendingQuestion = useQuestionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
   const interruptible = queueAvailable || runState === "running" || runState === "waiting" || hasPendingQuestion;
+  // 模型待生效判定（docs08-r6 任务 8 ④）：流式/排队期直发被禁（排队剥模型铁律在 api.ts
+  // 注入点，此处零改动），所选模型到下一条直发才注入——选中 ≠ 已生效即挂徽标。生效模型源：
+  // prompt 回执 appliedModel（下方写入）与 SSE model_changed（event-dispatch 写入）；
+  // 未知（null，未见回执/回显）时按「有选择即待生效」保守显示，回执/回显到达即收敛。
+  const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
+  const selectedModelForBadge = useUiStore((s) => s.selectedModel);
+  const modelPendingEffect = queueAvailable && selectedModelForBadge !== null && selectedModelForBadge !== appliedModel;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -445,6 +452,13 @@ export function Composer({
           if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
             messages.adoptDurableId(sessionId, receipt.durableSessionId);
             useSessionsStore.getState().adoptSessionId(sessionId, receipt.durableSessionId);
+          }
+          // 生效模型即时落库（docs08-r6 任务 8 ②④⑤）：直发回执 appliedModel（setModel
+          // 成功回模型行）；SSE model_changed 同值幂等收敛。adopt 后按真实 id 入键。
+          if (typeof receipt.appliedModel === "string" && receipt.appliedModel) {
+            const appliedKey =
+              typeof receipt.durableSessionId === "string" && receipt.durableSessionId ? receipt.durableSessionId : sessionId;
+            useSessionsStore.getState().setAppliedModel(appliedKey, receipt.appliedModel);
           }
           if (opts.clearInputs) {
             setImagesBoth([]);
@@ -1109,9 +1123,10 @@ export function Composer({
             className="relative flex min-w-0 flex-1 items-end gap-1 rounded-xl border border-input bg-background p-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
           >
             {/* 模型浮签（2026-10-15 可见性缺口 ①③）：胶囊右上角常驻当前模型短名，点开
-                直达选择弹层；取式样浮签不占行宽，textarea 宽度不受影响。 */}
+                直达选择弹层；取式样浮签不占行宽，textarea 宽度不受影响。待生效徽标
+                （docs08-r6 任务 8 ④）：流式/排队期所选模型尚未注入时明示「待可发送时生效」。 */}
             <div className="absolute -top-2.5 right-2 z-10">
-              <CapsuleModelTag />
+              <CapsuleModelTag pendingEffect={modelPendingEffect} />
             </div>
             {/* 常用语独立钮（docs08-r5 任务 9）：高频一步直达，点开即上方 inline 下拉 */}
             {snippetButtonSm}

@@ -47,6 +47,7 @@ export const login = {
   contextRing: {
     ringLabel: "Context usage {pct}%, open for details",
     ringTitle: "Context {pct}%",
+    ringTitleWithModel: "Context {pct}% · {model}",
     running: "Running",
     idle: "Idle",
     usage: "Context usage",

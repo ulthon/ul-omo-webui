@@ -14,6 +14,7 @@
 // GET /api/sessions 重同步（active 三态校准，见 resyncRunStatesFromServer）。
 import { api } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
+import { t } from "@/i18n/i18n";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
@@ -340,6 +341,29 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   if (wire.type === "queue_update") {
     const ordered = Array.isArray(wire.ordered) ? (wire.ordered as Array<Record<string, unknown>>) : [];
     useQueueStore.getState().applyUpdate(sessionId, ordered);
+  }
+
+  // 模型切换可观测（docs08-r6 任务 8 ③④⑤⑥）：
+  // - model_changed（引擎每次成功切换必发：本端 prompt 注入 setModel、异端/CLI 切换、
+  //   引擎 fallback 同源）：归一 "provider/model" 写会话生效模型——胶囊待生效徽标、
+  //   水位环 tooltip 与分母校准的数据源。不写 selectedModel（不回写偏好语义）。
+  // - model_change_rejected（引擎守卫拒绝：reason=context-budget/auth，会话 jsonl 落
+  //   model_change_rejected 条目）：error toast 明示切换未生效；不动 runState——拒绝
+  //   不改变回合进行状态（toast 不得污染状态点）。载荷形态 engine agent-session
+  //   _recordRejectedModelChange：{model:{provider,id}, reason, detail}。
+  if (wire.type === "model_changed") {
+    const m = wire.model as { provider?: unknown; id?: unknown } | undefined;
+    if (
+      typeof m === "object" && m !== null && typeof m.provider === "string" && m.provider &&
+      typeof m.id === "string" && m.id
+    ) {
+      useSessionsStore.getState().setAppliedModel(sessionId, `${m.provider}/${m.id}`);
+    }
+  } else if (wire.type === "model_change_rejected") {
+    const m = wire.model as { id?: unknown } | undefined;
+    const model = typeof m === "object" && m !== null && typeof m.id === "string" && m.id ? m.id : "";
+    const detail = typeof wire.detail === "string" && wire.detail ? wire.detail : "";
+    useUiStore.getState().showToast(t("common.lib.modelChangeRejected", { model, detail }), "error");
   }
 
   // 提问卡片生命周期（q1）：updated 刷截止；resolved 终局出队（超时/取消/异端应答）

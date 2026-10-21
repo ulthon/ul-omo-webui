@@ -49,6 +49,7 @@ export const composer = {
     loading: "加载中…",
     noModelShort: "无模型",
     currentModelAria: "当前模型 {model}，点击切换",
+    pendingEffect: "已选，待可发送时生效",
     thinkingTitle: "思考深度：{level}",
     defaultLevel: "默认",
   },

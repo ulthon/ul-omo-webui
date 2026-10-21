@@ -47,6 +47,7 @@ export const composer = {
     loading: "Loading…",
     noModelShort: "No model",
     currentModelAria: "Current model {model}, click to switch",
+    pendingEffect: "Selected, applies on next direct send",
     thinkingTitle: "Thinking depth: {level}",
     defaultLevel: "Default",
   },

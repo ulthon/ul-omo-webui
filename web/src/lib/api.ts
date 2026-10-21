@@ -109,6 +109,9 @@ export interface PromptReceipt {
   /** 未落盘别名会话（新会话）首条消息落盘后的真实会话 id（即时换 key）；已落盘会话无此字段 */
   durableSessionId?: string;
   degradations?: string[];
+  /** setModel 成功的模型行归一 "provider/model"（docs08-r6 任务 8 ②）：携带 model 直发时
+   *  由服务端回传；排队请求（排队剥模型铁律）与未携带 model 时缺省。 */
+  appliedModel?: string;
 }
 
 /** 手动压缩回执（docs08-r5 任务 8：POST /api/sessions/:id/compact；协议面 compact）。

@@ -66,6 +66,8 @@ export interface EngineGateway {
    * thinkingLevel 为 low/high/max（可选，W2 todo 7 起逐回合下传引擎）。
    * durableSessionId：未落盘别名会话（新会话）首条消息落盘后回传的真实 id
    * （缺陷修复：新会话首条用户消息不显示——前端以此即时换 key）；已落盘会话不回传。
+   * appliedModel（docs08-r6 任务 8 ②）：携带 model 且 setModel 成功时回 "provider/model"
+   * （回模型行归一）；排队/未携带 model 不回传。
    */
   prompt(
     sessionId: string,
@@ -76,7 +78,7 @@ export interface EngineGateway {
       thinkingLevel?: EngineThinkingLevel
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
-  ): Promise<{ disposition: string; durableSessionId?: string }>
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }>
   /** 排队对账快照（getSteeringMessages/getFollowUpMessages；断线重连/初次渲染拉一次） */
   queueList(sessionId: string): Promise<EngineQueueSnapshot>
   /** 整队清空（引擎无单条撤单协议面，单条撤销由前端清空后重排实现），返回被撤项 */
@@ -877,7 +879,7 @@ class ProjectRuntime {
       thinkingLevel?: EngineThinkingLevel
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
-  ): Promise<{ disposition: string; durableSessionId?: string }> {
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
     await this.ensure();
     return this.runExclusive(async () => {
       // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶。
@@ -888,8 +890,12 @@ class ProjectRuntime {
         throw new ApiError(409, "already_processing", "该会话已有进行中的回合（单驱动约束，请先 abort 或等待回合结束）");
       }
       await this.switchTo(sessionId);
+      // docs08-r6 任务 8 ②：切换成功的模型行归一 "provider/model" 随回执带回（回执可观测）；
+      // 排队请求（streamingBehavior）不走此分支——排队剥模型铁律在 api.ts 注入点，服务端此处不变
+      let appliedModel: string | undefined;
       if (input.model) {
-        await this.switchModel(input.model);
+        const row = await this.switchModel(input.model);
+        appliedModel = `${row.provider}/${row.id}`;
       }
       const adapter = this.requireAdapter();
       try {
@@ -921,13 +927,13 @@ class ProjectRuntime {
               // 真实 id——单驱动 409 守卫按 id 比较，前端换 key 后以真实 id 再来也拦得住
               this.activeId = row.durableSessionId;
               if (this.streamingId === sessionId) this.streamingId = row.durableSessionId;
-              return { disposition: receipt.disposition, durableSessionId: row.durableSessionId };
+              return { disposition: receipt.disposition, durableSessionId: row.durableSessionId, appliedModel };
             }
           } catch {
             // 活跃行查询失败不阻塞回合：退回原回执，事件归属靠 miss 防抖刷新兜底
           }
         }
-        return receipt;
+        return appliedModel !== undefined ? { ...receipt, appliedModel } : receipt;
       } catch (err) {
         // 外部驱动或事件丢失兜底：引擎进程内守卫的报错映射为同一 409 语义
         const message = err instanceof Error ? err.message : String(err);
@@ -970,15 +976,20 @@ class ProjectRuntime {
     });
   }
 
-  /** adapter 无模型切换面（接口未含 setModel）；直接走协议命令，仅作用于当前活跃会话 */
-  private async switchModel(model: string): Promise<void> {
+  /** adapter 无模型切换面（接口未含 setModel）；直接走协议命令，仅作用于当前活跃会话。
+   * docs08-r6 任务 8 ①：显式取 client——引擎未挂时明确 503（forkSession 同款范式），
+   * 绝不静默跳过（可选链会让模型切换无声失效，prompt 照发旧模型）；成功回模型行
+   * （SDK setModel 契约 {provider,id}，connection-handler set_model success 行）供回执取 appliedModel */
+  private async switchModel(model: string): Promise<{ provider: string; id: string }> {
     const slash = model.indexOf("/");
     if (slash <= 0) {
       throw new ApiError(400, "invalid_model", `model 需为 "provider/model" 形态：${model}`);
     }
     const provider = model.slice(0, slash);
     const modelId = model.slice(slash + 1);
-    await this.wrappedClient?.setModel(provider, modelId);
+    const client = this.wrappedClient;
+    if (!client) throw new ApiError(503, "engine_not_ready", "项目引擎未就绪");
+    return client.setModel(provider, modelId);
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -1275,7 +1286,7 @@ export class EngineRuntimeRegistry implements EngineGateway {
       thinkingLevel?: EngineThinkingLevel
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
-  ): Promise<{ disposition: string; durableSessionId?: string }> {
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.prompt(sessionId, input);
   }

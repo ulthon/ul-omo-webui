@@ -184,8 +184,11 @@ export function ModelChip() {
 /** 手机胶囊模型浮签（docs08 2026-10-15 手机端模型可见性缺口 ①③）：常驻于胶囊右上角的
  * 小徽标，显示当前模型短名，点开直达选择弹层（与 ModelChip 共用 modelPickerOpen——
  * 两触发器按断点互斥挂载：手机档 ModelChip 不上工具行，弹层永不双开）。替代原
- * "+"展开行里的 ModelChip（聚焦自动收起导致收起态全界面无模型信息）。 */
-export function CapsuleModelTag() {
+ * "+"展开行里的 ModelChip（聚焦自动收起导致收起态全界面无模型信息）。
+ * docs08-r6 任务 8 ④：pendingEffect 待生效徽标——流式/排队期直发被禁（排队剥模型
+ * 铁律，注入点在 api.ts），所选模型到下一条直发才生效；由 Composer 按「选中 ≠ 生效」
+ * 判定后传入（生效模型源：prompt 回执 appliedModel 与 SSE model_changed）。 */
+export function CapsuleModelTag({ pendingEffect = false }: { pendingEffect?: boolean }) {
   const models = useUiStore((s) => s.models);
   const modelsLoaded = useUiStore((s) => s.modelsLoaded);
   const selectedModel = useUiStore((s) => s.selectedModel);
@@ -218,6 +221,15 @@ export function CapsuleModelTag() {
         >
           <Cpu className="size-3 shrink-0" aria-hidden />
           <span className="truncate">{label}</span>
+          {pendingEffect && (
+            <span
+              data-testid="capsule-model-pending"
+              title={t("composer.chips.pendingEffect")}
+              className="shrink-0 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-px text-[10px] leading-none text-amber-600"
+            >
+              {t("composer.chips.pendingEffect")}
+            </span>
+          )}
           <ChevronDown className="size-2.5 shrink-0" aria-hidden />
         </button>
       </PopoverTrigger>
