@@ -128,6 +128,7 @@ export const chat = {
   // permission-card.tsx
   permissionCard: {
     kindSelect: "Permission request",
+    kindChoice: "Selection required",
     kindConfirm: "Confirm action",
     kindInput: "Input required",
     kindEditor: "Edit required",

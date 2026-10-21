@@ -125,9 +125,11 @@ export const chat = {
     ignore: "忽略",
     submit: "提交回答",
   },
-  // permission-card.tsx 权限卡片 chrome（引擎传入的 title/message 不在域内）
+  // permission-card.tsx 权限卡片 chrome（引擎传入的 title/message 不在域内）。
+  // kindChoice（docs08-r6 任务 6 ③）：非权限 select（提问降级/登录选择）的中性标题
   permissionCard: {
     kindSelect: "权限请求",
+    kindChoice: "需要选择",
     kindConfirm: "确认操作",
     kindInput: "需要输入",
     kindEditor: "需要编辑",

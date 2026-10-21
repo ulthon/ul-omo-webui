@@ -11,8 +11,6 @@ import { readSessionUrl } from "@/lib/session-url";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
-import { useQuestionsStore } from "@/stores/questions";
-import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
@@ -26,6 +24,7 @@ import { PermissionQueue } from "./permission-queue";
 import { QuestionQueue } from "./question-queue";
 import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
+import { reconcilePendingState, zombieReconcileAndReset } from "./zombie-reset";
 
 /** 无选中会话时的空态提示 */
 function EmptyHint() {
@@ -86,17 +85,22 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 僵尸流式兜底：agent_start 已置流式，但 assistant 流式始终未开始（实测引擎个别回合
   // 收尾事件缺席——message_start/end、turn_end、agent_end 全缺，QA 第 2 轮实证），
   // 超过宽限仍无流式消息则复位，避免输入区被永久锁死。
-  // 误解锁的代价只是 prompt 撞 409 得到提示（安全侧）；真实慢启动回合在 assistant
-  // message_start 到达时本 effect 自动撤销定时。
+  // docs08-r6 任务 6 ②：复位前先对账（GET questions/queue 同款代码）——仍有未决提问
+  // 或排队项则维持锁定与中断口（对账入队的问题卡使中断逃逸口可见）；对账失败
+  // 宁缺勿错解锁。误解锁的代价只是 prompt 撞 409 得到提示（安全侧）；真实慢启动回合
+  // 在 assistant message_start 到达时本 effect 自动撤销定时。
   useEffect(() => {
     if (!(streaming && !hasStreamingMessage)) return;
+    let cancelled = false;
     const timer = setTimeout(() => {
       const st = useMessagesStore.getState().bySession[sessionId];
-      if (st?.streaming && !st.streamingMessage && !st.streamingEntryId) {
-        useMessagesStore.getState().setStreaming(sessionId, false);
-      }
+      if (!(st?.streaming && !st.streamingMessage && !st.streamingEntryId)) return;
+      void zombieReconcileAndReset(sessionId, () => cancelled);
     }, 10_000);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [streaming, hasStreamingMessage, sessionId]);
 
   // 回合落定（agent_settled → runState=idle）且页面可见时补发一次已读上报：
@@ -132,28 +136,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         void api.markRead(sessionId).catch(() => {});
         // 预取前端 auto-allow 列表（kv，命中时权限 select 自动放行不弹卡）
         usePermissionsStore.getState().refreshAutoAllow(sessionId);
-        // 未决提问对账（q1 提问卡片；增量走 SSE question 帧，此处覆盖服务端重启/
-        // 环形缓冲淘汰场景，与 getQueue 同口径）
-        api
-          .getQuestions(sessionId)
-          .then(({ questions }) => {
-            if (cancelled) return;
-            for (const frame of questions) {
-              useQuestionsStore.getState().pushRequest(sessionId, {
-                id: frame.id,
-                waitForAnswer: frame.waitForAnswer === true,
-                questions: frame.questions,
-                deadlineAtMs: frame.deadlineAtMs,
-                timeout: frame.timeout,
-              });
-            }
-          })
-          .catch(() => {});
-        // 排队快照对账（docs08-r4 任务 11，初次渲染拉一次；增量走 queue_update 事件）
-        api
-          .getQueue(sessionId)
-          .then((snapshot) => useQueueStore.getState().setSnapshot(sessionId, snapshot))
-          .catch(() => {});
+        // 未决提问 + 排队快照对账（q1 / docs08-r4 任务 11 同款；docs08-r6 任务 6 ②提为
+        // 共用：增量走 SSE question / queue_update 帧，此处覆盖服务端重启/环形缓冲淘汰）
+        void reconcilePendingState(sessionId, () => cancelled);
       })
       .catch(() => {
         if (!cancelled) setLoadState("error");
@@ -241,9 +226,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
           <QueueBar sessionId={sessionId} />
           <CommandBar sessionId={sessionId} busy={composerLocked} hydrationLocked={hydrationLocked} />
+          {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传入处并入 runState
+              running/waiting 显式并集（knownRunning 虽已含，此处按计划定死保守并集，
+              中断口宁多勿少，防 hydration-lock 口径演进回归） */}
           <Composer
             sessionId={sessionId}
-            queueAvailable={streaming || knownRunning}
+            queueAvailable={streaming || knownRunning || runState === "running" || runState === "waiting"}
             permissionLocked={hasPendingPermission}
             hydrationLocked={hydrationLocked}
             onSent={() => setInterrupted(false)}

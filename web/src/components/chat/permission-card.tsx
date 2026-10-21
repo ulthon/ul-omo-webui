@@ -37,6 +37,13 @@ export function PermissionCard({
   const [alwaysAllow, setAlwaysAllow] = useState(false);
 
   const t = useT();
+  // select 型 chrome 标题按载荷类型二分（docs08-r6 任务 6 ③）：标题带引擎权限门
+  // "Permission required:" 前缀 = 权限请求；否则（提问降级 select / 登录选择等非权限
+  // 载荷）用中性「需要选择」，不误标权限语义（auto-allow 解析同为 null，不互扰）
+  const chromeKey =
+    request.method === "select" && parsePermissionTool(request.title) === null
+      ? "chat.permissionCard.kindChoice"
+      : METHOD_KEY[request.method];
   const respond = async (payload: { value?: string; confirmed?: boolean }) => {
     if (busy) return;
     setBusy(true);
@@ -83,7 +90,7 @@ export function PermissionCard({
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <ShieldAlert className="size-4 shrink-0 text-amber-600" aria-hidden />
         <span className="text-sm font-medium">
-          {t(METHOD_KEY[request.method])}
+          {t(chromeKey)}
           {total > 1 && (
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">
               {t("chat.permissionCard.position", { position, total })}

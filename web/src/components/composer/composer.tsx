@@ -20,6 +20,7 @@ import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
+import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
@@ -97,6 +98,12 @@ export function Composer({
 }) {
   const showToast = useUiStore((s) => s.showToast);
   const project = useUiStore((s) => s.currentProject);
+  // 中断逃逸口（docs08-r6 任务 6 ①）：runState running/waiting 与未决提问并入中断钮
+  // 可见性（保守并集，宁多勿少）——SSE 信号缺失/僵尸复位后 runState 停 waiting、或仅
+  // 提问未决的死局也有中断口。仅作用停止钮，不改排队语义（queueAvailable 独立）。
+  const runState = useSessionsStore((s) => s.runStates[sessionId]);
+  const hasPendingQuestion = useQuestionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
+  const interruptible = queueAvailable || runState === "running" || runState === "waiting" || hasPendingQuestion;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1040,9 +1047,12 @@ export function Composer({
         {queueMode === "followUp" ? <SkipForward className="size-4" /> : <CornerDownRight className="size-4" />}
       </button>
     ) : null;
-  // 停止钮（流式态保留，abort 语义不变：中断当前回合；排队项挂起待下次发送——spike (b)-6）
+  // 停止钮（流式态保留，abort 语义不变：中断当前回合；排队项挂起待下次发送——spike (b)-6）。
+  // docs08-r6 任务 6 ①：可见性从 queueAvailable 扩为保守并集 interruptible
+  // （queueAvailable || runState running/waiting || hasPendingQuestion），手机/桌面双档
+  // 经同一工厂都出——死局（runState 停 idle/waiting 且无流式态）也有中断逃逸口
   const stopButtonNode = (buttonClass: string) =>
-    queueAvailable ? (
+    interruptible ? (
       <button
         type="button"
         data-testid="abort-btn"
