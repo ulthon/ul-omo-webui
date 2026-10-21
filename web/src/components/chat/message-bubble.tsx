@@ -1,13 +1,74 @@
 // 消息气泡（todo 16）：定格条目按 entryId 订阅（条目对象引用稳定，别的消息更新不触发本气泡）；
 // 流式气泡只订阅 streamingMessage 存在性，part 级更新下沉到 parts.tsx 的单下标订阅。
 // 消息级操作（todo 25）：user/assistant 定格气泡挂 MessageActions（复制原文/重试 fork）。
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
+
+// user 长文本折叠阈值（docs08-r6 任务 14）：仅 user 消息；assistant 回复永不折叠。
+// 判定用纯字符估算而非运行时测高：气泡宽度随视口/图片混排变化，测高在 SSR/测试环境不可用，
+// 字符阈值判定稳定可测；3 行视觉本身由 line-clamp-3 保证，阈值只决定是否出现展开钮。
+// 估算行数：按换行分段，每段按 ~40 字/行（user 气泡 85% 宽、text-sm 下中文 3 行量级）上取整，
+// 估算超过 3 行即折叠；短消息（含边界附近）不出钮，无 flicker。
+const USER_TEXT_CHARS_PER_LINE = 40;
+const USER_TEXT_MAX_LINES = 3;
+
+/** user 文本估算行数是否超过折叠阈值（导出仅供测试） */
+export function isLongUserText(text: string): boolean {
+  let lines = 0;
+  for (const seg of text.split("\n")) {
+    lines += Math.max(1, Math.ceil(seg.length / USER_TEXT_CHARS_PER_LINE));
+    if (lines > USER_TEXT_MAX_LINES) return true;
+  }
+  return false;
+}
+
+/** 展开态跨重渲染/虚拟列表重挂载保持（docs08-r6 任务 14）：以 entryId 为键的模块级记录；
+ *  组件内 useState 管当次挂载，重挂载时从记录恢复，流式/兄弟更新不触碰。 */
+const expandedUserTexts = new Set<string>();
+
+/** user 长文本折叠块：默认 line-clamp-3 收缩 + 展开/收起钮；短文本不渲染钮；
+ *  展开态渲染完整文本（折叠只截显示，数据始终完整在 DOM）。 */
+function CollapsibleUserText({ text, entryId }: { text: string; entryId?: string }) {
+  const t = useT();
+  const collapsible = isLongUserText(text);
+  const [expanded, setExpanded] = useState(() => collapsible && entryId !== undefined && expandedUserTexts.has(entryId));
+  if (!collapsible) {
+    return <div data-user-text="" className="text-sm leading-relaxed whitespace-pre-wrap break-words">{text}</div>;
+  }
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (entryId !== undefined) {
+      if (next) expandedUserTexts.add(entryId);
+      else expandedUserTexts.delete(entryId);
+    }
+  };
+  return (
+    <div>
+      <div
+        data-user-text=""
+        data-clamped={expanded ? undefined : ""}
+        className={expanded ? "text-sm leading-relaxed whitespace-pre-wrap break-words" : "text-sm leading-relaxed whitespace-pre-wrap break-words line-clamp-3"}
+      >
+        {text}
+      </div>
+      <button
+        type="button"
+        data-testid="user-text-toggle"
+        aria-expanded={expanded}
+        onClick={toggle}
+        className="mt-1 block text-xs leading-4 text-primary-foreground/70 underline underline-offset-2"
+      >
+        {expanded ? t("chat.messageBubble.collapse") : t("chat.messageBubble.expand")}
+      </button>
+    </div>
+  );
+}
 
 // locale 显式传入（任务12）：避免 toLocaleTimeString([]) 依赖宿主隐式 locale
 function formatTime(timestamp: string | null, locale: string): string | null {
@@ -84,10 +145,13 @@ function MessageContent({
   message,
   sessionId,
   live,
+  entryId,
 }: {
   message: WireMessage;
   sessionId: string;
   live: boolean;
+  /** user 长文本折叠展开态的持久化键（docs08-r6 任务 14） */
+  entryId?: string;
 }) {
   if (message.role === "user") {
     const parts = Array.isArray(message.content) ? message.content : [];
@@ -99,7 +163,7 @@ function MessageContent({
     const images = parts.filter((p) => p.type === "image");
     return (
       <div className="space-y-2">
-        {text ? <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">{text}</div> : null}
+        {text ? <CollapsibleUserText text={text} entryId={entryId} /> : null}
         {images.map((p, i) => (
           <ImagePart key={i} part={p} />
         ))}
@@ -144,7 +208,7 @@ export const EntryBubble = memo(function EntryBubble({
       queued={queued}
       actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
     >
-      <MessageContent message={message} sessionId={sessionId} live={false} />
+      <MessageContent message={message} sessionId={sessionId} live={false} entryId={entry.id} />
     </BubbleShell>
   );
 });

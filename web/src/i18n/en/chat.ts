@@ -33,6 +33,8 @@ export const chat = {
     live: "Responding",
     assistant: "Assistant",
     interrupted: "Interrupted",
+    expand: "Expand",
+    collapse: "Collapse",
   },
   // parts.tsx unsupported placeholders (docs08-r6 task 10 ①②)
   parts: {

@@ -34,6 +34,8 @@ export const chat = {
     live: "正在回复",
     assistant: "助手",
     interrupted: "已中断",
+    expand: "展开",
+    collapse: "收起",
   },
   // parts.tsx 未支持内容占位（docs08-r6 任务 10 ①②）
   parts: {
