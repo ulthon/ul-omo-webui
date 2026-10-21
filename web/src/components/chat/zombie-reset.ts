@@ -17,6 +17,14 @@ export async function reconcilePendingState(
   if (isCancelled()) return { questions: null, queue: null };
   const questions = questionsRes.status === "fulfilled" ? questionsRes.value.questions : null;
   if (questions) {
+    // 对账双向对齐（docs08-r6 任务 19d F-A）：快照为本端真相——不在快照内的滞留条目
+    // 随对账复位（重放窗口截断 question_resolved / 中断后 resolved 帧丢失时，问题卡与
+    // hasPendingQuestion 中断口判据随刷新/重开永久滞留的面）；快照内照常入队
+    // （pushRequest 同 id 幂等）。拉取失败（null）不动本端，宁缺勿错口径不变。
+    const snapshotIds = new Set(questions.map((frame) => frame.id));
+    for (const stale of useQuestionsStore.getState().bySession[sessionId] ?? []) {
+      if (!snapshotIds.has(stale.id)) useQuestionsStore.getState().removeRequest(sessionId, stale.id);
+    }
     for (const frame of questions) {
       useQuestionsStore.getState().pushRequest(sessionId, {
         id: frame.id,
