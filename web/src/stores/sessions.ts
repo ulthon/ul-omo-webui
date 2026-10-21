@@ -50,6 +50,10 @@ interface SessionsState {
    * （local- 前缀仅消息条目，messages.ts:110），选中这类会话时 URL 必须清参——刷新命中
    * 占位 id 只会落 listMessages 错误态。adoptSessionId 换真实 id 时移除旧 id。 */
   aliasIds: Record<string, true>;
+  /** adopt 后待服务端确认的行 id 集合（task 19f）：语义同 aliasIds 的整替保护，
+   * 但不参与 select 的 URL 清参（真实 id 应入 URL）。服务端列表带回该行后集合项
+   * 惰性滞留（合并时同 id 命中即不追回，无副作用）；removeSession 随删清除。 */
+  pendingIds: Record<string, true>;
   loading: boolean;
 
   setQ(q: string): void;
@@ -92,6 +96,15 @@ interface SessionsState {
   adoptSessionId(oldId: string, newId: string): void;
   /** createSession 回执 id 记入别名集合（session-list 新建会话路径调用，先于 select） */
   markAliasId(id: string): void;
+}
+
+/** 整替合并的保护键（IS-5 task 19f）：别名 id（aliasIds）+ 已 adopt 真实 id 但服务端
+ * 列表尚未带回的行（pendingIds）。adoptSessionId 把别名行换 key 到真实 id 时同步把
+ * 保护迁到 pendingIds——否则 adopt 后必然的 hydration 探询刷新（ChatSession 按
+ * sessionId 重挂载触发）会用尚未含新会话的服务端列表把行冲掉，SSE 实时路径又只有
+ * patchSession（无行 no-op）无法补回，占位行直到下次刷新才重现（F3 IS-5 FAIL 根因）。 */
+function mergeKeys(s: Pick<SessionsState, "aliasIds" | "pendingIds">): Record<string, true> {
+  return Object.keys(s.pendingIds).length === 0 ? s.aliasIds : { ...s.aliasIds, ...s.pendingIds };
 }
 
 function replaceIn(list: SessionListItem[], session: SessionListItem): SessionListItem[] {
@@ -142,6 +155,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   tagFilter: [],
   selectedId: null,
   aliasIds: {},
+  pendingIds: {},
   loading: false,
 
   setQ: (q) => set({ q }),
@@ -159,7 +173,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
 
   setSessions: (project, sessions) =>
     set((s) => ({
-      byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, s.aliasIds) },
+      byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, mergeKeys(s)) },
     })),
 
   setAllSessions: (sessions) =>
@@ -172,11 +186,11 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       // 键，若仍有别名占位行则以追回结果重建键（新建会话后立即切项目/搜索冲刷窗口行不丢）
       for (const [project, list] of Object.entries(byProject)) {
         const prev = s.byProject[project];
-        if (prev) byProject[project] = mergeAliasRows(prev, list, s.aliasIds);
+        if (prev) byProject[project] = mergeAliasRows(prev, list, mergeKeys(s));
       }
       for (const [project, prev] of Object.entries(s.byProject)) {
         if (project in byProject) continue;
-        const restored = mergeAliasRows(prev, [], s.aliasIds);
+        const restored = mergeAliasRows(prev, [], mergeKeys(s));
         if (restored.length > 0) byProject[project] = restored;
       }
       return { byProject };
@@ -247,7 +261,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         delete aliasIds[id];
         changed = true;
       }
-      return changed || selectedId !== s.selectedId ? { byProject, selectedId, aliasIds } : s;
+      let pendingIds = s.pendingIds;
+      if (id in s.pendingIds) {
+        pendingIds = { ...s.pendingIds };
+        delete pendingIds[id];
+        changed = true;
+      }
+      return changed || selectedId !== s.selectedId ? { byProject, selectedId, aliasIds, pendingIds } : s;
     });
     // 删除的是当前选中会话：URL 同步清参回空态
     if (wasSelected) writeSessionUrl(null);
@@ -350,14 +370,18 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
           delete runStateAt[oldId];
         }
       }
-      // 别名集合随换 key 移除旧 id（新 id 是真实落盘 id，不入集合）
+      // 别名集合随换 key 移除旧 id（新 id 是真实落盘 id，不入集合——URL 语义不变）；
+      // 整替保护同步迁入 pendingIds（task 19f）：adopt 后 hydration 探询刷新的服务端
+      // 列表尚无新会话，缺保护则占位行被冲掉且实时路径无法补回
       let aliasIds = s.aliasIds;
+      let pendingIds = s.pendingIds;
       if (oldId in s.aliasIds) {
         aliasIds = { ...s.aliasIds };
         delete aliasIds[oldId];
+        pendingIds = { ...pendingIds, [newId]: true };
       }
-      return changed || selectedId !== s.selectedId || runStates !== s.runStates || appliedModels !== s.appliedModels || aliasIds !== s.aliasIds
-        ? { byProject, selectedId, runStates, runStateAt, appliedModels, aliasIds }
+      return changed || selectedId !== s.selectedId || runStates !== s.runStates || appliedModels !== s.appliedModels || aliasIds !== s.aliasIds || pendingIds !== s.pendingIds
+        ? { byProject, selectedId, runStates, runStateAt, appliedModels, aliasIds, pendingIds }
         : s;
     });
     // 选中态换 key：URL 同步换写真实 id（URL 里若是别名 id，此处原地纠正）
