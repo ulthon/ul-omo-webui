@@ -381,6 +381,11 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     useMessagesStore.getState().setCompacting(sessionId, false);
     if (wire.status !== "declined") {
       broadcastUsageRefresh();
+      // 摘要条目对账（docs08-r6 任务 19g）：压缩完成后渲染层依赖 type:"compaction"
+      // 条目入列派生标记块，实时通道靠 entry_appended（stores 白名单放行）。帧丢失场景
+      // （压缩期间断线重连 / 传输粘滞切换，F3 走查实录）下补拉一次 GET messages
+      // （游标增量、失败静默，与 synthetic settle 补拉同模式），标记块不等到刷新才出现。
+      refetchSession(sessionId);
     }
   }
 

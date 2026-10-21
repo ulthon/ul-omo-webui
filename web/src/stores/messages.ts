@@ -607,6 +607,20 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             }
             break;
           }
+          // 压缩摘要条目增量（docs08-r6 任务 19g）：引擎压缩完成后经 entry_appended 携
+          // 顶层 type:"compaction" 条目到达（F3 实测 compaction_end 后紧跟 entry_appended，
+          // 帧形态 {entry:{type:"compaction",id,summary,...}}），放行入列——渲染层
+          // compactionMarkerOf 派生标记块（白名单渲染语义在派生侧），历史 GET messages
+          // 同形同构；不入列则进行中页面永不出现标记块（仅刷新后才见）。
+          if (entry.type === "compaction" && typeof entry.id === "string" && entry.id !== "") {
+            set((s) => {
+              const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              return {
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+              };
+            });
+            break;
+          }
           // 记忆标记条目增量（docs08-r4 任务 13）：引擎记忆相关 custom/custom_message 条目
           // 经 entry_appended 到达（隔离实例实测 wire 形态 {entry:{type,id,customType,...}}，
           // custom_message 携 id 早于同义的无 id message_start/end 帧），仅白名单 customType
