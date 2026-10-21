@@ -3,7 +3,7 @@
 // 不渲染 agent 下拉，"当前 provider/model"语义由模型下拉承担）、设置入口（todo 26：外链
 // 地址 kv 配置）、连接状态点。
 // A3+A6（docs08-r4 任务 6）手机档（<lg）单层重排：[汉堡 | 会话标题+项目名小字（可点开
-// 项目菜单） | 上下文水位环 | 右栏入口钮 | 设置+连接点]，模型下拉手机档退役（经任务 7
+// 最近会话菜单，任务 15：复用 recentTop 派生直达切换） | 上下文水位环 | 右栏入口钮 | 设置+连接点]，模型下拉手机档退役（经任务 7
 // "更多"ModelChip 到达）；桌面（lg+）布局不动（项目/模型下拉原位）。手机档按 useIsMobile
 // 条件渲染（DOM 不存在，非 CSS 隐藏）。
 import { useMemo, useState } from "react";
@@ -11,7 +11,7 @@ import type { FormEvent } from "react";
 import { Check, ChevronDown, FolderPlus, ListTodo, Menu, Settings } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
-import { openProject } from "@/lib/bootstrap";
+import { loadProjectModels, openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
@@ -19,7 +19,10 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   PROJECT_SORT_KV,
+  crossProjectDecision,
+  flattenSessions,
   locateProjectInSidebar,
+  recentTop,
   type ProjectSortMode,
 } from "@/components/session-list/global-list-data";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
@@ -438,6 +441,46 @@ export function ProjectManagementSection() {
   );
 }
 
+/** 手机档中槽最近会话菜单（docs08-r6 任务 15）：点按会话身份区弹最近会话列表。
+ * 派生复用侧栏最近区同一来源——recentTop(flattenSessions(byProject))（跨项目
+ * modified 降序 8 条，RECENT_LIMIT 内含），不复制实现；点击直达切换：决策核复用
+ * crossProjectDecision，跨项目时 setCurrentProject + setSelectedModel（偏好模型）+
+ * 模型列表按需补拉（loadProjectModels），与侧栏统一 handler 同语义。
+ * 项目/添加项目入口降位：侧栏项目分组与设置面板已覆盖，不再出现在顶栏中槽。 */
+function RecentSessionsMenuItems() {
+  const byProject = useSessionsStore((s) => s.byProject);
+  const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
+  const t = useT();
+  return (
+    <>
+      <DropdownMenuLabel>{t("sessionList.list.recent")}</DropdownMenuLabel>
+      {recent.length === 0 && (
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">{t("sessionList.list.empty")}</div>
+      )}
+      {recent.map((s) => (
+        <DropdownMenuItem
+          key={s.id}
+          data-testid={`recent-session-${s.id}`}
+          onSelect={() => {
+            const ui = useUiStore.getState();
+            useSessionsStore.getState().select(s.id);
+            const decision = crossProjectDecision(s.project, ui.currentProject, ui.projects);
+            if (decision.switchProject) {
+              ui.setCurrentProject(s.project);
+              ui.setSelectedModel(decision.preferredModel);
+              if (ui.models.length === 0) void loadProjectModels(s.project);
+            }
+          }}
+        >
+          <span className="min-w-0 truncate" title={s.title}>
+            {s.title}
+          </span>
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
 /** 设置面板"侧栏"分区（C16 docs08-r3 todo 9）：项目排序三档单选（活动/添加/手动拖拽）。
  * 档位存 meta_kv sidebar.projectSort（走既有 PUT /api/settings，跨设备一致，不落
  * localStorage）；改档即存即生效（session-list 从 ui store 读档位派生分组顺序）。
@@ -778,8 +821,9 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       </Button>
 
       {isMobile ? (
-        /* 手机档会话身份区（A3）：标题+项目名两行堆叠 truncate；点按弹项目菜单
-           （内容复用桌面项目下拉，openProject/locateProjectInSidebar 零改动） */
+        /* 手机档会话身份区（A3）：标题+项目名两行堆叠 truncate；点按弹最近会话
+           （任务 15：复用 P3 跨项目最近 8 条派生，直达切换；项目/添加项目入口降位
+           ——侧栏项目分组与设置面板承担，桌面档项目下拉不动） */
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -809,7 +853,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">
-            <ProjectMenuItems onAddProject={() => setAddOpen(true)} />
+            <RecentSessionsMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (

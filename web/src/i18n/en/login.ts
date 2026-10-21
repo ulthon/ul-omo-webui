@@ -162,7 +162,7 @@ export const login = {
     noModelsTitle: "The engine provides no available models; sending is disabled",
     modelMenu: "Models",
     openSidebar: "Open sidebar",
-    sessionIdentity: "Sessions and projects; tap to switch project",
+    sessionIdentity: "Recent sessions; tap to switch",
     chooseProject: "Choose project",
     openTodoPanel: "Open task panel",
     online: "Connected",

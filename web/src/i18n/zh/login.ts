@@ -164,7 +164,7 @@ export const login = {
     noModelsTitle: "引擎未提供可用模型，发送已禁用",
     modelMenu: "模型",
     openSidebar: "打开侧栏",
-    sessionIdentity: "会话与项目，点按切换项目",
+    sessionIdentity: "最近会话，点按切换",
     chooseProject: "选择项目",
     openTodoPanel: "打开任务面板",
     online: "已连接",
