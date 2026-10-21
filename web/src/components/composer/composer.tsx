@@ -14,7 +14,7 @@
 // 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令
 // （尾部空格）走既有 prompt 支持路径；上下/回车导航，Esc 关闭并回退打开前输入。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -261,6 +261,18 @@ export function Composer({
   // 记录打开前内容（覆盖 onChange/回填/草稿恢复全部路径——use-draft 恢复不经 update）
   const slashToken = useMemo(() => slashTriggerToken(text), [text]);
   const t = useT();
+  // 等待提示条（docs08-r6 任务 12 ①）：runState=waiting（等待提问/权限应答）时明示
+  // 「等待中」，消除“回合在跑却没动静”的观感。纯派生渲染，不锁任何输入（排队语义不变）。
+  const showWaitingHint = runState === "waiting";
+  const waitingHintNode = showWaitingHint ? (
+    <div
+      data-testid="composer-waiting-hint"
+      className="flex items-center gap-1.5 rounded-lg border bg-muted/30 px-2 py-1 text-xs text-muted-foreground"
+    >
+      <Hourglass className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate">{t("composer.waitingHint")}</span>
+    </div>
+  ) : null;
   const slashOpen = slashToken !== null && slashDismissedToken !== slashToken;
   const prevTextRef = useRef("");
   useEffect(() => {
@@ -439,6 +451,9 @@ export function Composer({
           // 不动 streaming 态（排队回合同一 run，run 尾才 settle 一次——spike (b)-5）。
           useQueueStore.getState().addPending(sessionId, outgoingText, queueModeRef.current);
           messages.appendLocalUserEntry(sessionId, outgoingText, undefined, queueModeRef.current);
+          // 入队可见反馈（docs08-r6 任务 12 ②）：排队接受即轻提示，消除「点了没反应」观感。
+          // 只读回执 disposition（服务端真实结果），不影响排队语义本身。
+          showToast(t("composer.queuedFeedback"), "info");
           if (opts.clearInputs) {
             // 附件路径行已随排队文本投递 → 附件条清空；图片未投递 → 保留待直发
             setAttachmentsBoth([]);
@@ -1106,6 +1121,7 @@ export function Composer({
         {historyBar}
         {imageStrip}
         {attachmentStrip}
+        {waitingHintNode}
         {toolsOpen && (
           <div className="flex flex-wrap items-center gap-1" data-testid="composer-tools-row">
             {toolButtons}
@@ -1188,6 +1204,7 @@ export function Composer({
       {historyBar}
       {imageStrip}
       {attachmentStrip}
+      {waitingHintNode}
       {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
       <textarea
         ref={textareaRefCb}

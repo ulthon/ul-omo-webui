@@ -10,6 +10,8 @@ export const composer = {
   imageLimit: { one: "At most {n} image", other: "At most {n} images" },
   imageLimitKept: { one: "At most {n} image; kept the first {kept}", other: "At most {n} images; kept the first {kept}" },
   lockedHint: "Session is processing; sending is unavailable for now",
+  waitingHint: "Waiting for a question / permission response…",
+  queuedFeedback: "Queued; it will run after the current turn ends",
   stopGeneration: "Stop generating",
   stopTitle: "Stop the current turn (queued items are kept and will run on the next send)",
   placeholder: "Type a message; Enter to send, Shift+Enter for a new line",

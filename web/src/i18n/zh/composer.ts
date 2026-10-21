@@ -12,6 +12,8 @@ export const composer = {
   imageLimit: { one: "最多 {n} 张图片", other: "最多 {n} 张图片" },
   imageLimitKept: { one: "最多 {n} 张图片，已保留前 {kept} 张", other: "最多 {n} 张图片，已保留前 {kept} 张" },
   lockedHint: "会话处理中，暂不能发送",
+  waitingHint: "等待提问 / 权限应答中…",
+  queuedFeedback: "已加入队列，将在当前回合结束后执行",
   stopGeneration: "停止生成",
   stopTitle: "停止当前回合（排队项保留，将在下次发送时执行）",
   placeholder: "输入消息，Enter 发送，Shift+Enter 换行",
