@@ -5,7 +5,7 @@
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, Bell, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import { ArrowDown, Bell, BookOpen, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
@@ -17,7 +17,7 @@ import { NavRail } from "./nav-rail";
 
 /** 记忆标记块（docs08-r4 任务 13）：图标 + 一句话摘要 + 点击展开原文；折叠时不渲染原文
  *  （惰性展开，不影响消息流渲染）。样式与 thinking 块同族更轻（无边框细行）；权重分级：
- *  weak 弱标记 / weakest 极弱（projection-pin）/ notice 提示卡（kibitzer/memorian/notice）。 */
+ *  weak 弱标记 / weakest 极弱（projection-pin）/ notice 提示卡（kibitzer/memorian/notice/recall）。 */
 const MARKER_ICONS: Record<MemoryMarkerKind, LucideIcon> = {
   sessionBinding: Database,
   acceptedTurns: BookCheck,
@@ -25,6 +25,7 @@ const MARKER_ICONS: Record<MemoryMarkerKind, LucideIcon> = {
   kibitzerNudged: Lightbulb,
   memorianNudged: Lightbulb,
   memoryNotice: Bell,
+  memoryRecall: BookOpen,
 };
 
 const MARKER_TONE: Record<MemoryMarker["weight"], string> = {

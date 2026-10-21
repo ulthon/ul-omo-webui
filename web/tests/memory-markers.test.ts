@@ -1,4 +1,6 @@
 // 记忆标记（docs08-r4 任务 13）单测：白名单甄别（entry_appended 放行与渲染共用）、
+// docs08-r6 任务 9：白名单改命名空间前缀匹配（共享匹配函数 isMemoryCustomType，匹配宽渲染窄）、
+// 召回条目（custom_message recall）派生与 SSE/REST 两路渲染断言、
 // 两通道条目形态（历史 type:"custom"/"custom_message" 与实时 entry_appended 载荷 /
 // message_end role=custom）派生同构标记、mergeMemoryItems 流内归并、store 入列白名单、
 // EventsClient 具名帧真实路径（HANDLED_EVENT_TYPES 漏列则 EventSource 不派发，任务 11 教训）。
@@ -8,6 +10,7 @@ import {
   isMemoryAppendedEntry,
   isMemoryCustomEntry,
   isMemoryCustomMessageEntry,
+  isMemoryCustomType,
   memoryMarkerOf,
 } from "@/lib/memory-entries";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
@@ -285,5 +288,190 @@ describe("EventsClient 真实路径：entry_appended 具名帧派发", () => {
     expect(entries.length).toBe(1);
     expect(entries[0].id).toBe("abc12345");
     client.stop();
+  });
+});
+
+// ===== docs08-r6 任务 9：命名空间前缀白名单（匹配宽、渲染窄）与召回条目派生 =====
+
+/** task-3 枚举报告第一节“完整示例（原始行）”的 recall content（库内原文，含 &quot;） */
+const RECALL_CONTENT =
+  '<recalled-memory source="[[people/human/observations.md]]">\nKibitzer, a background memory advisor, surfaced this stored note. It may or may not apply: reference only; your current task stands.\n用户观察记录显示该用户倾向于&quot;先充分讨论、由用户拍板再动手实施&quot;，对方案常要求记录待定而非立即执行。\n</recalled-memory>';
+
+/** task-3 实测 recall 字段集：{type,customType,content,display,id,parentId,timestamp}，无 details */
+function recallMessageEntry(customType: string, content: string, id: string) {
+  return {
+    type: "custom_message",
+    customType,
+    content,
+    display: false,
+    id,
+    parentId: "25e8885f",
+    timestamp: "2026-10-20T15:14:51.829Z",
+  };
+}
+
+/** 前缀正例全集：四命名空间的既有类 + 未来子类（免改码入列，含非召回的 omo-kibitzer:gate） */
+const PREFIX_POSITIVES = [
+  "senpi-memory.session-binding",
+  "omo-memory:accepted-turns",
+  "omo-memory:projection-pin",
+  "omo-memory:notice",
+  "omo-kibitzer:nudged",
+  "omo-memorian:nudged",
+  "omo-kibitzer:recall",
+  "omo-memorian:recall",
+  "senpi-memory.future-thing",
+  "omo-memory:brand-new",
+  "omo-kibitzer:gate",
+];
+
+/** 前缀反例：引擎内部条目 + 分隔符近似碰撞（前缀集合精确，不扩大） */
+const PREFIX_NEGATIVES = [
+  "pi-rules.scan",
+  "senpi.hooks.stop-state",
+  "senpi-task.usage",
+  "environment-context",
+  "senpi.todo-first-turn",
+  "omo-model-profile:applied",
+  "senpi-memoryx.binding",
+  "omo-memoryx:pin",
+  "omo-kibitzerx:recall",
+  "omo-memorianx.recall",
+];
+
+/** markerMeta 覆盖的窄化集合（渲染门非 null 恰好于此） */
+const RENDER_KINDS = new Set([
+  "senpi-memory.session-binding",
+  "omo-memory:accepted-turns",
+  "omo-memory:projection-pin",
+  "omo-kibitzer:nudged",
+  "omo-memorian:nudged",
+  "omo-memory:notice",
+  "omo-kibitzer:recall",
+  "omo-memorian:recall",
+]);
+
+describe("命名空间前缀白名单（docs08-r6 任务 9，共享匹配函数）", () => {
+  test("四命名空间前缀正例全部命中共享匹配函数（含未知子类，匹配宽）", () => {
+    for (const ct of PREFIX_POSITIVES) expect(isMemoryCustomType(ct)).toBe(true);
+  });
+
+  test("引擎内部条目与分隔符近似碰撞全部拒绝（prefix_too_wide 反例真测）", () => {
+    for (const ct of PREFIX_NEGATIVES) expect(isMemoryCustomType(ct)).toBe(false);
+  });
+
+  test("两通道门与渲染门共用同一匹配函数：通道门判定恒等于 isMemoryCustomType（dual_gate_drift 断言）", () => {
+    for (const ct of [...PREFIX_POSITIVES, ...PREFIX_NEGATIVES]) {
+      const custom = customEntry(ct, {}, "f1");
+      const message = recallMessageEntry(ct, "c", "f2");
+      expect(isMemoryAppendedEntry(custom)).toBe(isMemoryCustomType(ct));
+      expect(isMemoryAppendedEntry(message)).toBe(isMemoryCustomType(ct));
+      expect(isMemoryCustomMessageEntry(message)).toBe(isMemoryCustomType(ct));
+    }
+  });
+
+  test("匹配宽、渲染窄：omo-kibitzer:gate 入列门放行、渲染门返 null；渲染非 null 恰为 markerMeta 覆盖集", () => {
+    expect(isMemoryAppendedEntry(recallMessageEntry("omo-kibitzer:gate", "g", "g1"))).toBe(true);
+    expect(memoryMarkerOf(recallMessageEntry("omo-kibitzer:gate", "g", "g1"))).toBeNull();
+    expect(memoryMarkerOf(customEntry("omo-kibitzer:gate", {}, "g2"))).toBeNull();
+    for (const ct of [...PREFIX_POSITIVES, ...PREFIX_NEGATIVES]) {
+      const m = memoryMarkerOf(recallMessageEntry(ct, "c", "g3"));
+      expect(m !== null).toBe(RENDER_KINDS.has(ct));
+    }
+  });
+});
+
+describe("召回条目派生（docs08-r6 任务 9）", () => {
+  test("kibitzer:recall：kind/权重/摘要源=content 内 source 路径/原文=content（task-3 实样原文）", () => {
+    const m = memoryMarkerOf(recallMessageEntry("omo-kibitzer:recall", RECALL_CONTENT, "7e16cad2"));
+    expect(m).not.toBeNull();
+    expect(m?.entryId).toBe("7e16cad2");
+    expect(m?.kind).toBe("memoryRecall");
+    expect(m?.weight).toBe("notice");
+    expect(m?.summary).toEqual({
+      key: "chat.memoryMarkers.recall",
+      vars: { source: "people/human/observations.md" },
+    });
+    expect(m?.detail).toBe(RECALL_CONTENT);
+    // 逐条渲染：不设 identity 去重键（仅 sessionBinding 设）
+    expect(m?.dedupeKey).toBeUndefined();
+  });
+
+  test("memorian:recall 同判（库内 0 条不等于永不出，前缀须放行）；message_end 实时形态同构", () => {
+    const content = '<recalled-memory source="[[notes/facts/senpi-webui.md]]">\n正文\n</recalled-memory>';
+    const hist = memoryMarkerOf(recallMessageEntry("omo-memorian:recall", content, "aa11bb22"));
+    const live = memoryMarkerOf(customMessageEnd("omo-memorian:recall", content));
+    expect(hist?.kind).toBe("memoryRecall");
+    expect(live?.kind).toBe("memoryRecall");
+    expect(hist?.summary).toEqual({
+      key: "chat.memoryMarkers.recall",
+      vars: { source: "notes/facts/senpi-webui.md" },
+    });
+    expect(live?.summary).toEqual(hist?.summary);
+  });
+
+  test("recall 异常形态降级：content 无包裹头时用无路径摘要键，不臆造字段", () => {
+    const m = memoryMarkerOf(recallMessageEntry("omo-kibitzer:recall", "纯文本无包裹头", "cc11dd22"));
+    expect(m?.summary).toEqual({ key: "chat.memoryMarkers.recallPlain" });
+    expect(m?.detail).toBe("纯文本无包裹头");
+  });
+});
+
+describe("召回渲染路径（SSE / REST 两路 + 逐条渲染）", () => {
+  const REST_ENTRY = recallMessageEntry("omo-kibitzer:recall", RECALL_CONTENT, "7e16cad2");
+
+  function frame(wire: Record<string, unknown>, cursor: number, durable = "d-r9"): void {
+    dispatchSseEvent(
+      String(wire.type),
+      JSON.stringify({ projectPath: "/p", event: wire, durableSessionId: durable }),
+      cursor,
+    );
+  }
+
+  beforeEach(() => {
+    resetDispatchState();
+    useMessagesStore.setState({ bySession: {} });
+  });
+  afterEach(() => {
+    resetDispatchState();
+    useMessagesStore.setState({ bySession: {} });
+  });
+
+  test("REST 路径：历史 GET messages 同形条目（display:false 无 details）经 setEntries 派生标记", () => {
+    useMessagesStore.getState().setEntries("d-r9", [REST_ENTRY], null, null);
+    const entries = useMessagesStore.getState().bySession["d-r9"].entries;
+    expect(entries.length).toBe(1);
+    const m = memoryMarkerOf(entries[0]);
+    expect(m?.kind).toBe("memoryRecall");
+    expect(m?.summary).toEqual({
+      key: "chat.memoryMarkers.recall",
+      vars: { source: "people/human/observations.md" },
+    });
+    expect(mergeMemoryItems([], entries).map((i) => i.kind)).toEqual(["memoryMarker"]);
+  });
+
+  test("SSE 路径：entry_appended 携 id recall 条目入列并派生同构标记", () => {
+    frame({ type: "entry_appended", entry: REST_ENTRY, sessionId: "rpc-1" }, 1);
+    const entries = useMessagesStore.getState().bySession["d-r9"].entries;
+    expect(entries.length).toBe(1);
+    const m = memoryMarkerOf(entries[0]);
+    expect(m?.kind).toBe("memoryRecall");
+    expect(m?.summary).toEqual({
+      key: "chat.memoryMarkers.recall",
+      vars: { source: "people/human/observations.md" },
+    });
+    expect(mergeMemoryItems([], entries).map((i) => i.kind)).toEqual(["memoryMarker"]);
+  });
+
+  test("多条召回并存逐条渲染，marker key 沿 entryId，不走 sessionBinding identity 去重（dedup_regression 断言）", () => {
+    const user = { type: "message", id: "u1", message: { role: "user", content: [] } };
+    const entries = [
+      recallMessageEntry("omo-kibitzer:recall", RECALL_CONTENT, "r1"),
+      user,
+      recallMessageEntry("omo-kibitzer:recall", RECALL_CONTENT, "r2"),
+    ];
+    const items: ChatListItem[] = [{ key: "u1", kind: "entry", entryId: "u1", interrupted: false }];
+    const merged = mergeMemoryItems(items, entries);
+    expect(merged.map((i) => i.key)).toEqual(["memory-r1", "u1", "memory-r2"]);
   });
 });

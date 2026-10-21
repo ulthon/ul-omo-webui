@@ -1,30 +1,38 @@
-// 记忆标记条目甄别与派生（docs08-r4 任务 13，spike task-3 (c) 实证）：
+// 记忆标记条目甄别与派生（docs08-r4 任务 13 建；docs08-r6 任务 9 改前缀白名单）：
 // 引擎记忆相关 custom 条目经两通道到达，历史（GET messages 全量）与实时（SSE）形态同构——
 //   entry 通道：历史 type:"custom" 条目；实时 entry_appended 载荷同形。
-//     实证：senpi-memory.session-binding / omo-memory:accepted-turns / omo-memory:projection-pin。
-//   message 通道：历史 type:"custom_message" 条目；实时 message_end（message.role="custom"）。
-//     omo-kibitzer:nudged / omo-memorian:nudged / omo-memory:notice（spike 短会话未实测到帧，
-//     customType 清单来自 omo 扩展源码枚举，形态按同构实现，联调时核对）。
-// 白名单外条目（pi-rules.scan、senpi.hooks.stop-state、senpi-task.usage、environment-context、
-// senpi.todo-first-turn、omo-model-profile:applied 等引擎内部状态）一律不渲染、不入列。
+//   message 通道：历史 type:"custom_message" 条目；实时 message_end（message.role="custom"）
+//     与 entry_appended 携 id 的 custom_message 载荷。
+// docs08-r6 任务 9（会话库全量枚举实证 .omo/evidence/docs08-r6/task-3-enumeration.md）：
+// 白名单从封闭类型清单改为记忆命名空间前缀匹配——customType 命中任一前缀即入两通道门
+// （匹配宽，新子类型免改码即入列）；渲染门仍窄化（markerMeta 未覆盖的类型返 null 不渲染）。
+// 已知类：session-binding / accepted-turns / projection-pin / kibitzer:nudged / memorian:nudged /
+// memory:notice / kibitzer:recall / memorian:recall。recall 实测 14 条全为 custom_message 容器、
+// display:false、无 details，content 为 <recalled-memory source="[[路径]]"> 包裹文本。
+// 前缀集合保持精确：pi-rules.scan、senpi.hooks.stop-state、senpi-task.usage、environment-context、
+// senpi.todo-first-turn、omo-model-profile:applied 等引擎内部状态不命中任何前缀，
+// 一律不渲染、不入列。
 // 载荷只做窄化读取（wire 原样透传，形态从宽），异常形态降级为通用摘要，不臆造字段。
 import type { WireEntry } from "@/lib/api";
 import type { MessageKey } from "@/i18n/i18n";
 
-/** entry 通道白名单（type:"custom" 条目的 customType；entry_appended 放行与渲染共用） */
-export const MEMORY_ENTRY_TYPES: ReadonlySet<string> = new Set([
-  "senpi-memory.session-binding",
-  "omo-memory:accepted-turns",
-  "omo-memory:projection-pin",
-]);
+/** 记忆命名空间前缀（docs08-r6 任务 9）：customType 命中任一前缀即入两通道门（匹配宽），
+ *  渲染门再经 markerMeta 窄化。分隔符按库内实测取定——senpi-memory 系点分、omo-memory /
+ *  omo-kibitzer / omo-memorian 系冒号分（计划原文 omo-memorian 后的句点是句子终止标点，
+ *  非前缀字符；用点分会漏掉 omo-memorian:nudged 与 omo-memorian:recall 实测形态）。 */
+const MEMORY_NAMESPACE_PREFIXES: readonly string[] = [
+  "senpi-memory.",
+  "omo-memory:",
+  "omo-kibitzer:",
+  "omo-memorian:",
+];
 
-/** message 通道白名单（custom_message 条目 / role:"custom" 消息的 customType；
- *  spike 源码枚举清单内的提示三类，短会话未实测到帧） */
-export const MEMORY_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "omo-kibitzer:nudged",
-  "omo-memorian:nudged",
-  "omo-memory:notice",
-]);
+/** 共享匹配函数（防 dual_gate_drift）：两通道门（SSE entry_appended 放行）与渲染门
+ *  （memoryMarkerOf 派生）共用同一前缀匹配，白名单只此一处；匹配宽、渲染窄的分层
+ *  在调用侧体现。 */
+export function isMemoryCustomType(customType: string): boolean {
+  return MEMORY_NAMESPACE_PREFIXES.some((prefix) => customType.startsWith(prefix));
+}
 
 export type MemoryMarkerKind =
   | "sessionBinding"
@@ -32,10 +40,13 @@ export type MemoryMarkerKind =
   | "projectionPin"
   | "kibitzerNudged"
   | "memorianNudged"
-  | "memoryNotice";
+  | "memoryNotice"
+  /** 召回条目（omo-kibitzer:recall / omo-memorian:recall；task-3 实测 omo-kibitzer:recall
+   *  14 条、omo-memorian:recall 库内 0 条但前缀须放行）：逐条忠实渲染，不走 identity 去重 */
+  | "memoryRecall";
 
 /** 视觉权重：weak=弱标记（entry 通道主类）；weakest=极弱（projection-pin，spike 允许可忽略）；
- *  notice=提示卡（message 通道 kibitzer/memorian/notice）。 */
+ *  notice=提示卡（message 通道 kibitzer/memorian/notice 与 recall 召回）。 */
 export type MemoryMarkerWeight = "weak" | "weakest" | "notice";
 
 /** 摘要纯数据形态（任务 10）：组件层 t(summary.key, summary.vars) 渲染 */
@@ -69,31 +80,32 @@ function customTypeOf(entry: WireEntry): string | null {
   return null;
 }
 
-/** entry 通道：type:"custom" 且 customType 在白名单（须有 id，入列按 id 幂等） */
+/** entry 通道：type:"custom" 且 customType 命中记忆命名空间前缀（须有 id，入列按 id 幂等） */
 export function isMemoryCustomEntry(entry: WireEntry): boolean {
   if (entry.type !== "custom" || typeof entry.id !== "string") return false;
   const ct = customTypeOf(entry);
-  return ct !== null && MEMORY_ENTRY_TYPES.has(ct);
+  return ct !== null && isMemoryCustomType(ct);
 }
 
-/** message 通道：type:"custom_message"（历史与实时 entry_appended 载荷同形，均有 id）/
+/** message 通道：type:"custom_message"（历史与实时 entry_appended 载荷同形，均有 id；
+ *  task-3 枚举实证 recall 14 条全走此容器，display:false、无 details）/
  *  实时 message_end（message.role="custom"，实测无 id，有 id 时才可渲染）。
  *  message_start 不认（start/end 双帧防重，终态以 end 为准）。 */
 export function isMemoryCustomMessageEntry(entry: WireEntry): boolean {
   if (typeof entry.id !== "string") return false;
   if (entry.type === "custom_message") {
     const ct = customTypeOf(entry);
-    return ct !== null && MEMORY_MESSAGE_TYPES.has(ct);
+    return ct !== null && isMemoryCustomType(ct);
   }
   if (entry.type !== "message_end") return false;
   const msg = entry.message;
   if (msg === null || typeof msg !== "object") return false;
   if ((msg as Record<string, unknown>).role !== "custom") return false;
   const ct = customTypeOf(entry);
-  return ct !== null && MEMORY_MESSAGE_TYPES.has(ct);
+  return ct !== null && isMemoryCustomType(ct);
 }
 
-/** entry_appended 载荷放行门（store 入列）：白名单 custom 条目 + 白名单 custom_message
+/** entry_appended 载荷放行门（store 入列）：命中记忆命名空间前缀的 custom / custom_message
  *  条目（隔离实例实测：custom_message 经 entry_appended 携 id 到达，早于同义的
  *  message_start/end 无 id 帧）。其余（pi-rules.scan、senpi.hooks.stop-state、
  *  senpi-task.usage、type:"message" 的 user/assistant 条目等）一律不放行。 */
@@ -117,6 +129,13 @@ function payloadOf(entry: WireEntry): Record<string, unknown> | null {
   return null;
 }
 
+/** recall 摘要数据源：content 内 <recalled-memory source="[[路径]]"> 的记忆路径
+ *  （task-3 枚举 14/14 均带此包裹头；缺失或异常形态降级返 null） */
+function recallSourceOf(entry: WireEntry): string | null {
+  const m = /<recalled-memory\s+source="\[\[([^\]]+)\]\]"/.exec(detailTextOf(entry));
+  return m !== null ? m[1] : null;
+}
+
 /** 展开用文本：custom_message content 优先（提示卡正文），custom 条目回落 data JSON */
 function detailTextOf(entry: WireEntry): string {
   const direct = typeof entry.content === "string" ? entry.content : "";
@@ -131,6 +150,8 @@ function detailTextOf(entry: WireEntry): string {
   return "";
 }
 
+/** 渲染门窄化表：命中前缀但未覆盖的 customType（如 omo-kibitzer:gate）走 default 返 null，
+ *  两通道门照常放行入列、渲染层跳过（匹配宽、渲染窄）。 */
 function markerMeta(customType: string): { kind: MemoryMarkerKind; weight: MemoryMarkerWeight } | null {
   switch (customType) {
     case "senpi-memory.session-binding":
@@ -145,12 +166,19 @@ function markerMeta(customType: string): { kind: MemoryMarkerKind; weight: Memor
       return { kind: "memorianNudged", weight: "notice" };
     case "omo-memory:notice":
       return { kind: "memoryNotice", weight: "notice" };
+    case "omo-kibitzer:recall":
+    case "omo-memorian:recall":
+      return { kind: "memoryRecall", weight: "notice" };
     default:
       return null;
   }
 }
 
-function summaryOf(customType: string, payload: Record<string, unknown> | null): MemoryMarkerSummary {
+function summaryOf(
+  customType: string,
+  entry: WireEntry,
+  payload: Record<string, unknown> | null,
+): MemoryMarkerSummary {
   switch (customType) {
     case "senpi-memory.session-binding": {
       const identity = payload !== null && typeof payload.identity === "string" ? payload.identity : "";
@@ -168,12 +196,23 @@ function summaryOf(customType: string, payload: Record<string, unknown> | null):
       return { key: "chat.memoryMarkers.memorianNudged" };
     case "omo-memory:notice":
       return { key: "chat.memoryMarkers.memoryNotice" };
+    case "omo-kibitzer:recall":
+    case "omo-memorian:recall": {
+      // 摘要文案数据源 = task-3 枚举载荷字段：recall 无 details，唯一载荷是 content，
+      // 路径取 <recalled-memory source="[[…]]"> 属性；异常形态降级为无路径摘要。
+      const source = recallSourceOf(entry);
+      return source !== null
+        ? { key: "chat.memoryMarkers.recall", vars: { source } }
+        : { key: "chat.memoryMarkers.recallPlain" };
+    }
     default:
       return { key: "chat.memoryMarkers.memoryNotice" };
   }
 }
 
-/** 条目 → 记忆标记（非白名单 / 非两通道形态 / 无 id 一律 null，渲染层跳过） */
+/** 条目 → 记忆标记（渲染门：与两通道门共用 isMemoryCustomType 前缀匹配——命中前缀但
+ *  markerMeta 未覆盖的 customType（如 omo-kibitzer:gate）在此窄化返 null；非两通道形态 /
+ *  无 id 同样 null，渲染层跳过） */
 export function memoryMarkerOf(entry: WireEntry): MemoryMarker | null {
   if (typeof entry.id !== "string" || entry.id === "") return null;
   const customType = customTypeOf(entry);
@@ -186,7 +225,7 @@ export function memoryMarkerOf(entry: WireEntry): MemoryMarker | null {
     entryId: entry.id,
     kind: meta.kind,
     weight: meta.weight,
-    summary: summaryOf(customType, payload),
+    summary: summaryOf(customType, entry, payload),
     detail: detailTextOf(entry),
   };
   if (meta.kind === "sessionBinding" && payload !== null && typeof payload.identity === "string") {

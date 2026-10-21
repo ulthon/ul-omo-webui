@@ -219,5 +219,7 @@ export const chat = {
     kibitzerNudged: "收到 kibitzer 提示",
     memorianNudged: "收到 memorian 提示",
     memoryNotice: "记忆提示",
+    recall: "召回记忆 {source}",
+    recallPlain: "召回记忆",
   },
 } as const;
