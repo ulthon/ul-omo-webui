@@ -4,17 +4,31 @@
  * （含挂起权限/运行会话的忙判定）、优雅关停与兜底强杀、warmup 钩子、事件订阅面。
  */
 
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
+
+// 负载下 fork pool 启动风暴会冻结 worker 数秒：等待上界 12s，用例超时 30s（上界远小于 runner 超时）
+vi.setConfig({ testTimeout: 30_000 })
 import { rmSync } from "node:fs"
 import { EngineProcessManager, resolveEnginePaths, type EngineManagerEvent } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function waitFor(predicate: () => boolean, timeoutMs = 500, step = 5): Promise<void> {
+/** 轮询等待条件成立；超时抛错（fail-fast），有界且小于 vitest 默认用例超时。 */
+async function waitFor(predicate: () => boolean, timeoutMs = 12000, step = 25): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (predicate()) return
+    await sleep(step)
+  }
+  throw new Error(`waitFor 超时（${timeoutMs}ms）：条件未成立`)
+}
+
+/** 负向观察窗口：在 durationMs 内持续断言不变式成立（状态保持不变），破坏即抛错。 */
+async function holdInvariant(invariant: () => boolean, durationMs: number, step = 25): Promise<void> {
+  const deadline = Date.now() + durationMs
+  while (Date.now() < deadline) {
+    if (!invariant()) throw new Error("观察窗口内不变式被破坏")
     await sleep(step)
   }
 }
@@ -203,11 +217,10 @@ describe("状态机：启动与健康检查", () => {
       // doStart 失败被 catch 进退避，ensureRunning 正常返回快照
       const snap = await m.ensureRunning(PROJ)
       expect(["backoff", "starting"]).toContain(snap.state)
-      // 轮询等退避到点再失败一次（固定 sleep 在负载下会早于定时器醒来，时序竞态）
       await waitFor(() => {
         const s = m.getStatus(PROJ)
         return s?.state === "backoff" && (s?.consecutiveRestarts ?? 0) >= 2
-      }, 2000)
+      })
       const s2 = m.getStatus(PROJ)
       expect(s2?.state).toBe("backoff")
       expect(s2?.consecutiveRestarts).toBeGreaterThanOrEqual(2)
@@ -297,22 +310,21 @@ describe("状态机：崩溃与重启退避", () => {
 
     await m.ensureRunning(PROJ) // 第一次失败 → 连续失败 1 → backoff
     expect(m.getStatus(PROJ)?.state).toBe("backoff")
-    await sleep(300) // 退避两次（失败 2、失败 3 → 触顶）；vitest 下事件循环节奏更慢，留足裕量
+    await waitFor(() => m.getStatus(PROJ)?.state === "unavailable") // 退避两次（失败 2、失败 3 → 触顶）
     const snap = m.getStatus(PROJ)
     expect(snap?.state).toBe("unavailable")
     expect(snap?.consecutiveRestarts).toBe(3)
     expect(events.some((e) => e.type === "engine_unavailable")).toBe(true)
 
     const countAtUnavailable = fakes.length
-    await sleep(150) // 观察窗口：不再自动重启
-    expect(fakes.length).toBe(countAtUnavailable)
+    // 观察窗口：不再自动重启（状态保持不变，破坏即抛错）
+    await holdInvariant(() => fakes.length === countAtUnavailable, 200)
 
     // recover：清零重试，仍失败继续进退避（fake 仍 alwaysFail）
     await m.recover(PROJ)
     expect(m.getStatus(PROJ)?.consecutiveRestarts).toBe(1)
     expect(m.getStatus(PROJ)?.state).toBe("backoff")
-    // 轮询等退避到点仍失败触顶 → 回到 unavailable（固定 sleep 在负载下会早于定时器醒来）
-    await waitFor(() => m.getStatus(PROJ)?.state === "unavailable", 2000)
+    await waitFor(() => m.getStatus(PROJ)?.state === "unavailable")
     expect(m.getStatus(PROJ)?.state).toBe("unavailable")
     void fakes
   })
@@ -335,8 +347,7 @@ describe("状态机：崩溃与重启退避", () => {
       },
     })
     await m.ensureRunning(PROJ)
-    await sleep(80) // 失败 2 次 → unavailable
-    expect(m.getStatus(PROJ)?.state).toBe("unavailable")
+    await waitFor(() => m.getStatus(PROJ)?.state === "unavailable") // 失败 2 次 → unavailable
     let err: unknown
     try {
       await m.ensureRunning(PROJ)
@@ -354,8 +365,7 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     const h = makeHarness()
     try {
       await h.manager.ensureRunning(PROJ)
-      await sleep(220)
-      expect(h.manager.getStatus(PROJ)?.state).toBe("stopped")
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
       expect(h.fakes[0].stopCount).toBe(1)
       expect(h.events.some((e) => e.type === "engine_reclaimed")).toBe(true)
     } finally {
@@ -368,13 +378,13 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     try {
       await h.manager.ensureRunning(PROJ)
       h.fakes[0].emit({ type: "extension_ui_request", method: "select", id: "ui-1", sessionId: "rpc-1" })
-      await sleep(220)
+      // 观察窗口覆盖数倍空闲超时（80ms）：期间必须保持 ready 不被回收
+      await holdInvariant(() => h.manager.getStatus(PROJ)?.state === "ready", 300)
       expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
       expect(h.manager.getStatus(PROJ)?.pendingPermissions).toEqual(["ui-1"])
 
       h.manager.reportPermissionAnswered(PROJ, "ui-1")
-      await sleep(220)
-      expect(h.manager.getStatus(PROJ)?.state).toBe("stopped")
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
     } finally {
       cleanup(h)
     }
@@ -385,13 +395,12 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     try {
       await h.manager.ensureRunning(PROJ)
       h.fakes[0].emit({ type: "agent_start", sessionId: "rpc-1" })
-      await sleep(200)
+      await holdInvariant(() => h.manager.getStatus(PROJ)?.state === "ready", 300)
       expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
       expect(h.manager.getStatus(PROJ)?.runningSessions).toEqual(["rpc-1"])
 
       h.fakes[0].emit({ type: "agent_settled", sessionId: "rpc-1" })
-      await sleep(200)
-      expect(h.manager.getStatus(PROJ)?.state).toBe("stopped")
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
     } finally {
       cleanup(h)
     }
@@ -402,11 +411,10 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     try {
       await h.manager.ensureRunning(PROJ)
       h.manager.reportSessionActive(PROJ, "rpc-9")
-      await sleep(200)
+      await holdInvariant(() => h.manager.getStatus(PROJ)?.state === "ready", 300)
       expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
       h.manager.reportSessionClosed(PROJ, "rpc-9")
-      await sleep(200)
-      expect(h.manager.getStatus(PROJ)?.state).toBe("stopped")
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
     } finally {
       cleanup(h)
     }
@@ -417,8 +425,7 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     try {
       await h.manager.ensureRunning(PROJ)
       h.fakes[0].emit({ type: "extension_ui_request", method: "setStatus", statusKey: "goal" })
-      await sleep(220)
-      expect(h.manager.getStatus(PROJ)?.state).toBe("stopped")
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
     } finally {
       cleanup(h)
     }
@@ -480,8 +487,8 @@ describe("优雅关停", () => {
       expect(m.getStatus(PROJ)?.state).toBe("backoff")
       await m.stop(PROJ)
       expect(m.getStatus(PROJ)?.state).toBe("stopped")
-      await sleep(80)
-      expect(fakes.length).toBe(1) // 定时器已取消，没有继续重启
+      // 观察窗口：退避定时器已取消，没有继续重启（backoffBaseMs=5000 远大于窗口）
+      await holdInvariant(() => fakes.length === 1, 200)
     } finally {
       rmSync(registryPath, { force: true })
     }
@@ -551,7 +558,7 @@ describe("warmup 钩子", () => {
         warmedWith = projectPath
       })
       await h.manager.ensureRunning(PROJ)
-      await sleep(20)
+      await waitFor(() => warmedWith !== undefined)
       expect(warmedWith).toBe(PROJ)
       expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
 
@@ -560,7 +567,6 @@ describe("warmup 钩子", () => {
       })
       await h.manager.stop(PROJ)
       await h.manager.ensureRunning(PROJ)
-      await sleep(20)
       expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
     } finally {
       await h.manager.stopAll()
