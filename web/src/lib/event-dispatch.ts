@@ -270,6 +270,10 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
     // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
     sessions.setRunState(sessionId, "idle");
+    // 回合自然结束补拉会话列表（task 19h，fire-and-forget）：对齐服务端真相——
+    // durable=true 创建的占位行由 pendingIds 保护至列表带回，此后真实行落位，
+    // 消息计数/标题等元数据同步；失败静默（下次回合结束/手动刷新兜底）。
+    void sessions.refreshSessions();
     // 回合落定即权限队列全落定（含应答后 UI 未及时移除的残留），整队清空
     usePermissionsStore.getState().clearSession(sessionId);
     // synthetic settle（server settle_watchdog / engine_crash 合成）：真实回合事件

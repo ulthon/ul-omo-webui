@@ -96,6 +96,11 @@ interface SessionsState {
   adoptSessionId(oldId: string, newId: string): void;
   /** createSession 回执 id 记入别名集合（session-list 新建会话路径调用，先于 select） */
   markAliasId(id: string): void;
+  /** durable=true 创建回执 id 记入整替保护集合（task 19h）：真实创建路径无别名换 key，
+   * 行仅 upsert 本地副本，随后 hydration 探询刷新会用尚未含新会话的服务端列表整替冲掉
+   * 它（SSE 实时路径仅 patchSession，无行 no-op 无法补回）——并入 19f 的保护，直到
+   * 服务端列表按 id/path 带回真实行。 */
+  markPendingId(id: string): void;
 }
 
 /** 整替合并的保护键（IS-5 task 19f）：别名 id（aliasIds）+ 已 adopt 真实 id 但服务端
@@ -390,4 +395,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
 
   markAliasId: (id) =>
     set((s) => (id in s.aliasIds ? s : { aliasIds: { ...s.aliasIds, [id]: true } })),
+
+  markPendingId: (id) =>
+    set((s) => (id in s.pendingIds ? s : { pendingIds: { ...s.pendingIds, [id]: true } })),
 }));

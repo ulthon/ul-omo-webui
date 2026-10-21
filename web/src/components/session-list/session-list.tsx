@@ -269,7 +269,13 @@ export function SessionList() {
       // 前缀仅消息条目）——记入别名集合，select 时清 ?session= 参数（刷新命中占位 id
       // 必落错误态）。durable=true 的回执 id 即磁盘真实 id，选中即写入 URL；此后首条
       // 发送不会换 key（adoptSessionId 只服务 durable=false 路径）。
-      if (!res.session.durable) useSessionsStore.getState().markAliasId(res.session.id);
+      if (!res.session.durable) {
+        useSessionsStore.getState().markAliasId(res.session.id);
+      } else {
+        // durable=true 路径（task 19h）：行仅 upsert 本地副本，记入整替保护集合，
+        // 直到服务端列表按 id/path 带回真实行——否则探询刷新冲掉后实时路径补不回
+        useSessionsStore.getState().markPendingId(res.session.id);
+      }
       useSessionsStore.getState().select(res.session.id);
       // F-1（docs08-r4 验证波 F3）：手机档抽屉内新建会话后自动收起（与 selectSession 同一
       // 关闭路径；桌面侧栏常驻，drawerOpen 无视觉效果，写 false 无害且与现状一致）

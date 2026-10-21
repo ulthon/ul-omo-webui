@@ -109,3 +109,46 @@ describe("新会话占位行随流实时派生（task 19f IS-5）", () => {
     expect(useSessionsStore.getState().aliasIds["durable-1"]).toBeUndefined();
   });
 });
+
+describe("durable=true 创建路径（task 19h IS-5）", () => {
+  test("真实创建后 hydration 整替（服务端列表尚无新会话）：行保留且随流可见", () => {
+    const store = useSessionsStore.getState();
+    // session-list 创建回执 durable=true：upsert 本地副本 + markPendingId（无别名换 key）
+    store.upsertSession("/p1", makeSession("dur-new", "/p1", "/p1/new.jsonl"));
+    store.markPendingId("dur-new");
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["dur-new"]);
+    // 随后探询/流中刷新：服务端列表仍只有旧会话，占位行不得被冲掉
+    useSessionsStore.getState().setSessions("/p1", [freshSession]);
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["dur-new", "fresh"]);
+    useSessionsStore.getState().setAllSessions([makeSession("old-0", "/p0")]);
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["dur-new"]);
+  });
+
+  test("服务端列表带回真实行后以服务端行胜出（同 id / 同 path 均不双行）", () => {
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", { ...makeSession("dur-new", "/p1", "/p1/new.jsonl"), messageCount: 0 });
+    store.markPendingId("dur-new");
+    const serverRow = { ...makeSession("dur-new", "/p1"), messageCount: 3 };
+    useSessionsStore.getState().setSessions("/p1", [freshSession, serverRow]);
+    const rows = useSessionsStore.getState().byProject["/p1"];
+    expect(rows).toHaveLength(2);
+    expect(rows.find((s) => s.id === "dur-new")?.messageCount).toBe(3);
+    // 同 path 不同 id（服务端换名场景）：弃占位行，防双行
+    const renamed = { ...makeSession("dur-other", "/p1"), path: "/p1/new.jsonl" };
+    useSessionsStore.getState().upsertSession("/p1", { ...makeSession("dur-new2", "/p1", "/p1/new2.jsonl") });
+    useSessionsStore.getState().markPendingId("dur-new2");
+    useSessionsStore.getState().setSessions("/p1", [freshSession, renamed]);
+    const rows2 = useSessionsStore.getState().byProject["/p1"];
+    expect(rows2.filter((s) => s.path === "/p1/new.jsonl")).toHaveLength(1);
+    expect(rows2.find((s) => s.path === "/p1/new.jsonl")?.id).toBe("dur-other");
+  });
+
+  test("removeSession 清保护：删除后整替不复活", () => {
+    const store = useSessionsStore.getState();
+    store.upsertSession("/p1", makeSession("dur-new", "/p1"));
+    store.markPendingId("dur-new");
+    store.removeSession("dur-new");
+    useSessionsStore.getState().setSessions("/p1", [freshSession]);
+    expect(useSessionsStore.getState().byProject["/p1"].map((s) => s.id)).toEqual(["fresh"]);
+  });
+});
