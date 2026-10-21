@@ -67,7 +67,7 @@ describe("filterSlashGroups", () => {
     const webui = groups.webui;
     expect(webui.map((r) => r.section)).toEqual(["webui"]);
     expect(webui.map((r) => r.name)).toEqual(["compact"]);
-    expect(webui[0]?.description).toContain("webui");
+    expect(webui[0]?.description).toContain("引擎协议直调");
     // 若引擎侧未来注册同名命令，webui 静态段去重不重复展示
     const withEngineCompact = res({
       extension: [{ name: "compact", source: "extension" }],

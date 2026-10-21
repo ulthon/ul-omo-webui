@@ -181,7 +181,7 @@ export function slashTriggerToken(text: string): string | null {
  *  webui 直调压缩端点的命令在此补挂，段名标注来源，不冒充引擎命令；引擎侧若
  *  未来注册同名命令则优先用引擎行（过滤去重）。 */
 export const WEBUI_SLASH_COMMANDS: Array<{ name: string; description: string }> = [
-  { name: "compact", description: "压缩上下文（webui 端点直调，非引擎命令）" },
+  { name: "compact", description: "压缩上下文（引擎协议直调，与 CLI 同入口）" },
 ];
 
 /** 三段+webui 过滤：token 前缀匹配（技能行对去 "skill:" 前缀短名同样命中）；
