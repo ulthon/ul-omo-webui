@@ -45,6 +45,12 @@ function isMessageEntry(entry: WireEntry): entry is WireEntry & { id: string; me
   return Boolean(msg && typeof msg.role === "string");
 }
 
+/** custom_message 历史条目（docs08-r6 任务 10 ③）：携 id 即过本门入分类；可见性
+ *  （display）由 buildMessageItems 判定——display=false 引擎明示不展示，不入列。 */
+function isCustomMessageEntry(entry: WireEntry): entry is WireEntry & { id: string } {
+  return entry.type === "custom_message" && typeof entry.id === "string";
+}
+
 /** 单会话视图：sessionId 变化时整体重挂载（key 保证滚动/状态干净） */
 function ChatSession({ sessionId }: { sessionId: string }) {
   const [loadState, setLoadState] = useState<"loading" | "done" | "error">("loading");
@@ -185,7 +191,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   const messageEntries = useMemo(
-    () => (entries ?? []).filter(isMessageEntry),
+    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e)),
     [entries],
   );
 

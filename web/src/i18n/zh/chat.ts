@@ -35,6 +35,15 @@ export const chat = {
     assistant: "助手",
     interrupted: "已中断",
   },
+  // parts.tsx 未支持内容占位（docs08-r6 任务 10 ①②）
+  parts: {
+    unsupportedBlock: "未支持内容块：{type}",
+    unsupportedCount: { one: "1 个未支持内容块", other: "{n} 个未支持内容块" },
+  },
+  // message-bubble.tsx custom_message 占位行（docs08-r6 任务 10 ③）
+  customMessage: {
+    unsupported: "未支持内容：{customType}",
+  },
   // queue-bar.tsx 排队条
   queue: {
     cancelFailed: "排队撤销失败",

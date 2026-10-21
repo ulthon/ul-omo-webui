@@ -34,6 +34,15 @@ export const chat = {
     assistant: "Assistant",
     interrupted: "Interrupted",
   },
+  // parts.tsx unsupported placeholders (docs08-r6 task 10 ①②)
+  parts: {
+    unsupportedBlock: "Unsupported content block: {type}",
+    unsupportedCount: { one: "1 unsupported content block", other: "{n} unsupported content blocks" },
+  },
+  // message-bubble.tsx custom_message placeholder (docs08-r6 task 10 ③)
+  customMessage: {
+    unsupported: "Unsupported content: {customType}",
+  },
   // queue-bar.tsx
   queue: {
     cancelFailed: "Failed to cancel the queued item",

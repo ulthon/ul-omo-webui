@@ -156,6 +156,37 @@ function isRenderableEntry(entry: WireEntry | undefined): entry is WireEntry & {
   return Boolean(msg && typeof msg.role === "string");
 }
 
+/** custom_message 占位行（docs08-r6 任务 10 ③）：display=true 且非记忆标记的
+ *  custom_message 历史条目此前无渲染分支（task-3 枚举：18 种 customType 均无实物
+ *  结构样本，禁猜字段），以轻量占位行兜底消解空壳路径；只读 customType
+ *  （task-3 实测键集 {type, customType, content, display, id, parentId, timestamp} 内字段）。
+ *  渲染门与 buildMessageItems 分类门同判 display === true（防直接挂载绕过分类门）。 */
+export const CustomMessageBubble = memo(function CustomMessageBubble({
+  sessionId,
+  entryId,
+}: {
+  sessionId: string;
+  entryId: string;
+}) {
+  const entry = useMessagesStore((s) => {
+    const entries = s.bySession[sessionId]?.entries;
+    const found = entries?.find((e) => e.id === entryId);
+    return found !== undefined && found.type === "custom_message" ? found : null;
+  });
+  const t = useT();
+  if (!entry || entry.display !== true) return null;
+  const customType = typeof entry.customType === "string" ? entry.customType : "unknown";
+  return (
+    <div
+      data-testid="custom-message-chip"
+      data-custom-type={customType}
+      className="my-0.5 inline-flex max-w-full items-center rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
+    >
+      {t("chat.customMessage.unsupported", { customType })}
+    </div>
+  );
+});
+
 /** 流式 assistant 气泡：本层只订阅"存在性"，delta 由 StreamingParts 按下标消化 */
 export function StreamingBubble({ sessionId }: { sessionId: string }) {
   const present = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);

@@ -12,7 +12,7 @@ import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, type ChatListItem } from "./message-items";
-import { EntryBubble, StreamingBubble } from "./message-bubble";
+import { CustomMessageBubble, EntryBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
 
 /** 记忆标记块（docs08-r4 任务 13）：图标 + 一句话摘要 + 点击展开原文；折叠时不渲染原文
@@ -64,6 +64,7 @@ export const MemoryMarkerBlock = memo(function MemoryMarkerBlock({ marker }: { m
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
+  if (item.kind === "customMessage") return <CustomMessageBubble sessionId={sessionId} entryId={item.entryId} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
 });
 

@@ -7,28 +7,51 @@ import type { WireEntry, WireMessage } from "@/lib/api";
 import { memoryMarkerOf, type MemoryMarker } from "@/lib/memory-entries";
 
 /** items 数组判别联合：entry=定格条目气泡；streaming=流式气泡；
- *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生） */
+ *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生）；
+ *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
+ *  这类条目此前无渲染分支——入列却无内容可渲染即空壳路径） */
 export type ChatListItem =
   | { key: string; kind: "entry"; entryId: string; interrupted: boolean }
   | { key: string; kind: "streaming" }
-  | { key: string; kind: "memoryMarker"; marker: MemoryMarker };
+  | { key: string; kind: "memoryMarker"; marker: MemoryMarker }
+  | { key: string; kind: "customMessage"; entryId: string };
+
+/** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
+function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
+  const msg = (entry as { message?: unknown }).message;
+  if (msg === null || typeof msg !== "object") return null;
+  return typeof (msg as WireMessage).role === "string" ? (msg as WireMessage) : null;
+}
 
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
+ *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
  *  interrupted 标记挂最后一个 assistant 条目。 */
 export function buildMessageItems(
-  entries: ReadonlyArray<WireEntry & { id: string; message: WireMessage }>,
+  entries: ReadonlyArray<WireEntry & { id: string }>,
   opts: { hasStreamingMessage: boolean; interrupted: boolean },
 ): ChatListItem[] {
   let lastAssistantId: string | null = null;
   for (const e of entries) {
-    if (e.message.role === "assistant") lastAssistantId = e.id;
+    if (messageOf(e)?.role === "assistant") lastAssistantId = e.id;
   }
   const list: ChatListItem[] = [];
   for (const e of entries) {
+    // custom_message 分支（docs08-r6 任务 10 ③）：仅 display=true 入列渲染占位行
+    // （task-3 枚举：18 种 customType 均无实物结构样本，禁猜字段，组件层只读 customType）；
+    // display=false 引擎明示不展示，一律跳过——这类条目（库内 998 条）不得产生零内容
+    // 气泡（空壳防线）；记忆标记条目已由 marker 通道渲染，此处跳过防双列。
+    if (e.type === "custom_message") {
+      if (e.display === true && memoryMarkerOf(e) === null) {
+        list.push({ key: e.id, kind: "customMessage", entryId: e.id });
+      }
+      continue;
+    }
+    const msg = messageOf(e);
+    if (!msg) continue;
     // toolResult 不单独入列：结果已由 ToolCard 按 toolCallId 关联展示（parts.tsx 同口径，
     // ToolResultLine 恒空）；入列只会渲染出带"助手+时间"头部的空壳行，每个工具调用
     // 多占一行死空间（任务 10 走查发现，390/1920 同样存在）。
-    if (e.message.role === "toolResult") continue;
+    if (msg.role === "toolResult") continue;
     list.push({
       key: e.id,
       kind: "entry",
