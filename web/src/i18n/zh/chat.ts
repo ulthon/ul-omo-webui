@@ -42,6 +42,9 @@ export const chat = {
     // 空数据省略不渲染，无占位词条
     originAgent: "代理 {name}",
     originDuration: "用时 {dur}",
+    // 变体名歧义注记（docs08 2026-10-22 批次任务 18）：5 级回退到裸名且注册表内
+    // 多个变体共用该上游时挂 title 提示（绝不猜）
+    modelAmbiguous: "多个模型变体共用此上游名，显示记录的原始名",
   },
   // parts.tsx 未支持内容占位（docs08-r6 任务 10 ①②）
   parts: {

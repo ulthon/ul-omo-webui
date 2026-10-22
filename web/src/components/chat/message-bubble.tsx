@@ -4,6 +4,7 @@
 import { memo, useMemo, useState } from "react";
 import { ChevronDown, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
+import { useSessionsStore } from "@/stores/sessions";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { useLocaleStore, useT } from "@/i18n/i18n";
@@ -11,7 +12,7 @@ import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 import { isLongUserText } from "./user-text-collapse";
 import { originAgentName, originDurationLabel } from "./message-origin";
-import type { LoopGuardKind } from "./message-items";
+import type { LoopGuardKind, ResolvedModelName } from "./message-items";
 
 // user 长文本折叠阈值（docs08-r6 任务 14）：仅 user 消息；assistant 回复永不折叠。
 // 判定用纯字符估算而非运行时测高：气泡宽度随视口/图片混排变化，测高在 SSR/测试环境不可用，
@@ -75,6 +76,7 @@ export function BubbleShell({
   role,
   timestamp,
   model,
+  modelAmbiguous,
   agentLabel,
   durationLabel,
   interrupted,
@@ -87,6 +89,9 @@ export function BubbleShell({
   timestamp: string | null;
   /** assistant 消息的模型名（消息级 model 字段，B11 同源）；头部行常驻短名显示 */
   model?: string | null;
+  /** 模型名歧义注记（docs08 2026-10-22 批次任务 18）：true = 显示名是裸上游名且
+   *  多个变体共用（title 提示；绝不猜） */
+  modelAmbiguous?: boolean;
   /** 溯源行（docs08 2026-10-22 批次任务 17）：代理名/用时标签（已含 i18n 文案）；
    *  仅 assistant 分支渲染，空值省略不占位；流式在途无数据不传 */
   agentLabel?: string | null;
@@ -125,8 +130,16 @@ export function BubbleShell({
         <span>{live ? t("chat.messageBubble.live") : t("chat.messageBubble.assistant")}</span>
         {/* 模型短名常驻（2026-10-15 可见性缺口 ②；docs08-r5 任务 12 放宽到 live 态）：逐条可知
             由哪只模型作答，替代 B11 切换点分隔线（连续同模型段零标记的盲区）；流式态与
-            "正在回复"并存，settle 态不变；无 model 字段（老数据/裸流）不渲染不误报 */}
-        {model && <span className="max-w-[40vw] truncate opacity-70">{shortModelName(model)}</span>}
+            "正在回复"并存，settle 态不变；无 model 字段（老数据/裸流）不渲染不误报。
+            变体名时间线对齐（任务 18）：传入已解析变体名；歧义时 title 注记 */}
+        {model && (
+          <span
+            className="max-w-[40vw] truncate opacity-70"
+            title={modelAmbiguous ? t("chat.messageBubble.modelAmbiguous") : undefined}
+          >
+            {shortModelName(model)}
+          </span>
+        )}
         {/* 溯源行（任务 17）：模型短名旁追加代理名与用时——「谁、用什么模型、跑了多久」；
             沿头部行既有 span 词汇（muted/opacity-70/truncate/tabular-nums），空值省略 */}
         {agentLabel && (
@@ -187,15 +200,19 @@ function MessageContent({
   return <PartsView parts={message.content} sessionId={sessionId} live={live} entryId={entryId} />;
 }
 
-/** 定格条目气泡：以 entryId 订阅单条 entry（upsertEntry 只替换被改条目的对象引用） */
+/** 定格条目气泡：以 entryId 订阅单条 entry（upsertEntry 只替换被改条目的对象引用）。
+ *  model（docs08 2026-10-22 批次任务 18）：items 层单遍时间线解析的变体名，props 消费——
+ *  缺席（未解析/null）回落裸 message.model，显示不丢。 */
 export const EntryBubble = memo(function EntryBubble({
   sessionId,
   entryId,
   interrupted,
+  model,
 }: {
   sessionId: string;
   entryId: string;
   interrupted: boolean;
+  model?: ResolvedModelName | null;
 }) {
   const entry = useMessagesStore((s) => {
     const entries = s.bySession[sessionId]?.entries;
@@ -223,7 +240,8 @@ export const EntryBubble = memo(function EntryBubble({
     <BubbleShell
       role={role}
       timestamp={typeof entry.timestamp === "string" ? entry.timestamp : null}
-      model={role === "assistant" ? messageModel(entry) : undefined}
+      model={role === "assistant" ? (model?.name ?? messageModel(entry)) : undefined}
+      modelAmbiguous={role === "assistant" ? model?.ambiguous : undefined}
       agentLabel={originAgent}
       durationLabel={originDuration}
       interrupted={role === "assistant" ? interrupted : undefined}
@@ -394,12 +412,16 @@ export const LoopGuardGroupBubble = memo(function LoopGuardGroupBubble({
   );
 });
 
-/** 流式 assistant 气泡：本层只订阅"存在性"，delta 由 StreamingParts 按下标消化 */
+/** 流式 assistant 气泡：本层只订阅"存在性"，delta 由 StreamingParts 按下标消化。
+ *  模型名（docs08 2026-10-22 批次任务 18）：appliedModels 优先（会话内引擎回执的
+ *  生效变体 "provider/model"，渲染层 shortModelName 归一），缺席回落 message_start
+ *  裸名（老数据/裸流不误报）。 */
 export function StreamingBubble({ sessionId }: { sessionId: string }) {
   const present = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
+  const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
   if (!present) return null;
   return (
-    <BubbleShell role="assistant" timestamp={null} model={streamingModelOf(sessionId)} live>
+    <BubbleShell role="assistant" timestamp={null} model={appliedModel ?? streamingModelOf(sessionId)} live>
       <StreamingParts sessionId={sessionId} />
     </BubbleShell>
   );

@@ -289,7 +289,7 @@ function readModelsStore(agentDir: string): EngineModelInfo[] {
   }
 }
 
-/** models.json 自定义模型直读（{providers:{name:{models:[{id,reasoning,contextWindow,thinkingLevelMap,...}]}}}；
+/** models.json 自定义模型直读（{providers:{name:{models:[{id,reasoning,contextWindow,thinkingLevelMap,upstreamModelId,...}]}}}；
  * 读取失败返回空列表）。 */
 function readCustomModels(agentDir: string): EngineModelInfo[] {
   const file = join(agentDir, "models.json");
@@ -307,11 +307,17 @@ function readCustomModels(agentDir: string): EngineModelInfo[] {
           reasoning?: unknown;
           contextWindow?: unknown;
           thinkingLevelMap?: unknown;
+          upstreamModelId?: unknown;
         };
         const info: EngineModelInfo = { provider, id: String(m.id ?? "") };
         if (!info.id) continue;
         if (typeof m.contextWindow === "number") info.contextWindow = m.contextWindow;
         if (typeof m.reasoning === "boolean") info.reasoning = m.reasoning;
+        if (typeof m.upstreamModelId === "string" && m.upstreamModelId !== "") {
+          // 变体上游映射（docs08 2026-10-22 批次任务 18）：glm-5.3-4k → glm-5.3。
+          // 仅非空字符串收下，非法形态一律视同缺失（非变体）。
+          info.upstreamId = m.upstreamModelId;
+        }
         if (m.thinkingLevelMap && typeof m.thinkingLevelMap === "object") {
           info.supportedThinkingLevels = Object.keys(m.thinkingLevelMap);
         }
@@ -333,6 +339,22 @@ export function readModelsFallback(agentDir: string): EngineModelInfo[] {
   const keyed = new Map(catalog.map((m) => [`${m.provider}/${m.id}`, m]));
   for (const m of customs) keyed.set(`${m.provider}/${m.id}`, m);
   return [...keyed.values()];
+}
+
+/** 协议面模型行按 provider/id 合并自定义 upstreamId（docs08 2026-10-22 批次任务 18）：
+ * 协议面返回的目录行不携带变体上游映射，models.json 自定义是唯一权威源；仅补缺失
+ * 字段不改写行本身（增量兼容，旧客户端多收一个字段不受影响）。导出供单测。 */
+export function mergeUpstreamIds(rows: EngineModelInfo[], agentDir: string): EngineModelInfo[] {
+  if (rows.length === 0) return rows;
+  const upstream = new Map<string, string>();
+  for (const m of readCustomModels(agentDir)) {
+    if (m.upstreamId !== undefined) upstream.set(`${m.provider}/${m.id}`, m.upstreamId);
+  }
+  if (upstream.size === 0) return rows;
+  return rows.map((r) => {
+    const up = upstream.get(`${r.provider}/${r.id}`);
+    return up !== undefined && r.upstreamId !== up ? { ...r, upstreamId: up } : r;
+  });
 }
 
 /** settings.json favoriteModels 直读（CLI 收藏）。条目形如 "provider/model:thinkingLevel"
@@ -1181,10 +1203,14 @@ class ProjectRuntime {
   async modelsList(): Promise<EngineModelInfo[]> {
     // 引擎未就绪时不为模型列表触发冷启动 spawn，直接走模型目录降级
     //（models-store.json 目录缓存 + models.json 自定义，同 id 自定义覆盖——
-    // 自定义模型不依赖引擎拉起即可见，修复"下拉只显示套餐目录"缺陷）
+    // 自定义模型不依赖引擎拉起即可见，修复"下拉只显示套餐目录"缺陷）。
+    // 三路径统一携带 upstreamId（任务 18）：两条降级路径经 readModelsFallback
+    // 自定义覆盖自然携带；活跃会话路径由 mergeUpstreamIds 按 provider/id 补齐。
     if (!this.isReady()) return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
     const adapter = this.requireAdapter();
-    if (adapter.getActiveSession()) return adapter.modelsList();
+    if (adapter.getActiveSession()) {
+      return mergeUpstreamIds(await adapter.modelsList(), this.opts.agentDir ?? defaultAgentDir());
+    }
     // 无活跃会话时协议面报 missing_session_id（多会话模式命令需会话路由）。
     // 降级：直读引擎同一份模型目录 models-store.json（W0 实证格式
     // {provider:{models:[{id,reasoning,cost,contextWindow,thinkingLevelMap,...}]}}）

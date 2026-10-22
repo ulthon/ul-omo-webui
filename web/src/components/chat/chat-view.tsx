@@ -16,6 +16,7 @@ import { useMessagesStore } from "@/stores/messages";
 import { resolveReachTopAction } from "./reach-top";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
+import { useUiStore } from "@/stores/ui";
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { Composer } from "@/components/composer/composer";
@@ -79,6 +80,13 @@ function isMessageEntry(entry: WireEntry): entry is WireEntry & { id: string; me
  *  （display）由 buildMessageItems 判定——display=false 引擎明示不展示，不入列。 */
 function isCustomMessageEntry(entry: WireEntry): entry is WireEntry & { id: string } {
   return entry.type === "custom_message" && typeof entry.id === "string";
+}
+
+/** model_change 时间线条目（docs08 2026-10-22 批次任务 18）：变体名单遍时间线的
+ *  数据源——不入列渲染（buildMessageItems 无 message 载荷自然跳过），仅供解析。
+ *  实测 jsonl 形态：{"type":"model_change",id,provider,modelId,...}。 */
+function isModelChangeEntry(entry: WireEntry): entry is WireEntry & { id: string } {
+  return entry.type === "model_change" && typeof entry.id === "string";
 }
 
 /** 单会话视图：sessionId 变化时整体重挂载（key 保证滚动/状态干净） */
@@ -247,13 +255,24 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   const messageEntries = useMemo(
-    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e)),
+    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e) || isModelChangeEntry(e)),
     [entries],
   );
 
+  // 变体名解析数据源（docs08 2026-10-22 批次任务 18）：注册表 = GET /api/models 行
+  // （服务端已合并 upstreamId）；appliedModel = 会话内最新生效（内存态，刷新后空）。
+  const models = useUiStore((s) => s.models);
+  const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
+
   const items = useMemo<ChatListItem[]>(
-    () => buildMessageItems(messageEntries, { hasStreamingMessage, interrupted }),
-    [messageEntries, hasStreamingMessage, interrupted],
+    () =>
+      buildMessageItems(messageEntries, {
+        hasStreamingMessage,
+        interrupted,
+        modelRegistry: models,
+        appliedModel,
+      }),
+    [messageEntries, hasStreamingMessage, interrupted, models, appliedModel],
   );
 
   if (loadState === "loading") {

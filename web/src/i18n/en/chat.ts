@@ -41,6 +41,9 @@ export const chat = {
     // the model short name; omitted entirely when data is missing
     originAgent: "agent {name}",
     originDuration: "{dur}",
+    // Variant ambiguity note (docs08 2026-10-22 batch task 18): title hint when the
+    // 5-level fallback lands on the raw upstream name shared by multiple variants
+    modelAmbiguous: "Multiple model variants share this upstream name; showing the recorded raw name",
   },
   // parts.tsx unsupported placeholders (docs08-r6 task 10 ①②)
   parts: {

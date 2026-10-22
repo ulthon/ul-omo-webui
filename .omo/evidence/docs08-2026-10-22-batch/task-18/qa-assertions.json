@@ -1,0 +1,57 @@
+[
+  {
+    "name": "desktop-1920 双变体会话:4k 段气泡头部显 glm-5.3-4k（非裸上游名）",
+    "ok": true,
+    "detail": "Assistant | glm-5.3-4k | 55.0s | 04:01 PM"
+  },
+  {
+    "name": "desktop-1920 切 2k 后时段显 glm-5.3-2k（历史各时段正确）",
+    "ok": true,
+    "detail": "Assistant | glm-5.3-2k | 2m 55s | 04:03 PM"
+  },
+  {
+    "name": "desktop-1920 无会话态+多变体共用上游:裸名+title 注记（绝不猜）",
+    "ok": true,
+    "detail": "glm-5.3 title=\"多个模型变体共用此上游名，显示记录的原始名\"(en locale 渲染 en 文案)"
+  },
+  {
+    "name": "desktop-1920 无变体对照:基础模型 glm-4.7 裸名无注记（零命中不误报）",
+    "ok": true,
+    "detail": "Assistant | glm-4.7 | 1m 55s | 03:02 PM titled=[]"
+  },
+  {
+    "name": "desktop-1920 t17 溯源行回归:用时+时间 span 保留",
+    "ok": true,
+    "detail": "用时 55.0s / 2m 55s / 1m 55s + toLocaleTimeString 时间都在头部行"
+  },
+  {
+    "name": "desktop-1920 无 undefined 泄漏",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile-390 双变体会话:两时段变体名对齐（同桌面）",
+    "ok": true,
+    "detail": "glm-5.3-4k / glm-5.3-2k"
+  },
+  {
+    "name": "mobile-390 歧义注记:裸名+title 在场",
+    "ok": true,
+    "detail": "span[title] 命中注记文案"
+  },
+  {
+    "name": "mobile-390 无变体对照 + 无 undefined 泄漏",
+    "ok": true,
+    "detail": "glm-4.7 无 title"
+  },
+  {
+    "name": "服务端 GET /api/models 行携带 upstreamId（增量兼容）",
+    "ok": true,
+    "detail": "glm-5.3-4k←glm-5.3 / glm-5.3-2k←glm-5.3 / 基础模型无该字段;引擎未就绪与目录缓存路径双核验"
+  },
+  {
+    "name": "bundle 伺服与磁盘一致（陈旧产物防线）",
+    "ok": true,
+    "detail": "web/dist 重建于 QA 前;bundle 拼接 sha256=c4b67bc2573d0d9f9e518da85c9bd3c2891087f1949b99e10fe3431df65f46ca;dist 全量 sha256=ccdc1f64ae9bb9c54e40186f6779f34b40cf01febc7d6d24d1c1a3035c49c35c(330 files)"
+  }
+]

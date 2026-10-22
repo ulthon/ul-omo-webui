@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readDefaultModel, readFavoriteModels, readModelsFallback } from "../src/api/engine-runtime";
+import { readDefaultModel, readFavoriteModels, readModelsFallback, mergeUpstreamIds } from "../src/api/engine-runtime";
 
 describe("readModelsFallback", () => {
   test("目录缓存与自定义合并：同 id 自定义覆盖、独有项各自并入", () => {
@@ -176,6 +176,70 @@ describe("readDefaultModel", () => {
       // 字段非字符串
       writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: 42, defaultModel: "m" }));
       expect(readDefaultModel(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("变体上游映射 upstreamId（docs08 2026-10-22 批次任务 18）", () => {
+  test("readModelsFallback：models.json upstreamModelId 解析为 upstreamId；非字符串/空串视同缺失", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-upstream-"));
+    try {
+      writeFileSync(
+        join(dir, "models.json"),
+        JSON.stringify({
+          providers: {
+            "zai-coding-cn": {
+              models: [
+                { id: "glm-5.3-4k", upstreamModelId: "glm-5.3", contextWindow: 400000 },
+                { id: "glm-5.3-2k", upstreamModelId: "glm-5.3", contextWindow: 200000 },
+                { id: "glm-5.3", contextWindow: 1000000 },
+                { id: "bad-empty", upstreamModelId: "" },
+                { id: "bad-type", upstreamModelId: 42 },
+              ],
+            },
+          },
+        }),
+      );
+      const byKey = new Map(readModelsFallback(dir).map((m) => [`${m.provider}/${m.id}`, m]));
+      expect(byKey.get("zai-coding-cn/glm-5.3-4k")?.upstreamId).toBe("glm-5.3");
+      expect(byKey.get("zai-coding-cn/glm-5.3-2k")?.upstreamId).toBe("glm-5.3");
+      expect(byKey.get("zai-coding-cn/glm-5.3")?.upstreamId).toBeUndefined();
+      expect(byKey.get("zai-coding-cn/bad-empty")?.upstreamId).toBeUndefined();
+      expect(byKey.get("zai-coding-cn/bad-type")?.upstreamId).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("mergeUpstreamIds：协议面行按 provider/id 补齐，不覆盖行内已有值；空入参原样返回", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-merge-"));
+    try {
+      writeFileSync(
+        join(dir, "models.json"),
+        JSON.stringify({
+          providers: {
+            "zai-coding-cn": {
+              models: [{ id: "glm-5.3-4k", upstreamModelId: "glm-5.3" }],
+            },
+          },
+        }),
+      );
+      const rows = [
+        { provider: "zai-coding-cn", id: "glm-5.3-4k" },
+        { provider: "zai-coding-cn", id: "glm-5.3", upstreamId: "keep-me" },
+        { provider: "other", id: "glm-5.3-4k" },
+      ];
+      const merged = mergeUpstreamIds(rows, dir);
+      expect(merged[0]).toEqual({ provider: "zai-coding-cn", id: "glm-5.3-4k", upstreamId: "glm-5.3" });
+      // 行内已有 upstreamId 不被改写
+      expect(merged[1]?.upstreamId).toBe("keep-me");
+      // 异 provider 同 id 不受影响
+      expect(merged[2]).toEqual({ provider: "other", id: "glm-5.3-4k" });
+      // 原数组不被改写
+      expect(rows[0]).toEqual({ provider: "zai-coding-cn", id: "glm-5.3-4k" });
+      expect(mergeUpstreamIds([], dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

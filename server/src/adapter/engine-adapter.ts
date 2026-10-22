@@ -155,6 +155,10 @@ export interface EngineModelInfo {
   contextWindow?: number
   reasoning?: boolean
   supportedThinkingLevels?: string[]
+  /** 变体上游模型 id（docs08 2026-10-22 批次任务 18）：models.json 自定义条目的
+   *  upstreamModelId（如 glm-5.3-4k → glm-5.3）。目录行与协议面行不携带，server 侧
+   *  按 provider/id 从自定义模型合并补齐；缺席 = 非变体（裸基础模型），消费侧判空。 */
+  upstreamId?: string
 }
 
 /**

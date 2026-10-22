@@ -215,6 +215,10 @@ export interface ModelInfo {
   reasoning: boolean;
   /** 引擎 models-store 部分条目缺 thinkingLevelMap，服务端可能不下发 */
   supportedThinkingLevels?: string[];
+  /** 变体上游模型 id（docs08 2026-10-22 批次任务 18）：models.json 自定义条目的
+   *  upstreamModelId（如 glm-5.3-4k → glm-5.3）；服务端按 provider/id 合并，缺席 =
+   *  非变体。旧服务端不下发（可选，增量兼容）。 */
+  upstreamId?: string;
 }
 
 /** 引擎 native 默认模型（服务端直读 settings.json defaultProvider/defaultModel/

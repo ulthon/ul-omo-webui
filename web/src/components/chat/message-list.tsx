@@ -97,7 +97,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   if (item.kind === "loopGuardGroup")
     return <LoopGuardGroupBubble sessionId={sessionId} loopGuardKind={item.loopGuardKind} entryIds={item.entryIds} />;
   if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;
-  return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} />;
+  return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 
 /** 距底部小于该值视为"在底部"（跟随流式内容增长） */

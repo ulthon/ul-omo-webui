@@ -3,6 +3,9 @@
 // chat-view.tsx 组装 items（chat-view.tsx:176 一带）调用；message-list.tsx 消费渲染。
 // B11 模型切换点分隔线已退役（2026-10-15 可见性缺口 ② 改为气泡头部常驻模型短名，
 // 消息级 model 字段同源）：连续同模型段的盲区不复存在，分隔线冗余。
+// 变体名时间线对齐（docs08 2026-10-22 批次任务 18）：引擎侧 assistant 消息只记裸上游名
+// （实测 3282 条 glm-5.3 vs 2 条变体 id），model_change 条目才记变体 id——本模块单遍
+// 时间线重建各时段生效变体，5 级回退歧义绝不猜。
 import type { WireEntry, WireMessage } from "@/lib/api";
 import { memoryMarkerOf, type MemoryMarker } from "@/lib/memory-entries";
 
@@ -67,6 +70,95 @@ export function loopGuardKindOf(customType: unknown): LoopGuardKind | null {
   return LOOP_GUARD_KIND_BY_TYPE[customType] ?? null;
 }
 
+/** 模型注册表行（resolve 只需 provider/id/upstreamId 三字段；web ModelInfo 结构子集，
+ *  服务端 GET /api/models 行已合并 upstreamId——非变体行缺席该字段） */
+export interface ModelVariantRow {
+  provider: string;
+  id: string;
+  upstreamId?: string;
+}
+
+/** 单条 assistant 条目的模型名解析结果：name 为显示名（变体 id 优先；"provider/model"
+ *  形态由渲染层 shortModelName 归一），ambiguous=true 表示只能给出裸上游名且注册表内
+ *  多个变体共用该上游（title 注记，绝不猜） */
+export interface ResolvedModelName {
+  name: string;
+  ambiguous: boolean;
+}
+
+/** 时间线 model_change 条目窄化（wire 形态从宽）：provider/modelId 非空字符串才更新
+ *  时间线（实录形态：{"type":"model_change",provider:"zai-coding-cn",modelId:"glm-5.3-4k"}） */
+function modelChangeOf(entry: WireEntry): { provider: string; modelId: string } | null {
+  if (entry.type !== "model_change") return null;
+  const provider = entry.provider;
+  const modelId = entry.modelId;
+  if (typeof provider !== "string" || provider === "") return null;
+  if (typeof modelId !== "string" || modelId === "") return null;
+  return { provider, modelId };
+}
+
+/** 单条 assistant 消息的模型名 5 级回退（docs08 2026-10-22 批次任务 18）：
+ *  1 时间线+注册表确证（upstreamId===raw）→ 变体名；
+ *  2 时间线命中但注册表无法确证（变体已删/基础模型无映射）且裸 id 一致 → 时间线 modelId；
+ *  3 appliedModels（会话内最新生效，"provider/model" 形态）；
+ *  4 注册表唯一反查（upstreamId===raw 恰一行）→ 该变体 id；
+ *  5 裸名 + 歧义注记（多变体共用上游时 title 提示；零命中/唯一命中之外的歧义绝不猜）。
+ *  纯函数无副作用（读 registry 不改写）。 */
+export function resolveVariantName(
+  raw: string,
+  asOf: { provider: string; modelId: string } | null,
+  registry: ReadonlyArray<ModelVariantRow>,
+  appliedModel: string | null,
+): ResolvedModelName {
+  if (asOf !== null) {
+    const row = registry.find((r) => r.provider === asOf.provider && r.id === asOf.modelId);
+    if (row !== undefined && row.upstreamId === raw) {
+      return { name: asOf.modelId, ambiguous: false };
+    }
+    // 裸 id 一致两态：时间线 modelId 即裸 id（基础模型，===raw）；或变体已从注册表
+    // 删除（无行）且 raw 仍是同 provider 在册模型 id（家族成立）——历史段照实显变体名。
+    if (
+      asOf.modelId === raw ||
+      (row === undefined && registry.some((r) => r.provider === asOf.provider && r.id === raw))
+    ) {
+      return { name: asOf.modelId, ambiguous: false };
+    }
+  }
+  if (appliedModel !== null && appliedModel !== "") {
+    return { name: appliedModel, ambiguous: false };
+  }
+  const upstreamMatches = registry.filter((r) => r.upstreamId === raw);
+  if (upstreamMatches.length === 1) {
+    return { name: upstreamMatches[0]!.id, ambiguous: false };
+  }
+  return { name: raw, ambiguous: upstreamMatches.length > 1 };
+}
+
+/** 单遍时间线解析（docs08 2026-10-22 批次任务 18）：model_change 更新 current，
+ *  assistant 记 as-of appliedAt；返回 entryId → 解析名映射（仅 assistant 条目入映射）。
+ *  纯函数：不修改入参，返回新建 Map。 */
+export function resolveTimelineModels(
+  entries: ReadonlyArray<WireEntry & { id: string }>,
+  registry: ReadonlyArray<ModelVariantRow>,
+  appliedModel: string | null,
+): Map<string, ResolvedModelName> {
+  const out = new Map<string, ResolvedModelName>();
+  let current: { provider: string; modelId: string } | null = null;
+  for (const e of entries) {
+    const change = modelChangeOf(e);
+    if (change !== null) {
+      current = change;
+      continue;
+    }
+    const msg = e.message as WireMessage | undefined;
+    if (msg === null || typeof msg !== "object" || msg.role !== "assistant") continue;
+    const raw = (msg as { model?: unknown }).model;
+    if (typeof raw !== "string" || raw === "") continue;
+    out.set(e.id, resolveVariantName(raw, current, registry, appliedModel));
+  }
+  return out;
+}
+
 /** items 数组判别联合：entry=定格条目气泡；streaming=流式气泡；
  *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生）；
  *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
@@ -74,7 +166,15 @@ export function loopGuardKindOf(customType: unknown): LoopGuardKind | null {
  *  loopGuardGroup=相邻同型 loop-guard 条目聚合组（docs08 2026-10-22 批次任务 2）；
  *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生） */
 export type ChatListItem =
-  | { key: string; kind: "entry"; entryId: string; interrupted: boolean }
+  | {
+      key: string;
+      kind: "entry";
+      entryId: string;
+      interrupted: boolean;
+      /** 变体名解析结果（任务 18）：assistant 条目携 resolved 名（null = 未解析/
+       *  无模型字段，渲染层回落裸 message.model） */
+      model: ResolvedModelName | null;
+    }
   | { key: string; kind: "streaming" }
   | { key: string; kind: "memoryMarker"; marker: MemoryMarker }
   | { key: string; kind: "customMessage"; entryId: string }
@@ -132,15 +232,26 @@ export function shouldShowStickyUser(
 
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
  *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
- *  interrupted 标记挂最后一个 assistant 条目。 */
+ *  interrupted 标记挂最后一个 assistant 条目。
+ *  变体名解析（任务 18）：opts.modelRegistry 传入时单遍时间线解析，entry 项携 model；
+ *  不传（旧调用方/单测）恒 null，渲染层回落裸 message.model。 */
 export function buildMessageItems(
   entries: ReadonlyArray<WireEntry & { id: string }>,
-  opts: { hasStreamingMessage: boolean; interrupted: boolean },
+  opts: {
+    hasStreamingMessage: boolean;
+    interrupted: boolean;
+    modelRegistry?: ReadonlyArray<ModelVariantRow>;
+    appliedModel?: string | null;
+  },
 ): ChatListItem[] {
   let lastAssistantId: string | null = null;
   for (const e of entries) {
     if (messageOf(e)?.role === "assistant") lastAssistantId = e.id;
   }
+  const modelNames =
+    opts.modelRegistry !== undefined
+      ? resolveTimelineModels(entries, opts.modelRegistry, opts.appliedModel ?? null)
+      : null;
   const list: ChatListItem[] = [];
   for (const e of entries) {
     // custom_message 分支（docs08-r6 任务 10 ③）：仅 display=true 入列渲染占位行
@@ -185,6 +296,7 @@ export function buildMessageItems(
       kind: "entry",
       entryId: e.id,
       interrupted: opts.interrupted && e.id === lastAssistantId,
+      model: modelNames?.get(e.id) ?? null,
     });
   }
     if (opts.hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });
