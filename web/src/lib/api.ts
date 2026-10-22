@@ -723,10 +723,13 @@ export interface FsBrowseResponse {
   error?: string;
 }
 
-/** 标签定义条目（GET /api/tags；name 必填，sort 升序同 sort 按 name 码元序） */
+/** 标签定义条目（GET /api/tags；name 必填，sort 升序同 sort 按 name 码元序）。
+ * color/display 为 todo 20 v2 可选字段（缺省 = hash 自动取色 / 跟随全局展示模式） */
 export interface TagDefinition {
   name: string;
   sort: number;
+  color?: string;
+  display?: "text" | "grid";
 }
 
 /** 标签挂载引用（scope 取 "global"|"project"；挂载与定义解耦，孤儿如实返回） */

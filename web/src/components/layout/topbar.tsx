@@ -13,7 +13,7 @@ import { api, ApiError } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels, openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
+import { THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
@@ -25,7 +25,7 @@ import {
   recentTop,
   type ProjectSortMode,
 } from "@/components/session-list/global-list-data";
-import { definedTagKeys } from "@/components/session-list/tag-data";
+import { definedTagKeys, type TagDefs, type TagDisplayMode } from "@/components/session-list/tag-data";
 import { TagBadges } from "@/components/session-list/tag-badge";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
@@ -483,7 +483,10 @@ export function SessionSwitcherSheet({
 }) {
   const byProject = useSessionsStore((s) => s.byProject);
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
-  const [definedKeys, setDefinedKeys] = useState<Set<string> | null>(null);
+  // 两源定义集（todo 20 v2：色源与 display 覆盖判定需完整定义，非仅键集）；
+  // definedKeys 仍由定义集派生（孤儿判定基准不变）
+  const [tagDefs, setTagDefs] = useState<TagDefs | null>(null);
+  const definedKeys = useMemo(() => (tagDefs ? definedTagKeys(tagDefs) : null), [tagDefs]);
   const t = useT();
 
   // 打开期间加载两源标签定义键集（孤儿判定基准）；卸载/关开竞态用 alive 守卫，
@@ -503,9 +506,9 @@ export function SessionSwitcherSheet({
               .catch(() => [] as TagDefinition[]),
           ),
         );
-        if (alive) setDefinedKeys(definedTagKeys({ global: globalDefs.global, project: projectLists.flat() }));
+        if (alive) setTagDefs({ global: globalDefs.global, project: projectLists.flat() });
       } catch {
-        if (alive) setDefinedKeys(null);
+        if (alive) setTagDefs(null);
       }
     })();
     return () => {
@@ -566,7 +569,7 @@ export function SessionSwitcherSheet({
                 <span className="min-w-0 truncate text-base font-medium leading-snug" title={s.title}>
                   {s.title}
                 </span>
-                <TagBadges session={s} definedKeys={definedKeys} />
+                <TagBadges session={s} definedKeys={definedKeys} defs={tagDefs} />
               </span>
               <span
                 className="block w-full min-w-0 truncate text-xs leading-snug text-muted-foreground"
@@ -648,6 +651,65 @@ function SidebarSortSection() {
         <p className="text-xs text-muted-foreground">
           {t("login.topbar.sortNote")}
         </p>
+      </div>
+    </div>
+  );
+}
+
+/** 设置面板"标签"分区（docs08-r7 任务 20）：标签展示模式二档单选（文字/色格）。
+ * 档位存 meta_kv tags.displayMode（走既有 PUT /api/settings，跨设备一致，不落
+ * localStorage）；改档即存即生效（TagBadges 从 ui store 读档渲染，行级标签 display
+ * 覆盖之上才是全局档；筛选/选择/管理面永远文字+色点不受影响）。导出供单测。 */
+const TAG_DISPLAY_OPTIONS: ReadonlyArray<{ value: TagDisplayMode; labelKey: MessageKey }> = [
+  { value: "text", labelKey: "login.topbar.tagDisplayText" },
+  { value: "grid", labelKey: "login.topbar.tagDisplayGrid" },
+];
+
+export function TagDisplaySection() {
+  const tagDisplayMode = useUiStore((s) => s.tagDisplayMode);
+  const [saving, setSaving] = useState(false);
+
+  const t = useT();
+  const changeMode = async (mode: TagDisplayMode) => {
+    if (mode === tagDisplayMode || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [TAG_DISPLAY_MODE_KV]: mode });
+      useUiStore.getState().setTagDisplayMode(mode);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.tagDisplaySaveFailed"), "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">{t("login.topbar.tagsHeading")}</p>
+        <div role="radiogroup" aria-label={t("login.topbar.tagDisplayMode")} data-testid="tag-display-mode-group" className="space-y-1">
+          {TAG_DISPLAY_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7"
+              data-testid={`tag-display-mode-option-${opt.value}`}
+            >
+              <input
+                type="radio"
+                name="tag-display-mode"
+                value={opt.value}
+                checked={tagDisplayMode === opt.value}
+                disabled={saving}
+                onChange={() => void changeMode(opt.value)}
+                className="size-4 accent-primary"
+              />
+              {t(opt.labelKey)}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.tagDisplayNote")}</p>
       </div>
     </div>
   );
@@ -832,6 +894,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <ProjectPermissionSection />
       <ProjectManagementSection />
       <SidebarSortSection />
+      <TagDisplaySection />
       <ConversationSection />
       <LanguageSection />
     </>

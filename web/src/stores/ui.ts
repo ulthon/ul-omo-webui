@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import type { ModelInfo, ProjectMeta } from "@/lib/api";
 import type { ProjectSortMode } from "@/components/session-list/global-list-data";
+import type { TagDisplayMode } from "@/components/session-list/tag-data";
 
 export type ConnectionStatus = "online" | "reconnecting";
 
@@ -22,6 +23,15 @@ export interface ExternalLinks {
  * （PUT /api/settings 只收字符串），缺省 false；bootstrap 读 GET /api/settings 填充，
  * 设置弹层"对话"分区改档即 PUT，跨设备一致不落 localStorage。 */
 export const THINKING_EXPANDED_KV = "chat.thinkingDefaultExpanded";
+
+/** 标签全局展示模式（todo 20 v2）：meta_kv 键，"text"|"grid" 字符串存储，缺省 text
+ * （文字徽标，历史形态）；行级标签 display 覆盖之上才是全局档（rowTagDisplayMode）。 */
+export const TAG_DISPLAY_MODE_KV = "tags.displayMode";
+
+/** 仅 "grid" 视为色格；键缺失/其他任何值回退 text（缺省文字，与历史行为一致） */
+export function parseTagDisplayMode(raw: string | null | undefined): TagDisplayMode {
+  return raw === "grid" ? "grid" : "text";
+}
 
 /** 仅精确 "true" 视为开启；键缺失/空串/其他任何值回退 false（缺省折叠，与历史行为一致） */
 export function parseThinkingExpanded(raw: string | null | undefined): boolean {
@@ -67,6 +77,9 @@ interface UiState {
   /** 思考块默认展开（docs08-r5 任务 13）：meta_kv chat.thinkingDefaultExpanded 持久
    * （缺省 false）；ThinkingBlock 挂载时读快照，改设置不影响已挂载块（瞬态语义）。 */
   thinkingDefaultExpanded: boolean;
+  /** 标签全局展示模式（todo 20 v2）：meta_kv tags.displayMode 持久（缺省 text）；
+   * 行级渲染面（侧栏行/切换 sheet）消费，筛选/选择/管理面永远文字+色点不读此档。 */
+  tagDisplayMode: TagDisplayMode;
   toast: Toast | null;
 
   setConnection(status: ConnectionStatus): void;
@@ -86,6 +99,7 @@ interface UiState {
   setProjectSort(sort: ProjectSortMode): void;
   setProjectOrder(order: string[]): void;
   setThinkingDefaultExpanded(expanded: boolean): void;
+  setTagDisplayMode(mode: TagDisplayMode): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
 }
@@ -109,6 +123,7 @@ export const useUiStore = create<UiState>()((set) => ({
   projectSort: "activity",
   projectOrder: [],
   thinkingDefaultExpanded: false,
+  tagDisplayMode: "text",
   toast: null,
 
   setConnection: (status) => set({ connection: status }),
@@ -127,6 +142,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setProjectSort: (sort) => set({ projectSort: sort }),
   setProjectOrder: (order) => set({ projectOrder: order }),
   setThinkingDefaultExpanded: (thinkingDefaultExpanded) => set({ thinkingDefaultExpanded }),
+  setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;

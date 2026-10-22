@@ -128,6 +128,7 @@ export const sessionList = {
     orphanTitle: "Tag \"{name}\" definition deleted; click to clean up",
     title: "Tag: {name}",
     more: { one: "1 more tag", other: "{n} more tags" },
+    gridTitle: "Tags: {names}",
   },
   // tag-manage-dialog.tsx 标签管理弹层
   tagManage: {
@@ -147,6 +148,12 @@ export const sessionList = {
     newProjectPlaceholder: "New project tag",
     newGlobalPlaceholder: "New global tag",
     add: "Add",
+    takeColor: "Pick color for {name}",
+    autoColor: "Reset {name} to automatic color",
+    displayLabel: "Display mode for {name}",
+    displayFollow: "Auto",
+    displayText: "Text",
+    displayGrid: "Grid",
     title: "Manage tags",
     description:
       "Renaming or deleting a definition does not affect existing mounts — old tags on sessions will show as stale (grayed out) and can be cleaned up by clicking.",

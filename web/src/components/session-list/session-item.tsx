@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { TagBadges } from "./tag-badge";
+import type { TagDefs } from "./tag-data";
 
 /** 紧凑相对时间（docs08-r5 任务 11 对标 OC：数字+字母不汉化——汉字占宽大）：<60s → Ns；
  *  <60m → Nm；<24h → Nh；<30d → Nd；≥30d → M/D（跨年 YY/M/D）。未来时间（时钟偏移）
@@ -134,6 +135,8 @@ export interface SessionItemProps {
   onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem, anchor?: HTMLElement) => void;
   /** 两源定义键集（todo 11 徽标孤儿判定；null = 定义未就绪不渲染徽标） */
   definedKeys?: Set<string> | null;
+  /** 两源定义集（todo 20 v2 色源与 display 覆盖判定；null = 定义未就绪视为无覆盖） */
+  defs?: TagDefs | null;
   /** 选中行为覆盖（todo 10 跨项目统一 handler）：缺省仅 select + 收抽屉；
    * 全局视图下由 session-list 传入共享 handler（跨项目轻量切换 currentProject + 应用偏好） */
   onSelect?: (session: SessionListItem) => void;
@@ -145,7 +148,7 @@ export interface SessionItemProps {
   onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, forkIndexes, projectLabel, knownChildren, expandable, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys }: SessionItemProps) {
+export function SessionItem({ session, forkIndexes, projectLabel, knownChildren, expandable, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys, defs }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -323,7 +326,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             {forkIndex ? `${session.title} (fork #${forkIndex})` : session.title}
           </span>
           <SourceBadge session={session} />
-          <TagBadges session={session} definedKeys={definedKeys ?? null} />
+          <TagBadges session={session} definedKeys={definedKeys ?? null} defs={defs ?? null} />
           {session.archivedAt && (
             <span className="shrink-0 rounded bg-muted px-1 py-px text-[11px] leading-none text-muted-foreground">
               {t("sessionList.item.archivedBadge")}
@@ -437,6 +440,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
                 checked={checked}
                 onToggleCheck={onToggleCheck}
                 definedKeys={definedKeys}
+                defs={defs}
               />
             ))
           )}

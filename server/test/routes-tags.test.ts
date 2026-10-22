@@ -4,9 +4,9 @@
 // 读写与 meta sessionTag 行为已由 config-store.test.ts / meta-notes-tags.test.ts
 // 锁定，此处不重复。全部 mkdtemp 隔离，绝不触碰真实配置与库。
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Hono } from "hono";
 import type {
   EngineMessagesPage,
@@ -476,5 +476,104 @@ describe("PUT /api/sessions/:id/tags", () => {
     expect((await badScope.json()).error.code).toBe("invalid_tags");
     const emptyName = await putJson(app, "/api/sessions/s1/tags", { tags: [{ scope: "global", name: "" }] });
     expect(emptyName.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------- 标签 v2：color/display（todo 20）
+
+describe("PUT /api/tags v2 color/display", () => {
+  test("合法 color/display 整替落盘，GET 回读一致且 tags.json 首写即 version 2", async () => {
+    const { app, tagsPath } = setup();
+    const res = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [
+        { name: "自定义色", sort: 1, color: "#334455", display: "text" },
+        { name: "半覆盖", sort: 2, display: "grid" },
+        { name: "纯自动", sort: 3 },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const echoed = (await res.json()).tags;
+    expect(echoed).toEqual([
+      { name: "自定义色", sort: 1, color: "#334455", display: "text" },
+      { name: "半覆盖", sort: 2, display: "grid" },
+      { name: "纯自动", sort: 3 },
+    ]);
+    const readBack = await (await app.request("/api/tags")).json();
+    expect(readBack.global).toEqual(echoed);
+    const raw = JSON.parse(readFileSync(tagsPath, "utf8")) as { version: number };
+    expect(raw.version).toBe(2);
+  });
+
+  test("非法 color 400 invalid_tags（格式错/非字符串/八位 hex）", async () => {
+    const { app } = setup();
+    for (const color of ["red", "334455", "#3344", "#33445599", 42, null]) {
+      const res = await putJson(app, "/api/tags", {
+        scope: "global",
+        tags: [{ name: "x", sort: 1, color }],
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe("invalid_tags");
+    }
+  });
+
+  test("非法 display 400 invalid_tags（非 text/grid 值）", async () => {
+    const { app } = setup();
+    const res = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [{ name: "x", sort: 1, display: "dot" }],
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("invalid_tags");
+  });
+
+  test("大写 hex 合法（#RRGGBB 大小写不敏感）", async () => {
+    const { app } = setup();
+    const res = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [{ name: "大写", sort: 1, color: "#A1B2C3" }],
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).tags).toEqual([{ name: "大写", sort: 1, color: "#A1B2C3" }]);
+  });
+
+  test("v1 文件读兼容：旧文件 PUT 后升 version 2 且 v2 字段保留（读后存不丢色）", async () => {
+    const { app, tagsPath } = setup();
+    mkdirSync(dirname(tagsPath), { recursive: true });
+    writeFileSync(
+      tagsPath,
+      JSON.stringify({ version: 1, tags: [{ name: "旧标签", sort: 1 }] }),
+    );
+    const res = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [
+        { name: "旧标签", sort: 1 },
+        { name: "新色", sort: 2, color: "#112233", display: "grid" },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const raw = JSON.parse(readFileSync(tagsPath, "utf8")) as {
+      version: number;
+      tags: Array<{ name: string; color?: string; display?: string }>;
+    };
+    expect(raw.version).toBe(2);
+    expect(raw.tags).toEqual([
+      { name: "旧标签", sort: 1 },
+      { name: "新色", sort: 2, color: "#112233", display: "grid" },
+    ]);
+  });
+
+  test("项目 scope：color/display 整替写项目文件且回读一致（read-modify-write 不剥字段）", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const res = await putJson(app, "/api/tags", {
+      scope: "project",
+      project: projectDir,
+      tags: [{ name: "项目色", sort: 1, color: "#aabbcc", display: "text" }],
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).tags).toEqual([{ name: "项目色", sort: 1, color: "#aabbcc", display: "text" }]);
+    const readBack = await (await app.request(`/api/tags?project=${encodeURIComponent(projectDir)}`)).json();
+    expect(readBack.project).toEqual([{ name: "项目色", sort: 1, color: "#aabbcc", display: "text" }]);
   });
 });

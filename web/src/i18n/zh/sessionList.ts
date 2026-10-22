@@ -125,6 +125,7 @@ export const sessionList = {
     orphanTitle: "标签「{name}」定义已删除，点击清理",
     title: "标签：{name}",
     more: { one: "还有 {n} 个标签", other: "还有 {n} 个标签" },
+    gridTitle: "标签：{names}",
   },
   // tag-manage-dialog.tsx 标签管理弹层（上移/下移等 aria 带名字插值）
   tagManage: {
@@ -144,6 +145,12 @@ export const sessionList = {
     newProjectPlaceholder: "新增项目标签",
     newGlobalPlaceholder: "新增全局标签",
     add: "添加",
+    takeColor: "取色 {name}",
+    autoColor: "恢复自动配色 {name}",
+    displayLabel: "展示模式 {name}",
+    displayFollow: "跟随",
+    displayText: "文字",
+    displayGrid: "色格",
     title: "管理标签",
     description: "重命名/删除定义不影响已有挂载记录——会话上的旧标签将显示为失效标签（灰显），可点击清理。",
   },

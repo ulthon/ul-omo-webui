@@ -4,7 +4,7 @@
 // 不自动迁移）；删除 = 定义删除（挂载成孤儿，列表灰显可清理）；上移下移 = 相邻交换后
 // sort 重排整替。入口显式传入 scope，不再依赖"当前项目"推断。
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { TagDefinition } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
@@ -17,7 +17,12 @@ import {
   removeTagEntry,
   renameTagEntries,
   reorderTagEntries,
+  resetTagColor,
+  setTagColor,
+  setTagDisplay,
+  tagColor,
   type TagDefs,
+  type TagDisplayMode,
 } from "./tag-data";
 
 /** 管理弹框的域：全局标签集，或指定项目的项目标签集（projectPath 必由入口显式给出） */
@@ -166,6 +171,56 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
                   </>
                 ) : (
                   <>
+                    {/* 行前取色 swatch（todo 20 b）：原生 color picker，开开预填当前有效色
+                        （显式色 ?? hash 自动色）；保存走整替 PUT，失败行内错误不消失 */}
+                    <label
+                      className="relative size-4 shrink-0 cursor-pointer rounded-sm border border-border/60"
+                      style={{ backgroundColor: tagColor(d) }}
+                      title={t("sessionList.tagManage.takeColor", { name: d.name })}
+                      data-testid={`tag-color-swatch-${d.name}`}
+                    >
+                      <input
+                        type="color"
+                        value={tagColor(d)}
+                        disabled={busy}
+                        onChange={(e) => void putScope(setTagColor(entriesOf(), d.name, e.target.value))}
+                        className="absolute inset-0 size-full cursor-pointer opacity-0"
+                        aria-label={t("sessionList.tagManage.takeColor", { name: d.name })}
+                      />
+                    </label>
+                    {/* 「自动」重置：剃显式色回 hash 自动色（无显式色时禁用） */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="size-11 shrink-0 lg:size-7"
+                      disabled={busy || d.color === undefined}
+                      onClick={() => void putScope(resetTagColor(entriesOf(), d.name))}
+                      aria-label={t("sessionList.tagManage.autoColor", { name: d.name })}
+                      title={t("sessionList.tagManage.autoColor", { name: d.name })}
+                      data-testid={`tag-color-auto-${d.name}`}
+                    >
+                      <RotateCcw className="size-3" />
+                    </Button>
+                    {/* 展示覆盖三态（todo 20 b/e）：""=跟随全局 / text=强制文字 / grid=强制色格；
+                        行级规则见 rowTagDisplayMode（text 覆盖优先进整行回退文字） */}
+                    <select
+                      value={d.display ?? ""}
+                      disabled={busy}
+                      onChange={(e) =>
+                        void putScope(
+                          setTagDisplay(entriesOf(), d.name, e.target.value === "" ? undefined : (e.target.value as TagDisplayMode)),
+                        )
+                      }
+                      aria-label={t("sessionList.tagManage.displayLabel", { name: d.name })}
+                      title={t("sessionList.tagManage.displayLabel", { name: d.name })}
+                      data-testid={`tag-display-select-${d.name}`}
+                      className="h-6 w-16 shrink-0 rounded border bg-transparent px-0.5 text-[11px] text-foreground"
+                    >
+                      <option value="">{t("sessionList.tagManage.displayFollow")}</option>
+                      <option value="text">{t("sessionList.tagManage.displayText")}</option>
+                      <option value="grid">{t("sessionList.tagManage.displayGrid")}</option>
+                    </select>
                     <span className="min-w-0 flex-1 truncate px-1 text-sm" data-testid="tag-manage-name">
                       {d.name}
                     </span>

@@ -52,7 +52,7 @@ import { SessionItem, buildForkIndexes } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagDropdown } from "./tag-dropdown";
 import { TagManageDialog, type TagManageScope } from "./tag-manage-dialog";
-import { definedTagKeys, dedupeTagDefs, mergeTagOptions, type TagDefs } from "./tag-data";
+import { definedTagKeys, dedupeTagDefs, mergeTagOptions, tagColorMap, type TagDefs } from "./tag-data";
 
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -439,6 +439,8 @@ export function SessionList() {
 
   const definedKeys = useMemo(() => (tagDefs ? definedTagKeys(tagDefs) : null), [tagDefs]);
   const tagOptions = useMemo(() => (tagDefs ? mergeTagOptions(tagDefs) : []), [tagDefs]);
+  /** 筛选面（下拉选项+chips）名称→有效色（todo 20：显式色 ?? hash，永远文字+色点） */
+  const filterTagColors = useMemo(() => (tagDefs ? tagColorMap(tagDefs) : new Map<string, string>()), [tagDefs]);
 
   /** 过滤 chips 勾选切换（多选 OR 语义）：写 store 后整体重取（refreshSessions 透传 tags） */
   const toggleTagFilter = (name: string) => {
@@ -676,6 +678,12 @@ export function SessionList() {
                       }}
                       data-testid={`tag-filter-option-${name}`}
                     >
+                      {/* 筛选面永远文字+色点（todo 20 (e)：不做颜色模式，色点 = tagColor 有效色） */}
+                      <span
+                        aria-hidden
+                        className="mr-1 inline size-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: filterTagColors.get(name) }}
+                      />
                       {name}
                     </DropdownMenuCheckboxItem>
                   ))
@@ -701,6 +709,11 @@ export function SessionList() {
                 data-tag-chip={name}
                 onClick={() => toggleTagFilter(name)}
               >
+                <span
+                  aria-hidden
+                  className="inline size-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: filterTagColors.get(name) }}
+                />
                 {name}
                 <X className="size-2.5" />
               </button>
@@ -780,6 +793,7 @@ export function SessionList() {
                 onSelect={selectSession}
                 onDialog={handleItemDialog}
                 definedKeys={definedKeys}
+                defs={tagDefs}
                 onChanged={onChanged}
                 {...itemBatchProps(s)}
               />
@@ -812,6 +826,7 @@ export function SessionList() {
                       onSelect={selectSession}
                       onDialog={handleItemDialog}
                       definedKeys={definedKeys}
+                      defs={tagDefs}
                       onChanged={onChanged}
                       {...itemBatchProps(s)}
                     />
@@ -985,6 +1000,7 @@ export function SessionList() {
                             onSelect={selectSession}
                             onDialog={handleItemDialog}
                             definedKeys={definedKeys}
+                            defs={tagDefs}
                             onChanged={onChanged}
                             {...itemBatchProps(s)}
                           />

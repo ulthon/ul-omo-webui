@@ -140,6 +140,13 @@ export const login = {
     chatHeading: "对话",
     thinkingExpanded: "思考块默认展开",
     thinkingNote: "开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。",
+    // 标签分区（任务 20：展示模式二档，行级覆盖之上才是全局档）
+    tagsHeading: "标签",
+    tagDisplayMode: "标签展示模式",
+    tagDisplayText: "文字徽标",
+    tagDisplayGrid: "色格",
+    tagDisplayNote: "色格模式下会话行以小色方格显示标签配色；含强制文字标签的行回退文字徽标。筛选、打标签与管理弹层永远显示文字加色点。",
+    tagDisplaySaveFailed: "保存标签设置失败",
     // 语言分区（标签用各语言自我称谓，两种语言档下同值）
     langSaveFailed: "保存语言设置失败",
     languageHeading: "语言",

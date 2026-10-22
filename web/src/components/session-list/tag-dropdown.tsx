@@ -14,7 +14,7 @@ import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { AnchoredPanel } from "@/components/ui/anchored-panel";
-import { tagKey, nextSessionTags, type TagDefs } from "./tag-data";
+import { tagColorMap, tagKey, nextSessionTags, type TagDefs } from "./tag-data";
 import type { TagManageScope } from "./tag-manage-dialog";
 
 interface TagDropdownProps {
@@ -105,6 +105,8 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
   };
 
   const empty = defs.global.length === 0 && defs.project.length === 0;
+  // 选择面永远文字+色点（todo 20 (e)）：名称→有效色（显式色 ?? hash），跨 scope 同名全局优先
+  const colors = tagColorMap(defs);
 
   const renderGroup = (scope: "global" | "project", label: string) => {
     const entries = scope === "global" ? defs.global : defs.project;
@@ -134,6 +136,12 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
                   >
                     {checked && <Check className="size-3" />}
                   </span>
+                  {/* 文字+色点（todo 20 (e)：选择面不做颜色模式） */}
+                  <span
+                    aria-hidden
+                    className="inline size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: colors.get(d.name) }}
+                  />
                   <span className="min-w-0 flex-1 truncate" title={d.name}>
                     {d.name}
                   </span>

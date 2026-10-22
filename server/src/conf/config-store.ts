@@ -25,9 +25,21 @@ import { selfDir } from "../runtime-paths";
 
 // ---------- 领域类型（camelCase，供 REST 层直接序列化） ----------
 
+/** 标签展示模式（todo 20 v2）：text=文字徽标，grid=色格 A 方格（渲染层语义） */
+export type TagDisplayMode = "text" | "grid";
+
+export const TAG_DISPLAY_MODES: readonly TagDisplayMode[] = ["text", "grid"];
+
+/** 标签自定义色：#rrggbb 六位十六进制（大小写不限；REST 层 400 校验，读取层宽容丢弃） */
+export const TAG_COLOR_RE = /^#[0-9a-f]{6}$/i;
+
 export interface TagEntry {
   name: string;
   sort: number;
+  /** 自定义色（缺省 = 前端按名称 hash 自动取色，hash 色绝不落盘） */
+  color?: string;
+  /** 展示覆盖（缺省 = 跟随全局 tags.displayMode） */
+  display?: TagDisplayMode;
 }
 
 export interface SnippetEntry {
@@ -79,6 +91,10 @@ export interface OpenConfigStoreOptions {
 }
 
 export const CONFIG_SCHEMA_VERSION = 1;
+
+/** tags.json 专用 schema 版本（todo 20 v2：条目新增 color/display 可选字段）。
+ * 读兼容 v1（versionOf 保原文，tagEntry 宽容解析）；首写升 2。 */
+export const TAGS_SCHEMA_VERSION = 2;
 
 export function defaultGlobalDir(): string {
   return process.env.UL_OMO_WEBUI_CONFIG_DIR ?? join(homedir(), ".config", "ul-omo-webui");
@@ -169,9 +185,18 @@ function entriesOf<E>(value: unknown, filePath: string, field: string, item: (ra
 
 function tagEntry(raw: unknown): TagEntry {
   const obj: Record<string, unknown> = isRecord(raw) ? raw : {};
+  // color/display 宽容解析（防 read-modify-write 剥字段的第一刀）：合法值保留透传，
+  // 非法值丢弃（写入口 routes-tags PUT 已 400 挡住，磁盘手改只损失该可选字段）
+  const color = typeof obj.color === "string" && TAG_COLOR_RE.test(obj.color) ? obj.color : undefined;
+  const display =
+    typeof obj.display === "string" && (TAG_DISPLAY_MODES as readonly string[]).includes(obj.display)
+      ? (obj.display as TagDisplayMode)
+      : undefined;
   return {
     name: typeof obj.name === "string" ? obj.name : "",
     sort: typeof obj.sort === "number" && Number.isFinite(obj.sort) ? obj.sort : 0,
+    ...(color !== undefined ? { color } : {}),
+    ...(display !== undefined ? { display } : {}),
   };
 }
 
@@ -379,6 +404,8 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
     writeTags(entries) {
       return tagsLayer.write((existing) => ({
         ...(existing ?? emptyTagsFile()),
+        // 首写（含从 v1 文件整替）即升 v2（todo 20）；读 v1 不拒不迁（宽容解析）
+        version: TAGS_SCHEMA_VERSION,
         tags: sortTags(entries),
       }));
     },

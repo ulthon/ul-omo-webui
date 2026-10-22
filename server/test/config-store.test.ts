@@ -97,7 +97,8 @@ describe("config-store 读写回环", () => {
     expect(raw.endsWith("\n")).toBe(true);
     expect(raw).toBe(JSON.stringify(JSON.parse(raw), null, 2) + "\n");
     const onDisk = JSON.parse(raw) as { version: number; tags: { name: string; sort: number }[] };
-    expect(onDisk.version).toBe(1);
+    // todo 20 v2：writeTags 首写即 version 2（读 v1 兼容，写升级）
+    expect(onDisk.version).toBe(2);
     expect(onDisk.tags.map((t) => t.name)).toEqual(["z-tag", "a-tag", "b-tag"]);
   });
 
@@ -192,6 +193,63 @@ describe("config-store 读写回环", () => {
     expect(cfg.snippets).toEqual([]);
     expect(cfg.preferredModel).toBeNull();
     expect(cfg.permissionPreset).toBeNull();
+  });
+});
+
+describe("config-store 标签 v2 字段（todo 20）", () => {
+  test("writeTags 首写即 version 2（新文件）", async () => {
+    const { globalDir, projectRoot } = freshDirs();
+    const store = openConfigStore({ globalDir, projectRoot });
+    await store.writeTags([{ name: "a", sort: 1 }]);
+    const onDisk = JSON.parse(readFileSync(tagsPath(globalDir), "utf8")) as { version: number };
+    expect(onDisk.version).toBe(2);
+  });
+
+  test("v2 文件读：color/display 保留；非法值宽容丢弃（写入口已 400 挡住）", () => {
+    const { globalDir, projectRoot } = freshDirs();
+    mkdirSync(globalDir, { recursive: true });
+    const store = openConfigStore({ globalDir, projectRoot });
+    externalRewrite(
+      tagsPath(globalDir),
+      JSON.stringify({
+        version: 2,
+        tags: [
+          { name: "全字段", sort: 1, color: "#a1b2c3", display: "grid" },
+          { name: "坏色", sort: 2, color: "red", display: "dot" },
+          { name: "v1旧条目", sort: 3 },
+        ],
+      }),
+    );
+    expect(store.readTags().tags).toEqual([
+      { name: "全字段", sort: 1, color: "#a1b2c3", display: "grid" },
+      { name: "坏色", sort: 2 },
+      { name: "v1旧条目", sort: 3 },
+    ]);
+  });
+
+  test("read-modify-write 不剥字段：v2 tags 文件 patch 无关字段后 color/display 保留", async () => {
+    const { globalDir, projectRoot } = freshDirs();
+    mkdirSync(projectRoot, { recursive: true });
+    const configPath = join(projectRoot, ".ul-omo-webui.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        tags: [{ name: "带色", sort: 1, color: "#123456", display: "text" }],
+        snippets: [],
+        preferredModel: null,
+        permissionPreset: null,
+        preferredThinkingLevel: null,
+      }),
+    );
+    const store = openConfigStore({ globalDir, projectRoot });
+    await store.updateProjectConfig({ preferredModel: "zhipu/glm-4.6" });
+    const onDisk = JSON.parse(readFileSync(configPath, "utf8")) as {
+      tags: Array<{ name: string; color?: string; display?: string }>;
+      preferredModel: string | null;
+    };
+    expect(onDisk.preferredModel).toBe("zhipu/glm-4.6");
+    expect(onDisk.tags).toEqual([{ name: "带色", sort: 1, color: "#123456", display: "text" }]);
   });
 });
 

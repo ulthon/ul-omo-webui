@@ -5,7 +5,14 @@
 // 配置文件损坏按 Scope 决策 10a：显式写与管理端点严格 500（route 包装
 // 默认行为，错误 message 含文件路径），不做静默降级。
 import { Hono, type Context } from "hono";
-import { openConfigStore, type ConfigStore, type TagEntry } from "../conf/config-store";
+import {
+  openConfigStore,
+  TAG_COLOR_RE,
+  TAG_DISPLAY_MODES,
+  type ConfigStore,
+  type TagDisplayMode,
+  type TagEntry,
+} from "../conf/config-store";
 import { ApiError, parseJsonBody, requireParam, route } from "./http";
 import type { ApiDeps } from "./deps";
 import { validateProjectInput } from "./paths";
@@ -22,7 +29,8 @@ function normalizeProjectKey(raw: unknown): string {
   return raw.length > 1 ? raw.replace(/\/+$/, "") : raw;
 }
 
-/** 定义条目边界解析：name 必填非空串，sort 可选有限数字（缺省 0） */
+/** 定义条目边界解析：name 必填非空串，sort 可选有限数字（缺省 0）；
+ * color 可选 #rrggbb（非法 400，todo 20）；display 可选 text|grid（非法 400） */
 function parseTagEntries(raw: unknown): TagEntry[] {
   if (!Array.isArray(raw)) {
     throw new ApiError(400, "invalid_tags", "tags 必须是条目数组");
@@ -37,7 +45,23 @@ function parseTagEntries(raw: unknown): TagEntry[] {
     if (sort !== undefined && (typeof sort !== "number" || !Number.isFinite(sort))) {
       throw new ApiError(400, "invalid_tags", "条目 sort 必须是数字");
     }
-    return { name, sort: sort ?? 0 };
+    const color = entry.color;
+    if (color !== undefined && (typeof color !== "string" || !TAG_COLOR_RE.test(color))) {
+      throw new ApiError(400, "invalid_tags", "条目 color 必须是 #rrggbb 六位十六进制色");
+    }
+    const display = entry.display;
+    if (
+      display !== undefined &&
+      (typeof display !== "string" || !(TAG_DISPLAY_MODES as readonly string[]).includes(display))
+    ) {
+      throw new ApiError(400, "invalid_tags", "条目 display 仅支持 text|grid");
+    }
+    return {
+      name,
+      sort: sort ?? 0,
+      ...(color !== undefined ? { color } : {}),
+      ...(display !== undefined ? { display: display as TagDisplayMode } : {}),
+    };
   });
 }
 
