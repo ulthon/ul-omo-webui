@@ -159,7 +159,13 @@ export function StatusBar({ sessionId }: { sessionId: string }) {
                 output: formatTokens(tokens.output),
                 cache: formatTokens(tokens.cacheRead + tokens.cacheWrite),
               })}
-              {stats.context ? t("chat.statusBar.context", { n: Math.round(stats.context.percent) }) : ""}
+              {stats.context
+                ? t("chat.statusBar.context", {
+                    n: Math.round(stats.context.percent),
+                    used: formatTokens(stats.context.tokens),
+                    limit: formatTokens(stats.context.contextWindow),
+                  })
+                : ""}
             </span>
           </span>
         ) : (

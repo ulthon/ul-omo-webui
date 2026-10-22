@@ -48,8 +48,8 @@ export const login = {
   // —— 上下文水位环（components/layout/context-ring.tsx）——
   contextRing: {
     ringLabel: "Context usage {pct}%, open for details",
-    ringTitle: "Context {pct}%",
-    ringTitleWithModel: "Context {pct}% · {model}",
+    ringTitle: "Context {pct}% · {tokens}",
+    ringTitleWithModel: "Context {pct}% · {tokens} · {model}",
     running: "Running",
     idle: "Idle",
     usage: "Context usage",

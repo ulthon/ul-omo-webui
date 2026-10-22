@@ -90,6 +90,8 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
   const tokens = stats.tokens;
   // 分母校准（任务 8 ⑥）：模型侧窗口与引擎分母不一致时以模型侧重算
   const pct = calibrateContextPercent(ctx, appliedModelWindow);
+  // 水位附已用/上限 token（docs08 r7 任务 5）：tooltip 与明细行共用
+  const ctxTokensText = `${formatTokens(ctx.tokens)}/${formatTokens(ctx.contextWindow)}`;
 
   return (
     <Popover>
@@ -100,8 +102,12 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
           aria-label={t("login.contextRing.ringLabel", { pct: Math.round(pct) })}
           title={
             appliedModel
-              ? t("login.contextRing.ringTitleWithModel", { pct: Math.round(pct), model: shortModelName(appliedModel) })
-              : t("login.contextRing.ringTitle", { pct: Math.round(pct) })
+              ? t("login.contextRing.ringTitleWithModel", {
+                  pct: Math.round(pct),
+                  tokens: ctxTokensText,
+                  model: shortModelName(appliedModel),
+                })
+              : t("login.contextRing.ringTitle", { pct: Math.round(pct), tokens: ctxTokensText })
           }
           className="relative flex size-9 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
@@ -158,7 +164,11 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
             testid="context-ring-cache"
           />
           <DetailRow label={t("login.contextRing.cost")} value={formatCost(stats.cost)} testid="context-ring-cost" />
-          <DetailRow label={t("login.contextRing.context")} value={`${Math.round(pct)}%`} testid="context-ring-ctx" />
+          <DetailRow
+            label={t("login.contextRing.context")}
+            value={`${Math.round(pct)}% · ${ctxTokensText}`}
+            testid="context-ring-ctx"
+          />
         </div>
       </PopoverContent>
     </Popover>

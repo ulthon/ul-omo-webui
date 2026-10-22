@@ -124,6 +124,8 @@ describe("格式化", () => {
     expect(formatTokens(999)).toBe("999");
     expect(formatTokens(1000)).toBe("1.0k");
     expect(formatTokens(1234)).toBe("1.2k");
+    expect(formatTokens(999_999)).toBe("1000.0k");
+    expect(formatTokens(1_000_000)).toBe("1.00M");
     expect(formatTokens(1234567)).toBe("1.23M");
   });
 

@@ -1,0 +1,13 @@
+PASS bundle-fresh | index-Bs7Re0LF.js sha256=2cfecaf19f2f91b071f3839934b2624fc018f588f930306d26a9bf97f915f22f
+PASS login | status=200
+PASS session-ready | id=01a1645e-7571-79f8-a3be-7e22d1374394
+PASS mobile-ring-visible | {"pct":"6%","title":"Context 6% · 57.0k/1.00M"}
+PASS mobile-ring-center-percent-only | center=6%
+PASS mobile-ring-title-has-tokens | title=Context 6% · 57.0k/1.00M
+PASS mobile-viewport-390 | innerWidth=390
+PASS mobile-detail-row-format | row=6% · 57.0k/1.00M
+PASS desktop-status-appended | detail=↑40.0k ↓7.0k cache 10.0k · context 6% · 57.0k/1.00M
+PASS failure-ring-hidden | {"ring":false,"detail":"↑40.0k ↓7.0k cache 10.0k"}
+PASS failure-status-no-token-segment | detail=↑40.0k ↓7.0k cache 10.0k
+SUMMARY 11/11
+EXIT=0

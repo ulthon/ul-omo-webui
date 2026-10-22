@@ -50,8 +50,8 @@ export const login = {
   // —— 上下文水位环（components/layout/context-ring.tsx）——
   contextRing: {
     ringLabel: "上下文水位 {pct}%，点开明细",
-    ringTitle: "上下文 {pct}%",
-    ringTitleWithModel: "上下文 {pct}% · {model}",
+    ringTitle: "上下文 {pct}% · {tokens}",
+    ringTitleWithModel: "上下文 {pct}% · {tokens} · {model}",
     running: "运行中",
     idle: "空闲",
     usage: "上下文水位",

@@ -1,0 +1,57 @@
+[
+  {
+    "name": "bundle-fresh",
+    "pass": true,
+    "detail": "index-Bs7Re0LF.js sha256=2cfecaf19f2f91b071f3839934b2624fc018f588f930306d26a9bf97f915f22f"
+  },
+  {
+    "name": "login",
+    "pass": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "session-ready",
+    "pass": true,
+    "detail": "id=01a1645e-7571-79f8-a3be-7e22d1374394"
+  },
+  {
+    "name": "mobile-ring-visible",
+    "pass": true,
+    "detail": "{\"pct\":\"6%\",\"title\":\"Context 6% · 57.0k/1.00M\"}"
+  },
+  {
+    "name": "mobile-ring-center-percent-only",
+    "pass": true,
+    "detail": "center=6%"
+  },
+  {
+    "name": "mobile-ring-title-has-tokens",
+    "pass": true,
+    "detail": "title=Context 6% · 57.0k/1.00M"
+  },
+  {
+    "name": "mobile-viewport-390",
+    "pass": true,
+    "detail": "innerWidth=390"
+  },
+  {
+    "name": "mobile-detail-row-format",
+    "pass": true,
+    "detail": "row=6% · 57.0k/1.00M"
+  },
+  {
+    "name": "desktop-status-appended",
+    "pass": true,
+    "detail": "detail=↑40.0k ↓7.0k cache 10.0k · context 6% · 57.0k/1.00M"
+  },
+  {
+    "name": "failure-ring-hidden",
+    "pass": true,
+    "detail": "{\"ring\":false,\"detail\":\"↑40.0k ↓7.0k cache 10.0k\"}"
+  },
+  {
+    "name": "failure-status-no-token-segment",
+    "pass": true,
+    "detail": "detail=↑40.0k ↓7.0k cache 10.0k"
+  }
+]

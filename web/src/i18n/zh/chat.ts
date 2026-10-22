@@ -24,7 +24,7 @@ export const chat = {
     running: "运行中",
     idle: "空闲",
     detail: "↑{input} ↓{output} 缓存{cache}",
-    context: " · 上下文 {n}%",
+    context: " · 上下文 {n}% · {used}/{limit}",
     usageFailed: "用量不可用",
     usageLoading: "用量统计中…",
   },

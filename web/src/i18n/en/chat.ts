@@ -23,7 +23,7 @@ export const chat = {
     running: "Running",
     idle: "Idle",
     detail: "↑{input} ↓{output} cache {cache}",
-    context: " · context {n}%",
+    context: " · context {n}% · {used}/{limit}",
     usageFailed: "Usage unavailable",
     usageLoading: "Computing usage…",
   },
