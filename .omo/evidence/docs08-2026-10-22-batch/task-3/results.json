@@ -1,0 +1,103 @@
+{
+  "results": [
+    {
+      "name": "D0 create session",
+      "ok": true,
+      "detail": "status=201 id=01a1641c-1bb8-7647-96c8-b4e9e32cd40b"
+    },
+    {
+      "name": "D1 desktop placeholder",
+      "ok": true,
+      "detail": "\"@ 引用文件 / 斜杠命令 / # 代码片段\""
+    },
+    {
+      "name": "D2a chip appears checked (zero click)",
+      "ok": true,
+      "detail": "{\"chip\":\"paste-1792680932936-s7bvp3oa.txt\"}"
+    },
+    {
+      "name": "D2b no paste-offer-bar",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D2c chip settles ready + POST 201",
+      "ok": true,
+      "detail": "name=paste-1792680932936-s7bvp3oa.txt posts=1"
+    },
+    {
+      "name": "D3a uncheck inserts text + chip gone",
+      "ok": true,
+      "detail": "len=undefined"
+    },
+    {
+      "name": "D3b DELETE fired (uncheck, best-effort)",
+      "ok": true,
+      "detail": "DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680932936-s7bvp3oa.txt"
+    },
+    {
+      "name": "D4 X removes chip + DELETE 200",
+      "ok": true,
+      "detail": "DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680932936-s7bvp3oa.txt"
+    },
+    {
+      "name": "D5 POST 500 fallback inserts text, no chip, toast",
+      "ok": true,
+      "detail": "len=undefined toast=true"
+    },
+    {
+      "name": "D6a 4096 bytes not intercepted (no chip)",
+      "ok": true,
+      "detail": "{\"prevented\":false,\"chip\":false}"
+    },
+    {
+      "name": "D6b 4097 bytes chip appears checked",
+      "ok": true,
+      "detail": "{\"size\":\"paste-1792680938581-sl9fkwmc.txt\"}"
+    },
+    {
+      "name": "D7-pre loading spinner visible during in-flight upload",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "D7a uncheck during in-flight upload: chip gone + text inserted",
+      "ok": true,
+      "detail": "len=undefined"
+    },
+    {
+      "name": "D7b orphan DELETE after settle",
+      "ok": true,
+      "detail": "DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680942826-fab95plv.txt"
+    },
+    {
+      "name": "M0 mobile placeholder short form",
+      "ok": true,
+      "detail": "\"@ 文件 / 命令 / # 片段\""
+    },
+    {
+      "name": "M1 chip appears checked",
+      "ok": true,
+      "detail": "{\"spinning\":false}"
+    },
+    {
+      "name": "M2 uncheck inserts text + DELETE",
+      "ok": true,
+      "detail": "len=undefined delete=true"
+    }
+  ],
+  "shots": [
+    "desktop-0-initial.png",
+    "desktop-1-chip-checked.png",
+    "desktop-2-uncheck-inserted.png",
+    "desktop-3-x-removed.png",
+    "desktop-4-post-500-fallback.png",
+    "boundary-4096-no-chip.png",
+    "boundary-4097-chip.png",
+    "desktop-5-uncheck-inflight.png",
+    "mobile-1-placeholder.png",
+    "mobile-2-chip-checked.png",
+    "mobile-3-uncheck-inserted.png"
+  ],
+  "sessionId": "01a1641c-1bb8-7647-96c8-b4e9e32cd40b"
+}

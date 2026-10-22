@@ -1,0 +1,57 @@
+2026-10-22T14:55:22.645Z omowright loaded
+2026-10-22T14:55:22.682Z launch d 1920x1080
+2026-10-22T14:55:23.578Z browser connected
+2026-10-22T14:55:24.052Z tab created (emulated 1920x1080)
+2026-10-22T14:55:24.361Z login page loaded: http://127.0.0.1:8952/login
+2026-10-22T14:55:24.499Z login api status: 200
+2026-10-22T14:55:24.584Z landed on / : http://127.0.0.1:8952/
+2026-10-22T14:55:25.032Z project register status: 200
+2026-10-22T14:55:30.994Z PASS D0 create session — status=201 id=01a1641c-1bb8-7647-96c8-b4e9e32cd40b
+2026-10-22T14:55:32.438Z session page ready
+2026-10-22T14:55:32.446Z PASS D1 desktop placeholder — "@ 引用文件 / 斜杠命令 / # 代码片段"
+2026-10-22T14:55:32.618Z shot desktop-0-initial.png
+2026-10-22T14:55:34.436Z paste diag: {"dispatched":false,"pasteSeen":1,"errs":[],"chipText":"paste-1792680932936-s7bvp3oa.txt","chipToggleChecked":true,"taLen":0,"toastHit":false,"attNet":[{"url":"pi/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments","status":201}]}
+2026-10-22T14:55:34.436Z paste dispatched (7500B)
+2026-10-22T14:55:34.441Z PASS D2a chip appears checked (zero click) — {"chip":"paste-1792680932936-s7bvp3oa.txt"}
+2026-10-22T14:55:34.447Z PASS D2b no paste-offer-bar
+2026-10-22T14:55:34.452Z PASS D2c chip settles ready + POST 201 — name=paste-1792680932936-s7bvp3oa.txt posts=1
+2026-10-22T14:55:34.629Z shot desktop-1-chip-checked.png
+2026-10-22T14:55:34.659Z unchecked
+2026-10-22T14:55:34.667Z PASS D3a uncheck inserts text + chip gone — len=undefined
+2026-10-22T14:55:34.668Z PASS D3b DELETE fired (uncheck, best-effort) — DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680932936-s7bvp3oa.txt
+2026-10-22T14:55:34.874Z shot desktop-2-uncheck-inserted.png
+2026-10-22T14:55:36.406Z paste diag: {"dispatched":false,"pasteSeen":2,"errs":[],"chipText":"paste-1792680934905-efji2zj0.txt","chipToggleChecked":true,"taLen":0,"toastHit":false,"attNet":[{"url":"pi/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments","status":201},{"url":"hments%2Fcd6e6588ae2985d4%2Fpaste-1792680932936-s7bvp3oa.txt","status":200},{"url":"pi/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments","status":201}]}
+2026-10-22T14:55:36.442Z PASS D4 X removes chip + DELETE 200 — DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680932936-s7bvp3oa.txt
+2026-10-22T14:55:36.653Z shot desktop-3-x-removed.png
+2026-10-22T14:55:36.657Z 500 route armed
+2026-10-22T14:55:38.174Z paste diag: {"dispatched":false,"pasteSeen":3,"errs":[],"chipText":null,"chipToggleChecked":null,"taLen":2500,"toastHit":false,"attNet":[{"url":"pi/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments","status":201},{"url":"hments%2Fcd6e6588ae2985d4%2Fpaste-1792680934905-efji2zj0.txt","status":200},{"url":"pi/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments","status":500}]}
+2026-10-22T14:55:38.186Z PASS D5 POST 500 fallback inserts text, no chip, toast — len=undefined toast=true
+2026-10-22T14:55:38.346Z shot desktop-4-post-500-fallback.png
+2026-10-22T14:55:38.374Z PASS D6a 4096 bytes not intercepted (no chip) — {"prevented":false,"chip":false}
+2026-10-22T14:55:38.568Z shot boundary-4096-no-chip.png
+2026-10-22T14:55:40.088Z PASS D6b 4097 bytes chip appears checked — {"size":"paste-1792680938581-sl9fkwmc.txt"}
+2026-10-22T14:55:40.266Z shot boundary-4097-chip.png
+2026-10-22T14:55:40.308Z delay route armed
+2026-10-22T14:55:41.825Z PASS D7-pre loading spinner visible during in-flight upload
+2026-10-22T14:55:41.839Z unchecked during flight
+2026-10-22T14:55:41.848Z PASS D7a uncheck during in-flight upload: chip gone + text inserted — len=undefined
+2026-10-22T14:55:43.053Z PASS D7b orphan DELETE after settle — DELETE 200 application/json 166B http://127.0.0.1:8952/api/sessions/01a1641c-1bb8-7647-96c8-b4e9e32cd40b/attachments?path=%2Ftmp%2Ft3-qa-data%2Fattachments%2Fcd6e6588ae2985d4%2Fpaste-1792680942826-fab95plv.txt
+2026-10-22T14:55:43.221Z shot desktop-5-uncheck-inflight.png
+2026-10-22T14:55:43.553Z desktop browser closed
+2026-10-22T14:55:43.585Z launch m 390x844
+2026-10-22T14:55:44.300Z browser connected
+2026-10-22T14:55:44.653Z tab created (emulated 390x844)
+2026-10-22T14:55:44.938Z login page loaded: http://127.0.0.1:8952/login
+2026-10-22T14:55:45.096Z login api status: 200
+2026-10-22T14:55:45.182Z landed on / : http://127.0.0.1:8952/
+2026-10-22T14:55:45.885Z mobile innerWidth: 390
+2026-10-22T14:55:47.753Z PASS M0 mobile placeholder short form — "@ 文件 / 命令 / # 片段"
+2026-10-22T14:55:48.016Z shot mobile-1-placeholder.png
+2026-10-22T14:55:49.843Z PASS M1 chip appears checked — {"spinning":false}
+2026-10-22T14:55:50.069Z shot mobile-2-chip-checked.png
+2026-10-22T14:55:50.103Z mobile unchecked
+2026-10-22T14:55:50.113Z mobile M2 diag: {"ins":{"chip":false,"taLen":2500,"bytes":7500,"errs":[]},"last":{"chip":false,"taLen":2500,"bytes":7500,"errs":[]}}
+2026-10-22T14:55:50.113Z PASS M2 uncheck inserts text + DELETE — len=undefined delete=true
+2026-10-22T14:55:50.456Z shot mobile-3-uncheck-inserted.png
+2026-10-22T14:55:50.820Z mobile browser closed
+2026-10-22T14:55:50.821Z == SUMMARY: 17/17 PASS ==

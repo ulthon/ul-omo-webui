@@ -124,9 +124,9 @@ export function historyPreview(item: InputHistoryItem, max = 40): string {
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
 
-// ---------- 大段粘贴转附件（B10 docs08-r3 任务 17） ----------
+// ---------- 大段粘贴转附件（B10 docs08-r3 任务 17；docs08-r7 任务 3 三态改造） ----------
 
-/** 粘贴文本超过该 UTF-8 字节数即弹选择条（原样插入 / 作为附件发送 / 忽略） */
+/** 粘贴文本超过该 UTF-8 字节数即零点击转附件 chip（默认勾选=作为附件发送） */
 export const PASTE_ATTACHMENT_THRESHOLD = 4096;
 
 /** UTF-8 字节数：阈值判定按字节口径（与服务端 1MB 上限、CJK 粘贴场景对齐） */
@@ -150,6 +150,64 @@ export function appendAttachmentLines(text: string, attachments: ReadonlyArray<{
   if (attachments.length === 0) return text;
   const lines = attachments.map((a) => `[大段文本已保存为附件：${a.path}（按需读取）]`);
   return text ? `${text}\n${lines.join("\n")}` : lines.join("\n");
+}
+
+// ---------- 粘贴 chip 三态（docs08-r7 任务 3：勾=附件保留 / 取消勾选=文本立即插入 / 叉=删除） ----------
+
+/** chip 阶段：uploading=POST 在途（加载态）；ready=已落服务端临时区（可拼路径行、可 DELETE） */
+export type PasteChipStage = "uploading" | "ready";
+
+/** 大段文本粘贴 chip：文件落服务端临时区后 prompt 只带路径行；content 常驻
+ *（取消勾选回插输入框，内容永不丢），bytes 供上传中展示体积文案。 */
+export interface PasteChip {
+  id: string;
+  /** 服务端文件名；上传中为空串（展示用体积文案替代） */
+  name: string;
+  /** 服务端临时区绝对路径；上传中为空串（不可拼路径行、不可 DELETE） */
+  path: string;
+  /** 粘贴原文：取消勾选或 POST 失败回退时回插输入框 */
+  content: string;
+  /** UTF-8 字节数（onPaste 时计定） */
+  bytes: number;
+  stage: PasteChipStage;
+}
+
+/** 阈值判定（零点击转附件唯一门）：>4096 字节转 chip；4096 恰好不转（浏览器默认粘贴） */
+export function pasteExceedsThreshold(text: string): boolean {
+  return utf8ByteLength(text) > PASTE_ATTACHMENT_THRESHOLD;
+}
+
+/** 入列：上传中 chip 追加队尾（零点击即挂，勾选框默认勾选） */
+export function startPasteChip(chips: readonly PasteChip[], chip: PasteChip): PasteChip[] {
+  return [...chips, chip];
+}
+
+/** 上传落定：更新 name/path/stage。chip 已出列（用户抢先取消勾选/叉除/发送清空）时
+ * 返回 orphan=true 且列表原样——调用方对该 path 做 best-effort DELETE（孤儿文件清理，
+ * 48h 按龄清理兜底）。 */
+export function settlePasteChip(
+  chips: readonly PasteChip[],
+  id: string,
+  name: string,
+  path: string,
+): { chips: PasteChip[]; orphan: boolean } {
+  if (!chips.some((c) => c.id === id)) return { chips: [...chips], orphan: true };
+  return {
+    chips: chips.map((c) => (c.id === id ? { ...c, name, path, stage: "ready" satisfies PasteChipStage } : c)),
+    orphan: false,
+  };
+}
+
+/** 出列（取消勾选与叉共用）：带回整条 chip——取消勾选用 content 回插、按 stage 决定
+ * DELETE 时机；未知 id 列表原样返回 detached=null。 */
+export function detachPasteChip(chips: readonly PasteChip[], id: string): { chips: PasteChip[]; detached: PasteChip | null } {
+  const detached = chips.find((c) => c.id === id) ?? null;
+  return { chips: chips.filter((c) => c.id !== id), detached };
+}
+
+/** 发送携带：仅就绪 chip（上传中无路径，绝不拼路径行）；纯上传中+空文本时发送早退 */
+export function sendablePasteChips(chips: readonly PasteChip[]): Array<{ path: string }> {
+  return chips.filter((c) => c.stage === "ready" && c.path !== "").map(({ path }) => ({ path }));
 }
 
 // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------

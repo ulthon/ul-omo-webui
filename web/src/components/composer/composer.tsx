@@ -13,8 +13,13 @@
 // docs08-r3 任务 19：斜杠输入提示（SlashHints）——值以 / 开头且首 token 未闭合时
 // 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令
 // （尾部空格）走既有 prompt 支持路径；上下/回车导航，Esc 关闭并回退打开前输入。
+// docs08-r7 任务 3：大段粘贴零点击三态——>4KB 粘贴 preventDefault 后立即 POST 挂附件
+// chip（加载态，勾选框默认勾选=随消息作为附件发送）；取消勾选=文本经 insertSnippetText
+// 立即插入光标处且 chip 消失（best-effort DELETE）；叉=移除+DELETE；POST 失败回退=
+// 原文插入输入框（内容永不丢）+toast。三按钮选择条退役；占位符改语法教学（桌面长版/
+// 手机短版按视口）。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -36,19 +41,24 @@ import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   EMPTY_SLASH_GROUPS,
   MAX_IMAGES,
-  PASTE_ATTACHMENT_THRESHOLD,
   appendAttachmentLines,
   dataUrlToBase64,
+  detachPasteChip,
   filterSlashGroups,
   flattenSlashItems,
   formatPasteKb,
   historyPreview,
+  pasteExceedsThreshold,
   readFileAsDataUrl,
+  sendablePasteChips,
+  settlePasteChip,
   slashReplaceToken,
   slashTriggerToken,
+  startPasteChip,
   stepHistoryIndex,
   utf8ByteLength,
   validateImageFile,
+  type PasteChip,
   type SlashItem,
 } from "./composer-logic";
 import { useDraft } from "./use-draft";
@@ -58,14 +68,6 @@ interface ImageAttachment {
   /** base64（无 dataURL 前缀），随 prompt 发 body.images=[{data,mimeType}]（服务端注入 type:"image"） */
   data: string;
   mimeType: string;
-}
-
-/** 大段文本附件 chip（B10 docs08-r3 任务 17）：文件已落服务端临时区，prompt 只带路径行 */
-interface TextAttachment {
-  id: string;
-  name: string;
-  /** 服务端临时区绝对路径（DATA_DIR/attachments/<projectHash>/），发送拼接进 prompt */
-  path: string;
 }
 
 /** 历史翻阅态：items 新在前（服务端 id DESC），index 当前高亮条 */
@@ -136,15 +138,14 @@ export function Composer({
     setImages(next);
   }, []);
 
-  // 大段粘贴转附件（B10）：attachmentsRef 同步镜像同 images 模式；pasteOffer =
-  // 超阈值粘贴挂起的选择（原样插入/作为附件发送/忽略），同一时刻至多一条（新粘贴覆盖旧条）
-  const [attachments, setAttachments] = useState<TextAttachment[]>([]);
-  const attachmentsRef = useRef<TextAttachment[]>([]);
-  const setAttachmentsBoth = useCallback((next: TextAttachment[]) => {
+  // 大段粘贴零点击三态（docs08-r7 任务 3）：attachmentsRef 同步镜像同 images 模式；
+  // 粘贴超阈值即挂上传中 chip（加载态），勾选框默认勾选=随消息作为附件发送
+  const [attachments, setAttachments] = useState<PasteChip[]>([]);
+  const attachmentsRef = useRef<PasteChip[]>([]);
+  const setAttachmentsBoth = useCallback((next: PasteChip[]) => {
     attachmentsRef.current = next;
     setAttachments(next);
   }, []);
-  const [pasteOffer, setPasteOffer] = useState<{ content: string; bytes: number } | null>(null);
 
   const [history, setHistory] = useState<ActiveHistory | null>(null);
   /** 进入历史翻阅前的输入内容（下翻越过最新一条时还原） */
@@ -379,7 +380,7 @@ export function Composer({
     async (rawText: string, opts: { clearInputs: boolean }) => {
       const trimmed = rawText.trim();
       const imgs = opts.clearInputs ? imagesRef.current : undefined;
-      const atts = opts.clearInputs ? attachmentsRef.current : [];
+      const atts = opts.clearInputs ? sendablePasteChips(attachmentsRef.current) : [];
       // busy 语义定则（docs08-r4 任务 11）：权限锁禁发送；流式态放行（发送变排队）。
       // 水合锁（docs08-r5 任务 6）同禁发送：运行态未知窗口悲观默认阻塞。
       // 排队判定读发送瞬间的 store 流式态与运行态（不经渲染闭包，回合刚结束/开始的窗口也对）
@@ -561,6 +562,32 @@ export function Composer({
     [setImagesBoth],
   );
 
+  /** 粘贴 chip POST（零点击，docs08-r7 任务 3）：成功落就绪态（name/path 填充，勾选框
+   * 保持勾选=随消息作为附件发送）；chip 已被抢先取消勾选/叉除/发送清空时孤儿文件
+   * best-effort DELETE（静默，48h 按龄清理兑底）。失败回退（内容永不丢）：chip 出列，
+   * 原文经 insertSnippetText 立即插入光标处 + toast。 */
+  const uploadPasteAttachment = useCallback(
+    async (id: string, content: string) => {
+      try {
+        const res = await api.postAttachment(sessionId, { content });
+        const settled = settlePasteChip(attachmentsRef.current, id, res.name, res.path);
+        setAttachmentsBoth(settled.chips);
+        if (settled.orphan) {
+          void api.removeAttachment(sessionId, res.path).catch(() => {});
+        }
+      } catch (err) {
+        const { chips, detached } = detachPasteChip(attachmentsRef.current, id);
+        setAttachmentsBoth(chips);
+        if (detached) {
+          insertSnippetText(detached.content);
+          requestAnimationFrame(() => textareaRef.current?.focus());
+        }
+        showToast(apiErrorMessage(err, "composer.attachmentSaveFailed"), "error");
+      }
+    },
+    [sessionId, setAttachmentsBoth, insertSnippetText, showToast],
+  );
+
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       // 图片粘贴链路原样（B10 不改语义）：图片文件优先于文本分支
@@ -570,44 +597,46 @@ export function Composer({
         void addImageFiles(files);
         return;
       }
-      // 大段文本（B10）：text/plain 超 4KB 拦截默认粘贴，弹选择条（原样插入/作为附件
-      // 发送/忽略）；阈值内走浏览器默认行为不动
+      // 大段文本（docs08-r7 任务 3）：text/plain 超 4KB 拦截默认粘贴，零点击立即挂
+      // 上传中 chip（POST 在途，勾选框默认勾选）；阈值内（含恰好 4096 字节）走浏览器
+      // 默认行为不动
       const text = e.clipboardData.getData("text/plain");
-      if (text) {
-        const bytes = utf8ByteLength(text);
-        if (bytes > PASTE_ATTACHMENT_THRESHOLD) {
-          e.preventDefault();
-          setPasteOffer({ content: text, bytes });
-        }
+      if (text && pasteExceedsThreshold(text)) {
+        e.preventDefault();
+        const id = `att-${++attachmentSeq}`;
+        setAttachmentsBoth(
+          startPasteChip(attachmentsRef.current, {
+            id,
+            name: "",
+            path: "",
+            content: text,
+            bytes: utf8ByteLength(text),
+            stage: "uploading",
+          }),
+        );
+        void uploadPasteAttachment(id, text);
       }
     },
-    [addImageFiles],
+    [addImageFiles, setAttachmentsBoth, uploadPasteAttachment],
   );
 
-  // ---------- 大段粘贴转附件（B10） ----------
+  // ---------- 大段粘贴零点击三态（docs08-r7 任务 3） ----------
 
-  /** 选择条「原样插入」：内容走草稿链路插入光标处，光标落插入内容之后 */
-  const insertPasteContent = useCallback(
-    (content: string) => {
-      setPasteOffer(null);
-      insertSnippetText(content);
+  /** 取消勾选（三态之二）：原文经 insertSnippetText 立即插入光标处且 chip 消失；
+   * 就绪 chip 即刻 best-effort DELETE（失败静默——内容已回插，文件另有 48h 按龄清理
+   * 兑底）；上传中 chip 无路径可删，落定时按孤儿清理。 */
+  const uncheckPasteAttachment = useCallback(
+    (id: string) => {
+      const { chips, detached } = detachPasteChip(attachmentsRef.current, id);
+      setAttachmentsBoth(chips);
+      if (!detached) return;
+      insertSnippetText(detached.content);
       requestAnimationFrame(() => textareaRef.current?.focus());
-    },
-    [insertSnippetText],
-  );
-
-  /** 选择条「作为附件发送」：POST 落服务端临时区后加附件 chip；失败 toast 不加条 */
-  const attachPasteContent = useCallback(
-    async (content: string) => {
-      setPasteOffer(null);
-      try {
-        const res = await api.postAttachment(sessionId, { content });
-        setAttachmentsBoth([...attachmentsRef.current, { id: `att-${++attachmentSeq}`, name: res.name, path: res.path }]);
-      } catch (err) {
-        showToast(apiErrorMessage(err, "composer.attachmentSaveFailed"), "error");
+      if (detached.stage === "ready" && detached.path !== "") {
+        void api.removeAttachment(sessionId, detached.path).catch(() => {});
       }
     },
-    [sessionId, setAttachmentsBoth, showToast],
+    [sessionId, setAttachmentsBoth, insertSnippetText],
   );
 
   /** chip 显式移除：本地即删 + fire DELETE（失败 toast；文件另有 48h 按龄清理兜底）。
@@ -779,38 +808,6 @@ export function Composer({
 
   // ---------- 桌面/手机共享子树（docs08-r4 任务 7）：两分支同源，仅容器排布不同 ----------
 
-  const pasteOfferBar = pasteOffer ? (
-    <div
-      data-testid="paste-offer-bar"
-      className="flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
-    >
-      <span className="shrink-0">{t("composer.pasteLabel", { size: formatPasteKb(pasteOffer.bytes) })}</span>
-      <button
-        type="button"
-        data-testid="paste-insert"
-        onClick={() => insertPasteContent(pasteOffer.content)}
-        className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
-      >
-        {t("composer.pasteInsert")}
-      </button>
-      <button
-        type="button"
-        data-testid="paste-attach"
-        onClick={() => void attachPasteContent(pasteOffer.content)}
-        className="min-h-8 rounded-md border px-2 transition-colors hover:bg-muted"
-      >
-        {t("composer.pasteAttach")}
-      </button>
-      <button
-        type="button"
-        data-testid="paste-dismiss"
-        onClick={() => setPasteOffer(null)}
-        className="min-h-8 rounded-md border px-2 text-muted-foreground transition-colors hover:bg-muted"
-      >
-        {t("composer.pasteDismiss")}
-      </button>
-    </div>
-  ) : null;
   const historyBar = history ? (
     <div
       data-testid="history-bar"
@@ -873,10 +870,25 @@ export function Composer({
             data-testid="attachment-chip"
             className="flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-lg border bg-muted/40 px-2 text-xs"
           >
-            <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="max-w-44 truncate" title={att.path}>
-              {att.name}
+            {att.stage === "uploading" ? (
+              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+            ) : (
+              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <span className="max-w-44 truncate" title={att.path || undefined}>
+              {att.stage === "uploading" ? formatPasteKb(att.bytes) : att.name}
             </span>
+            {/* 三态勾选框（docs08-r7 任务 3）：恒勾选展示——取消勾选=文本立即插入输入框
+                且 chip 消失（无重勾路径，chip 随取消即卸载）；aria 兼作 tooltip（OC 全站原则） */}
+            <input
+              type="checkbox"
+              data-testid="attachment-chip-toggle"
+              aria-label={t("composer.pasteAttachKeep")}
+              title={t("composer.pasteAsTextHint")}
+              checked
+              onChange={() => uncheckPasteAttachment(att.id)}
+              className="size-4 shrink-0 cursor-pointer accent-primary"
+            />
             <button
               type="button"
               aria-label={t("composer.attachmentRemove")}
@@ -1111,13 +1123,12 @@ export function Composer({
   // 参考在线 OpenChamber 390 实拍（.omo/evidence/docs08-r5/task-9-oc-390-*.png 与
   // docs08-r4-notes/openchamber-mobile-390-input.png）。任务 13 用户拍板：胶囊三圆钮
   // 同行挤占输入宽度的形态退役，改为上下两行——上行 textarea 占满整行（自增高不变，
-  // 单行汉字容量提升）；下行常用语/收纳/排队切换 + 停止/发送。上方各条（粘贴选择/
-  // 历史/图片/附件）、聚焦收起、visualViewport 键盘、草稿、斜杠内联、图片附件条、
+  // 单行汉字容量提升）；下行常用语/收纳/排队切换 + 停止/发送。上方各条（历史/图片/
+  // 附件/粘贴 chip）、聚焦收起、visualViewport 键盘、草稿、斜杠内联、图片附件条、
   // 粘贴转附件全链路不变；桌面档零改动。
   if (isCompact) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
-        {pasteOfferBar}
         {historyBar}
         {imageStrip}
         {attachmentStrip}
@@ -1147,7 +1158,7 @@ export function Composer({
             data-testid="composer-input"
             value={text}
             rows={1}
-            placeholder={t("composer.placeholder")}
+            placeholder={t("composer.placeholderTeachMobile")}
             disabled={sending}
             onChange={(e) => applyText(e.target.value)}
             onKeyDown={onKeyDown}
@@ -1201,7 +1212,6 @@ export function Composer({
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 pb-[max(env(safe-area-inset-bottom),8px)]">
-      {pasteOfferBar}
       {historyBar}
       {imageStrip}
       {attachmentStrip}
@@ -1212,7 +1222,7 @@ export function Composer({
         data-testid="composer-input"
         value={text}
         rows={1}
-        placeholder={t("composer.placeholder")}
+        placeholder={t("composer.placeholderTeach")}
         disabled={sending}
         onChange={(e) => applyText(e.target.value)}
         onKeyDown={onKeyDown}

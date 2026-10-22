@@ -7,13 +7,19 @@ import {
   PASTE_ATTACHMENT_THRESHOLD,
   appendAttachmentLines,
   dataUrlToBase64,
+  detachPasteChip,
   formatPasteKb,
   historyPreview,
+  pasteExceedsThreshold,
   resolveDraftSource,
+  sendablePasteChips,
+  settlePasteChip,
+  startPasteChip,
   stepHistoryIndex,
   utf8ByteLength,
   validateImageFile,
   type LocalDraft,
+  type PasteChip,
 } from "@/components/composer/composer-logic";
 
 const serverDraft = (content: string): DraftInfo => ({ content, updatedAt: "2026-10-06T00:00:00Z" });
@@ -122,5 +128,94 @@ describe("大段粘贴转附件（B10 docs08-r3 任务 17）", () => {
       "[大段文本已保存为附件：/a/1.txt（按需读取）]\n[大段文本已保存为附件：/b/2.txt（按需读取）]",
     );
     expect(appendAttachmentLines("原文", [])).toBe("原文");
+  });
+});
+
+describe("大段粘贴零点击三态（docs08-r7 任务 3）", () => {
+  const chip = (over: Partial<PasteChip> = {}): PasteChip => ({
+    id: "att-1",
+    name: "",
+    path: "",
+    content: "x".repeat(5000),
+    bytes: 5000,
+    stage: "uploading",
+    ...over,
+  });
+
+  test("pasteExceedsThreshold：4096 字节恰好不转（浏览器默认粘贴）", () => {
+    expect(pasteExceedsThreshold("a".repeat(4096))).toBe(false);
+  });
+
+  test("pasteExceedsThreshold：4097 字节零点击转附件 chip", () => {
+    expect(pasteExceedsThreshold("a".repeat(4097))).toBe(true);
+  });
+
+  test("pasteExceedsThreshold：CJK 多字节按字节口径（字符数会误判）", () => {
+    expect(pasteExceedsThreshold("中".repeat(1365))).toBe(false); // 4095 字节
+    expect(pasteExceedsThreshold("中".repeat(1366))).toBe(true); // 4098 字节
+    // 字符数 4096、字节数 4098：按字符误判会漏判
+    expect(pasteExceedsThreshold("a".repeat(4094) + "中")).toBe(true);
+  });
+
+  test("startPasteChip：上传中 chip 追加队尾，既有 chip 保留（多粘贴共存）", () => {
+    const ready = chip({ id: "att-0", name: "paste-0.txt", path: "/a/paste-0.txt", stage: "ready" });
+    const next = startPasteChip([ready], chip({ id: "att-1" }));
+    expect(next).toHaveLength(2);
+    expect(next[0]?.id).toBe("att-0");
+    expect(next[1]).toMatchObject({ id: "att-1", stage: "uploading", name: "", path: "" });
+  });
+
+  test("settlePasteChip：落就绪态更新 name/path/stage，原文保留", () => {
+    const { chips, orphan } = settlePasteChip([chip({ id: "att-1", content: "原文" })], "att-1", "paste-1.txt", "/a/paste-1.txt");
+    expect(orphan).toBe(false);
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toMatchObject({
+      id: "att-1",
+      name: "paste-1.txt",
+      path: "/a/paste-1.txt",
+      stage: "ready",
+      content: "原文",
+    });
+  });
+
+  test("settlePasteChip：chip 已被抢先出列（在途取消/发送清空）→ orphan=true 列表原样", () => {
+    expect(settlePasteChip([], "att-2", "paste-2.txt", "/a/paste-2.txt")).toEqual({ chips: [], orphan: true });
+    const unrelated = chip({ id: "att-9" });
+    const res = settlePasteChip([unrelated], "att-2", "n", "/p");
+    expect(res.orphan).toBe(true);
+    expect(res.chips).toEqual([unrelated]);
+  });
+
+  test("detachPasteChip：出列并带回整条 chip（取消勾选据 content 回插、据 stage 定 DELETE）", () => {
+    const c = chip({ id: "att-1", name: "n.txt", path: "/a/n.txt", stage: "ready", content: "原文" });
+    const { chips, detached } = detachPasteChip([c], "att-1");
+    expect(chips).toEqual([]);
+    expect(detached).toEqual(c);
+  });
+
+  test("detachPasteChip：上传中 chip 出列同样带回原文（在途取消内容不丢）", () => {
+    const c = chip({ id: "att-1", content: "在途原文", path: "" });
+    const { chips, detached } = detachPasteChip([c], "att-1");
+    expect(chips).toEqual([]);
+    expect(detached).toMatchObject({ stage: "uploading", content: "在途原文", path: "" });
+  });
+
+  test("detachPasteChip：未知 id 列表原样、detached=null", () => {
+    const c = chip({ id: "att-1" });
+    const { chips, detached } = detachPasteChip([c], "att-x");
+    expect(chips).toEqual([c]);
+    expect(detached).toBeNull();
+  });
+
+  test("sendablePasteChips：仅就绪 chip 拼路径行；上传中一律不携带（空文本+纯上传中发送早退）", () => {
+    const chips = [
+      chip({ id: "a", name: "a.txt", path: "/a/a.txt", stage: "ready" }),
+      chip({ id: "b", content: "b", bytes: 1 }),
+    ];
+    expect(sendablePasteChips(chips)).toEqual([{ path: "/a/a.txt" }]);
+    expect(sendablePasteChips([chips[1]!])).toEqual([]);
+    expect(appendAttachmentLines("", sendablePasteChips(chips))).toBe(
+      "[大段文本已保存为附件：/a/a.txt（按需读取）]",
+    );
   });
 });
