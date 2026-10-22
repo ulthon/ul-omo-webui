@@ -10,6 +10,7 @@ import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 import { isLongUserText } from "./user-text-collapse";
+import { originAgentName, originDurationLabel } from "./message-origin";
 import type { LoopGuardKind } from "./message-items";
 
 // user 长文本折叠阈值（docs08-r6 任务 14）：仅 user 消息；assistant 回复永不折叠。
@@ -74,6 +75,8 @@ export function BubbleShell({
   role,
   timestamp,
   model,
+  agentLabel,
+  durationLabel,
   interrupted,
   live,
   queued,
@@ -84,6 +87,10 @@ export function BubbleShell({
   timestamp: string | null;
   /** assistant 消息的模型名（消息级 model 字段，B11 同源）；头部行常驻短名显示 */
   model?: string | null;
+  /** 溯源行（docs08 2026-10-22 批次任务 17）：代理名/用时标签（已含 i18n 文案）；
+   *  仅 assistant 分支渲染，空值省略不占位；流式在途无数据不传 */
+  agentLabel?: string | null;
+  durationLabel?: string | null;
   interrupted?: boolean;
   live?: boolean;
   queued?: boolean;
@@ -120,6 +127,18 @@ export function BubbleShell({
             由哪只模型作答，替代 B11 切换点分隔线（连续同模型段零标记的盲区）；流式态与
             "正在回复"并存，settle 态不变；无 model 字段（老数据/裸流）不渲染不误报 */}
         {model && <span className="max-w-[40vw] truncate opacity-70">{shortModelName(model)}</span>}
+        {/* 溯源行（任务 17）：模型短名旁追加代理名与用时——「谁、用什么模型、跑了多久」；
+            沿头部行既有 span 词汇（muted/opacity-70/truncate/tabular-nums），空值省略 */}
+        {agentLabel && (
+          <span data-testid="message-origin-agent" className="max-w-[24vw] truncate opacity-70">
+            {agentLabel}
+          </span>
+        )}
+        {durationLabel && (
+          <span data-testid="message-origin-duration" className="shrink-0 tabular-nums opacity-70">
+            {durationLabel}
+          </span>
+        )}
         {live && <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />}
         {time && <span>{time}</span>}
         {interrupted && (
@@ -184,6 +203,13 @@ export const EntryBubble = memo(function EntryBubble({
     const found = entries.find((e) => e.id === entryId);
     return isRenderableEntry(found) ? found : null;
   });
+  // 溯源行（docs08 2026-10-22 批次任务 17）：assistant 气泡头部模型短名旁的代理名+用时。
+  // 选择器返回原始值（string | null，引用稳定不触发无限重渲），本组件内套 i18n 文案；
+  // 按条目 id 取数（不依赖 entry 对象，钩子可全部置于早退之前）。流式在途无定格条目
+  // 不参与，落格后随 EntryBubble 上屏（无 async 高度变化，不破虚拟化测距）。
+  const t = useT();
+  const agentName = useMessagesStore((s) => originAgentName(s.bySession[sessionId]?.entries, entryId));
+  const duration = useMessagesStore((s) => originDurationLabel(s.bySession[sessionId]?.entries, entryId));
   if (!entry) return null;
   const message = entry.message as WireMessage;
   const role = message.role === "user" ? "user" : "assistant";
@@ -191,11 +217,15 @@ export const EntryBubble = memo(function EntryBubble({
   const queued = role === "user" && entry.queued !== undefined;
   // 消息级操作仅挂 user/assistant 定格气泡（toolResult 走 ToolCard 关联展示，无气泡菜单）
   const showActions = message.role === "user" || message.role === "assistant";
+  const originAgent = role === "assistant" && agentName !== null ? t("chat.messageBubble.originAgent", { name: agentName }) : null;
+  const originDuration = role === "assistant" && duration !== null ? t("chat.messageBubble.originDuration", { dur: duration }) : null;
   return (
     <BubbleShell
       role={role}
       timestamp={typeof entry.timestamp === "string" ? entry.timestamp : null}
       model={role === "assistant" ? messageModel(entry) : undefined}
+      agentLabel={originAgent}
+      durationLabel={originDuration}
       interrupted={role === "assistant" ? interrupted : undefined}
       queued={queued}
       actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}

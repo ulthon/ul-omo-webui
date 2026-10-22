@@ -37,6 +37,10 @@ export const chat = {
     interrupted: "Interrupted",
     expand: "Expand",
     collapse: "Collapse",
+    // Origin line (docs08 2026-10-22 batch task 17): agent name + elapsed next to
+    // the model short name; omitted entirely when data is missing
+    originAgent: "agent {name}",
+    originDuration: "{dur}",
   },
   // parts.tsx unsupported placeholders (docs08-r6 task 10 ①②)
   parts: {

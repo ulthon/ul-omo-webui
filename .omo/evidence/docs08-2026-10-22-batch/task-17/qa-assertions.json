@@ -1,0 +1,62 @@
+[
+  {
+    "name": "desktop-1920 会话打开且末条回复上屏",
+    "ok": true,
+    "detail": "body 文本含『渲染链路结论』"
+  },
+  {
+    "name": "desktop-1920 agent 名出现",
+    "ok": true,
+    "detail": "[\"代理 Sisyphus - ultraworker\",\"代理 Sisyphus - ultraworker\",\"代理 Sisyphus - ultraworker\"]"
+  },
+  {
+    "name": "desktop-1920 用时三段",
+    "ok": true,
+    "detail": "[\"用时 3m 10s\",\"用时 9m 46s\",\"用时 54.0s\"]"
+  },
+  {
+    "name": "desktop-1920 user 气泡无溯源 span",
+    "ok": true,
+    "detail": "[{\"hasAgent\":false,\"hasDur\":false},{\"hasAgent\":false,\"hasDur\":false}]"
+  },
+  {
+    "name": "desktop-1920 无 undefined 泄漏",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "desktop-1920 截图落盘",
+    "ok": true,
+    "detail": "/data/projects/senpi-webui-wt/docs08-r7-wave2-t17/.omo/evidence/docs08-2026-10-22-batch/task-17/desktop-1920.png"
+  },
+  {
+    "name": "mobile-390 会话打开且末条回复上屏",
+    "ok": true,
+    "detail": "body 文本含『渲染链路结论』"
+  },
+  {
+    "name": "mobile-390 agent 名出现",
+    "ok": true,
+    "detail": "[\"代理 Sisyphus - ultraworker\",\"代理 Sisyphus - ultraworker\",\"代理 Sisyphus - ultraworker\"]"
+  },
+  {
+    "name": "mobile-390 用时三段",
+    "ok": true,
+    "detail": "[\"用时 3m 10s\",\"用时 9m 46s\",\"用时 54.0s\"]"
+  },
+  {
+    "name": "mobile-390 user 气泡无溯源 span",
+    "ok": true,
+    "detail": "[{\"hasAgent\":false,\"hasDur\":false},{\"hasAgent\":false,\"hasDur\":false}]"
+  },
+  {
+    "name": "mobile-390 无 undefined 泄漏",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "mobile-390 截图落盘",
+    "ok": true,
+    "detail": "/data/projects/senpi-webui-wt/docs08-r7-wave2-t17/.omo/evidence/docs08-2026-10-22-batch/task-17/mobile-390.png"
+  }
+]

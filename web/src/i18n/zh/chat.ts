@@ -38,6 +38,10 @@ export const chat = {
     interrupted: "已中断",
     expand: "展开",
     collapse: "收起",
+    // 溯源行（docs08 2026-10-22 批次任务 17）：模型短名旁的代理名与用时；
+    // 空数据省略不渲染，无占位词条
+    originAgent: "代理 {name}",
+    originDuration: "用时 {dur}",
   },
   // parts.tsx 未支持内容占位（docs08-r6 任务 10 ①②）
   parts: {
