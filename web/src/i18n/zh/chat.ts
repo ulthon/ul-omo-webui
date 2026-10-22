@@ -173,6 +173,14 @@ export const chat = {
     continuedHint: "回合已继续，回答将作为新消息送达",
     ignore: "忽略",
     submit: "提交回答",
+    stepPosition: "第 {step}/{count} 题",
+    stepJump: "跳到第 {step} 题",
+    prevQuestion: "上一题",
+    nextQuestion: "下一题",
+    submitPending: "已提交，等待确认…",
+    submitFallback: "提交后未收到确认，可重试或取消",
+    retrySubmit: "重试",
+    cancelSubmit: "取消作答",
   },
   // permission-card.tsx 权限卡片 chrome（引擎传入的 title/message 不在域内）。
   // kindChoice（docs08-r6 任务 6 ③）：非权限 select（提问降级/登录选择）的中性标题

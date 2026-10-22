@@ -72,11 +72,14 @@ function parseImages(raw: unknown): Array<{ type: "image"; data: string; mimeTyp
 }
 
 /** question 型应答甄别（q1 提问卡片）：Record<questionId, {selected: label[]; text?}>。
- *  从宽收窄——非对象/空对象/条目异形返回 false（由"至少一项"总校验兜底报 400）。 */
+ *  空对象 {} 合法：引擎 ConnectionQuestionBridge.respond 要求载荷含 answers 键才进入
+ *  settledQuestionStatus 甄别（comment-only 落定 comment-submitted 必须带 answers:{}），
+ *  剥掉空 answers 会让引擎拒收 question_incomplete 且静默（r6 实录卡死根因）。
+ *  空对象仅在同时有非空 comment 时放行（路由内守卫），纯空对象仍由总校验报 400。 */
 function isQuestionAnswers(raw: unknown): raw is Record<string, { selected: string[]; text?: string }> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
   const entries = Object.values(raw as Record<string, unknown>);
-  if (entries.length === 0) return false;
+  if (entries.length === 0) return true;
   return entries.every(
     (v) =>
       typeof v === "object" &&
@@ -438,7 +441,12 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     if (typeof body.value === "string") reply.value = body.value;
     if (typeof body.confirmed === "boolean") reply.confirmed = body.confirmed;
     if (body.cancelled === true) reply.cancelled = true;
-    if (isQuestionAnswers(body.answers)) reply.answers = body.answers;
+    if (isQuestionAnswers(body.answers)) {
+      const hasComment = typeof body.comment === "string" && body.comment.length > 0;
+      // 空 answers 仅随非空 comment 透传（comment-only 落定路径）；纯空对象不进 reply，
+      // 落入下方总校验 400（引擎对空 answers+无 comment 恒拒收 question_incomplete）
+      if (Object.keys(body.answers).length > 0 || hasComment) reply.answers = body.answers;
+    }
     if (typeof body.comment === "string" && body.comment) reply.comment = body.comment;
     if (Object.keys(reply).length === 0) {
       throw new ApiError(400, "invalid_request", "需要 value/confirmed/cancelled/answers 之一");

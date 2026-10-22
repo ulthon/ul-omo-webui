@@ -1,0 +1,13 @@
+REAL_CARD_SHOWN=true
+REAL_CARD_TEXT=Assistant questionWaiting for your answer17:57配置迁移你是从其他编码代理（Claude Code、Codex、OpenCode 等）转过来的吗？需要我把本机已有的配置迁移到 omo 吗？是，想迁
+POST_PERMISSION {"requestId":"6bf6254a-6f9f-438d-bcdc-7cec4cedc071","answers":{},"comment":"QA comment-only: 仅备注提交，不选选项（r6 回归，真实引擎）"}
+REAL_PAYLOAD={"requestId":"6bf6254a-6f9f-438d-bcdc-7cec4cedc071","answers":{},"comment":"QA comment-only: 仅备注提交，不选选项（r6 回归，真实引擎）"}
+REAL_RESOLVED_DEQUEUES=true
+REAL_STILL_NO_CARD=true
+FIXTURE_CARD_SHOWN=true
+FIXTURE_STEP_INDICATOR=Question 1 of 3
+FIXTURE_STEP2_ONLY_Q2=true
+MOBILE_FIXTURE_CARD_SHOWN=true
+MOBILE_STEP_SCROLL_RESET=scrolled=false
+MOBILE_AFTER_NEXT_RESET=RESET_OK
+QA2_DONE

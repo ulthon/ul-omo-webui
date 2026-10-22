@@ -173,6 +173,14 @@ export const chat = {
     continuedHint: "The turn has already continued; your answer will arrive as a new message",
     ignore: "Dismiss",
     submit: "Submit answer",
+    stepPosition: "Question {step} of {count}",
+    stepJump: "Go to question {step}",
+    prevQuestion: "Previous",
+    nextQuestion: "Next",
+    submitPending: "Submitted, awaiting confirmation…",
+    submitFallback: "No confirmation after submit; retry or cancel",
+    retrySubmit: "Retry",
+    cancelSubmit: "Cancel answer",
   },
   // permission-card.tsx
   permissionCard: {

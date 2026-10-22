@@ -1,0 +1,7 @@
+FRAME {"id":"8f9515de-d1a5-4ea5-af77-61a0135dfe75","method":"question","waitForAnswer":true}
+RESPOND_COMMENT_ONLY true
+RESOLVED_1 {"outcome":"comment-submitted","answers":{},"comment":"只补充说明"}
+STATUS_1 comment-submitted
+RESPOND_NO_ANSWERS_KEY "question_incomplete"
+RESPOND_EMPTY_ONLY "question_incomplete"
+SPIKE_DONE
