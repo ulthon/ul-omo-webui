@@ -150,6 +150,7 @@ export const chat = {
     emptyTitle: "本会话暂无子代理调用",
     emptyHint: "会话经 task 工具派发子代理后在此聚合展示（运行中实时进度与终态回复）",
     statusRunning: "运行中",
+    statusDispatched: "已派发·后台运行中",
     statusDone: "完成",
     statusFailed: "失败",
     responseTitle: "最终回复",

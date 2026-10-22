@@ -10,7 +10,7 @@
 // （run_stats：时长·回合·工具·tokens·速率·费用·缓存命中率）+ 最终回复（result.content
 // 文本剥 [task_id] 尾注，可展开，附完整提示词）。布局按右栏窄容器（320-560px）自适应。
 import { useMemo, useState } from "react";
-import { ChevronDown, CircleCheck, CircleX, Loader2 } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleMinus, CircleX, Loader2 } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { formatCost, formatTokens } from "./status-bar-data";
 import { collectSubagentCalls, summaryOfCall, type SubagentCall } from "./subagent-data";
@@ -33,31 +33,42 @@ function formatSpeed(n: number): string {
 /** 终态 status 词表 → 失败族（其余原样显示，不虚标完成） */
 const FAILURE_STATUSES = new Set(["failed", "errored", "error", "cancelled", "canceled"]);
 
+/** 已知完成词表（仅此族配 CircleCheck；任务 26：未知值不再配完成图标） */
+const DONE_STATUSES = new Set(["completed", "succeeded", "success", "done"]);
+
 function StatusPill({ call }: { call: SubagentCall }) {
   const t = useT();
-  const failed = call.isError || (call.final?.status != null && FAILURE_STATUSES.has(call.final.status));
+  const status = call.final?.status;
+  const failed = call.isError || (status != null && FAILURE_STATUSES.has(status));
+  const done = !call.running && !call.dispatched && !failed && status != null && DONE_STATUSES.has(status);
+  const unknown = !call.running && !call.dispatched && !failed && !done && status != null;
   const label = call.running
     ? t("chat.subagentPanel.statusRunning")
-    : failed
-      ? t("chat.subagentPanel.statusFailed")
-      : call.final == null
-        ? "—"
-        : call.final.status != null && call.final.status !== "completed"
-          ? call.final.status
-          : t("chat.subagentPanel.statusDone");
+    : call.dispatched
+      ? t("chat.subagentPanel.statusDispatched")
+      : failed
+        ? t("chat.subagentPanel.statusFailed")
+        : done
+          ? t("chat.subagentPanel.statusDone")
+          : unknown
+            ? status
+            : "—";
   return (
     <span
       data-testid="subagent-card-status"
       className={`flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs ${
         failed ? "border-destructive/30 text-destructive" : "border-border text-muted-foreground"
-      } ${call.running ? "animate-pulse" : ""}`}
+      } ${call.running || call.dispatched ? "animate-pulse" : ""}`}
     >
-      {call.running ? (
+      {call.running || call.dispatched ? (
         <Loader2 className="size-3 shrink-0 animate-spin" />
       ) : failed ? (
         <CircleX className="size-3 shrink-0" />
-      ) : (
+      ) : done ? (
         <CircleCheck className="size-3 shrink-0" />
+      ) : (
+        // 未知终态/无终态：中性图标，不虚标完成（任务 26：图标与文字矛盾是观感主因）
+        <CircleMinus className="size-3 shrink-0" />
       )}
       {label}
     </span>
@@ -122,7 +133,7 @@ function SubagentCard({ call }: { call: SubagentCall }) {
       ) : null}
       {taskId ? <p className="mt-0.5 font-mono text-[11px] text-muted-foreground/70">{taskId}</p> : null}
 
-      {call.running ? (
+      {call.running || call.dispatched ? (
         <>
           {call.live?.activity ? (
             <p data-testid="subagent-card-activity" className="mt-1 truncate text-xs text-muted-foreground" title={call.live.activity}>

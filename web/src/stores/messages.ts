@@ -9,6 +9,7 @@
 import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
+import { parseTaskCompletionEntry } from "@/lib/task-completion";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -654,6 +655,21 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           // 入列（渲染层派生标记块，历史 GET messages 同形天然同构）；其余（pi-rules.scan、
           // senpi.hooks.stop-state 等）保持不渲染（type:"message" 的消息条目已在上方
           // 按身份归一消费）。
+          // 子代理后台完成通知入列（docs08-2026-10-22 批次任务 26，GAP-16）：后台 task
+          // 真正完成时引擎经 entry_appended 携 customType "omo-senpi:wake" 的
+          // task completion 条目（JSONL 顶层 type:"custom_message" 携 id，历史 GET
+          // messages 同形同构）——此前不消费，页签卡永停 spawn 回执。放行入列供
+          // subagent-data 按 taskId 配对转真终态；其余 wake 载荷（ulw 续跑引导等）
+          // 与未知噪音照旧不消费（宁漏勿错，判定单一真相源 lib/task-completion.ts）。
+          if (parseTaskCompletionEntry(entry) !== null) {
+            set((s) => {
+              const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              return {
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+              };
+            });
+            break;
+          }
           if (!isMemoryAppendedEntry(entry)) break;
           set((s) => {
             const cur = s.bySession[sessionId] ?? emptySessionMessages();

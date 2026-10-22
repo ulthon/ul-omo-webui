@@ -150,6 +150,7 @@ export const chat = {
     emptyTitle: "No subagent calls in this session yet",
     emptyHint: "Subagents spawned via the task tool are aggregated here (live progress and final replies)",
     statusRunning: "Running",
+    statusDispatched: "Dispatched · running in background",
     statusDone: "Completed",
     statusFailed: "Failed",
     responseTitle: "Final response",

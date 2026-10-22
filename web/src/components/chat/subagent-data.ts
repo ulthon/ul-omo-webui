@@ -18,6 +18,7 @@
 //   D3 纪律：不作依据、绝不等待一个不存在的字段）。
 import type { ToolRun } from "@/stores/messages";
 import type { WireEntry, WirePart } from "@/lib/api";
+import { parseTaskCompletionEntry } from "@/lib/task-completion";
 
 /** 有限数值窄化（NaN/Infinity/非数值 → undefined） */
 function num(v: unknown): number | undefined {
@@ -81,8 +82,12 @@ export interface SubagentRunStats {
 /** 终态快照（tool_execution_end 的 result / toolResult 配对消息，同构） */
 export interface SubagentFinal {
   taskId?: string;
-  /** 终态值（spike 实测 "completed"；失败族由消费侧按词表映射） */
+  /** 终态值（spike 实测 "completed"；失败族由消费侧按词表映射）
+   *  后台 spawn 回执（run_in_background=true）此值恒 "running"/"pending"——
+   *  启动态语义非终态，消费侧按 dispatched 渲染、按完成通知转真终态（任务 26） */
   status?: string;
+  /** 后台派发标记（spawn 回执 details.run_in_background === true；前台调用 false/undefined） */
+  runInBackground?: boolean;
   taskSummary?: string;
   category?: string;
   modelDisplay?: string;
@@ -100,6 +105,9 @@ export interface SubagentCall {
   args: unknown;
   /** 运行中实时态（无终态且有 running run；零中间帧时 live=null 仍算运行中） */
   running: boolean;
+  /** 启动态语义（任务 26）：后台 spawn 回执（run_in_background=true 且 status∈{running,pending}）
+   *  已派发未终局——渲染「已派发·后台运行中」，不入终态词表裸显 */
+  dispatched: boolean;
   /** LIVE 最新快照（update 帧合并保最新；无中间帧为 null——降级为摘要行） */
   live: SubagentLive | null;
   /** 终态快照（end 帧结果优先，toolResult 消息兜底；均无为 null） */
@@ -173,6 +181,7 @@ export function parseFinalSnapshot(result: unknown): SubagentFinal | null {
   return {
     taskId: details ? str(details.task_id) : undefined,
     status: details ? str(details.status) : undefined,
+    runInBackground: details ? details.run_in_background === true : undefined,
     taskSummary: details ? str(details.task_summary) : undefined,
     category: details ? str(details.category) : undefined,
     modelDisplay: resolvedModel ? str(resolvedModel.display) : undefined,
@@ -221,6 +230,7 @@ export function collectSubagentCalls(entries: WireEntry[], toolRuns: Record<stri
           toolCallId: p.id,
           args: p.arguments ?? null,
           running: false,
+          dispatched: false,
           live: null,
           final: null,
           isError: false,
@@ -246,7 +256,7 @@ export function collectSubagentCalls(entries: WireEntry[], toolRuns: Record<stri
     if (run.toolName !== "task") continue;
     let call = byId.get(run.toolCallId);
     if (!call) {
-      call = { toolCallId: run.toolCallId, args: null, running: false, live: null, final: null, isError: false, order: order++ };
+      call = { toolCallId: run.toolCallId, args: null, running: false, dispatched: false, live: null, final: null, isError: false, order: order++ };
       byId.set(run.toolCallId, call);
     }
     if (run.args != null) call.args = run.args;
@@ -259,5 +269,46 @@ export function collectSubagentCalls(entries: WireEntry[], toolRuns: Record<stri
   }
 
   // 历史卡（无 run）终态未知：running 保持 false（不虚标运行中）
-  return [...byId.values()].sort((a, b) => a.order - b.order);
+  const calls = [...byId.values()].sort((a, b) => a.order - b.order);
+
+  // 完成通知消费（任务 26，GAP-16）：后台 task 真正完成时引擎经 entry_appended 携
+  // customType "omo-senpi:wake" 的 task completion 条目（含 id/status/duration/tokens，
+  // 无结构化 run_stats——lib/task-completion.ts spike 定案）。spawn 回执启动态卡按
+  // taskId 配对转真终态：通知 status 覆写回执的 running/pending，耗时/用量/result
+  // 可得则并入。纯聚合天然幂等（同一通知重放/双 id 重发按 taskId 收敛一次）。
+  const completions = new Map<string, ReturnType<typeof parseTaskCompletionEntry>>();
+  for (const entry of entries) {
+    const tc = parseTaskCompletionEntry(entry);
+    if (tc) completions.set(tc.taskId, tc);
+  }
+  for (const call of calls) {
+    const f = call.final;
+    const startup =
+      f != null && f.runInBackground === true && (f.status === "running" || f.status === "pending");
+    const tc = completions.get(f?.taskId ?? call.live?.taskId ?? "");
+    if (f != null && startup && tc) {
+      call.final = {
+        ...f,
+        status: tc.status,
+        responseText: tc.responseText ?? f.responseText,
+        runStats: {
+          ...f.runStats,
+          runtimeMs: f.runStats?.runtimeMs ?? tc.runtimeMs,
+          totalTokens: f.runStats?.totalTokens ?? tc.totalTokens,
+          outputTokens: f.runStats?.outputTokens ?? tc.outputTokens,
+          inputTokens: f.runStats?.inputTokens ?? tc.inputTokens,
+          turns: f.runStats?.turns ?? tc.turns,
+          toolCalls: f.runStats?.toolCalls ?? tc.toolCalls,
+          tokensPerSecond: f.runStats?.tokensPerSecond ?? tc.tokensPerSecond,
+          costUsd: f.runStats?.costUsd ?? tc.costUsd,
+        },
+      };
+    }
+    // 启动态语义：后台回执未被通知终局化时保持「已派发」
+    call.dispatched =
+      call.final?.runInBackground === true &&
+      (call.final?.status === "running" || call.final?.status === "pending");
+  }
+
+  return calls;
 }

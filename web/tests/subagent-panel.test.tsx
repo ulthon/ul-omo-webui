@@ -391,3 +391,187 @@ describe("stripTaskIdTail（尾注剥离纯函数）", () => {
     expect(stripTaskIdTail(TAIL)).toBe("");
   });
 });
+
+
+// ---- 任务 26（docs08-2026-10-22 批次）：启动态语义 + 完成通知消费 ----
+
+// 后台 spawn 回执实测形态（2026-10-22 全库实录：details.status 恒 "running"，
+// run_in_background=true，无 run_stats；正文为「Started task ...」派发回执）
+const BG_ARGS = { ...TASK_ARGS, run_in_background: true };
+const SPAWN_DETAILS = {
+  task_id: "st_bg1",
+  status: "running",
+  task_summary: "后台子代理回显测试 BG-OK",
+  category: "quick",
+  model: "zai-coding-cn/glm-5.3-flash",
+  resolved_model: RESOLVED_MODEL,
+  run_in_background: true,
+};
+const SPAWN_TEXT = "Started task 后台子代理回显测试 BG-OK (st_bg1, running). Completion is automatically delivered.";
+// 完成通知实录形态（omo-senpi:wake / task completion，lib/task-completion.ts spike 定案）
+const wakeEntry = (id: string, overrides: Partial<Record<string, string>> = {}) => ({
+  type: "custom_message",
+  id,
+  customType: "omo-senpi:wake",
+  content:
+    "task completion name:st_bg1 id:st_bg1 agent:explore(zai-coding-cn/glm-5.3) " +
+    `status:${overrides.status ?? "completed"} duration:${overrides.duration ?? "3m 52s"} ` +
+    `tokens:${overrides.tokens ?? "447558"} tools:${overrides.tools ?? "43"} tps:${overrides.tps ?? "90"}\n` +
+    'result:"ECHO-BG-OK"',
+});
+
+function seedBgReceipt(): void {
+  seedStore({
+    entries: [
+      { type: "message", id: "m-bg-1", message: { role: "assistant", content: [{ type: "toolCall", id: "c-bg-1", name: "task", arguments: BG_ARGS }] } },
+      { type: "message", id: "m-bg-2", message: { role: "toolResult", toolCallId: "c-bg-1", isError: false, content: [{ type: "text", text: SPAWN_TEXT }], details: SPAWN_DETAILS } },
+    ],
+  });
+}
+
+describe("子代理启动态语义与完成通知消费（任务 26）", () => {
+  test("后台 spawn 回执显「已派发·后台运行中」启动态，不入终态词表裸显；模型徽标不受影响", async () => {
+    seedBgReceipt();
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    const pill = container.querySelector('[data-testid="subagent-card-status"]');
+    expect(pill?.textContent).toContain("已派发·后台运行中");
+    expect(pill?.textContent).not.toContain("完成");
+    expect(pill?.className).toContain("animate-pulse");
+    // 启动态转圈脉动保留（Loader2 spin），无 CircleCheck 完成图标
+    expect(container.querySelector(".lucide-loader-circle")).not.toBeNull();
+    expect(container.querySelector(".lucide-circle-check")).toBeNull();
+    // 启动态不渲染「最终回复」区（派发回执不是终态答复）
+    expect(container.querySelector('[data-testid="subagent-card-response-preview"]')).toBeNull();
+    // 回归守卫：spawn 回执的 resolved_model.display 照常显示（模型徽标先前修复不受影响）
+    expect(container.querySelector('[data-testid="subagent-card-model"]')?.textContent).toBe("GLM-5.3 Flash");
+  });
+
+  test("完成通知消费（entry_appended 实时路径）：spawn 回执卡按 taskId 转真终态「完成」", async () => {
+    seedBgReceipt();
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    expect(container.querySelector('[data-testid="subagent-card-status"]')?.textContent).toContain("已派发");
+
+    await act(async () => {
+      useMessagesStore.getState().applyWireEvent(S, { type: "entry_appended", entry: wakeEntry("w-1") });
+    });
+
+    const pill = container.querySelector('[data-testid="subagent-card-status"]');
+    expect(pill?.textContent).toContain("完成");
+    expect(pill?.textContent).not.toContain("已派发");
+    expect(container.querySelector(".lucide-circle-check")).not.toBeNull();
+    // 通知用量并入：duration:3m 52s → 用时；tokens:447558 → 447.6k tok；tps:90
+    const metrics = container.querySelector('[data-testid="subagent-card-metrics"]')?.textContent ?? "";
+    expect(metrics).toContain("3m 52s");
+    expect(metrics).toContain("447.6k tok");
+    expect(metrics).toContain("90 tok/s");
+    // result:"..." 成为最终回复
+    expect(container.querySelector('[data-testid="subagent-card-response-preview"]')?.textContent).toContain("ECHO-BG-OK");
+  });
+
+  test("完成通知重放幂等：同 taskId 双帧只消费一次，指标不叠加不抖动", async () => {
+    seedBgReceipt();
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    await act(async () => {
+      const store = useMessagesStore.getState();
+      store.applyWireEvent(S, { type: "entry_appended", entry: wakeEntry("w-1") });
+      store.applyWireEvent(S, { type: "entry_appended", entry: wakeEntry("w-2") });
+    });
+    expect(container.querySelector('[data-testid="subagent-card-status"]')?.textContent).toContain("完成");
+    const metrics = container.querySelector('[data-testid="subagent-card-metrics"]')?.textContent ?? "";
+    expect(metrics).toContain("3m 52s");
+    expect(metrics).toContain("447.6k tok");
+    // 卡仍唯一（按 toolCallId 聚合，不因重放增卡）
+    expect(container.querySelectorAll('[data-testid="subagent-card"]').length).toBe(1);
+  });
+
+  test("通知 status:error 如实转失败族，不虚标完成", async () => {
+    seedBgReceipt();
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    await act(async () => {
+      useMessagesStore.getState().applyWireEvent(S, { type: "entry_appended", entry: wakeEntry("w-err", { status: "error" }) });
+    });
+    const pill = container.querySelector('[data-testid="subagent-card-status"]');
+    expect(pill?.textContent).toContain("失败");
+    expect(pill?.className).toContain("text-destructive");
+    expect(container.querySelector(".lucide-circle-x")).not.toBeNull();
+  });
+
+  test("未知终态 status：中性图标 + 原值小字，不再配 CircleCheck 完成图标", async () => {
+    seedStore({
+      entries: [
+        { type: "message", id: "m-u-1", message: { role: "assistant", content: [{ type: "toolCall", id: "c-u-1", name: "task", arguments: TASK_ARGS }] } },
+        { type: "message", id: "m-u-2", message: { role: "toolResult", toolCallId: "c-u-1", isError: false, content: [{ type: "text", text: "..." }], details: { ...FINAL_DETAILS, status: "plan_error" } } },
+      ],
+    });
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    const pill = container.querySelector('[data-testid="subagent-card-status"]');
+    expect(pill?.textContent).toContain("plan_error");
+    expect(container.querySelector(".lucide-circle-check")).toBeNull();
+    expect(container.querySelector(".lucide-circle-minus")).not.toBeNull();
+  });
+
+  test("状态转换矩阵（collectSubagentCalls 纯聚合）：前台 running→completed；后台回执 dispatched；通知终局化", () => {
+    const toolCall = (id: string) => ({ type: "message", id: `m-${id}`, message: { role: "assistant", content: [{ type: "toolCall", id, name: "task", arguments: TASK_ARGS }] } });
+    // 前台：LIVE running → end completed
+    const fg = collectSubagentCalls([toolCall("c-fg")], {
+      "c-fg": { toolCallId: "c-fg", toolName: "task", args: null, status: "running", partialResult: { details: { ...LIVE_DETAILS, task_id: "st_fg" } } },
+    });
+    expect(fg[0] && fg[0].running && !fg[0].dispatched).toBe(true);
+    const fgDone = collectSubagentCalls([toolCall("c-fg")], {
+      "c-fg": { toolCallId: "c-fg", toolName: "task", args: null, status: "done", result: { content: [{ type: "text", text: "ok" }], details: { ...FINAL_DETAILS, task_id: "st_fg" } } },
+    });
+    expect(!fgDone[0] || (!fgDone[0].running && !fgDone[0].dispatched && fgDone[0].final?.status === "completed")).toBe(true);
+    // 后台：spawn 回执（end 帧即派发回执）→ dispatched；补通知 → 终局
+    const bgArgs = { ...TASK_ARGS, run_in_background: true };
+    const bgEntry = [
+      { type: "message", id: "m-bg", message: { role: "assistant", content: [{ type: "toolCall", id: "c-bg", name: "task", arguments: bgArgs }] } },
+      { type: "message", id: "m-bg-r", message: { role: "toolResult", toolCallId: "c-bg", isError: false, content: [{ type: "text", text: SPAWN_TEXT }], details: SPAWN_DETAILS } },
+    ];
+    const bg = collectSubagentCalls(bgEntry, {});
+    expect(bg[0] && !bg[0].running && bg[0].dispatched && bg[0].final?.status === "running").toBe(true);
+    const bgDone = collectSubagentCalls([...bgEntry, wakeEntry("w-1") as never], {});
+    expect(bgDone[0] && !bgDone[0].dispatched && bgDone[0].final?.status === "completed" && bgDone[0].final?.runStats?.runtimeMs === 232000).toBe(true);
+  });
+});
+
+  test("完成通知结构化形态（senpi-task.completion details）优先：final_response 与 run_stats 并入，next 段不混入回复", async () => {
+    seedBgReceipt();
+    const container = await render(createElement(SubagentPanel, { sessionId: S }));
+    const structured = {
+      type: "custom_message",
+      id: "w-s1",
+      customType: "omo-senpi:wake",
+      content:
+        "task completion name:st_bg1 id:st_bg1 category:quick(zai-coding-cn/glm-5.3-flash:low) status:completed duration:14.92s tokens:20611 tools:0 tps:196\n" +
+        'result:"IGNORED-TEXT-FORM"\nnext:Use task_send({ to: "st_bg1", message: "..." }) to continue.',
+      details: [
+        {
+          customType: "senpi-task.completion",
+          details: [
+            {
+              task_id: "st_bg1",
+              name: "st_bg1",
+              status: "completed",
+              category: "quick",
+              model: "zai-coding-cn/glm-5.3-flash",
+              duration_ms: 14923,
+              final_response: "BGQA-OK-STRUCTURED",
+              resolved_model: { provider: "zai-coding-cn", model_id: "glm-5.3-flash", display: "GLM-5.3 Flash" },
+              run_stats: { runtime_ms: 6216, turns: 1, tool_calls: 0, output_tokens: 9, input_tokens: 17722, total_tokens: 20611, tokens_per_second: 196, cost_usd: 0.0027492 },
+            },
+          ],
+        },
+      ],
+    };
+    await act(async () => {
+      useMessagesStore.getState().applyWireEvent(S, { type: "entry_appended", entry: structured });
+    });
+    expect(container.querySelector('[data-testid="subagent-card-status"]')?.textContent).toContain("完成");
+    const metrics = container.querySelector('[data-testid="subagent-card-metrics"]')?.textContent ?? "";
+    expect(metrics).toContain("14.9s");
+    expect(metrics).toContain("$0.0027");
+    const preview = container.querySelector('[data-testid="subagent-card-response-preview"]')?.textContent ?? "";
+    expect(preview).toContain("BGQA-OK-STRUCTURED");
+    expect(preview).not.toContain("IGNORED-TEXT-FORM");
+    expect(preview).not.toContain("next:");
+  });
