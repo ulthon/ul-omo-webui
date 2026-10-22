@@ -10,8 +10,30 @@ import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
 import { parseTaskCompletionEntry } from "@/lib/task-completion";
+import { lastModelChangeOf } from "@/components/chat/message-items";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+
+/** 生效模型水合（docs08 2026-10-22 批次任务 27a）：载入窗含 model_change 条目时把最后
+ *  一条写会话生效模型——刷新/打开会话后 appliedModels 不再是未知态（待生效徽标误报
+ *  主因，docs/08 第 17 条机制 a）。窗口内无条目不写（新会话留 null；极老切换在尾窗外
+ *  由回执/回显补齐）。服务端 jsonl 为权威源，显式覆盖写（内存值只可能更旧：回执先到、
+ *  历史重取后到的窗口场景）。
+ *  (c) 基线对齐：仅在水合路径对齐当前查看会话的全局选中（机制 b：残留跨会话选中
+ *  不再误挂待生效徽标）；回执/SSE model_changed 不对齐——发送中改选、真待生效不被
+ *  冲掉。cached 会话切回的对齐在 composer 挂载 effect。不写偏好持久化（初值语义）。
+ *  已知风险：水合对齐会冲掉会话打开至条目载入之间（亚秒窗）的主动改选——窗口极小
+ *  （entries 首载毫秒级）且显式选择的偏好持久化不受影响，接受。 */
+function hydrateAppliedModel(sessionId: string, entries: ReadonlyArray<WireEntry>): void {
+  const change = lastModelChangeOf(entries);
+  if (change === null) return;
+  const model = `${change.provider}/${change.modelId}`;
+  useSessionsStore.getState().setAppliedModel(sessionId, model);
+  if (useSessionsStore.getState().selectedId === sessionId) {
+    const ui = useUiStore.getState();
+    if (ui.selectedModel !== model) ui.setSelectedModel(model);
+  }
+}
 
 export interface ToolRun {
   toolCallId: string;
@@ -367,7 +389,9 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       });
     },
 
-    setEntries: (sessionId, entries, cursor, leafId, paging) =>
+    setEntries: (sessionId, entries, cursor, leafId, paging) => {
+      // 打开会话/刷新/_gap 重取的水合点（任务 27a）：先落生效模型再入消息槽
+      hydrateAppliedModel(sessionId, entries);
       set((s) => ({
         bySession: {
           ...s.bySession,
@@ -381,7 +405,8 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             ...(paging ?? { hasMore: false, oldestId: null }),
           },
         },
-      })),
+      }));
+    },
 
     setCursor: (sessionId, cursor) =>
       set((s) => {
@@ -390,13 +415,17 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, cursor } } };
       }),
 
-    appendEntries: (sessionId, entries) =>
+    appendEntries: (sessionId, entries) => {
+      // 游标增量校准窗（切回会话/触顶同步）同水合（任务 27a）：增量内含切换才写，
+      // 与 setEntries 同一权威源口径；prependEntries 是更早窗（不可能含最新切换）不扫
+      hydrateAppliedModel(sessionId, entries);
       set((s) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
         let list = cur.entries;
         for (const entry of entries) list = upsertEntry(list, entry);
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
-      }),
+      });
+    },
 
     prependEntries: (sessionId, entries, paging) =>
       set((s) => {

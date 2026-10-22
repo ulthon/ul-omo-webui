@@ -34,6 +34,7 @@ import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
 import { SlashHints } from "@/components/composer/slash-hints";
 import { CapsuleModelTag, ModelChip, ThinkingChip } from "@/components/composer/chips";
+import { alignSelectionToApplied, pendingModelBadgeVisible } from "@/components/composer/model-pending";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
 import { parseSlashCommand } from "@/components/chat/commands";
@@ -107,13 +108,24 @@ export function Composer({
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const hasPendingQuestion = useQuestionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
   const interruptible = queueAvailable || runState === "running" || runState === "waiting" || hasPendingQuestion;
-  // 模型待生效判定（docs08-r6 任务 8 ④）：流式/排队期直发被禁（排队剥模型铁律在 api.ts
-  // 注入点，此处零改动），所选模型到下一条直发才注入——选中 ≠ 已生效即挂徽标。生效模型源：
-  // prompt 回执 appliedModel（下方写入）与 SSE model_changed（event-dispatch 写入）；
-  // 未知（null，未见回执/回显）时按「有选择即待生效」保守显示，回执/回显到达即收敛。
+  // 模型待生效判定（docs08-r6 任务 8 ④ + docs08 2026-10-22 批次任务 27）：生效模型源三路
+  // ——prompt 回执 appliedModel（下方写入）、SSE model_changed（event-dispatch 写入）、
+  // 会话历史水合（messages store setEntries/appendEntries，任务 27a）。判定与基线对齐
+  // 纯函数见 model-pending.ts（机制 a/b 说明与键空间核实记录在彼处）。
   const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
   const selectedModelForBadge = useUiStore((s) => s.selectedModel);
-  const modelPendingEffect = queueAvailable && selectedModelForBadge !== null && selectedModelForBadge !== appliedModel;
+  // (c) 挂载对齐（docs08 2026-10-22 批次任务 27）：切会话（chat-view 按 key 重挂载）时
+  // 选中对齐该会话已知生效模型——cached 会话切回无水合事件，基线在这里补齐；applied
+  // 未知（新会话/尾窗缺载）留全局选中（输入初值语义）。回执/SSE model_changed 路径
+  // 不对齐（水合到达的对齐在 messages store 水合点，仅水合路径）：发送中改选、真待
+  // 生效挂标不被冲掉。刻意不写偏好持久化（scheduleModelPreferencePersist 只属显式
+  // 选择，localStorage 初值语义不变）。
+  useEffect(() => {
+    const applied = useSessionsStore.getState().appliedModels[sessionId];
+    const next = alignSelectionToApplied(typeof applied === "string" && applied !== "" ? applied : null, useUiStore.getState().selectedModel);
+    if (next !== null) useUiStore.getState().setSelectedModel(next);
+  }, [sessionId]);
+  const modelPendingEffect = pendingModelBadgeVisible(queueAvailable, selectedModelForBadge, appliedModel);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 

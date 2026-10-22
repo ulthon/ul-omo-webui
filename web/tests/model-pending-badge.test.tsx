@@ -1,8 +1,9 @@
 /**
- * 胶囊模型待生效徽标（docs08-r6 任务 8 ④）条件渲染用例：
+ * 胶囊模型待生效徽标（docs08-r6 任务 8 ④ + docs08 2026-10-22 批次任务 27）条件渲染用例：
  * - CapsuleModelTag 直渲染：pendingEffect 真→徽标在（文案词条）；假/缺省→不渲染。
- * - Composer 手机档接线：queueAvailable && selectedModel !== appliedModel 才挂徽标——
- *   生效模型回执到达（appliedModels 收敛为所选）即摘除；非排队期不挂。
+ * - Composer 手机档接线：queueAvailable && selectedModel !== appliedModel 才挂徽标，
+ *   且 appliedModel 未知（null，无水合/无回执）一律不挂（任务 27b：保守显示即误报）；
+ *   生效模型已知时选中 ≠ 生效才挂（真待生效），回执到达（appliedModels 收敛为所选）即摘除。
  * （api.ts 排队剥模型注入点为铁律区域，本用例零触碰，只验展示层条件。）
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -120,14 +121,20 @@ describe("Composer 手机档接线：选中 ≠ 生效 才挂徽标", () => {
     onAborted: () => {},
   };
 
-  test("排队期所选模型未生效 → 徽标在；回执收敛（appliedModels=所选）→ 徽标摘除", async () => {
+  test("排队期生效未知→不挂（27b）；生效已知时改选→挂；回执收敛→摘除", async () => {
     useUiStore.setState({ selectedModel: "zai-coding-cn/glm-4.7" });
     const { container, unmount } = await render(createElement(Composer, composerProps));
 
-    // 生效模型未知（null）：保守显示待生效
+    // 生效模型未知（null，无水合/无回执）：不挂——保守显示即误报（任务 27b 消除）
+    expect(el(container, "capsule-model-pending")).toBeNull();
+
+    // 回执/SSE model_changed 落库生效模型 ≠ 所选 → 真待生效：徽标在
+    await act(async () => {
+      useSessionsStore.getState().setAppliedModel("d-1", "zai-coding-cn/glm-5.3-flash");
+    });
     expect(el(container, "capsule-model-pending")).not.toBeNull();
 
-    // prompt 回执/SSE model_changed 写入生效模型 = 所选 → 摘除
+    // 回执收敛（appliedModels = 所选）→ 摘除
     await act(async () => {
       useSessionsStore.getState().setAppliedModel("d-1", "zai-coding-cn/glm-4.7");
     });
@@ -141,12 +148,22 @@ describe("Composer 手机档接线：选中 ≠ 生效 才挂徽标", () => {
     expect(el(idle.container, "capsule-model-pending")).toBeNull();
     await idle.unmount();
 
-    // 排队期但已生效另一模型且用户改选回它？——生效=glm-5.3-flash、选 glm-4.7：仍待生效
+    // 生效模型已知（glm-5.3-flash）、选中 glm-4.7（残留跨会话选中或他端切换后的真实意图）：仍待生效
     const { container, unmount } = await render(createElement(Composer, composerProps));
     await act(async () => {
       useSessionsStore.getState().setAppliedModel("d-1", "zai-coding-cn/glm-5.3-flash");
     });
     expect(el(container, "capsule-model-pending")).not.toBeNull();
+    await unmount();
+  });
+
+  test("挂载对齐（任务 27c）：切到生效模型已知的会话，残留选中基线对齐为该会话生效模型→不误挂", async () => {
+    useSessionsStore.setState({ appliedModels: { "d-1": "zai-coding-cn/glm-5.3-flash" } });
+    useUiStore.setState({ selectedModel: "anthropic/claude-x" }); // 残留（他会话）选中
+    const { container, unmount } = await render(createElement(Composer, composerProps));
+    // 挂载即对齐：选中 := 该会话生效模型 → 切会话不误挂（机制 b 消除）
+    expect(useUiStore.getState().selectedModel).toBe("zai-coding-cn/glm-5.3-flash");
+    expect(el(container, "capsule-model-pending")).toBeNull();
     await unmount();
   });
 });

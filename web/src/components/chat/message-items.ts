@@ -78,6 +78,22 @@ export interface ModelVariantRow {
   upstreamId?: string;
 }
 
+/** 会话生效模型水合源（docs08 2026-10-22 批次任务 27a）：entries 中最后一条 model_change
+ *  条目即当前生效模型——provider/modelId 记变体名，与选中 "provider/变体id"、prompt 回执
+ *  appliedModel 同键空间（引擎 bundle 实证 model_changed 帧与 jsonl 条目同源同一 model
+ *  对象，任务 27d 核实）。正序扫描保最后一条；无则 null（新会话/切换在载入窗外，此时
+ *  由回执/回显补齐）。纯函数。 */
+export function lastModelChangeOf(
+  entries: ReadonlyArray<WireEntry>,
+): { provider: string; modelId: string } | null {
+  let current: { provider: string; modelId: string } | null = null;
+  for (const e of entries) {
+    const change = modelChangeOf(e);
+    if (change !== null) current = change;
+  }
+  return current;
+}
+
 /** 单条 assistant 条目的模型名解析结果：name 为显示名（变体 id 优先；"provider/model"
  *  形态由渲染层 shortModelName 归一），ambiguous=true 表示只能给出裸上游名且注册表内
  *  多个变体共用该上游（title 注记，绝不猜） */
