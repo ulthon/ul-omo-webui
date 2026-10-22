@@ -101,9 +101,17 @@ export const chat = {
     noContext: "No context data yet",
     costTitle: "Cost",
     costTotal: "Total cost",
+    costToday: "Today's cost",
+    cacheRate: "Hit rate",
     speedTitle: "Turn speed",
+    lastTurn: "Last turn",
     avgTurns: { one: "avg (1 turn)", other: "avg ({n} turns)" },
     noData: "No data yet (appears after a turn ends)",
+    timeTitle: "Time (estimated)",
+    timeModel: "Model (est.)",
+    timeTool: "Tools",
+    subagentsTitle: "Subagent costs",
+    subagentTotal: "Total",
   },
   // memory-panel.tsx
   memoryPanel: {

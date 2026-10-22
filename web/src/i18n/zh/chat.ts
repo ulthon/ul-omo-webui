@@ -102,9 +102,17 @@ export const chat = {
     noContext: "暂无上下文数据",
     costTitle: "成本",
     costTotal: "累计费用",
+    costToday: "今日费用",
+    cacheRate: "命中率",
     speedTitle: "回合速度",
+    lastTurn: "末回合",
     avgTurns: { one: "平均（1 回合）", other: "平均（{n} 回合）" },
     noData: "暂无数据（回合结束后出现）",
+    timeTitle: "耗时估算",
+    timeModel: "模型（估）",
+    timeTool: "工具",
+    subagentsTitle: "子代理费用",
+    subagentTotal: "合计",
   },
   // memory-panel.tsx 记忆页签
   memoryPanel: {

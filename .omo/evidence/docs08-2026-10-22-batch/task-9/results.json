@@ -1,0 +1,137 @@
+{
+  "task": 9,
+  "results": [
+    {
+      "name": "项目注册",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "bundle 新鲜（线上=磁盘 sha256）",
+      "pass": true,
+      "detail": "{\"bundle\":\"index-mGUPGGLd.js\",\"servedSha\":\"436906f83d222b8a94bd83851eb5ecc65086478641cb31a289dbe50eb8f10add\",\"diskSha\":\"436906f83d222b8a94bd83851eb5ecc65086478641cb31a289dbe50eb8f10add\",\"match\":true}"
+    },
+    {
+      "name": "桌面1920: 累计费用=$1.5000",
+      "pass": true,
+      "detail": "$1.5000"
+    },
+    {
+      "name": "桌面1920: 今日费用=$0.3500",
+      "pass": true,
+      "detail": "$0.3500"
+    },
+    {
+      "name": "桌面1920: 模型拆分两行降序",
+      "pass": true,
+      "detail": "[\"glm-5.3-4k$0.2500\",\"glm-4.6v$0.1000\"]"
+    },
+    {
+      "name": "桌面1920: 缓存命中率=16%",
+      "pass": true,
+      "detail": "16%"
+    },
+    {
+      "name": "桌面1920: 末回合 tok/s",
+      "pass": true,
+      "detail": "45.6 tok/s"
+    },
+    {
+      "name": "桌面1920: 模型耗时行",
+      "pass": true,
+      "detail": "2m 0s"
+    },
+    {
+      "name": "桌面1920: 工具耗时行=1m 0s",
+      "pass": true,
+      "detail": "1m 0s"
+    },
+    {
+      "name": "桌面1920: 子代理花费行",
+      "pass": true,
+      "detail": "$0.1486"
+    },
+    {
+      "name": "桌面1920: 子代理合计行",
+      "pass": true,
+      "detail": "$0.1486"
+    },
+    {
+      "name": "桌面1920: 区块无 NaN",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "name": "桌面1920: 无横向溢出",
+      "pass": true,
+      "detail": "scrollWidth=1920 clientWidth=1920"
+    },
+    {
+      "name": "桌面1920: 截图落档",
+      "pass": true,
+      "detail": "/data/projects/senpi-webui-wt/docs08-r7-wave1-t9/.omo/evidence/docs08-2026-10-22-batch/task-9/desktop-1920.png"
+    },
+    {
+      "name": "手机390: 累计费用=$1.5000",
+      "pass": true,
+      "detail": "$1.5000"
+    },
+    {
+      "name": "手机390: 今日费用=$0.3500",
+      "pass": true,
+      "detail": "$0.3500"
+    },
+    {
+      "name": "手机390: 模型拆分两行降序",
+      "pass": true,
+      "detail": "[\"glm-5.3-4k$0.2500\",\"glm-4.6v$0.1000\"]"
+    },
+    {
+      "name": "手机390: 缓存命中率=16%",
+      "pass": true,
+      "detail": "16%"
+    },
+    {
+      "name": "手机390: 末回合 tok/s",
+      "pass": true,
+      "detail": "45.6 tok/s"
+    },
+    {
+      "name": "手机390: 模型耗时行",
+      "pass": true,
+      "detail": "2m 0s"
+    },
+    {
+      "name": "手机390: 工具耗时行=1m 0s",
+      "pass": true,
+      "detail": "1m 0s"
+    },
+    {
+      "name": "手机390: 子代理花费行",
+      "pass": true,
+      "detail": "$0.1486"
+    },
+    {
+      "name": "手机390: 子代理合计行",
+      "pass": true,
+      "detail": "$0.1486"
+    },
+    {
+      "name": "手机390: 区块无 NaN",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "name": "手机390: 无横向溢出",
+      "pass": true,
+      "detail": "scrollWidth=390 clientWidth=390"
+    },
+    {
+      "name": "手机390: 截图落档",
+      "pass": true,
+      "detail": "/data/projects/senpi-webui-wt/docs08-r7-wave1-t9/.omo/evidence/docs08-2026-10-22-batch/task-9/mobile-390.png"
+    }
+  ],
+  "passed": true,
+  "at": "2026-10-22T19:03:30.819Z"
+}
