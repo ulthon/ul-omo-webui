@@ -2,6 +2,8 @@
 // 纯函数模块（tool-card-data/commands 等）与引擎 wire 传入文案（权限卡
 // title/message、notify 载荷）不在本域，保持原样不译；compact-run 为本地拼装 toast（终验 F2 修复入域）。
 export const chat = {
+  // 折叠步骤行耗时标签（docs08 2026-10-22 批次任务 7）：thinking-block/tool-card 折叠头
+  duration: "{dur}",
   // tool-card.tsx 工具调用卡片
   toolcard: {
     statusRunning: "运行中",

@@ -165,7 +165,7 @@ function MessageContent({
   if (message.role === "toolResult") {
     return <ToolResultLine message={message} />;
   }
-  return <PartsView parts={message.content} sessionId={sessionId} live={live} />;
+  return <PartsView parts={message.content} sessionId={sessionId} live={live} entryId={entryId} />;
 }
 
 /** 定格条目气泡：以 entryId 订阅单条 entry（upsertEntry 只替换被改条目的对象引用） */

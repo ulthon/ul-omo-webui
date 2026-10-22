@@ -12,6 +12,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useMessagesStore } from "@/stores/messages";
 import type { WireMessage } from "@/lib/api";
 import { codeTextOf, RESULT_PREVIEW_CHARS, diffTextOf, prettyJson, resultTextOf, summarizeToolCall } from "./tool-card-data";
+import { toolDurationLabel } from "./step-duration";
 import { useT } from "@/i18n/i18n";
 import { ChevronDown, CircleCheck, CircleX, Loader2, Wrench } from "lucide-react";
 
@@ -38,6 +39,7 @@ export function ToolCard({
   name,
   args: partArgs,
   live,
+  entryId,
 }: {
   sessionId: string;
   toolCallId: string;
@@ -45,6 +47,8 @@ export function ToolCard({
   /** part.arguments（定格消息自带）；运行期以 toolRuns.args（事件确认）优先 */
   args?: unknown;
   live: boolean;
+  /** toolCall 所在条目 id（任务 7）：有值时按 toolCall→toolResult 时间戳差显示耗时标签 */
+  entryId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [showFull, setShowFull] = useState(false);
@@ -54,6 +58,12 @@ export function ToolCard({
     const entries = s.bySession[sessionId]?.entries;
     return entries ? findToolResultMessage(entries, toolCallId) : null;
   });
+  // 耗时标签（任务 7）：toolCall 所在条目 → 配对 toolResult 条目时间戳差；无结果/无时间戳不显示
+  const entriesRef = useMessagesStore((s) => s.bySession[sessionId]?.entries);
+  const durationLabel = useMemo(
+    () => (entryId && entriesRef ? toolDurationLabel(entriesRef, toolCallId, entryId) : null),
+    [entryId, entriesRef, toolCallId],
+  );
 
   const t = useT();
   const args = run && run.args != null ? run.args : (partArgs ?? null);
@@ -99,6 +109,11 @@ export function ToolCard({
           {summary.primary && <span className="block truncate text-xs text-foreground/90">{summary.primary}</span>}
           {summary.secondary && <span className="block truncate text-[11px] text-muted-foreground">{summary.secondary}</span>}
         </span>
+        {durationLabel && (
+          <span data-testid="tool-duration" className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {t("chat.duration", { dur: durationLabel })}
+          </span>
+        )}
         {/* 状态徽标独立：右端 pill，运行中/失败/完成语义不变（docs08-r4 任务 9 视觉分组） */}
         <span
           className={`flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs ${

@@ -1,6 +1,8 @@
 // chat 域词条（en）：键集与 zh/chat.ts 完全一致（聚合处 satisfies 锁定），英文为自然翻译。
 // 计数词条按英文复数规则用 one/other；插值占位符与 zh 同名。
 export const chat = {
+  // Collapsed step-row duration label (task 7): thinking-block/tool-card headers
+  duration: "{dur}",
   // tool-card.tsx
   toolcard: {
     statusRunning: "Running",

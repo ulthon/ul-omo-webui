@@ -3,12 +3,26 @@
 // 折叠时不渲染正文，delta 只触发头部计数一次重渲染（part 级订阅由上层保证）。
 // 展开态滚动跟随（docs08-r5 任务 13）：thinking 变化时正文滚至底部；用户 wheel /
 // touchmove（passive 监听，不阻断手势）即停跟随，手动重新展开复位跟随。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
 import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
+import { useMessagesStore } from "@/stores/messages";
+import { thinkingDurationLabel } from "./step-duration";
 
-export function ThinkingBlock({ thinking, live }: { thinking: string; live: boolean }) {
+export function ThinkingBlock({
+  thinking,
+  live,
+  entryId,
+  sessionId,
+}: {
+  thinking: string;
+  live: boolean;
+  /** 所在条目 id（任务 7）：有值时按条目起止时间戳差显示折叠行耗时标签 */
+  entryId?: string;
+  /** 条目归属会话（任务 7）：与 entryId 成对传入用于订阅 entries */
+  sessionId?: string;
+}) {
   // 初始开合读 store 快照（useState 初始化器仅取挂载时刻值；手动开合是会话内瞬态，
   // 不回写设置，已挂载的块也不随设置变化重开）
   const [open, setOpen] = useState(() => useUiStore.getState().thinkingDefaultExpanded);
@@ -45,6 +59,12 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
 
   const t = useT();
   const count = thinking.length;
+  // 耗时标签（任务 7）：本条目 → 下一条目时间戳差；缺失（老会话/流式在途末条）不显示
+  const entries = useMessagesStore((s) => (sessionId ? s.bySession[sessionId]?.entries : undefined));
+  const durationLabel = useMemo(
+    () => (entryId && entries ? thinkingDurationLabel(entries, entryId) : null),
+    [entryId, entries],
+  );
 
   return (
     <div className="my-1">
@@ -59,6 +79,11 @@ export function ThinkingBlock({ thinking, live }: { thinking: string; live: bool
           {live ? t("chat.thinkingBlock.live") : t("chat.thinkingBlock.title")}
           {count > 0 ? t("chat.thinkingBlock.chars", { n: count }) : t("chat.thinkingBlock.ellipsis")}
         </span>
+        {durationLabel && (
+          <span data-testid="thinking-duration" className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {t("chat.duration", { dur: durationLabel })}
+          </span>
+        )}
         <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (

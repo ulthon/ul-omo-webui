@@ -64,7 +64,18 @@ function UnsupportedCountLine({ count }: { count: number }) {
 }
 
 /** 单个 part 分发；未知类型渲染占位 chip（docs08-r6 任务 10 ①） */
-export function PartView({ part, sessionId, live }: { part: WirePart; sessionId: string; live: boolean }) {
+export function PartView({
+  part,
+  sessionId,
+  live,
+  entryId,
+}: {
+  part: WirePart;
+  sessionId: string;
+  live: boolean;
+  /** 所在条目 id（任务 7）：透传给 thinking/toolCall 行用于耗时标签 */
+  entryId?: string;
+}) {
   switch (part.type) {
     case "text": {
       const text = typeof part.text === "string" ? part.text : "";
@@ -73,7 +84,7 @@ export function PartView({ part, sessionId, live }: { part: WirePart; sessionId:
     }
     case "thinking": {
       const thinking = typeof part.thinking === "string" ? part.thinking : "";
-      return <ThinkingBlock thinking={thinking} live={live} />;
+      return <ThinkingBlock thinking={thinking} live={live} entryId={entryId} sessionId={sessionId} />;
     }
     case "image":
       return <ImagePart part={part} />;
@@ -101,6 +112,7 @@ export function PartView({ part, sessionId, live }: { part: WirePart; sessionId:
           name={name}
           args={part.arguments}
           live={live}
+          entryId={entryId}
         />
       );
     }
@@ -114,7 +126,18 @@ export function PartView({ part, sessionId, live }: { part: WirePart; sessionId:
 /** 定格消息的 part 列表（part 对象引用稳定，随气泡 memo）。
  *  空判上移为计数（docs08-r6 任务 10 ②）：全部 part 不可见时渲染单行「N 个未支持内容块」
  *  替代空壳；有任一可见 part 时逐 part 渲染（无未知类型会话零变化）。 */
-export function PartsView({ parts, sessionId, live }: { parts?: WirePart[]; sessionId: string; live: boolean }) {
+export function PartsView({
+  parts,
+  sessionId,
+  live,
+  entryId,
+}: {
+  parts?: WirePart[];
+  sessionId: string;
+  live: boolean;
+  /** 所在条目 id（任务 7）：透传给 part 分发用于耗时标签 */
+  entryId?: string;
+}) {
   if (!parts || parts.length === 0) return null;
   if (parts.every((p) => !isRenderablePart(p))) {
     return <UnsupportedCountLine count={parts.length} />;
@@ -122,7 +145,7 @@ export function PartsView({ parts, sessionId, live }: { parts?: WirePart[]; sess
   return (
     <>
       {parts.map((part, i) => (
-        <PartView key={i} part={part} sessionId={sessionId} live={live} />
+        <PartView key={i} part={part} sessionId={sessionId} live={live} entryId={entryId} />
       ))}
     </>
   );
