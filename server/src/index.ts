@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { relative } from "node:path";
@@ -8,7 +9,10 @@ import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { openConfigStore } from "./conf/config-store";
-import { EngineProcessManager } from "./engine/process-manager";
+import { EngineProcessManager, resolveEnginePaths } from "./engine/process-manager";
+import { ScheduleRunnerSupervisor } from "./engine/schedule-runner";
+import { createScheduleRoutes, createScheduleDeliverHandler, type ScheduleRouteDeps } from "./api/routes-schedule";
+import { abandonSessionJobs, scheduleDir } from "./api/schedule-store";
 import {
   createProjectConfigStores,
   migrateProjectPreferences,
@@ -130,7 +134,42 @@ void manager
     console.warn(`孤儿引擎清扫失败：${err instanceof Error ? err.message : String(err)}`);
   });
 
+// schedule 定时任务（docs08-r7 任务 21）：runner 托管 + CRUD 路由 + 投递回注桥。
+// spawn 失败连续达上限时降级为「列表+取消只读」（POST 503），不阻断 server 启动。
+const scheduleDeliverToken = randomBytes(24).toString("hex");
+let scheduleSupervisor: ScheduleRunnerSupervisor | null = null;
+try {
+  const { cliPath } = resolveEnginePaths();
+  scheduleSupervisor = new ScheduleRunnerSupervisor({
+    cliPath,
+    agentDir: agentDir(),
+    dataDir: DATA_DIR,
+    deliverUrl: `http://127.0.0.1:${PORT}/api/schedule/deliver`,
+    deliverToken: scheduleDeliverToken,
+  });
+  scheduleSupervisor.start();
+  console.log("[schedule] runner 已托管启动（omo schedule run --watch）");
+} catch (err) {
+  console.warn(`[schedule] runner 托管启动失败，定时任务降级为列表+取消只读：${err instanceof Error ? err.message : String(err)}`);
+}
+// 会话行解析/prompt 注入复用既有网关能力（resolveSessionRow 纯读不 spawn）
+const scheduleDeps: ScheduleRouteDeps = {
+  agentDir: agentDir(),
+  resolveSession: async (id) => {
+    const row = await engines.resolveSessionRow(id);
+    return row ? { path: row.path, cwd: row.cwd } : null;
+  },
+  promptSession: (id, text) => engines.prompt(id, { text }),
+  runnerAlive: () => scheduleSupervisor?.alive() ?? false,
+  degraded: () => scheduleSupervisor?.degraded() ?? false,
+  deliverToken: scheduleDeliverToken,
+};
+
 const app = new Hono();
+
+// 投递回注端点：免登录中间件（自带每次启动随机 bearer token 校验），
+// 必须在 /api/* 鉴权之前挂载（同登录端点先例）
+app.post("/api/schedule/deliver", createScheduleDeliverHandler(scheduleDeps));
 
 // 公开端点：登录/登出（登录端点必须匿名可达，否则永远进不了门）
 app.post("/api/auth/login", auth.login);
@@ -143,7 +182,19 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
 // configs（todo 4）：全局目录取 UL_OMO_WEBUI_CONFIG_DIR / ~/.config/ul-omo-webui/；
 // 项目 scope 配置经 projectConfigs 按注册项目派生（todo 6 合并读取与迁移共用）。
-const deps = { meta, engines, configs, projectConfigs, titleGen };
+const deps = {
+  meta,
+  engines,
+  configs,
+  projectConfigs,
+  titleGen,
+  // 会话删除 → 该会话 pending 定时任务标 invalid（abandoned 语义，任务 21c）
+  schedule: {
+    onSessionDeleted: (sessionId: string) =>
+      abandonSessionJobs(scheduleDir(agentDir()), sessionId, "abandoned: session deleted"),
+  },
+};
+app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/", createSessionRoutes(deps));
 app.route("/", createMetaRoutes(deps));
 app.route("/", createCommandsRoutes(deps));
@@ -154,6 +205,7 @@ app.route("/", createSnippetsRoutes(deps));
 app.route("/", createTagsRoutes(deps));
 app.route("/", createNotesRoutes(deps));
 app.route("/", createMemoryRoutes(deps));
+app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
@@ -247,6 +299,11 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   detachEventBus();
   detachTombstones();
+  try {
+    await scheduleSupervisor?.stop();
+  } catch {
+    // 尽力关停
+  }
   try {
     await engines.stopAll();
   } catch {

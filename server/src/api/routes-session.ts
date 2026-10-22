@@ -582,6 +582,13 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     const id = requireParam(c, "id");
     const removed = await deps.engines.deleteSession(id);
     deps.meta.deleteSessionMeta(id);
+    // schedule 钩子（任务 21c）：该会话 pending 定时任务标 invalid（abandoned）。
+    // best-effort：标记失败不回滚删除，仅告警（引擎删除已不可逆，阻塞无意义）。
+    try {
+      await deps.schedule?.onSessionDeleted(id);
+    } catch (err) {
+      console.warn(`[schedule] 会话删除标记定时任务失败：${err instanceof Error ? err.message : String(err)}`);
+    }
     return c.json({ ok: true, deleted: { id, ...removed } });
   }));
 

@@ -21,6 +21,11 @@ export interface ApiDeps {
    */
   projectConfigs?: ProjectConfigStores;
   /**
+   * schedule 会话删除钩子（docs08 任务 21c）：删除会话后把该会话 pending 定时
+   * 任务标 invalid（abandoned 语义）。缺省时无操作（测试装配兼容）。
+   */
+  schedule?: { onSessionDeleted(sessionId: string): Promise<unknown> };
+  /**
    * 附件临时区根（docs08-r3 任务 17）：缺省 DATA_DIR/attachments（api/attachments.ts）。
    * 测试注入临时目录，端点写入/校验/删除全部以它为界。
    */
