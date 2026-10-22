@@ -3,6 +3,7 @@
 import type { MessageCatalogShape } from "./i18n";
 import { common } from "./en/common";
 import { login } from "./en/login";
+import { shortcuts } from "./en/shortcuts";
 import { chat } from "./en/chat";
 import { composer } from "./en/composer";
 import { sessionList } from "./en/sessionList";
@@ -14,6 +15,7 @@ import { errors } from "./en/errors";
 export const en = {
   common,
   login,
+  shortcuts,
   chat,
   composer,
   sessionList,

@@ -28,6 +28,8 @@ import { Button } from "@/components/ui/button";
 import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 import { RightRail } from "@/components/layout/right-rail";
 import { useIsMobile } from "@/lib/use-is-mobile";
+import { isModelPickerTrigger } from "@/lib/shortcuts";
+import { useShortcutsHelp } from "@/lib/use-shortcuts-help";
 
 /** 手机触控目标外链按钮（44px；desktop 同尺寸不碍事） */
 const EXTERNAL_LINK_CLASS =
@@ -58,11 +60,12 @@ function useAppHeight(): void {
 /** Ctrl/Cmd+P 快捷键挂载（W2 todo 8）：打开输入区模型选择弹层（打开态在 ui store，chip 消费）。
  * 对话框内不接管——radix 弹层经 Portal 盖住输入区 chip，快捷键在遮罩下打开等于失效
  * （Oracle 低-7）；无可用模型时同样不开。preventDefault 压掉浏览器默认打印面板。
- * 独立导出成 hook：shell 挂载用，单测可挂最小探针组件验证（不牵起整个 shell 的引导链）。 */
+ * 独立导出成 hook：shell 挂载用，单测可挂最小探针组件验证（不牵起整个 shell 的引导链）。
+ * docs08-r7 任务 12：键位判定收拢 lib/shortcuts.isModelPickerTrigger（注册表唯一来源），逐字等价。 */
 export function useCtrlPModelPicker(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "p") return;
+      if (!isModelPickerTrigger(e)) return;
       const target = e.target;
       if (target instanceof Element && target.closest('[role="dialog"]')) return;
       e.preventDefault();
@@ -149,6 +152,9 @@ export function AppShell() {
   }, []);
 
   useCtrlPModelPicker();
+  // 快捷键帮助触发（docs08-r7 任务 12）：? / Ctrl+K 打开帮助对话框（开关在 ui store，
+  // 对话框挂 topbar）；登录页不挂 AppShell，本 hook 不存在即登录页零影响。
+  useShortcutsHelp();
 
   // A6（docs08-r4 任务 6）：手机档第二层整行退役——右栏触发钮迁入顶栏（topbar 手机档
   // 右簇），git/files 外链手机档迁入右栏抽屉头部（right-rail.tsx）；桌面（lg+）第二层

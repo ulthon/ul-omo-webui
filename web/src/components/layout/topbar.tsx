@@ -8,7 +8,7 @@
 // 条件渲染（DOM 不存在，非 CSS 隐藏）。
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Check, ChevronDown, FolderPlus, ListTodo, Menu, Settings } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, Keyboard, ListTodo, Menu, Settings } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { ModelInfo } from "@/lib/api";
 import { loadProjectModels, openProject } from "@/lib/bootstrap";
@@ -26,6 +26,7 @@ import {
   type ProjectSortMode,
 } from "@/components/session-list/global-list-data";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
+import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
 import { ContextWaterRing } from "@/components/layout/context-ring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -798,6 +799,9 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   const isMobile = useIsMobile();
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 快捷键帮助开关（docs08-r7 任务 12）：帮助钮 onClick 置位，shell 的 ?/Ctrl+K 触发同写
+  const shortcutsHelpOpen = useUiStore((s) => s.shortcutsHelpOpen);
+  const setShortcutsHelpOpen = useUiStore((s) => s.setShortcutsHelpOpen);
 
   // 会话身份（A3 手机档）：选中会话自 byProject 反查（id 唯一，命中即返回原引用，
   // 选择器引用稳定）。标题显示服务端合并值 title（renamedTitle ?? name ?? firstMessage）。
@@ -911,6 +915,18 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
           >
             <ListTodo className="size-5" />
           </Button>
+          {/* 快捷键帮助（docs08-r7 任务 12）：顶栏帮助钮挂载对话框，手机档即无键盘入口 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label={t("shortcuts.title")}
+            title={t("shortcuts.title")}
+            data-testid="shortcuts-help-button"
+            onClick={() => setShortcutsHelpOpen(true)}
+          >
+            <Keyboard className="size-5" />
+          </Button>
           {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
           <Button
             variant="ghost"
@@ -964,6 +980,18 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* 快捷键帮助（docs08-r7 任务 12）：顶栏帮助钮挂载对话框 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label={t("shortcuts.title")}
+            title={t("shortcuts.title")}
+            data-testid="shortcuts-help-button"
+            onClick={() => setShortcutsHelpOpen(true)}
+          >
+            <Keyboard className="size-5" />
+          </Button>
           {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
           <Button
             variant="ghost"
@@ -984,6 +1012,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
 
       <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <ShortcutsDialog open={shortcutsHelpOpen} onOpenChange={setShortcutsHelpOpen} />
     </header>
   );
 }

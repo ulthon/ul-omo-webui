@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
+import { isSendKey } from "@/lib/shortcuts";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
@@ -747,7 +748,7 @@ export function Composer({
           return;
         }
       }
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (isSendKey(e)) {
         e.preventDefault();
         void send();
         return;

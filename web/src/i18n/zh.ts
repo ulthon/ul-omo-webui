@@ -2,6 +2,7 @@
 // 各域拆分至 zh/ 目录下独立文件，便于按域并行编辑；此处仅组装，键形状与拆分前一致。
 import { common } from "./zh/common";
 import { login } from "./zh/login";
+import { shortcuts } from "./zh/shortcuts";
 import { chat } from "./zh/chat";
 import { composer } from "./zh/composer";
 import { sessionList } from "./zh/sessionList";
@@ -13,6 +14,7 @@ import { errors } from "./zh/errors";
 export const zh = {
   common,
   login,
+  shortcuts,
   chat,
   composer,
   sessionList,

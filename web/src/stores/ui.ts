@@ -53,6 +53,9 @@ interface UiState {
   /** 输入区模型选择弹层开关（W2 todo 8）：chip 点击与 shell 的 Ctrl+P 快捷键共用——
    * 键盘监听在 shell、弹层在 composer，跨组件状态落 store。 */
   modelPickerOpen: boolean;
+  /** 快捷键帮助对话框开关（docs08-r7 任务 12）：顶栏帮助钮与 shell 的 ?/Ctrl+K
+   * 触发共用，键盘监听在 shell、对话框挂 topbar，跨组件状态落 store（同上款）。 */
+  shortcutsHelpOpen: boolean;
   /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
   externalLinks: ExternalLinks;
   /** 侧栏项目排序档位（C16 todo 9）：meta_kv sidebar.projectSort 持久（缺省 activity），
@@ -78,6 +81,7 @@ interface UiState {
   setSelectedModel(model: string | null): void;
   setSelectedThinkingLevel(level: string | null): void;
   setModelPickerOpen(open: boolean): void;
+  setShortcutsHelpOpen(open: boolean): void;
   setExternalLinks(links: ExternalLinks): void;
   setProjectSort(sort: ProjectSortMode): void;
   setProjectOrder(order: string[]): void;
@@ -100,6 +104,7 @@ export const useUiStore = create<UiState>()((set) => ({
   selectedModel: null,
   selectedThinkingLevel: null,
   modelPickerOpen: false,
+  shortcutsHelpOpen: false,
   externalLinks: { gitUrl: null, filesUrl: null },
   projectSort: "activity",
   projectOrder: [],
@@ -117,6 +122,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setSelectedModel: (model) => set({ selectedModel: model }),
   setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
+  setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),
   setExternalLinks: (links) => set({ externalLinks: links }),
   setProjectSort: (sort) => set({ projectSort: sort }),
   setProjectOrder: (order) => set({ projectOrder: order }),
