@@ -88,6 +88,48 @@ function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
   return typeof (msg as WireMessage).role === "string" ? (msg as WireMessage) : null;
 }
 
+/** 最近一条含文本 user 条目的粘性摘要（docs08-r7 任务 11）：从尾部扫描 kind==="entry"
+ *  且条目 role==="user" 的项（与 NavRail 刻度同判），取首个 text part 原文
+ *  （展示层 truncate 截断）。纯图/空文本条目跳过；无候选返回 null（无 user 消息不渲染）。 */
+export function stickyUserOf(
+  items: ChatListItem[],
+  entries: readonly WireEntry[],
+): { index: number; key: string; text: string } | null {
+  const byId = new Map<string, WireMessage>();
+  for (const e of entries) {
+    if (typeof e.id !== "string") continue;
+    const msg = messageOf(e as WireEntry & { id: string });
+    if (msg) byId.set(e.id, msg);
+  }
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind !== "entry") continue;
+    const msg = byId.get(item.entryId);
+    if (!msg || msg.role !== "user") continue;
+    const content = Array.isArray(msg.content) ? msg.content : [];
+    for (const part of content) {
+      if (part.type === "text" && typeof part.text === "string" && part.text.trim() !== "") {
+        return { index: i, key: item.key, text: part.text.trim() };
+      }
+    }
+  }
+  return null;
+}
+
+/** 粘性条可见性二值判定（docs08-r7 任务 11）：未在底部（回底即消失）且最近 user 气泡
+ *  完整滚出视口（上缘滚出顶部＝下滚读长回答，或下缘滚出底部＝上滚浏览历史）时显示；
+ *  气泡仍在视口内（含跨越边缘）不钉。 */
+export function shouldShowStickyUser(
+  atBottom: boolean,
+  rowTop: number,
+  rowBottom: number,
+  viewportTop: number,
+  viewportBottom: number,
+): boolean {
+  if (atBottom) return false;
+  return rowBottom <= viewportTop || rowTop >= viewportBottom;
+}
+
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
  *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
  *  interrupted 标记挂最后一个 assistant 条目。 */

@@ -11,7 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, type ChatListItem, type CompactionMarker } from "./message-items";
+import { mergeMemoryItems, shouldShowStickyUser, stickyUserOf, type ChatListItem, type CompactionMarker } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
 import { NavRail } from "./nav-rail";
 
@@ -103,6 +103,9 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
 /** 距底部小于该值视为"在底部"（跟随流式内容增长） */
 const BOTTOM_THRESHOLD = 80;
 
+/** 滚动容器 py-4 顶垫（粘性判定把测量缓存偏移换算到视口坐标用） */
+const STICKY_TOP_PAD = 16;
+
 export function MessageList({
   items,
   sessionId,
@@ -127,6 +130,12 @@ export function MessageList({
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
   const compacting = useMessagesStore((s) => s.bySession[sessionId]?.compacting ?? false);
 
+  // 粘性用户条（docs08-r7 任务 11）：虚拟化行绝对定位，纯 CSS sticky 不可行；判定复用
+  // 既有 scroll 通道（不新增监听），几何用 TanStack 测量缓存（窗外行可判，同 NavRail）。
+  // 回底消失：atBottom 恒隐藏，回底钮滚底后随之消失。值只在翻转时写入（cand 引用稳定）。
+  const [stickyUser, setStickyUser] = useState<{ key: string; text: string } | null>(null);
+  const stickyCandidate = useMemo(() => stickyUserOf(mergedItems, entries ?? []), [mergedItems, entries]);
+
   const virtualizer = useVirtualizer({
     count: mergedItems.length,
     getScrollElement: () => scrollRef.current,
@@ -139,6 +148,31 @@ export function MessageList({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    if (!smooth) return;
+    // 平滑滚动途中与落底后,虚拟化行测量都可能增长总高使点击时目标失效,落点未到底
+    // (docs08-r7 任务 11 回底打磨;手机档实测涨约 239px):2s 窗口内每 300ms 校验,
+    // 仍在底部阈值外则补瞬时对底;用户主动上滚(位置回退>50px)即退出不抢滚动。
+    // 非 smooth 路径(会话打开两段式)不变。
+    let lastTop = -1;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      const el2 = scrollRef.current;
+      if (!el2 || Date.now() - started > 2000) {
+        window.clearInterval(timer);
+        return;
+      }
+      const top = el2.scrollTop;
+      if (lastTop >= 0 && top < lastTop - 50) {
+        window.clearInterval(timer);
+        return;
+      }
+      lastTop = top;
+      if (el2.scrollHeight - top - el2.clientHeight > BOTTOM_THRESHOLD) {
+        el2.scrollTo({ top: el2.scrollHeight, behavior: "auto" });
+      } else {
+        window.clearInterval(timer);
+      }
+    }, 300);
   }, []);
 
   const handleScroll = useCallback(() => {
@@ -148,8 +182,18 @@ export function MessageList({
     const atBottom = distance < BOTTOM_THRESHOLD;
     followRef.current = atBottom;
     setShowJump(!atBottom);
+    // 粘性用户条：回底消失；最近 user 气泡完整滚出视口（任一侧）时钉摘要于消息区顶
+    const cand = stickyCandidate;
+    const m = cand ? virtualizer.measurementsCache[cand.index] : undefined;
+    if (cand && m) {
+      const rowTop = STICKY_TOP_PAD + m.start - el.scrollTop;
+      const rowBottom = rowTop + m.size;
+      setStickyUser(shouldShowStickyUser(atBottom, rowTop, rowBottom, 0, el.clientHeight) ? cand : null);
+    } else {
+      setStickyUser(null);
+    }
     if (el.scrollTop < BOTTOM_THRESHOLD) onReachTop();
-  }, [onReachTop]);
+  }, [onReachTop, stickyCandidate, virtualizer]);
 
   // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚底，不经 React 渲染路径
   useEffect(() => {
@@ -217,7 +261,7 @@ export function MessageList({
       <NavRail items={mergedItems} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
 
       {(syncing || compacting) && (
-        <div className="pointer-events-none absolute top-2 left-1/2 flex -translate-x-1/2 flex-col items-center gap-1">
+        <div className={`pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center gap-1 ${stickyUser ? "top-10" : "top-2"}`}>
           {compacting && (
             <div
               data-testid="compacting-banner"
@@ -231,6 +275,18 @@ export function MessageList({
               {t("chat.messageList.syncing")}
             </div>
           )}
+        </div>
+      )}
+
+      {stickyUser && (
+        <div
+          data-testid="sticky-user-message"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 pt-2"
+        >
+          <div className="max-w-full truncate rounded-full bg-primary px-3.5 py-1.5 text-xs text-primary-foreground shadow-md">
+            {stickyUser.text}
+          </div>
         </div>
       )}
 

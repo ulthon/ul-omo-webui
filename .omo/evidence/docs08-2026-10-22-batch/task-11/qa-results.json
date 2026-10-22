@@ -1,0 +1,329 @@
+{
+  "total": 22,
+  "pass": 22,
+  "fail": 0,
+  "results": [
+    {
+      "id": "desktop:M1-初始滚底无粘性无回底",
+      "pass": true,
+      "detail": {
+        "met": {
+          "scrollTop": 8120,
+          "scrollHeight": 8969,
+          "clientHeight": 849,
+          "rows": 8,
+          "visibleRows": 2
+        },
+        "bar": false,
+        "jump": false
+      }
+    },
+    {
+      "id": "desktop:M2-上滚钉当前提问摘要",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 69,
+        "bottom": 105,
+        "left": 288,
+        "right": 1880,
+        "inVp": true,
+        "text": "最后一问:粘性条应显示这句摘要。",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "desktop:M3-回底钮视口内(二值判据)",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 874,
+        "bottom": 902,
+        "left": 1017.890625,
+        "right": 1150.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "desktop:M4-深上滚仍钉最后提问(连排在下方)",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 69,
+        "bottom": 105,
+        "left": 288,
+        "right": 1880,
+        "inVp": true,
+        "text": "最后一问:粘性条应显示这句摘要。",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "desktop:M5-深上滚回底钮仍在视口",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 874,
+        "bottom": 902,
+        "left": 1017.890625,
+        "right": 1150.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "desktop:M6-下滚越顶仍钉",
+      "pass": true,
+      "detail": {
+        "bar": {
+          "present": true,
+          "top": 69,
+          "bottom": 105,
+          "left": 288,
+          "right": 1880,
+          "inVp": true,
+          "text": "最后一问:粘性条应显示这句摘要。",
+          "overflow": 0
+        },
+        "dist": 2444
+      }
+    },
+    {
+      "id": "desktop:M7-下滚>一屏回底钮视口内",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 874,
+        "bottom": 902,
+        "left": 1017.890625,
+        "right": 1150.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "desktop:M8-超长提问截断降级",
+      "pass": true,
+      "detail": {
+        "overflow": 0,
+        "text": "最后一问:粘性条应显示这句摘要。"
+      }
+    },
+    {
+      "id": "desktop:M9-虚拟化滚动无空白",
+      "pass": true,
+      "detail": [
+        {
+          "scrollTop": 1794,
+          "scrollHeight": 7540,
+          "clientHeight": 849,
+          "rows": 25,
+          "visibleRows": 17
+        },
+        {
+          "scrollTop": 3588,
+          "scrollHeight": 7433,
+          "clientHeight": 849,
+          "rows": 15,
+          "visibleRows": 9
+        },
+        {
+          "scrollTop": 5381,
+          "scrollHeight": 7433,
+          "clientHeight": 849,
+          "rows": 8,
+          "visibleRows": 1
+        },
+        {
+          "scrollTop": 6584,
+          "scrollHeight": 7433,
+          "clientHeight": 849,
+          "rows": 8,
+          "visibleRows": 2
+        }
+      ]
+    },
+    {
+      "id": "desktop:M10-回底消失",
+      "pass": true,
+      "detail": {
+        "dist": 24,
+        "bar": false,
+        "jump": false
+      }
+    },
+    {
+      "id": "desktop:M11-伺服哈希一致(index-B6uQybaa.js)",
+      "pass": true,
+      "detail": {
+        "servedHash": "5143c463dbb92a68",
+        "diskHash": "5143c463dbb92a68"
+      }
+    },
+    {
+      "id": "mobile:M1-初始滚底无粘性无回底",
+      "pass": true,
+      "detail": {
+        "met": {
+          "scrollTop": 13032,
+          "scrollHeight": 13708,
+          "clientHeight": 676,
+          "rows": 8,
+          "visibleRows": 2
+        },
+        "bar": false,
+        "jump": false
+      }
+    },
+    {
+      "id": "mobile:M2-上滚钉当前提问摘要",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 56,
+        "bottom": 92,
+        "left": 0,
+        "right": 390,
+        "inVp": true,
+        "text": "最后一问:粘性条应显示这句摘要。",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "mobile:M3-回底钮视口内(二值判据)",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 688,
+        "bottom": 716,
+        "left": 128.890625,
+        "right": 261.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "mobile:M4-深上滚仍钉最后提问(连排在下方)",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 56,
+        "bottom": 92,
+        "left": 0,
+        "right": 390,
+        "inVp": true,
+        "text": "最后一问:粘性条应显示这句摘要。",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "mobile:M5-深上滚回底钮仍在视口",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 688,
+        "bottom": 716,
+        "left": 128.890625,
+        "right": 261.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "mobile:M6-下滚越顶仍钉",
+      "pass": true,
+      "detail": {
+        "bar": {
+          "present": true,
+          "top": 56,
+          "bottom": 92,
+          "left": 0,
+          "right": 390,
+          "inVp": true,
+          "text": "最后一问:粘性条应显示这句摘要。",
+          "overflow": 0
+        },
+        "dist": 6382
+      }
+    },
+    {
+      "id": "mobile:M7-下滚>一屏回底钮视口内",
+      "pass": true,
+      "detail": {
+        "present": true,
+        "top": 688,
+        "bottom": 716,
+        "left": 128.890625,
+        "right": 261.109375,
+        "inVp": true,
+        "text": "Back to bottom",
+        "overflow": 0
+      }
+    },
+    {
+      "id": "mobile:M8-超长提问截断降级",
+      "pass": true,
+      "detail": {
+        "overflow": 0,
+        "text": "最后一问:粘性条应显示这句摘要。"
+      }
+    },
+    {
+      "id": "mobile:M9-虚拟化滚动无空白",
+      "pass": true,
+      "detail": [
+        {
+          "scrollTop": 2742,
+          "scrollHeight": 13100,
+          "clientHeight": 676,
+          "rows": 21,
+          "visibleRows": 10
+        },
+        {
+          "scrollTop": 5483,
+          "scrollHeight": 13108,
+          "clientHeight": 676,
+          "rows": 13,
+          "visibleRows": 7
+        },
+        {
+          "scrollTop": 8225,
+          "scrollHeight": 13108,
+          "clientHeight": 676,
+          "rows": 8,
+          "visibleRows": 1
+        },
+        {
+          "scrollTop": 10966,
+          "scrollHeight": 13108,
+          "clientHeight": 676,
+          "rows": 8,
+          "visibleRows": 1
+        }
+      ]
+    },
+    {
+      "id": "mobile:M10-回底消失",
+      "pass": true,
+      "detail": {
+        "dist": 0,
+        "bar": false,
+        "jump": false
+      }
+    },
+    {
+      "id": "mobile:M11-伺服哈希一致(index-B6uQybaa.js)",
+      "pass": true,
+      "detail": {
+        "servedHash": "5143c463dbb92a68",
+        "diskHash": "5143c463dbb92a68"
+      }
+    }
+  ]
+}
