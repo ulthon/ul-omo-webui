@@ -169,10 +169,10 @@ describe("手机顶栏最近会话切换（任务 15）", () => {
     expect(items[1].textContent).toContain("会话-b2");
     expect(items[2].textContent).toContain("会话-a1");
 
-    // 弹层内容为最近会话，非项目菜单：无项目分组入口/添加项目入口
+    // 弹层内容为最近会话；菜单尾「添加项目…」为任务4新增双入口之一（非项目分组菜单）
     const text = container.textContent ?? "";
     expect(text).toContain("最近会话");
-    expect(text).not.toContain("添加项目…");
+    expect(text).toContain("添加项目…");
     expect(text).not.toContain("尚无项目");
   });
 

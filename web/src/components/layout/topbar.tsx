@@ -218,6 +218,8 @@ export function ProjectManagementSection() {
   const [view, setView] = useState<"normal" | "hidden">("normal");
   const [pendingHide, setPendingHide] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
+  // 「添加项目」入口（docs08-r7 任务 4）：设置面板头部按钮，复用同弹框组件
+  const [addOpen, setAddOpen] = useState(false);
 
   const t = useT();
   const remove = async () => {
@@ -303,8 +305,20 @@ export function ProjectManagementSection() {
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">{t("login.topbar.management")}</p>
-          {/* 正常/已隐藏筛选（A2）：面板内临时视图态（不持久化），计数即容量提示 */}
-          <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label={t("login.topbar.visibilityFilter")} data-testid="project-visibility-filter">
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* 添加项目（任务 4 双入口之二）：头部小钮复用 AddProjectDialog */}
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-7 px-2 text-xs"
+              data-testid="project-add-button"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="mr-1 size-3.5" />
+              {t("login.topbar.addProjectShort")}
+            </Button>
+            {/* 正常/已隐藏筛选（A2）：面板内临时视图态（不持久化），计数即容量提示 */}
+            <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label={t("login.topbar.visibilityFilter")} data-testid="project-visibility-filter">
             <button
               type="button"
               role="tab"
@@ -325,6 +339,7 @@ export function ProjectManagementSection() {
             >
               {t("login.topbar.filterHidden", { n: hiddenCount })}
             </button>
+            </div>
           </div>
         </div>
         {projects.length === 0 ? (
@@ -437,6 +452,7 @@ export function ProjectManagementSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }
@@ -446,8 +462,9 @@ export function ProjectManagementSection() {
  * modified 降序 8 条，RECENT_LIMIT 内含），不复制实现；点击直达切换：决策核复用
  * crossProjectDecision，跨项目时 setCurrentProject + setSelectedModel（偏好模型）+
  * 模型列表按需补拉（loadProjectModels），与侧栏统一 handler 同语义。
- * 项目/添加项目入口降位：侧栏项目分组与设置面板已覆盖，不再出现在顶栏中槽。 */
-function RecentSessionsMenuItems() {
+ * 添加项目入口（docs08-r7 任务 4）：菜单尾分隔线+「添加项目…」，与桌面项目下拉同
+ * 一 onAddProject→AddProjectDialog 通道，不改桌面 ProjectMenuItems。 */
+export function RecentSessionsMenuItems({ onAddProject }: { onAddProject: () => void }) {
   const byProject = useSessionsStore((s) => s.byProject);
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
   const t = useT();
@@ -477,6 +494,11 @@ function RecentSessionsMenuItems() {
           </span>
         </DropdownMenuItem>
       ))}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem data-testid="mobile-add-project" onSelect={onAddProject}>
+        <FolderPlus className="mr-2 size-4" />
+        {t("login.topbar.addProject")}
+      </DropdownMenuItem>
     </>
   );
 }
@@ -822,8 +844,8 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
 
       {isMobile ? (
         /* 手机档会话身份区（A3）：标题+项目名两行堆叠 truncate；点按弹最近会话
-           （任务 15：复用 P3 跨项目最近 8 条派生，直达切换；项目/添加项目入口降位
-           ——侧栏项目分组与设置面板承担，桌面档项目下拉不动） */
+           （任务 15：复用 P3 跨项目最近 8 条派生，直达切换；菜单尾「添加项目…」为
+           docs08-r7 任务 4 新增双入口之一，桌面档项目下拉不动） */
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -853,7 +875,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">
-            <RecentSessionsMenuItems />
+            <RecentSessionsMenuItems onAddProject={() => setAddOpen(true)} />
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (

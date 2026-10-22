@@ -160,6 +160,7 @@ export const login = {
     projectMenu: "项目",
     noProjectsMenu: "尚无项目，先添加一个",
     addProject: "添加项目…",
+    addProjectShort: "添加项目",
     // 模型下拉与连接状态
     noModels: "无可用模型",
     modelLoading: "加载中…",

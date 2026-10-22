@@ -158,6 +158,7 @@ export const login = {
     projectMenu: "Projects",
     noProjectsMenu: "No projects yet; add one first",
     addProject: "Add project…",
+    addProjectShort: "Add project",
     // 模型下拉与连接状态
     noModels: "No models available",
     modelLoading: "Loading…",
