@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
 import { api, setPromptGate } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
+import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { usePermissionsStore } from "@/stores/permissions";
@@ -126,6 +127,11 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     let cancelled = false;
     const existing = useMessagesStore.getState().bySession[sessionId];
     const cursor = existing?.loaded ? (existing.cursor ?? undefined) : undefined;
+    // Fix0 前端埋点（docs08 任务 1；localStorage ulomo_perf=1 门控，默认零输出）：
+    // 首载耗时 mark/measure（DevTools Performance 面板可见）+ 控制台一行摘要
+    const perfOn = webPerfEnabled();
+    const loadMark = `ulomo:messages-start:${sessionId}`;
+    if (perfOn) perfMark(loadMark);
     api
       .listMessages(sessionId, cursor)
       .then((page) => {
@@ -138,6 +144,14 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           store.setEntries(sessionId, page.entries, page.cursor, page.leafId);
         }
         setLoadState("done");
+        if (perfOn) {
+          const ms = perfMeasure(`ulomo:messages:${sessionId}`, loadMark, `ulomo:messages-end:${sessionId}`);
+          if (ms !== undefined) {
+            console.log(
+              `[perf] web op=messages session=${sessionId.slice(0, 8)} ms=${ms.toFixed(1)} entries=${page.entries.length}${cursor ? " incr=1" : ""}`,
+            );
+          }
+        }
         // 打开即已读（服务端 unread 清零语义：任一设备查看即清零）
         void api.markRead(sessionId).catch(() => {});
         // 预取前端 auto-allow 列表（kv，命中时权限 select 自动放行不弹卡）

@@ -27,6 +27,7 @@ import { existsSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs"
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  EngineAdapterError,
   type EngineAdapter,
   type EngineMessagesPage,
   type EngineCommandInfo,
@@ -46,6 +47,17 @@ import {
 import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
+import { DEBUG_PERF, logPerfSpan, projHash8, type PerfSpan } from "./perf";
+
+/** 错误 → 业务码（ApiError/EngineAdapterError 带 code；其余归 internal）。埋点 err 段用。 */
+function perfErrCode(err: unknown): string {
+  if (err instanceof ApiError) return err.code;
+  if (err instanceof EngineAdapterError) return err.code;
+  return "internal";
+}
+
+/** 关闭态共享哑 span（body 的段写入无读者；省去按调用分配，零行为差异） */
+const INERT_PERF_SPAN = {} as PerfSpan;
 
 /** 会话运行态三态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
  *  语义与前端 SSE 驱动的 runStates 同口径（agent_start → running；四型权限/阻塞型
@@ -847,6 +859,38 @@ class ProjectRuntime {
     throw new ApiError(404, "session_not_found", `会话不存在（项目 ${this.projectPath}）：${sessionId}`);
   }
 
+  /** Fix0 性能埋点（docs08-2026-10-22-batch 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关）：
+   * 包一层 ④ensure 计时 + ②runExclusive 排队计时，body 内部自记 ③switchTo/①rpc 段；
+   * 收尾（含失败）统一落一行 [perf] 日志。关闭路径与原实现等价：不建 span、不计时，
+   * 仅 body 写入共享哑对象（无读者）。 */
+  private runTraced<T>(op: string, sessionId: string, body: (span: PerfSpan) => Promise<T>): Promise<T> {
+    if (!DEBUG_PERF) {
+      // 关闭路径与原实现等价：ensure() 就绪后再进互斥队列（原方法体逐字语义）
+      return this.ensure().then(() => this.runExclusive(() => body(INERT_PERF_SPAN)));
+    }
+    const span: PerfSpan = { op, proj: projHash8(this.projectPath), session: sessionId };
+    const t0 = performance.now();
+    return this.ensure()
+      .catch((err) => {
+        span.ensureMs = performance.now() - t0;
+        span.err = perfErrCode(err);
+        throw err;
+      })
+      .then(() => {
+        span.ensureMs = performance.now() - t0;
+        const tEnqueue = performance.now();
+        return this.runExclusive(async () => {
+          span.queueWaitMs = performance.now() - tEnqueue;
+          return body(span);
+        });
+      })
+      .catch((err) => {
+        span.err ??= perfErrCode(err);
+        throw err;
+      })
+      .finally(() => logPerfSpan(span));
+  }
+
   runExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.chain.then(fn, fn);
     this.chain = next.catch(() => undefined);
@@ -917,10 +961,15 @@ class ProjectRuntime {
   }
 
   async messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage> {
-    await this.ensure();
-    return this.runExclusive(async () => {
+    return this.runTraced("messages", sessionId, async (span) => {
+      const tSwitch = performance.now();
       await this.switchTo(sessionId);
-      return this.requireAdapter().messages(cursor);
+      span.switchToMs = performance.now() - tSwitch;
+      const tRpc = performance.now();
+      const page = await this.requireAdapter().messages(cursor);
+      span.rpcMs = performance.now() - tRpc;
+      span.entries = page.entries.length;
+      return page;
     });
   }
 
@@ -934,8 +983,7 @@ class ProjectRuntime {
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
   ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
-    await this.ensure();
-    return this.runExclusive(async () => {
+    return this.runTraced("prompt", sessionId, async (span) => {
       // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶。
       // docs08-r4 任务 11（spike 实证）：携带 streamingBehavior 时放行——prompt 入引擎队列
       // （回执 "queued"），streamingId 保持占用（排队回合同一 run，run 尾才 settle 一次）。
@@ -943,7 +991,10 @@ class ProjectRuntime {
       if (this.streamingId === sessionId && !input.streamingBehavior) {
         throw new ApiError(409, "already_processing", "该会话已有进行中的回合（单驱动约束，请先 abort 或等待回合结束）");
       }
+      const tSwitch = performance.now();
       await this.switchTo(sessionId);
+      span.switchToMs = performance.now() - tSwitch;
+      const tRpc = performance.now();
       // docs08-r6 任务 8 ②：切换成功的模型行归一 "provider/model" 随回执带回（回执可观测）；
       // 排队请求（streamingBehavior）不走此分支——排队剥模型铁律在 api.ts 注入点，服务端此处不变
       let appliedModel: string | undefined;
@@ -959,6 +1010,7 @@ class ProjectRuntime {
           thinkingLevel: input.thinkingLevel,
           streamingBehavior: input.streamingBehavior,
         });
+        span.rpcMs = performance.now() - tRpc;
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
         if (receipt.disposition !== "handled") {
           this.streamingId = sessionId;
@@ -1001,10 +1053,15 @@ class ProjectRuntime {
 
   /** 排队对账快照（断线重连/初次渲染各拉一次；增量走 queue_update wire 事件透传） */
   async queueList(sessionId: string): Promise<EngineQueueSnapshot> {
-    await this.ensure();
-    return this.runExclusive(async () => {
+    return this.runTraced("queueList", sessionId, async (span) => {
+      const tSwitch = performance.now();
       await this.switchTo(sessionId);
-      return this.requireAdapter().queueList();
+      span.switchToMs = performance.now() - tSwitch;
+      const tRpc = performance.now();
+      const snapshot = await this.requireAdapter().queueList();
+      span.rpcMs = performance.now() - tRpc;
+      span.entries = snapshot.ordered.length;
+      return snapshot;
     });
   }
 
@@ -1020,10 +1077,14 @@ class ProjectRuntime {
   /** 未决提问对账快照（q1 提问卡片；同 queue 口径——前端会话打开时拉一次，
    *  增量走 SSE 的 question 帧透传；get_state 快照无 sessionId，此处注入本会话 id） */
   async questionsList(sessionId: string): Promise<EngineQuestionFrame[]> {
-    await this.ensure();
-    return this.runExclusive(async () => {
+    return this.runTraced("questionsList", sessionId, async (span) => {
+      const tSwitch = performance.now();
       await this.switchTo(sessionId);
+      span.switchToMs = performance.now() - tSwitch;
+      const tRpc = performance.now();
       const frames = await this.requireAdapter().pendingQuestions();
+      span.rpcMs = performance.now() - tRpc;
+      span.entries = frames.length;
       // 快照帧不带会话归属（引擎侧 per-session 存储，出队即知归属）——注入当前
       // 请求的会话 id（REST 层的 :id 即 durable/别名，前端 store 键口径一致）
       return frames.map((f) => ({ ...f, sessionId }));
@@ -1065,10 +1126,13 @@ class ProjectRuntime {
   }
 
   async usage(sessionId: string): Promise<EngineUsageStats> {
-    await this.ensure();
-    return this.runExclusive(async () => {
+    return this.runTraced("usage", sessionId, async (span) => {
+      const tSwitch = performance.now();
       await this.switchTo(sessionId);
+      span.switchToMs = performance.now() - tSwitch;
+      const tRpc = performance.now();
       const stats = await this.requireAdapter().usage();
+      span.rpcMs = performance.now() - tRpc;
       // A5：附加内存速度环快照（durable 键）。别名 id（未落盘窗口）无映射则不下发
       // turnSpeed，前端按"暂无数据"降级；此时环内也尚无样本（样本归属真实 durable id）。
       const durable = this.durableSessionIdFor(sessionId);

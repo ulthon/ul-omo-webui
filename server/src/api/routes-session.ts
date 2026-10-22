@@ -20,8 +20,9 @@ import { resolveTitleLanguage, type TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
-import { ApiError, parseJsonBody, requireParam, route } from "./http";
+import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
+import { DEBUG_PERF, logPerfHttp } from "./perf";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set(["low", "high", "max"]);
 
@@ -310,12 +311,21 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     return c.json({ project, archived, sessions });
   }));
 
-  // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）
+  // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）。
+  // Fix0 HTTP 计时（docs08 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关零输出）：
+  // 首载路径（无 cursor）端到端耗时+条目数一行日志；关闭时零额外行为。
   app.get("/api/sessions/:id/messages", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const cursor = c.req.query("cursor") || undefined;
-    const page = await deps.engines.messages(id, cursor);
-    return c.json({ sessionId: id, entries: page.entries, leafId: page.leafId, cursor: page.cursor });
+    const t0 = DEBUG_PERF ? performance.now() : 0;
+    try {
+      const page = await deps.engines.messages(id, cursor);
+      if (DEBUG_PERF) logPerfHttp(200, performance.now() - t0, page.entries.length);
+      return c.json({ sessionId: id, entries: page.entries, leafId: page.leafId, cursor: page.cursor });
+    } catch (err) {
+      if (DEBUG_PERF) logPerfHttp(toErrorResponse(c, err).status, performance.now() - t0, undefined);
+      throw err;
+    }
   }));
 
   // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、
