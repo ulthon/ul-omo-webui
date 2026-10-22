@@ -13,6 +13,7 @@ import { readSessionUrl } from "@/lib/session-url";
 import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
+import { resolveReachTopAction } from "./reach-top";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import type { WireEntry, WireMessage } from "@/lib/api";
@@ -160,7 +161,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     const loadMark = `ulomo:messages-start:${sessionId}`;
     if (perfOn) perfMark(loadMark);
     api
-      .listMessages(sessionId, cursor)
+      .listMessages(sessionId, cursor ? { cursor } : undefined)
       .then((page) => {
         if (cancelled) return;
         const store = useMessagesStore.getState();
@@ -168,7 +169,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           store.appendEntries(sessionId, page.entries);
           store.setCursor(sessionId, page.cursor);
         } else {
-          store.setEntries(sessionId, page.entries, page.cursor, page.leafId);
+          // 任务 16：首载尾窗直读——携带 hasMore/oldestId 供触顶向上翻页；
+          // cursor 仍为文件 leafId（切回会话的前向增量校准不变）
+          store.setEntries(sessionId, page.entries, page.cursor, page.leafId, {
+            hasMore: page.hasMore ?? false,
+            oldestId: page.oldestId ?? null,
+          });
         }
         setLoadState("done");
         if (perfOn) {
@@ -207,21 +213,30 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     return () => clearTimeout(timer);
   }, [loadState, autoRetried]);
 
-  // 顶部触顶：游标增量同步（引擎 getEntries 为 since 语义，首载即全量，此钩子兜底补漏；
+  // 顶部触顶：任务 16——hasMore 时向上翻页（?before= 后向拉更早窗，id 去重头插，
+  // 拼缝零重复零丢失）；否则原游标增量同步（引擎 getEntries since 语义兜底补漏；
   // 10s 冷却防贴顶滚动反复请求）
   const onReachTop = useCallback(() => {
     if (syncInFlightRef.current) return;
     if (Date.now() < syncingUntilRef.current) return;
-    const cursor = useMessagesStore.getState().bySession[sessionId]?.cursor;
-    if (!cursor) return;
+    const state = useMessagesStore.getState().bySession[sessionId];
+    const action = resolveReachTopAction(state);
+    if (!action) return;
     syncInFlightRef.current = true;
     setSyncing(true);
     api
-      .listMessages(sessionId, cursor)
+      .listMessages(sessionId, action.kind === "before" ? { before: action.before } : { cursor: action.cursor })
       .then((page) => {
         const store = useMessagesStore.getState();
-        store.appendEntries(sessionId, page.entries);
-        store.setCursor(sessionId, page.cursor);
+        if (action.kind === "before") {
+          store.prependEntries(sessionId, page.entries, {
+            hasMore: page.hasMore ?? false,
+            oldestId: page.oldestId ?? null,
+          });
+        } else {
+          store.appendEntries(sessionId, page.entries);
+          store.setCursor(sessionId, page.cursor);
+        }
       })
       .catch(() => {})
       .finally(() => {

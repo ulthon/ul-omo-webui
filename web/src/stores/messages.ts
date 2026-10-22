@@ -33,6 +33,10 @@ export interface SessionMessages {
   leafId: string | null;
   /** 是否做过全量加载（gap 全量重取的判据） */
   loaded: boolean;
+  /** 任务 16：文件头方向是否还有更早条目（尾窗首载/向上翻页后由服务端 hasMore 同步） */
+  hasMore: boolean;
+  /** 任务 16：当前已加载窗口最旧条目 id（向上翻页 ?before= 游标；全量加载为 null） */
+  oldestId: string | null;
   streaming: boolean;
   /** 流式中的 assistant 消息（part 级就地更新；定格时并入 entries） */
   streamingMessage: WireMessage | null;
@@ -67,10 +71,22 @@ interface MessagesState {
   replayRecovering: boolean;
 
   /** 全量加载 / gap 全量重取 */
-  setEntries(sessionId: string, entries: WireEntry[], cursor: string | null, leafId: string | null): void;
+  setEntries(
+    sessionId: string,
+    entries: WireEntry[],
+    cursor: string | null,
+    leafId: string | null,
+    paging?: { hasMore: boolean; oldestId: string | null },
+  ): void;
   setCursor(sessionId: string, cursor: string | null): void;
   /** 增量分页（向上翻历史） */
   appendEntries(sessionId: string, entries: WireEntry[]): void;
+  /** 任务 16：向上翻页头插（id 去重——重叠窗与既有条目按 id 收敛，拼缝零重复零丢失） */
+  prependEntries(
+    sessionId: string,
+    entries: WireEntry[],
+    paging: { hasMore: boolean; oldestId: string | null },
+  ): void;
   /** SSE wire 事件统一入口（todo 14 调用）；未知类型静默忽略 */
   applyWireEvent(sessionId: string, event: WireEvent): void;
   /** part 级流式增量（作用于当前流式 assistant 消息） */
@@ -108,6 +124,8 @@ function emptySessionMessages(): SessionMessages {
     cursor: null,
     leafId: null,
     loaded: false,
+    hasMore: false,
+    oldestId: null,
     streaming: false,
     streamingMessage: null,
     streamingEntryId: null,
@@ -348,11 +366,19 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       });
     },
 
-    setEntries: (sessionId, entries, cursor, leafId) =>
+    setEntries: (sessionId, entries, cursor, leafId, paging) =>
       set((s) => ({
         bySession: {
           ...s.bySession,
-          [sessionId]: { ...emptySessionMessages(), ...s.bySession[sessionId], entries, cursor, leafId, loaded: true },
+          [sessionId]: {
+            ...emptySessionMessages(),
+            ...s.bySession[sessionId],
+            entries,
+            cursor,
+            leafId,
+            loaded: true,
+            ...(paging ?? { hasMore: false, oldestId: null }),
+          },
         },
       })),
 
@@ -369,6 +395,22 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         let list = cur.entries;
         for (const entry of entries) list = upsertEntry(list, entry);
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
+      }),
+
+    prependEntries: (sessionId, entries, paging) =>
+      set((s) => {
+        const cur = s.bySession[sessionId] ?? emptySessionMessages();
+        // id 去重头插：新窗与既有窗口的重叠区（beforeId 锚）按 id 收敛，恰补
+        // 严格更早的条目——拼缝零重复零丢失；fresh 已是文件序（旧→新），直接头插
+        const known = new Set(cur.entries.map((e) => e.id));
+        const fresh = entries.filter((e) => !known.has(e.id));
+        const list = [...fresh, ...cur.entries];
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...cur, entries: list, hasMore: paging.hasMore, oldestId: paging.oldestId },
+          },
+        };
       }),
 
     applyWireEvent: (sessionId, event) => {

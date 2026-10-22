@@ -22,6 +22,7 @@ import type { ApiDeps } from "./deps";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
+import { CursorInvalidError, readEntriesBefore, readTailEntries } from "../adapter/session-file";
 import { DEBUG_PERF, logPerfHttp } from "./perf";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set(["low", "high", "max"]);
@@ -315,16 +316,62 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   }));
 
   // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）。
-  // Fix0 HTTP 计时（docs08 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关零输出）：
-  // 首载路径（无 cursor）端到端耗时+条目数一行日志；关闭时零额外行为。
+  // 任务 16（GAP-6 修复）：无 cursor 首载改服务端尾窗直读（resolveSession 取
+  // sessionPath，SDK 直读不 spawn 引擎不进 runExclusive 不 switchTo；读不到会话
+  // 文件的新会话/别名回退引擎全量）；?before= 上一窗（无效 409 cursor_invalid）；
+  // ?cursor= 前向增量与 ?full=1 全量（SSE gap 重连对账依赖）走引擎不变。
+  // Fix0 HTTP 计时（docs08 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关零输出）。
   app.get("/api/sessions/:id/messages", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const cursor = c.req.query("cursor") || undefined;
+    const before = c.req.query("before") || undefined;
+    const full = c.req.query("full") === "1";
     const t0 = DEBUG_PERF ? performance.now() : 0;
     try {
-      const page = await deps.engines.messages(id, cursor);
+      let page: Awaited<ReturnType<typeof deps.engines.messages>>;
+      let hasMore = false;
+      let oldestId: string | null = null;
+      if (cursor || full || !deps.engines.sessionPath) {
+        // 前向增量 / 全量 / fake 网关（无直读面）：引擎路径原样
+        page = await deps.engines.messages(id, cursor);
+        oldestId = page.entries[0]?.id ?? null;
+      } else {
+        // 尾窗直读：磁盘文件在则直读；不在（新会话未落盘/别名）回退引擎
+        const sessionPath = await deps.engines.sessionPath(id);
+        let stat: { size: number } | null = null;
+        try {
+          stat = statSync(sessionPath);
+        } catch {
+          stat = null;
+        }
+        if (stat && stat.size > 0) {
+          try {
+            const tail = before
+              ? await readEntriesBefore(sessionPath, before)
+              : await readTailEntries(sessionPath);
+            page = { entries: tail.entries, leafId: tail.leafId, cursor: tail.leafId };
+            hasMore = tail.hasMore;
+            oldestId = tail.oldestId;
+          } catch (err) {
+            if (err instanceof CursorInvalidError) {
+              throw new ApiError(409, "cursor_invalid", "before 游标在会话文件中不存在");
+            }
+            throw err;
+          }
+        } else {
+          page = await deps.engines.messages(id);
+          oldestId = page.entries[0]?.id ?? null;
+        }
+      }
       if (DEBUG_PERF) logPerfHttp(200, performance.now() - t0, page.entries.length);
-      return c.json({ sessionId: id, entries: page.entries, leafId: page.leafId, cursor: page.cursor });
+      return c.json({
+        sessionId: id,
+        entries: page.entries,
+        leafId: page.leafId,
+        cursor: page.cursor,
+        hasMore,
+        oldestId,
+      });
     } catch (err) {
       if (DEBUG_PERF) logPerfHttp(toErrorResponse(c, err).status, performance.now() - t0, undefined);
       throw err;

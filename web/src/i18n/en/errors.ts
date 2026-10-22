@@ -9,6 +9,7 @@ export const errors = {
   nothingToCompact: "Session context is still small; no compaction needed",
   compactUnsupported: "Current engine does not support context compaction",
   compactTimeout: "Compaction is still running in the background; the context level refreshes automatically once it finishes",
+  cursorInvalid: "Page cursor is no longer valid; return to the latest messages and retry",
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
   forkCancelled: "Fork cancelled by the extension",

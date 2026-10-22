@@ -35,7 +35,7 @@ export async function runCompact(sessionId: string): Promise<CompactReceipt> {
   const cur = useMessagesStore.getState().bySession[sessionId];
   const cursor = cur?.loaded ? (cur.cursor ?? undefined) : undefined;
   try {
-    const page = await api.listMessages(sessionId, cursor);
+    const page = await api.listMessages(sessionId, cursor ? { cursor } : undefined);
     const store = useMessagesStore.getState();
     if (cursor) {
       store.appendEntries(sessionId, page.entries);

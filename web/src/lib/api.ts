@@ -92,6 +92,10 @@ export interface MessagesPage {
   leafId: string | null;
   /** 传回 GET messages?cursor= 取增量；与 leafId 同值 */
   cursor: string | null;
+  /** 任务 16：文件头方向是否还有更多条目（尾窗直读路径携带；引擎路径缺省 false） */
+  hasMore?: boolean;
+  /** 任务 16：本窗最旧条目 id（向上翻页 ?before= 游标） */
+  oldestId?: string | null;
 }
 
 export interface SessionCreated {
@@ -399,9 +403,16 @@ export const api = {
     if (params.tags) for (const t of params.tags) q.append("tag", t);
     return request(`/api/sessions?${q.toString()}`);
   },
-  async listMessages(sessionId: string, cursor?: string): Promise<MessagesPage> {
-    const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/messages${qs}`);
+  async listMessages(
+    sessionId: string,
+    opts?: { cursor?: string; before?: string; full?: boolean },
+  ): Promise<MessagesPage> {
+    const q = new URLSearchParams();
+    if (opts?.cursor) q.set("cursor", opts.cursor);
+    if (opts?.before) q.set("before", opts.before);
+    if (opts?.full) q.set("full", "1");
+    const qs = q.toString();
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ""}`);
   },
   async prompt(
     sessionId: string,

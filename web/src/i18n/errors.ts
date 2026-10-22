@@ -19,6 +19,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   compact_unsupported: "errors.compactUnsupported",
   compact_timeout: "errors.compactTimeout",
   content_too_large: "errors.contentTooLarge",
+  cursor_invalid: "errors.cursorInvalid",
   engine_not_ready: "errors.engineNotReady",
   fork_cancelled: "errors.forkCancelled",
   fork_failed: "errors.forkFailed",

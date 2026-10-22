@@ -89,6 +89,12 @@ export interface EngineGateway {
   /** 会话消息分页（游标 = 上页 leafId） */
   messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage>;
   /**
+   * 会话 jsonl 磁盘路径反查（任务 16：首载尾窗直读）。SDK 直读会话库定位，
+   * 不 spawn 引擎不进 runExclusive。可选面：测试装配 fake 可省略——缺省时
+   * messages 路由整体回退引擎全量（原行为）。查不到抛 session_not_found。
+   */
+  sessionPath?(sessionId: string): Promise<string>;
+  /**
    * 发送 prompt。单驱动约束：目标会话回合进行中抛 ApiError(409, "already_processing")；
    * 携带 streamingBehavior（docs08-r4 任务 11）时放行改为入队（回执 disposition="queued"，
    * 排队回合与当前回合同一 run，仅在 run 尾 settle 一次）。
@@ -1393,6 +1399,13 @@ export class EngineRuntimeRegistry implements EngineGateway {
   async messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.messages(sessionId, cursor);
+  }
+
+  /** 任务 16：会话 jsonl 路径反查（SDK 直读，不 spawn 引擎） */
+  async sessionPath(sessionId: string): Promise<string> {
+    const rt = await this.resolveRuntime(sessionId);
+    const row = await rt.resolveSession(sessionId);
+    return row.path;
   }
 
   async prompt(

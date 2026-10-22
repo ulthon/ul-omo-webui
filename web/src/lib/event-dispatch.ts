@@ -118,7 +118,8 @@ export function resetDispatchState(): void {
 }
 
 /** 单会话全量重取（gap/游标回退校准与 synthetic settle 补拉共用）：
- * GET messages 后 setEntries 整替（先取后换，重取期间界面不清空）。
+ * GET messages?full=1 全量（任务 16：首载改尾窗直读后，gap 对账必须回全量不被
+ * 尾窗截断——full=1 保持引擎全量路径）后 setEntries 整替（先取后换，重取期间界面不清空）。
  * store 外会话不拉（客户端未关心过）；进行中的重取按会话去重。
  * 失败静默——下一次 gap / 游标回退 / 重连重放再兜底，不打断实时流。 */
 function refetchSession(sessionId: string): void {
@@ -126,7 +127,7 @@ function refetchSession(sessionId: string): void {
   if (!useMessagesStore.getState().bySession[sessionId]) return;
   refetching.add(sessionId);
   api
-    .listMessages(sessionId)
+    .listMessages(sessionId, { full: true })
     .then((page) => {
       // 重取完成时会话可能已被 clearSession（删除/切换清理），仅在仍存在时替换
       if (useMessagesStore.getState().bySession[sessionId]) {
