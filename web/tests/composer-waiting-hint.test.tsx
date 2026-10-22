@@ -177,11 +177,12 @@ describe("排队入队可见反馈", () => {
     }
   }
 
-  test("回执 queued → info toast「已加入队列…」+ 本地排队占位入列", async () => {
+  test("回执 queued → info toast「已加入队列…」+ 仅排队条入列（消息流零占位，docs08-r7 任务 15）", async () => {
     const toast = await sendAndGetToast();
     expect(toast).toContain("已加入队列");
     const pending = useQueueStore.getState().bySession[SID]?.items ?? [];
     expect(pending.length).toBe(1);
-    expect(useMessagesStore.getState().bySession[SID]?.entries.length).toBe(1);
+    // 排队占位路径已退役：排队项只进 queue store，不进消息流
+    expect(useMessagesStore.getState().bySession[SID]?.entries.length ?? 0).toBe(0);
   });
 });

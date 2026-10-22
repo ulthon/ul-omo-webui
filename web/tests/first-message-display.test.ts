@@ -6,10 +6,12 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { SessionListItem, WireEntry } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
+import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
 
 function resetStores() {
   useMessagesStore.setState({ bySession: {} });
+  useQueueStore.setState({ bySession: {} });
   useSessionsStore.setState({ byProject: {}, runStates: {}, selectedId: null });
 }
 
@@ -176,10 +178,10 @@ describe("缺陷修复：新会话首条用户消息", () => {
     expect(asLocal(slot.entries[0]).id).toBe("srv-real");
   });
 
-  test("同文本双条排队：服务端事件逐条吸收，一次事件只吞一条占位（spike (b)-7 去重键加固）", () => {
-    // 两条同文本排队占位（引擎不去重，磁盘四行——两条独立 user 条目 + 各自回复）
-    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");
-    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本", undefined, "followUp");
+  test("同文本双条直发占位：服务端事件逐条吸收，一次事件只吞一条占位（spike (b)-7 去重键加固）", () => {
+    // 两条同文本直发占位（引擎不去重，磁盘四行——两条独立 user 条目 + 各自回复）
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本");
+    useMessagesStore.getState().appendLocalUserEntry("d-1", "同文本");
     expect(useMessagesStore.getState().bySession["d-1"].entries.length).toBe(2);
 
     // 第一条投递（message_end role=user）：只吸收一条（剩余占位在前，服务端真值 append 在尾）
@@ -205,25 +207,50 @@ describe("缺陷修复：新会话首条用户消息", () => {
     expect(asLocal(slot.entries[1]).id).toBe("srv-q2");
   });
 
-  test("排队占位带 queued 标记；撤销移除只删排队占位（removeQueuedLocalEntry 首条 / removeAll 全清）", () => {
-    useMessagesStore.getState().appendLocalUserEntry("d-1", "排队甲", undefined, "steer");
-    useMessagesStore.getState().appendLocalUserEntry("d-1", "排队甲", undefined, "followUp");
-    useMessagesStore.getState().appendLocalUserEntry("d-1", "普通占位");
-    let entries = useMessagesStore.getState().bySession["d-1"].entries;
-    expect(entries.filter((e) => (e as { queued?: unknown }).queued !== undefined).length).toBe(2);
+  // docs08-r7 任务 15：排队占位路径退役——消息流零占位，排队条单显示源。
+  // 排队投递不产生服务端 user echo，投递帧（携带引擎 timestamp）按载荷身份收敛守卫
+  // 直接入列；REST 全量重取后与真实 id 真相收敛恰一条（合成 id 孪生不双列）。
+  test("任务 15：appendLocalUserEntry 不再支持 queuedMode；排队项只进 queue store 不进消息流", () => {
+    // 类型层：第四参已移除（编译期守卫）；运行层：排队发送只写 queue store
+    useQueueStore.getState().addPending("d-9", "排队项", "followUp");
+    expect(useMessagesStore.getState().bySession["d-9"]).toBeUndefined();
+    expect(useQueueStore.getState().bySession["d-9"].items.length).toBe(1);
+  });
 
-    // 单条撤销：同文本取首条，普通占位不动
-    useMessagesStore.getState().removeQueuedLocalEntry("d-1", "排队甲");
-    entries = useMessagesStore.getState().bySession["d-1"].entries;
-    expect(entries.length).toBe(2);
-    expect((entries[0] as { queued?: unknown }).queued).toEqual({ mode: "followUp" });
-    expect(asLocal(entries[1]).id?.startsWith("local-")).toBe(true);
+  test("任务 15：排队投递 user 帧无占位直接入列（载荷身份收敛，恰一条）", () => {
+    const msg = {
+      role: "user",
+      content: [{ type: "text", text: "排队投递" }],
+      timestamp: 1730000000000,
+    };
+    useMessagesStore.getState().applyWireEvent("d-10", { type: "message_end", message: msg });
+    let slot = useMessagesStore.getState().bySession["d-10"];
+    expect(slot.entries.length).toBe(1);
+    const syntheticCopy = slot.entries[0];
 
-    // 整队清空：全部排队占位移除，普通占位保留
-    useMessagesStore.getState().removeAllQueuedLocalEntries("d-1");
-    entries = useMessagesStore.getState().bySession["d-1"].entries;
-    expect(entries.length).toBe(1);
-    expect(asLocal(entries[0]).message?.content?.[0]).toEqual({ type: "text", text: "普通占位" });
+    // REST 全量重取/重放重播同一载荷（真实 id 真相）：守卫收敛，不双列
+    useMessagesStore.getState().applyWireEvent("d-10", {
+      type: "message_end",
+      id: "srv-real-1",
+      message: msg,
+    });
+    useMessagesStore.getState().applyWireEvent("d-10", { type: "message_end", message: msg });
+    slot = useMessagesStore.getState().bySession["d-10"];
+    expect(slot.entries.length).toBe(1);
+    expect(slot.entries[0]).not.toBe(syntheticCopy);
+    expect(slot.entries[0].id).toBe("srv-real-1");
+  });
+
+  test("任务 15：直发乐观占位仍被 user 帧等价吸收（直发路径不受影响）", () => {
+    useMessagesStore.getState().appendLocalUserEntry("d-11", "直发消息");
+    useMessagesStore.getState().applyWireEvent("d-11", {
+      type: "message_end",
+      id: "srv-direct",
+      message: { role: "user", content: [{ type: "text", text: "直发消息" }], timestamp: 1 },
+    });
+    const slot = useMessagesStore.getState().bySession["d-11"];
+    expect(slot.entries.length).toBe(1);
+    expect(slot.entries[0].id).toBe("srv-direct");
   });
 
   test("adoptDurableId：目标槽不存在时直接搬家（含流式态）", () => {

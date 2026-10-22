@@ -65,6 +65,9 @@ export const chat = {
     steer: "Steer",
     follow: "Follow-up",
     removeItem: "Remove this item",
+    sendNowItem: "Send this item now",
+    sendNowTitle: "Send now: injects as steer into the current turn; other items stay queued",
+    sendNowFailed: "Failed to send now",
   },
   // todo-list.tsx / todo-panel.tsx
   todo: {

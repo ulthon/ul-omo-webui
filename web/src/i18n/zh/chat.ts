@@ -66,6 +66,9 @@ export const chat = {
     steer: "插入",
     follow: "跟答",
     removeItem: "撤销该条",
+    sendNowItem: "立即发送该条",
+    sendNowTitle: "立即发送：转插入注入当前回合，其余项保持排队",
+    sendNowFailed: "立即发送失败",
   },
   // todo-list.tsx / todo-panel.tsx 任务清单
   todo: {

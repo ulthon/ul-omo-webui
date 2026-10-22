@@ -448,10 +448,10 @@ export function Composer({
         const messages = useMessagesStore.getState();
         if (receipt.disposition === "queued") {
           // 排队接受（回执 queued）：本地排队列表乐观占位（queue_update 确认后转正式
-          // 项）+ "排队中"气泡占位（投递时服务端 user 事件按等价吸收，徽标随之消失）。
+          // 项）。docs08-r7 任务 15：消息流不再插“排队中”占位（单显示源=排队条，
+          // 零假象）；投递时服务端 user 帧经载荷身份收敛守卫直接入列。
           // 不动 streaming 态（排队回合同一 run，run 尾才 settle 一次——spike (b)-5）。
           useQueueStore.getState().addPending(sessionId, outgoingText, queueModeRef.current);
-          messages.appendLocalUserEntry(sessionId, outgoingText, undefined, queueModeRef.current);
           // 入队可见反馈（docs08-r6 任务 12 ②）：排队接受即轻提示，消除「点了没反应」观感。
           // 只读回执 disposition（服务端真实结果），不影响排队语义本身。
           showToast(t("composer.queuedFeedback"), "info");
