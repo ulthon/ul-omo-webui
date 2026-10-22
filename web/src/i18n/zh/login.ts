@@ -172,5 +172,8 @@ export const login = {
     openTodoPanel: "打开任务面板",
     online: "已连接",
     reconnecting: "重连中",
+    // 会话切换全屏 sheet（docs08-r7 任务 19）
+    switcherSheetTitle: "会话",
+    switcherSheetClose: "关闭会话切换",
   },
 } as const;

@@ -2,15 +2,15 @@
 // 模型切换下拉（todo 22：选择落 meta_project 偏好，防抖 PATCH；agentsList=false 降级已定——
 // 不渲染 agent 下拉，"当前 provider/model"语义由模型下拉承担）、设置入口（todo 26：外链
 // 地址 kv 配置）、连接状态点。
-// A3+A6（docs08-r4 任务 6）手机档（<lg）单层重排：[汉堡 | 会话标题+项目名小字（可点开
-// 最近会话菜单，任务 15：复用 recentTop 派生直达切换） | 上下文水位环 | 右栏入口钮 | 设置+连接点]，模型下拉手机档退役（经任务 7
+// A3+A6（docs08-r4 任务 6）手机档（<lg）单层重排：[汉堡 | 会话标题+项目名小字（点按开
+// 会话切换全屏 sheet，任务 19：recentTop 派生直达切换） | 上下文水位环 | 右栏入口钮 | 设置+连接点]，模型下拉手机档退役（经任务 7
 // "更多"ModelChip 到达）；桌面（lg+）布局不动（项目/模型下拉原位）。手机档按 useIsMobile
 // 条件渲染（DOM 不存在，非 CSS 隐藏）。
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Check, ChevronDown, FolderPlus, Keyboard, ListTodo, Menu, Settings } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import type { ModelInfo } from "@/lib/api";
+import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels, openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { THINKING_EXPANDED_KV, useUiStore } from "@/stores/ui";
@@ -25,6 +25,8 @@ import {
   recentTop,
   type ProjectSortMode,
 } from "@/components/session-list/global-list-data";
+import { definedTagKeys } from "@/components/session-list/tag-data";
+import { TagBadges } from "@/components/session-list/tag-badge";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
 import { ContextWaterRing } from "@/components/layout/context-ring";
@@ -40,6 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -458,49 +461,135 @@ export function ProjectManagementSection() {
   );
 }
 
-/** 手机档中槽最近会话菜单（docs08-r6 任务 15）：点按会话身份区弹最近会话列表。
- * 派生复用侧栏最近区同一来源——recentTop(flattenSessions(byProject))（跨项目
- * modified 降序 8 条，RECENT_LIMIT 内含），不复制实现；点击直达切换：决策核复用
- * crossProjectDecision，跨项目时 setCurrentProject + setSelectedModel（偏好模型）+
- * 模型列表按需补拉（loadProjectModels），与侧栏统一 handler 同语义。
- * 添加项目入口（docs08-r7 任务 4）：菜单尾分隔线+「添加项目…」，与桌面项目下拉同
- * 一 onAddProject→AddProjectDialog 通道，不改桌面 ProjectMenuItems。 */
-export function RecentSessionsMenuItems({ onAddProject }: { onAddProject: () => void }) {
+/** 手机档会话切换全屏 sheet（docs08-r7 任务 19，替代原任务 15 下拉菜单）：触发器
+ * 点按开 Radix Dialog 全屏页——头部「会话」标题+关闭钮（焦点陷阱/Esc 关闭由 Dialog
+ * 原语承担），列表区 recentTop(flattenSessions(byProject))（跨项目 modified 降序 8 条，
+ * 派生复用不复制），尾部「添加项目…」（任务 4 双入口之一）；抽屉承载全量列表/搜索/
+ * 新建，sheet 内不做（计划 Must NOT）。定制行=标题(text-base≥16px font-medium)+项目
+ * 名副行(text-xs muted)+标签徽标（TagBadges 文字形态，任务 20 色格在其内部升级，此处
+ * 预留 slot）；行 min-h-11(44px) 触控达标、双行紧凑。头部/尾部按 env(safe-area-inset-*)
+ * 让位（任务 6 viewport-fit=cover 先例）。点击直达切换：决策核复用 crossProjectDecision
+ * （跨项目 setCurrentProject + setSelectedModel 偏好模型 + 模型按需补拉），选完关 sheet。
+ * 标签定义两源键集（global+全部注册项目）沿侧栏 reloadTagDefs 同构，仅 sheet 打开时拉；
+ * 失败静默 null→徽标整体不渲染（同侧栏防闪烁语义）。 */
+export function SessionSwitcherSheet({
+  open,
+  onOpenChange,
+  onAddProject,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAddProject: () => void;
+}) {
   const byProject = useSessionsStore((s) => s.byProject);
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
+  const [definedKeys, setDefinedKeys] = useState<Set<string> | null>(null);
   const t = useT();
+
+  // 打开期间加载两源标签定义键集（孤儿判定基准）；卸载/关开竞态用 alive 守卫，
+  // 失败不 toast（徽标缺席即可感知，不打扰切换主路径）
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void (async () => {
+      const { projects: registered } = useUiStore.getState();
+      try {
+        const globalDefs = await api.listTags();
+        const projectLists = await Promise.all(
+          registered.map((p) =>
+            api
+              .listTags(p.projectPath)
+              .then((r) => r.project)
+              .catch(() => [] as TagDefinition[]),
+          ),
+        );
+        if (alive) setDefinedKeys(definedTagKeys({ global: globalDefs.global, project: projectLists.flat() }));
+      } catch {
+        if (alive) setDefinedKeys(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const select = (s: SessionListItem) => {
+    const ui = useUiStore.getState();
+    useSessionsStore.getState().select(s.id);
+    const decision = crossProjectDecision(s.project, ui.currentProject, ui.projects);
+    if (decision.switchProject) {
+      ui.setCurrentProject(s.project);
+      ui.setSelectedModel(decision.preferredModel);
+      if (ui.models.length === 0) void loadProjectModels(s.project);
+    }
+    onOpenChange(false);
+  };
+
   return (
-    <>
-      <DropdownMenuLabel>{t("sessionList.list.recent")}</DropdownMenuLabel>
-      {recent.length === 0 && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">{t("sessionList.list.empty")}</div>
-      )}
-      {recent.map((s) => (
-        <DropdownMenuItem
-          key={s.id}
-          data-testid={`recent-session-${s.id}`}
-          onSelect={() => {
-            const ui = useUiStore.getState();
-            useSessionsStore.getState().select(s.id);
-            const decision = crossProjectDecision(s.project, ui.currentProject, ui.projects);
-            if (decision.switchProject) {
-              ui.setCurrentProject(s.project);
-              ui.setSelectedModel(decision.preferredModel);
-              if (ui.models.length === 0) void loadProjectModels(s.project);
-            }
-          }}
-        >
-          <span className="min-w-0 truncate" title={s.title}>
-            {s.title}
-          </span>
-        </DropdownMenuItem>
-      ))}
-      <DropdownMenuSeparator />
-      <DropdownMenuItem data-testid="mobile-add-project" onSelect={onAddProject}>
-        <FolderPlus className="mr-2 size-4" />
-        {t("login.topbar.addProject")}
-      </DropdownMenuItem>
-    </>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        aria-describedby={undefined}
+        data-testid="session-switcher-sheet"
+        data-presentation="fullscreen-sheet"
+        className="inset-0 flex h-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 bg-background p-0 text-base text-foreground ring-0 data-open:slide-in-from-bottom-2 data-open:zoom-in-100 sm:max-w-none"
+      >
+        <header className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b px-3 pt-[env(safe-area-inset-top)]">
+          <DialogTitle className="text-base font-semibold">{t("login.topbar.switcherSheetTitle")}</DialogTitle>
+          <DialogClose asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label={t("login.topbar.switcherSheetClose")}
+              data-testid="session-switcher-sheet-close"
+            >
+              <X className="size-5" />
+            </Button>
+          </DialogClose>
+        </header>
+        <div data-testid="session-switcher-sheet-list" className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+          <p className="px-4 pb-1 pt-2 text-xs font-medium text-muted-foreground">{t("sessionList.list.recent")}</p>
+          {recent.length === 0 && (
+            <p className="px-4 py-6 text-sm text-muted-foreground">{t("sessionList.list.empty")}</p>
+          )}
+          {recent.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              data-testid="sheet-session-item"
+              data-session-id={s.id}
+              onClick={() => select(s)}
+              className="flex min-h-11 w-full flex-col justify-center gap-0.5 px-4 py-1.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50 active:bg-accent"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate text-base font-medium leading-snug" title={s.title}>
+                  {s.title}
+                </span>
+                <TagBadges session={s} definedKeys={definedKeys} />
+              </span>
+              <span
+                className="block w-full min-w-0 truncate text-xs leading-snug text-muted-foreground"
+                title={s.project}
+              >
+                {basename(s.project)}
+              </span>
+            </button>
+          ))}
+        </div>
+        <footer className="shrink-0 border-t bg-background pb-[max(env(safe-area-inset-bottom),8px)]">
+          <button
+            type="button"
+            data-testid="mobile-add-project"
+            onClick={onAddProject}
+            className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-base outline-none hover:bg-accent/50 focus-visible:bg-accent/50 active:bg-accent"
+          >
+            <FolderPlus className="size-4 shrink-0" />
+            {t("login.topbar.addProject")}
+          </button>
+        </footer>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -798,6 +887,8 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
   const isMobile = useIsMobile();
   const [addOpen, setAddOpen] = useState(false);
+  // 会话切换全屏 sheet 开合（任务 19）：手机档身份区触发钮点按置位，选完/关钮/Esc 关
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 快捷键帮助开关（docs08-r7 任务 12）：帮助钮 onClick 置位，shell 的 ?/Ctrl+K 触发同写
   const shortcutsHelpOpen = useUiStore((s) => s.shortcutsHelpOpen);
@@ -847,41 +938,47 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       </Button>
 
       {isMobile ? (
-        /* 手机档会话身份区（A3）：标题+项目名两行堆叠 truncate；点按弹最近会话
-           （任务 15：复用 P3 跨项目最近 8 条派生，直达切换；菜单尾「添加项目…」为
-           docs08-r7 任务 4 新增双入口之一，桌面档项目下拉不动） */
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              data-testid="mobile-session-identity"
-              aria-label={t("login.topbar.sessionIdentity")}
-              className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {selectedSession && (
-                <span
-                  data-testid="topbar-session-title"
-                  title={selectedSession.title}
-                  className="block w-full truncate text-sm font-medium leading-tight"
-                >
-                  {selectedSession.title}
-                </span>
-              )}
+        /* 手机档会话身份区（A3 + 任务 19）：标题+项目名两行堆叠 truncate（字大微调：
+           标题 text-base、项目名 text-xs）；点按开全屏会话切换 sheet（recentTop 跨项目
+           8 条 + 尾部「添加项目…」；汉堡抽屉不动，桌面项目下拉不动） */
+        <>
+          <button
+            type="button"
+            data-testid="mobile-session-identity"
+            aria-label={t("login.topbar.sessionIdentity")}
+            aria-haspopup="dialog"
+            aria-expanded={switcherOpen}
+            className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            onClick={() => setSwitcherOpen(true)}
+          >
+            {selectedSession && (
               <span
-                data-testid="topbar-project-name"
-                className="flex w-full min-w-0 items-center gap-0.5 text-[11px] leading-tight text-muted-foreground"
+                data-testid="topbar-session-title"
+                title={selectedSession.title}
+                className="block w-full truncate text-base font-medium leading-tight"
               >
-                <span className="min-w-0 truncate">
-                  {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
-                </span>
-                <ChevronDown className="size-3 shrink-0" aria-hidden />
+                {selectedSession.title}
               </span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-72">
-            <RecentSessionsMenuItems onAddProject={() => setAddOpen(true)} />
-          </DropdownMenuContent>
-        </DropdownMenu>
+            )}
+            <span
+              data-testid="topbar-project-name"
+              className="flex w-full min-w-0 items-center gap-0.5 text-xs leading-tight text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">
+                {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
+              </span>
+              <ChevronDown className="size-3 shrink-0" aria-hidden />
+            </span>
+          </button>
+          <SessionSwitcherSheet
+            open={switcherOpen}
+            onOpenChange={setSwitcherOpen}
+            onAddProject={() => {
+              setSwitcherOpen(false);
+              setAddOpen(true);
+            }}
+          />
+        </>
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

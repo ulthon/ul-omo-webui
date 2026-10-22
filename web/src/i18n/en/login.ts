@@ -170,5 +170,8 @@ export const login = {
     openTodoPanel: "Open task panel",
     online: "Connected",
     reconnecting: "Reconnecting",
+    // Session switcher full-screen sheet (docs08-r7 task 19)
+    switcherSheetTitle: "Sessions",
+    switcherSheetClose: "Close session switcher",
   },
 } as const;
