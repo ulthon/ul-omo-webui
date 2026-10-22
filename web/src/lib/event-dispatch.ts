@@ -68,7 +68,7 @@ const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "in
 function narrowQuestionSpecs(raw: unknown): QuestionSpec[] | null {
   if (!Array.isArray(raw) || raw.length === 0) {
     if (sseDebugEnabled()) {
-      console.debug(`[sse-dispatch] question questions 载荷丢弃：非数组或空（${Array.isArray(raw) ? "empty" : typeof raw}）`)
+      console.debug(`[sse-dispatch] question questions payload dropped: not array or empty (${Array.isArray(raw) ? "empty" : typeof raw})`)
     }
     return null
   }
@@ -93,7 +93,7 @@ function narrowQuestionSpecs(raw: unknown): QuestionSpec[] | null {
   }
   if (out.length === 0) {
     if (sseDebugEnabled()) {
-      console.debug(`[sse-dispatch] question questions 全部异形丢弃：count=${raw.length}`)
+      console.debug(`[sse-dispatch] question questions all malformed, dropped: count=${raw.length}`)
     }
     return null
   }
