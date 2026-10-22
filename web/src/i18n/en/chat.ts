@@ -209,6 +209,12 @@ export const chat = {
     copy: "Copy original text",
     retry: "Retry (regenerate from this message)",
   },
+  // markdown.tsx 表格行操作（todo 8）
+  tableActions: {
+    copyTable: "Copy table",
+    copied: "Table copied",
+    downloadCsv: "Download CSV",
+  },
   // message-list.tsx
   messageList: {
     empty: "No messages yet; send the first message to start the conversation",

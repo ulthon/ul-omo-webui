@@ -22,7 +22,20 @@ import { visit } from "unist-util-visit";
 import { unified } from "unified";
 import { VFile } from "vfile";
 import type { Element, Nodes, Parents } from "hast";
+import { Copy, Download } from "lucide-react";
+import { cn } from "cn";
 import { highlight } from "@/lib/highlight-client";
+import { copyText } from "@/lib/clipboard";
+import { useT } from "@/i18n/i18n";
+import { useUiStore } from "@/stores/ui";
+import { Button } from "@/components/ui/button";
+import {
+  ROW_ACTIONS_CELL_CLASS,
+  downloadTableCsv,
+  tableDataFromDom,
+  tableToCsv,
+  tableToTsv,
+} from "./markdown-table";
 
 /** live 模式节流：值高频变化时按 intervalMs 尾沿提交（流式 markdown 专用） */
 function useThrottledValue<T>(value: T, intervalMs: number, enabled: boolean): T {
@@ -103,6 +116,54 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   );
 }
 
+// ---- 表格行操作（todo 8）----
+// 行悬停操作条：复制表格（TSV 到剪贴板）+ 下载 CSV（全表）。移动端常显小钮、桌面悬停显
+// （与 message-actions 同款 lg:group-hover 惯用法；命名组 group/row 隔离消息气泡外层 group
+// 的悬停）。按钮 aria-label + title 双通道。仅追加行尾操作单元格，不改表格本体渲染；
+// 点击时经 closest 从真实 DOM 读当前表数据，无需覆写 table 或引入 context。
+
+/** 行尾操作单元格：两个常显/悬显小钮（复制表格、下载 CSV） */
+function TableRowActionsCell({ tag: Tag }: { tag: "th" | "td" }) {
+  const t = useT();
+  const showToast = useUiStore((s) => s.showToast);
+  const onCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    const table = event.currentTarget.closest("table");
+    if (!table) return;
+    const ok = await copyText(tableToTsv(tableDataFromDom(table)));
+    showToast(ok ? t("chat.tableActions.copied") : t("chat.messageActions.copyFailed"), ok ? undefined : "error");
+  };
+  const onDownload = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const table = event.currentTarget.closest("table");
+    if (table) downloadTableCsv(tableToCsv(tableDataFromDom(table)));
+  };
+  return (
+    <Tag className={ROW_ACTIONS_CELL_CLASS}>
+      <div className="flex items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 lg:opacity-0 lg:group-hover/row:opacity-100">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 text-muted-foreground"
+          aria-label={t("chat.tableActions.copyTable")}
+          title={t("chat.tableActions.copyTable")}
+          onClick={onCopy}
+        >
+          <Copy className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 text-muted-foreground"
+          aria-label={t("chat.tableActions.downloadCsv")}
+          title={t("chat.tableActions.downloadCsv")}
+          onClick={onDownload}
+        >
+          <Download className="size-3.5" />
+        </Button>
+      </div>
+    </Tag>
+  );
+}
+
 const markdownComponents: ToJsxOptions["components"] = {
   pre: ({ children }) => {
     const extracted = extractCode(children);
@@ -118,6 +179,20 @@ const markdownComponents: ToJsxOptions["components"] = {
       {children}
     </a>
   ),
+  tr: ({ node, children, ...rest }) => {
+    if (!node) return <tr {...rest}>{children}</tr>;
+    return (
+      <tr
+        {...rest}
+        className={cn("group/row", typeof rest.className === "string" ? rest.className : undefined)}
+      >
+        {children}
+        <TableRowActionsCell
+          tag={node.children.some((c: Nodes) => c.type === "element" && c.tagName === "th") ? "th" : "td"}
+        />
+      </tr>
+    );
+  },
 };
 
 // ---- 渲染管线（react-markdown v10 同步路径复刻）----

@@ -1,0 +1,107 @@
+[
+ {
+  "name": "桌面:fixture 渲染出 4 张表(主表+仅表头+单格+宽表)",
+  "pass": true,
+  "detail": "count=4"
+ },
+ {
+  "name": "桌面:主表 3 行(1 表头+2 数据)",
+  "pass": true,
+  "detail": "{\"rows\":3,\"everyRowHasActions\":true,\"headerThActions\":\"TH\",\"bodyTdActions\":\"TD\",\"ariaCopy\":1,\"ariaCsv\":1,\"titleAttr\":\"复制表格\"}"
+ },
+ {
+  "name": "桌面:每行(含表头)都有操作单元格,表头 th/数据 td",
+  "pass": true,
+  "detail": "{\"rows\":3,\"everyRowHasActions\":true,\"headerThActions\":\"TH\",\"bodyTdActions\":\"TD\",\"ariaCopy\":1,\"ariaCsv\":1,\"titleAttr\":\"复制表格\"}"
+ },
+ {
+  "name": "桌面:双钮 aria-label(复制表格/下载 CSV)与 title 齐备",
+  "pass": true,
+  "detail": "{\"rows\":3,\"everyRowHasActions\":true,\"headerThActions\":\"TH\",\"bodyTdActions\":\"TD\",\"ariaCopy\":1,\"ariaCsv\":1,\"titleAttr\":\"复制表格\"}"
+ },
+ {
+  "name": "桌面:未悬停时该行操作钮隐藏(opacity 0)",
+  "pass": true,
+  "detail": "opacity=0"
+ },
+ {
+  "name": "桌面:悬停行后操作钮显现(opacity 1)",
+  "pass": true,
+  "detail": "hover-reveal"
+ },
+ {
+  "name": "桌面:复制表格=全表 TSV(制表符分隔,逐格比对)",
+  "pass": true,
+  "detail": "\"名称\\t数值\\t备注\\n甲\\t1\\t普通\\n乙,丙\\t2\\t含\\\"引号\\\"\""
+ },
+ {
+  "name": "桌面:TSV 列对齐(每行 3 段)",
+  "pass": true,
+  "detail": "[3,3,3]"
+ },
+ {
+  "name": "桌面:复制成功 toast(已复制表格)",
+  "pass": true,
+  "detail": "\"已复制表格\""
+ },
+ {
+  "name": "桌面:下载落盘文件名 table.csv",
+  "pass": true,
+  "detail": "file=table.csv"
+ },
+ {
+  "name": "桌面:CSV 内容=BOM+RFC4180 转义(逗号/引号),不回归",
+  "pass": true,
+  "detail": "\"﻿名称,数值,备注\\n甲,1,普通\\n\\\"乙,丙\\\",2,\\\"含\\\"\\\"引号\\\"\\\"\\\"\""
+ },
+ {
+  "name": "对抗:仅表头表渲染 1 行且有下载钮不崩",
+  "pass": true,
+  "detail": "{\"rows\":1,\"btn\":true}"
+ },
+ {
+  "name": "对抗:仅表头表 CSV=单行表头",
+  "pass": true,
+  "detail": "\"﻿只有列\""
+ },
+ {
+  "name": "对抗:单格表复制表格=单格\\n唯一",
+  "pass": true,
+  "detail": "\"单格\\n唯一\""
+ },
+ {
+  "name": "对抗:宽表=block 横滚容器且操作格在行内",
+  "pass": true,
+  "detail": "{\"scrollable\":true,\"cellInRow\":true,\"display\":\"block\",\"overflowX\":\"auto\"}"
+ },
+ {
+  "name": "对抗:宽表末行横滚到位后悬停显钮且格不出视口",
+  "pass": true,
+  "detail": "{\"x\":1262.75,\"y\":554.03125,\"inViewport\":true}"
+ },
+ {
+  "name": "手机:视口 390",
+  "pass": true,
+  "detail": "innerWidth=390"
+ },
+ {
+  "name": "手机:所有行操作钮无悬停即常显(opacity 1 且占位)",
+  "pass": true,
+  "detail": "[{\"op\":\"1\",\"w\":50},{\"op\":\"1\",\"w\":50},{\"op\":\"1\",\"w\":50}]"
+ },
+ {
+  "name": "手机:点按复制表格可触发(全表 TSV)",
+  "pass": true,
+  "detail": "\"名称\\t数值\\t备注\\n甲\\t1\\t普通\\n乙,丙\\t2\\t含\\\"引号\\\"\""
+ },
+ {
+  "name": "手机:宽表真溢出且为 block 横滚容器、操作格在行内",
+  "pass": true,
+  "detail": "{\"scrollable\":true,\"display\":\"block\",\"overflowX\":\"auto\",\"cellInRow\":true,\"scrollWidth\":943,\"clientWidth\":364}"
+ },
+ {
+  "name": "手机:宽表滚到最右后操作格双钮在场且不出视口",
+  "pass": true,
+  "detail": "{\"inViewport\":true,\"hasButtons\":true}"
+ }
+]

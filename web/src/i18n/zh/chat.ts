@@ -210,6 +210,12 @@ export const chat = {
     copy: "复制原文",
     retry: "重试（从此消息重新生成）",
   },
+  // markdown.tsx 表格行操作（todo 8）
+  tableActions: {
+    copyTable: "复制表格",
+    copied: "已复制表格",
+    downloadCsv: "下载 CSV",
+  },
   // message-list.tsx 虚拟化消息列表
   messageList: {
     empty: "暂无消息，发送第一条消息开始对话",
