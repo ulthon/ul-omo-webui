@@ -1,7 +1,8 @@
 // 消息气泡（todo 16）：定格条目按 entryId 订阅（条目对象引用稳定，别的消息更新不触发本气泡）；
 // 流式气泡只订阅 streamingMessage 存在性，part 级更新下沉到 parts.tsx 的单下标订阅。
 // 消息级操作（todo 25）：user/assistant 定格气泡挂 MessageActions（复制原文/重试 fork）。
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
+import { ChevronDown, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
 import { PartsView, ToolResultLine, StreamingParts } from "./parts";
@@ -9,6 +10,7 @@ import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
 import { isLongUserText } from "./user-text-collapse";
+import type { LoopGuardKind } from "./message-items";
 
 // user 长文本折叠阈值（docs08-r6 任务 14）：仅 user 消息；assistant 回复永不折叠。
 // 判定用纯字符估算而非运行时测高：气泡宽度随视口/图片混排变化，测高在 SSR/测试环境不可用，
@@ -237,6 +239,127 @@ export const CustomMessageBubble = memo(function CustomMessageBubble({
       className="my-0.5 inline-flex max-w-full items-center rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
     >
       {t("chat.customMessage.unsupported", { customType })}
+    </div>
+  );
+});
+
+/** loop-guard 三型色板与图标（docs08 2026-10-22 批次任务 2）：notice=info（sky）、
+ *  escalation=error（destructive）、recovery=success（emerald）；色值沿库内既有
+ *  Tailwind 语义词汇（changes-view/topbar 同族：emerald-500/600+dark:400、
+ *  file-preview 提示块 border-amber-500/40 bg-amber-500/10 同构框）。 */
+const LOOP_GUARD_TONE: Record<LoopGuardKind, { frame: string; badge: string; icon: string }> = {
+  notice: {
+    frame: "border-sky-500/40 bg-sky-500/5",
+    badge: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+    icon: "text-sky-600 dark:text-sky-400",
+  },
+  escalation: {
+    frame: "border-destructive/40 bg-destructive/5",
+    badge: "bg-destructive/10 text-destructive",
+    icon: "text-destructive",
+  },
+  recovery: {
+    frame: "border-emerald-500/40 bg-emerald-500/5",
+    badge: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+    icon: "text-emerald-600 dark:text-emerald-400",
+  },
+};
+
+const LOOP_GUARD_ICONS: Record<LoopGuardKind, typeof Shield> = {
+  notice: Shield,
+  escalation: ShieldAlert,
+  recovery: ShieldCheck,
+};
+
+/** loop-guard content 摘要行（对齐引擎 CLI 三行结构的 why 行语义）：首个信息行；
+ *  真实 content 是 <system-reminder> 包裹文本（引擎 notice.js 落库形态），包裹标签
+ *  行不作摘要；无信息行（空/纯标签/非字符串）降级空串不臆造。 */
+function loopGuardSummaryOf(content: unknown): string {
+  if (typeof content !== "string") return "";
+  return (
+    content
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "" && l !== "<system-reminder>" && l !== "</system-reminder>") ?? ""
+  );
+}
+
+/** loop-guard 聚合组块（docs08 2026-10-22 批次任务 2）：相邻同型条目一组，折叠行=
+ *  图标 + 「循环防护提醒」 + ×N 角标（单条无角标） + 首条信息行摘要，点击展开逐条
+ *  全文（对齐引擎 renderer.js buildNoticeBox title/why/expandedLine 三行结构：
+ *  title=具名行、why=摘要行、expanded=全文）。渲染门与分类门同判 display===true
+ *  （防直接挂载绕过分类门）；条目缺失（store 未及/被清理）静默降级不崩。 */
+export const LoopGuardGroupBubble = memo(function LoopGuardGroupBubble({
+  sessionId,
+  loopGuardKind,
+  entryIds,
+}: {
+  sessionId: string;
+  loopGuardKind: LoopGuardKind;
+  entryIds: string[];
+}) {
+  const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
+  // 选择器只取 entries 数组稳定引用；按 id 回查在 useMemo 内做（新建数组不能当选择器
+  // 返回值——引用不稳定会触发 zustand 无限重渲）
+  const grouped = useMemo(() => {
+    if (!entries) return null;
+    const found = entryIds
+      .map((id) => entries.find((e) => e.id === id))
+      .filter(
+        (e): e is WireEntry & { id: string } =>
+          e !== undefined && e.type === "custom_message" && e.display === true,
+      );
+    return found.length > 0 ? found : null;
+  }, [entries, entryIds]);
+  const [open, setOpen] = useState(false);
+  const t = useT();
+  if (!grouped) return null;
+  const tone = LOOP_GUARD_TONE[loopGuardKind];
+  const Icon = LOOP_GUARD_ICONS[loopGuardKind];
+  const count = grouped.length;
+  const summary = loopGuardSummaryOf(grouped[0].content);
+  return (
+    <div
+      data-testid="loop-guard-block"
+      data-loop-guard-kind={loopGuardKind}
+      data-count={count}
+      className={`my-0.5 max-w-full rounded-lg border px-3 py-2 text-xs ${tone.frame}`}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full min-h-7 items-center gap-1.5 text-left"
+      >
+        <Icon className={`size-3.5 shrink-0 ${tone.icon}`} aria-hidden />
+        <span className={`shrink-0 rounded-sm px-1.5 py-px font-medium ${tone.badge}`}>
+          {t("chat.loopGuard.title")}
+        </span>
+        {count > 1 && (
+          <span className={`shrink-0 rounded-sm px-1.5 py-px ${tone.badge}`}>×{count}</span>
+        )}
+        {summary !== "" && <span className="truncate text-muted-foreground">{summary}</span>}
+        <ChevronDown
+          className={`ml-auto size-3 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div className="mt-2 max-h-48 space-y-2 overflow-y-auto border-t pt-2">
+          {grouped.map((e) => {
+            const full = typeof e.content === "string" ? e.content.trim() : "";
+            return (
+              <div
+                key={e.id}
+                data-testid="loop-guard-item"
+                className="whitespace-pre-wrap break-words text-muted-foreground"
+              >
+                {full !== "" ? full : t("chat.loopGuard.emptyContent")}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 });

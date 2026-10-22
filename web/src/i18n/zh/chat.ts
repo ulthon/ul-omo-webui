@@ -46,6 +46,13 @@ export const chat = {
   customMessage: {
     unsupported: "未支持内容：{customType}",
   },
+  // message-bubble.tsx loop-guard 三型具名渲染（docs08 2026-10-22 批次任务 2）：
+  // 折叠行具名标签（×N 角标由 count>1 条件拼在标签后，不入词条）；
+  // 空内容条目展开时的降级占位
+  loopGuard: {
+    title: "循环防护提醒",
+    emptyContent: "（无内容）",
+  },
   // queue-bar.tsx 排队条
   queue: {
     cancelFailed: "排队撤销失败",

@@ -45,6 +45,13 @@ export const chat = {
   customMessage: {
     unsupported: "Unsupported content: {customType}",
   },
+  // message-bubble.tsx loop-guard named rendering (docs08 2026-10-22 batch task 2):
+  // collapsed row label (the ×N badge is appended conditionally, not part of the string);
+  // fallback for entries with empty content when expanded
+  loopGuard: {
+    title: "Loop guard notice",
+    emptyContent: "(no content)",
+  },
   // queue-bar.tsx
   queue: {
     cancelFailed: "Failed to cancel the queued item",

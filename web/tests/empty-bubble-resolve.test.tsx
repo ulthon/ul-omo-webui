@@ -177,8 +177,8 @@ describe("全空 assistant 条目计数行（②）", () => {
 // ---------------------------------------------------------------- ③ custom_message 渲染分支
 
 describe("custom_message 条目分类与渲染（③）", () => {
-  test("display=true 入列 customMessage 项（loop-guard:notice 实测形态）", () => {
-    const items = buildMessageItems([customMsg("cm1", "loop-guard:notice", true)], OPTS);
+  test("display=true 入列 customMessage 项（非 loop-guard customType；loop-guard 三型已改走聚合组通道，见 loop-guard-aggregate.test.ts）", () => {
+    const items = buildMessageItems([customMsg("cm1", "my-plugin:hello", true)], OPTS);
     expect(items).toEqual([{ key: "cm1", kind: "customMessage", entryId: "cm1" }]);
   });
 
@@ -208,16 +208,16 @@ describe("custom_message 条目分类与渲染（③）", () => {
   });
 
   test("CustomMessageBubble 渲染 customType 占位行（zh/en）；只读键集内字段", () => {
-    setEntries([customMsg("cm1", "loop-guard:notice", true)]);
+    setEntries([customMsg("cm1", "my-plugin:hello", true)]);
     const el = mount(createElement(CustomMessageBubble, { sessionId: "s1", entryId: "cm1" }));
     const chip = el.querySelector("[data-testid='custom-message-chip']");
     expect(chip).not.toBeNull();
-    expect(chip?.getAttribute("data-custom-type")).toBe("loop-guard:notice");
-    expect(chip?.textContent).toBe("未支持内容：loop-guard:notice");
+    expect(chip?.getAttribute("data-custom-type")).toBe("my-plugin:hello");
+    expect(chip?.textContent).toBe("未支持内容：my-plugin:hello");
 
     act(() => useLocaleStore.getState().setLocale("en"));
     expect(el.querySelector("[data-testid='custom-message-chip']")?.textContent).toBe(
-      "Unsupported content: loop-guard:notice",
+      "Unsupported content: my-plugin:hello",
     );
   });
 
@@ -293,11 +293,11 @@ describe("空壳复现样例（empty_bubble_regression）与零变化守卫（ze
     ];
     setEntries(entries);
     const items = buildMessageItems(entries, OPTS);
-    // custom_message display=true 占位行按流内位置入列；recall 不入列（marker 通道经
-    // mergeMemoryItems 在 message-list 归并，不在本函数职责内）
+    // loop-guard 条目改走聚合组通道（docs08 2026-10-22 批次任务 2），按流内位置入列；
+    // recall 不入列（marker 通道经 mergeMemoryItems 在 message-list 归并，不在本函数职责内）
     expect(items.map((i) => [i.kind, i.key])).toEqual([
       ["entry", "u1"],
-      ["customMessage", "cm1"],
+      ["loopGuardGroup", "loop-guard-cm1"],
       ["entry", "a1"],
     ]);
   });

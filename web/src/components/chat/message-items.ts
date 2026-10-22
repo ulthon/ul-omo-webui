@@ -48,16 +48,37 @@ export function compactionMarkerOf(entry: WireEntry): CompactionMarker | null {
   return marker;
 }
 
+/** loop-guard 三型 kind（引擎内置扩展三常量：LOOP_GUARD_NOTICE/ESCALATION/RECOVERY_
+ *  CUSTOM_TYPE = loop-guard:notice/escalation/recovery，session-worker.js 实证；
+ *  引擎 renderer.js 仅 notice/escalation 注册渲染器，escalation tone=error；
+ *  web 侧三型色板：notice=info（sky）/escalation=error（destructive）/recovery=success（emerald）） */
+export type LoopGuardKind = "notice" | "escalation" | "recovery";
+
+const LOOP_GUARD_KIND_BY_TYPE: Record<string, LoopGuardKind> = {
+  "loop-guard:notice": "notice",
+  "loop-guard:escalation": "escalation",
+  "loop-guard:recovery": "recovery",
+};
+
+/** customType → loop-guard kind（仅三型精确名命中；未知 loop-guard:* 后缀禁猜，
+ *  返回 null 回落通用占位行，对齐 task-3 枚举纪律） */
+export function loopGuardKindOf(customType: unknown): LoopGuardKind | null {
+  if (typeof customType !== "string") return null;
+  return LOOP_GUARD_KIND_BY_TYPE[customType] ?? null;
+}
+
 /** items 数组判别联合：entry=定格条目气泡；streaming=流式气泡；
  *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生）；
  *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
  *  这类条目此前无渲染分支——入列却无内容可渲染即空壳路径）；
+ *  loopGuardGroup=相邻同型 loop-guard 条目聚合组（docs08 2026-10-22 批次任务 2）；
  *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生） */
 export type ChatListItem =
   | { key: string; kind: "entry"; entryId: string; interrupted: boolean }
   | { key: string; kind: "streaming" }
   | { key: string; kind: "memoryMarker"; marker: MemoryMarker }
   | { key: string; kind: "customMessage"; entryId: string }
+  | { key: string; kind: "loopGuardGroup"; loopGuardKind: LoopGuardKind; entryIds: string[] }
   | { key: string; kind: "compactionMarker"; marker: CompactionMarker };
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
@@ -86,7 +107,28 @@ export function buildMessageItems(
     // 气泡（空壳防线）；记忆标记条目已由 marker 通道渲染，此处跳过防双列。
     if (e.type === "custom_message") {
       if (e.display === true && memoryMarkerOf(e) === null) {
-        list.push({ key: e.id, kind: "customMessage", entryId: e.id });
+        // loop-guard 三型（docs08 2026-10-22 批次任务 2）：渲染流相邻同型连排聚合为一组。
+        // 「连排」= 用户所见相邻：toolResult 等不入列的不可见条目不产生可见行，不阻断
+        // 聚合；任何产生可见行的条目（普通 message、非三型 custom_message）打断聚合
+        // （非相邻同型不聚合；kind 边界重置）。
+        // 非三型 customType 回落通用占位行（r6 任务 10 ③ 兜底不动）；display=false
+        // 仍按既有口径一律不入列（引擎明示不展示，聚合组亦不得绕过）。
+        const kind = loopGuardKindOf(e.customType);
+        const last = list[list.length - 1];
+        if (kind !== null) {
+          if (last !== undefined && last.kind === "loopGuardGroup" && last.loopGuardKind === kind) {
+            last.entryIds.push(e.id);
+          } else {
+            list.push({
+              key: `loop-guard-${e.id}`,
+              kind: "loopGuardGroup",
+              loopGuardKind: kind,
+              entryIds: [e.id],
+            });
+          }
+        } else {
+          list.push({ key: e.id, kind: "customMessage", entryId: e.id });
+        }
       }
       continue;
     }
