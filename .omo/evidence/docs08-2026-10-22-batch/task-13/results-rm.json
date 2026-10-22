@@ -1,0 +1,19 @@
+{
+  "matchMediaReduce": true,
+  "rmDot": {
+    "anim": "none",
+    "color": "oklch(0.685 0.169 237.323)"
+  },
+  "rmQueue": {
+    "rows": 1,
+    "anim": "none"
+  },
+  "rmSend": {
+    "anim": "none"
+  },
+  "rmSkeleton": {
+    "anim": "none",
+    "dotsAnim": "none",
+    "src": "/favicon.svg"
+  }
+}

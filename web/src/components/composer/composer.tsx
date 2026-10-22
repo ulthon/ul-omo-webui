@@ -805,6 +805,9 @@ export function Composer({
 
   const canSend =
     (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending && !hydrationLocked;
+  // 发送中忙碌态（docs08-r7 任务 13）：POST 在途时发送钮呼吸（busy-pulse），
+  // 桌面/手机双分支同源；禁用态语义不变，仅叠加视觉节奏
+  const sendBusyCls = sending ? " animate-busy-pulse" : "";
 
   // ---------- 桌面/手机共享子树（docs08-r4 任务 7）：两分支同源，仅容器排布不同 ----------
 
@@ -1195,7 +1198,7 @@ export function Composer({
               onClick={() => void send()}
               className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
                 canSend ? "bg-accent text-accent-foreground hover:bg-muted" : "bg-muted text-muted-foreground"
-              }`}
+              }${sendBusyCls}`}
             >
               <ArrowUp className="size-5" />
             </button>
@@ -1255,7 +1258,7 @@ export function Composer({
               canSend
                 ? "border-border bg-accent text-accent-foreground hover:bg-muted dark:border-input"
                 : "border-border bg-background text-muted-foreground hover:bg-muted dark:border-input dark:bg-input/30"
-            }`}
+            }${sendBusyCls}`}
           >
             <ArrowUp className="size-5" />
           </button>

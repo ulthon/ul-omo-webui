@@ -1,0 +1,46 @@
+{
+  "_note": "desktopDot/Queue/SendBusy 数值取自 desktop-1/2/3 截图（视觉证据）；animationName 数值由 rm2 反向证明（reduce 时为 none，常态即为 busy-*，CSS 契约单测锁定）。动画态 send-busy 点击已生效（DOM 类存在由 busy-motion.test.tsx 断言）。",
+  "bundle": {
+    "served": "assets/index-tDzYj7go.js",
+    "disk": "index-tDzYj7go.js",
+    "match": true
+  },
+  "reducedMotion": {
+    "matchMediaReduce": true,
+    "method": "chromium --force-prefers-reduced-motion 启动参数（omowright 管道 CDP 不暴露 Emulation/Network 域）",
+    "dot": {
+      "anim": "none",
+      "color": "oklch(0.685 0.169 237.323)",
+      "note": "bg-sky-500 颜色保持可辨"
+    },
+    "queue": {
+      "rows": 1,
+      "anim": "none"
+    },
+    "send": {
+      "anim": "none",
+      "clsPresent": true
+    },
+    "skeleton": {
+      "anim": "none",
+      "dotsAnim": "none",
+      "src": "/favicon.svg"
+    },
+    "screens": [
+      "desktop-5-rm-dot-static.png",
+      "desktop-6-rm-queue-static.png",
+      "desktop-7-rm-send-static.png",
+      "desktop-8-rm-skeleton-static.png"
+    ]
+  },
+  "screensAnimated": [
+    "desktop-1-dot-running.png",
+    "desktop-2-queue-wave.png",
+    "desktop-3-send-busy.png",
+    "desktop-4-skeleton.png",
+    "mobile-1-dot-running.png",
+    "mobile-2-queue-wave.png",
+    "mobile-3-send-busy.png",
+    "mobile-4-skeleton.png"
+  ]
+}

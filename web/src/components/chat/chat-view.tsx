@@ -41,6 +41,33 @@ function EmptyHint() {
   );
 }
 
+/** 首载骨架（docs08-r7 任务 13，对标 OC：切会话/首载先渲染 logo 占位骨架替代纯文字，
+ *  无白屏闪跳）：项目 logo 呼吸（busy-pulse）+ 三点追逐（busy-dots）+ 静态骨架条；
+ *  reduced-motion 降为静态可辨（logo 常态、点=中灰省略号）；role=status + 既有
+ *  loading 键保读屏可达，无新增 i18n 键 */
+export function ChatLoadSkeleton() {
+  const t = useT();
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-5"
+      role="status"
+      aria-label={t("chat.chatView.loading")}
+    >
+      <img src="/favicon.svg" alt="" aria-hidden className="size-12 animate-busy-pulse" />
+      <div className="flex items-center gap-1.5" aria-hidden>
+        <span className="busy-dot size-1.5 rounded-full bg-muted-foreground/60" />
+        <span className="busy-dot size-1.5 rounded-full bg-muted-foreground/60" />
+        <span className="busy-dot size-1.5 rounded-full bg-muted-foreground/60" />
+      </div>
+      <div className="flex w-44 flex-col gap-2" aria-hidden>
+        <div className="h-2.5 w-full rounded-full bg-muted" />
+        <div className="h-2.5 w-2/3 rounded-full bg-muted" />
+        <div className="h-2.5 w-1/2 rounded-full bg-muted" />
+      </div>
+    </div>
+  );
+}
+
 function isMessageEntry(entry: WireEntry): entry is WireEntry & { id: string; message: WireMessage } {
   if (entry.type !== "message" || typeof entry.id !== "string") return false;
   const msg = entry.message as WireMessage | undefined;
@@ -215,9 +242,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   );
 
   if (loadState === "loading") {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("chat.chatView.loading")}</div>
-    );
+    return <ChatLoadSkeleton />;
   }
   if (loadState === "error") {
     return (

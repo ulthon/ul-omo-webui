@@ -148,6 +148,41 @@
 
 /* ---- Shiki 代码块（双主题：亮色内联，暗色走 CSS 变量切换） ---- */
 .md-body .shiki { margin: 0; background-color: transparent !important; }
+
+/* ---- 忙碌动画族（docs08-r7 任务 13，对标 OC 盘点第 1 节：忙碌态用定制呼吸/波动/点跃
+     动画而非通用 spinner 一律套用；关键帧仅 transform/opacity，零布局抖动；节奏取 OC
+     150/200/300ms 三档——busy-pulse 步进 300ms（1.2s 循环 25% 停驻双心跳）、
+     busy-wave 半程 300ms + 波峰级差 150ms（0.6s 循环）、busy-dots 追逐级差 200ms
+     （1.2s 循环）。prefers-reduced-motion 降级为静态：各基类保留可辨静止形态
+     （呼吸元素=常态外观、波形条=等高三竖线、追逐点=中灰省略号），状态不丢失 ---- */
+@keyframes busy-pulse {
+    0%, 100% { opacity: 0.45; transform: scale(0.86); }
+    25%, 75% { opacity: 1; transform: scale(1.06); }
+    50% { opacity: 0.6; transform: scale(0.92); }
+}
+.animate-busy-pulse { animation: busy-pulse 1.2s ease-in-out infinite; }
+
+@keyframes busy-wave {
+    0%, 100% { opacity: 0.35; transform: scaleY(0.4); }
+    50% { opacity: 1; transform: scaleY(1); }
+}
+.busy-wave-bar { opacity: 0.7; transform-origin: center; animation: busy-wave 0.6s ease-in-out infinite; }
+.busy-wave-bar:nth-child(2) { animation-delay: -0.15s; }
+.busy-wave-bar:nth-child(3) { animation-delay: -0.3s; }
+
+@keyframes busy-dots {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+}
+.busy-dot { opacity: 0.55; animation: busy-dots 1.2s ease-in-out infinite; }
+.busy-dot:nth-child(2) { animation-delay: -0.2s; }
+.busy-dot:nth-child(3) { animation-delay: -0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-busy-pulse,
+    .busy-wave-bar,
+    .busy-dot { animation: none; }
+}
 .md-body .shiki code { display: block; font-size: 0.75rem; line-height: 1.6; }
 .dark .md-body .shiki span { color: var(--shiki-dark); }
 .dark .md-body .shiki { background-color: transparent !important; }

@@ -74,6 +74,13 @@ export function QueueBar({ sessionId }: { sessionId: string }) {
       <ul className="mt-0.5 space-y-0.5">
         {list.map((item, index) => (
           <li key={item.enqueueOrder !== null ? `q${item.enqueueOrder}` : `p${index}`} data-testid="queue-item" className="flex items-center gap-1.5">
+            {/* 忙碌波形（docs08-r7 任务 13）：待发条目左侧三竖线波形，busy-wave 级差 150ms；
+                reduced-motion 降为等高三竖线静态可辨 */}
+            <span data-testid="queue-item-wave" className="flex h-3.5 shrink-0 items-center gap-0.5" aria-hidden>
+              <span className="busy-wave-bar h-3 w-0.5 rounded-full bg-current" />
+              <span className="busy-wave-bar h-3 w-0.5 rounded-full bg-current" />
+              <span className="busy-wave-bar h-3 w-0.5 rounded-full bg-current" />
+            </span>
             <span
               data-testid="queue-item-mode"
               title={item.mode === "steer" ? t("chat.queue.steerTitle") : t("chat.queue.followTitle")}

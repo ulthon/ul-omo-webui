@@ -64,13 +64,15 @@ function StatusDot({
   let cls = "bg-muted-foreground/30";
   let title = t("sessionList.item.statusIdle");
   if (effective === "waiting") {
-    cls = "bg-amber-500 animate-pulse";
+    // 忙碌呼吸（docs08-r7 任务 13）：busy-pulse 步进 300ms，替代通用 animate-pulse；
+    // reduced-motion 降为静态实心点，颜色与 title 仍可辨
+    cls = "bg-amber-500 animate-busy-pulse";
     title = t("sessionList.item.statusWaiting");
   } else if (effective === "error") {
     cls = "bg-destructive";
     title = t("sessionList.item.statusError");
   } else if (effective === "running" || (effective === null && active === true)) {
-    cls = "bg-sky-500 animate-pulse";
+    cls = "bg-sky-500 animate-busy-pulse";
     title = t("sessionList.item.statusRunning");
   }
   return <span className={`size-1.5 shrink-0 rounded-full ${cls}`} title={title} />;

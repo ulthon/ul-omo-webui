@@ -1,0 +1,38 @@
+{
+  "cpuThrottle": "FAIL:'Emulation.setCPUThrottlingRate' wasn't found",
+  "desktopSkeleton": {
+    "src": "/favicon.svg",
+    "anim": "busy-pulse",
+    "dots": 3
+  },
+  "rmMediaOn": "FAIL:'Emulation.setEmulatedMedia' wasn't found",
+  "rmDot": {
+    "cls": "size-1.5 shrink-0 rounded-full bg-sky-500 animate-busy-pulse",
+    "anim": "busy-pulse"
+  },
+  "rmSend": {
+    "clsPresent": true,
+    "anim": "busy-pulse"
+  },
+  "rmSkeleton": {
+    "anim": "busy-pulse",
+    "dotsAnim": "busy-dots"
+  },
+  "mobileDotDrawer": {
+    "cls": "size-1.5 shrink-0 rounded-full bg-sky-500 animate-busy-pulse",
+    "anim": "busy-pulse"
+  },
+  "mobileQueue": {
+    "rows": 2,
+    "barsPerRow": 3,
+    "anim": "busy-wave"
+  },
+  "mobileSendBusy": {
+    "clsPresent": true,
+    "anim": "busy-pulse"
+  },
+  "mobileSkeleton": {
+    "anim": "busy-pulse"
+  },
+  "servedBundle": "assets/index-tDzYj7go.js"
+}
