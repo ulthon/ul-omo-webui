@@ -83,7 +83,7 @@ function SourceBadge({ session }: { session: SessionListItem }) {
   if (!session.parentSessionPath) return null;
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground"
+      className="inline-flex shrink-0 items-center gap-0.5 rounded border bg-muted px-1 py-px text-[11px] leading-none text-muted-foreground"
       title={t("sessionList.item.forkedFrom", { path: session.parentSessionPath })}
     >
       <GitFork className="size-2.5" />
@@ -258,11 +258,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
 
   return (
     <div>
-      {/* 行密度（2026-10-15 对标 OpenChamber，双端一起压；docs08-r5 任务 11 行高保持不变）：
-          手机 = py-1 + 子件 ≤32px → 40px 行；桌面 = lg:py-2 → 36px 行（菜单钮桌面改为绝对定位
-          脱离文档流后，行高改由内边距维持）；行间距为零（相邻 div 贴排），信息密度以文字为主。 */}
+      {/* 行密度第三轮（docs08-2026-10-22 批次任务 10，新增字号维度）：py-1/lg:py-2 →
+          py-0.5/lg:py-1.5 收紧，文字主导行高：手机 = py-0.5 + 行内子件 32px → 36px 行
+          （整行触控带 ≥36px 预算，子件 ≥32px 不再降）；桌面 = lg:py-1.5 + 标题行高 20px →
+          32px 行（OC pitch 30-32 下沿取稳）；标题 text-base(16px/24px) +
+          lg:text-[15px] lg:leading-5（桌面 15px/20px）；时间 12px；徽标 11px。
+          行间距仍为零（相邻 div 贴排）；菜单钮桌面仍绝对定位脱离文档流，不参与行高。 */}
       <div
-        className={`group relative flex items-center gap-1 rounded-md px-1.5 py-1 text-sm lg:py-2 ${
+        className={`group relative flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm lg:py-1.5 ${
           selected ? "bg-primary/10" : "hover:bg-accent/50"
         }`}
       >
@@ -313,19 +316,19 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
           {/* min-w-9：极端挤压（超长标题+多徽标窄行）下标题保底 2 字符宽，
               防止 truncate 的 flex 收缩极值把标题压成 0 宽（overflow hidden 使
               min-width:auto 失效，无此下限会整段消失） */}
-          <span className={`min-w-9 truncate ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
+          <span className={`min-w-9 truncate text-base leading-6 lg:text-[15px] lg:leading-5 ${session.archivedAt ? "text-muted-foreground" : ""}`} title={session.title}>
             {session.pinned && <Pin className="mr-1 inline size-3 shrink-0 align-[-1px] text-muted-foreground" />}
             {forkIndex ? `${session.title} (fork #${forkIndex})` : session.title}
           </span>
           <SourceBadge session={session} />
           <TagBadges session={session} definedKeys={definedKeys ?? null} />
           {session.archivedAt && (
-            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">
+            <span className="shrink-0 rounded bg-muted px-1 py-px text-[11px] leading-none text-muted-foreground">
               {t("sessionList.item.archivedBadge")}
             </span>
           )}
           {projectLabel && (
-            <span className="shrink min-w-0 truncate rounded bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground" title={session.project}>
+            <span className="shrink min-w-0 truncate rounded bg-muted px-1 py-px text-[11px] leading-none text-muted-foreground" title={session.project}>
               {projectLabel}
             </span>
           )}
@@ -333,9 +336,9 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
               绝对定位叠加到同一槽位（时间隐/菜单显，回收菜单常占宽度）；菜单打开期间
               （data-state=open）保持隐藏——invisible 保布局零跳版，min-w-0 truncate 收缩
               防线与未读 shrink-0 保位不变 */}
-          <span className="ml-auto shrink min-w-0 truncate text-[11px] text-muted-foreground/70 lg:group-hover:invisible lg:group-has-[[data-state=open]]:invisible">{formatRelative(session.modified)}</span>
+          <span className="ml-auto shrink min-w-0 truncate text-xs text-muted-foreground/70 lg:group-hover:invisible lg:group-has-[[data-state=open]]:invisible">{formatRelative(session.modified)}</span>
           {session.unreadCount > 0 && (
-            <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
+            <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-medium leading-none text-primary-foreground">
               {session.unreadCount > 99 ? "99+" : session.unreadCount}
             </span>
           )}
@@ -344,10 +347,11 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             {/* 手机常显（无 hover 可言）；触控目标 32px（2026-10-15 密度对标由 44px 收窄——
-                选中主目标=整行 40px 全宽，菜单是次要动作，OC 同款量级；行高不再被按钮撑到 52px）。
+                选中主目标=整行全宽（第三轮后 36px），菜单是次要动作，OC 同款量级；
+                行高不再被按钮撑到 52px）。
                 桌面（docs08-r5 任务 11 对标 OC）：absolute 定位到行尾时间同一槽位，group-hover
                 交换显隐（时间隐/菜单显），回收 32px 常占宽度；菜单打开（data-state=open）与
-                键盘 focus-visible 时不随 hover 消失。行高改由 lg:py-2 维持（见行容器注释） */}
+                键盘 focus-visible 时不随 hover 消失。行高改由 lg:py-1.5 维持（见行容器注释） */}
             <Button
               ref={menuBtnRef}
               variant="ghost"

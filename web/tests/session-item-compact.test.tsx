@@ -1,11 +1,13 @@
 /**
- * 会话列表行紧凑化测试（docs08-r5 任务 11）：
+ * 会话列表行紧凑化测试（docs08-r5 任务 11；第三轮字号行距合同 docs08-2026-10-22 批次任务 10）：
  * - formatRelative 紧凑档位全枚举：<60s → Ns（未来时间钳 0s）、<60m → Nm、<24h → Nh、
  *   <30d → Nd、≥30d → M/D、跨年 → YY/M/D、非法 ISO → 空串（不汉化，对标 OC 数字+字母）
  * - 行渲染：紧凑时间上屏；桌面共享槽位机制类级 pin（时间 lg:group-hover:invisible +
  *   菜单开 group-has 隐藏；菜单钮 lg:absolute 脱离文档流回收 32px 常占宽 + hover 交换显隐；
  *   hover 态真实显隐走 Playwright 双档取证，happy-dom 无 CSS 求值不做伪断言）；
  *   手机双常显（时间无隐藏类、菜单钮无基线 opacity-0）；批量框/展开钮/未读/置顶零回归
+ * - 第三轮合同类级锁定：行 py-0.5/lg:py-1.5（36px/32px 行高构成）、标题 text-base
+ *   lg:text-[15px] lg:leading-5、时间 text-xs、徽标 text-[11px]
  * 场景走真实组件（happy-dom + react-dom/client，sidebar-single-list.test.tsx 同款基建）。
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -176,10 +178,51 @@ describe("SessionItem 行渲染紧凑化（docs08-r5 任务 11）", () => {
     expect(time).toBeDefined();
     expect(time!.className).toContain("lg:group-hover:invisible");
     expect(time!.className).toContain("lg:group-has-[[data-state=open]]:invisible");
-    // 行高维持：菜单钮脱离文档流后行高改由 lg:py-2 提供（36px 桌面行不变）
+    // 行高维持：菜单钮脱离文档流后行高改由 lg:py-1.5 提供（第三轮 32px 桌面行，
+    // docs08-2026-10-22 批次任务 10）
     const row = btn!.closest("div.group");
     expect(row).toBeDefined();
-    expect(row!.className).toContain("lg:py-2");
+    expect(row!.className).toContain("lg:py-1.5");
+  });
+
+  test("第三轮字号行距合同（docs08-2026-10-22 批次任务 10）：行 py-0.5/lg:py-1.5、标题 16/15px、时间 12px、徽标 11px", async () => {
+    const container = await mount(
+      createElement(SessionItem, {
+        session: makeSession("density-round3", {
+          modified: "2020-01-01T00:00:00.000Z",
+          title: "第三轮密度行",
+          parentSessionPath: "/store/parent.jsonl",
+        }),
+        expandable: false,
+        onDialog: () => {},
+        onChanged: () => {},
+      }),
+    );
+    // 行容器：内边距收紧到 py-0.5（手机 36px = 子件 32px + 2×2）与 lg:py-1.5（桌面 32px =
+    // 标题行高 20px + 2×6），旧 py-1/lg:py-2 不得残留
+    const row = container.querySelector("div.group");
+    expect(row).toBeDefined();
+    expect(row!.className).toContain("py-0.5");
+    expect(row!.className).toContain("lg:py-1.5");
+    expect(row!.className).not.toContain("py-1 ");
+    expect(row!.className).not.toContain("lg:py-2");
+    // 标题：手机 text-base（16px/24px），桌面 lg:text-[15px] lg:leading-5（15px/20px）
+    const title = row!.querySelector("span.min-w-9");
+    expect(title).toBeDefined();
+    expect(title!.className).toContain("text-base");
+    expect(title!.className).toContain("leading-6");
+    expect(title!.className).toContain("lg:text-[15px]");
+    expect(title!.className).toContain("lg:leading-5");
+    // 时间：text-xs（12px，旧 text-[11px] 退役）
+    const time = [...container.querySelectorAll("span")].find((s) => (s.textContent ?? "") === "20/1/1");
+    expect(time).toBeDefined();
+    expect(time!.className).toContain("text-xs");
+    expect(time!.className).not.toContain("text-[11px]");
+    // fork 徽标：text-[11px]（旧 text-[10px] 退役）
+    const fork = [...container.querySelectorAll("span")].find((s) => (s.textContent ?? "").includes("fork"));
+    expect(fork).toBeDefined();
+    expect(fork!.className).toContain("text-[11px]");
+    expect(fork!.className).not.toContain("text-[10px]");
   });
 
   test("手机双常显：时间与菜单钮均无移动端隐藏类（无裸 hidden/invisible/opacity-0，无 max-lg: 前缀）", async () => {
