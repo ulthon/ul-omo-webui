@@ -78,4 +78,15 @@ export const errors = {
   scheduleRunnerUnavailable: "定时任务 runner 不可用，创建已禁用（列表/取消仍可用）",
   unauthorized: "未登录或登录已过期",
   invalidEvent: "投递事件缺少必要字段",
+  // 模型发现（docs08-2026-10-22 批次任务 23 后端新增码）
+  invalidProvider: "provider 必填",
+  invalidImport: "导入选择无效（须为 all 或模型 id 列表）",
+  invalidBaseurl: "provider 缺少有效的 baseUrl",
+  providerNotFound: "provider 不存在",
+  providerNotCompatible: "provider 不是 OpenAI 兼容类型",
+  modelsUnreadable: "models.json 无法读取",
+  modelsInvalid: "models.json 结构无效",
+  modelsWriteFailed: "models.json 写回失败",
+  discoverUpstreamFailed: "模型发现请求失败（上游不可达、鉴权失败或非 JSON 响应）",
+  discoverBadListing: "上游未返回模型列表",
 } as const;

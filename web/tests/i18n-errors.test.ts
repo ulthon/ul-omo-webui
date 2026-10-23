@@ -18,7 +18,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // 实测 60 个（编排口述 59 与实测差 1，含 routes-project.ts 两处多行构造；以本清单为准）。
 // docs08-2026-10-22 批次任务 21（schedule 后端）追加 8 码：invalid_due/invalid_event/
 // invalid_every/invalid_prompt/invalid_session/schedule_limit/schedule_runner_unavailable/
-// unauthorized（含投递回注端点两码），合计 70。
+// docs08-2026-10-22 批次任务 23（模型发现后端）追加 10 码：discover_bad_listing/
+// discover_upstream_failed/invalid_baseurl/invalid_import/invalid_provider/models_invalid/
+// models_unreadable/models_write_failed/provider_not_compatible/provider_not_found，合计 80。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -28,11 +30,14 @@ const SCANNED_CODES = [
   "compact_unsupported",
   "content_too_large",
   "cursor_invalid",
+  "discover_bad_listing",
+  "discover_upstream_failed",
   "engine_not_ready",
   "fork_cancelled",
   "fork_failed",
   "git_error",
   "invalid_archived",
+  "invalid_baseurl",
   "invalid_content",
   "invalid_deleted",
   "invalid_due",
@@ -41,6 +46,7 @@ const SCANNED_CODES = [
   "invalid_every",
   "invalid_hidden",
   "invalid_images",
+  "invalid_import",
   "invalid_json",
   "invalid_last_opened_at",
   "invalid_limit",
@@ -54,6 +60,7 @@ const SCANNED_CODES = [
   "invalid_preferred_thinking_level",
   "invalid_project",
   "invalid_prompt",
+  "invalid_provider",
   "invalid_purge",
   "invalid_renamed_title",
   "invalid_request",
@@ -69,6 +76,9 @@ const SCANNED_CODES = [
   "memory_escape",
   "mkdir_failed",
   "mkdir_forbidden",
+  "models_invalid",
+  "models_unreadable",
+  "models_write_failed",
   "no_project",
   "not_a_directory",
   "not_a_file",
@@ -81,6 +91,8 @@ const SCANNED_CODES = [
   "path_escape",
   "project_not_found",
   "project_not_registered",
+  "provider_not_compatible",
+  "provider_not_found",
   "purge_requires_deleted",
   "schedule_limit",
   "schedule_runner_unavailable",
@@ -135,12 +147,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（70 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（80 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(70);
+    expect(scanned).toHaveLength(80);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(70);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(80);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

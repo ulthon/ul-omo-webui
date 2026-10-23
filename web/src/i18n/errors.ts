@@ -82,6 +82,17 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   title_gen_unavailable: "errors.titleGenUnavailable",
   unauthorized: "errors.unauthorized",
   version_not_found: "errors.versionNotFound",
+  // 模型发现（docs08-2026-10-22 批次任务 23 后端新增 10 码）
+  discover_bad_listing: "errors.discoverBadListing",
+  discover_upstream_failed: "errors.discoverUpstreamFailed",
+  invalid_baseurl: "errors.invalidBaseurl",
+  invalid_import: "errors.invalidImport",
+  invalid_provider: "errors.invalidProvider",
+  models_invalid: "errors.modelsInvalid",
+  models_unreadable: "errors.modelsUnreadable",
+  models_write_failed: "errors.modelsWriteFailed",
+  provider_not_compatible: "errors.providerNotCompatible",
+  provider_not_found: "errors.providerNotFound",
 };
 
 /** ApiError 形状最小结构（结构化判定，不 import lib/api，避免 i18n ↔ api 模块环） */

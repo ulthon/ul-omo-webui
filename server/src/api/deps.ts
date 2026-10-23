@@ -30,4 +30,9 @@ export interface ApiDeps {
    * 测试注入临时目录，端点写入/校验/删除全部以它为界。
    */
   attachmentsRoot?: string;
+  /**
+   * models.json 绝对路径（docs08-2026-10-22 批次任务 23 模型发现）：缺省
+   * agentDir()/models.json。测试注入临时文件路径，绝不触碰真实 agent 目录。
+   */
+  modelsPath?: string;
 }

@@ -229,6 +229,25 @@ export interface EngineDefaultModel {
   thinkingLevel: string | null;
 }
 
+export interface DiscoverProvider {
+  id: string;
+  baseUrl: string;
+  api: string | null;
+  modelCount: number;
+}
+
+/** 发现报告：discovered=远端去重清单；added=本地缺失可导入；unchanged=保留既有；
+ * imported/written 仅确认导入后非空/为真（预览恒 null/false） */
+export interface DiscoverReport {
+  provider: string;
+  url: string;
+  discovered: string[];
+  added: string[];
+  unchanged: string[];
+  imported: string[] | null;
+  written: boolean;
+}
+
 export interface ModelsResponse {
   project: string | null;
   models: ModelInfo[];
@@ -588,6 +607,26 @@ export const api = {
   async listModels(project?: string): Promise<ModelsResponse> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/models${qs}`);
+  },
+
+  // ---- 模型发现（docs08-2026-10-22 批次任务 23：OpenAI 兼容 provider）----
+  /** models.json 中可发现的 provider 清单（文件缺失返回空清单） */
+  async listDiscoverProviders(): Promise<{ providers: DiscoverProvider[] }> {
+    return request("/api/models/discover");
+  },
+
+  /** 发现预览：拉远端 /models 并 diff，不落盘（import 缺省 = 仅预览） */
+  async discoverModels(provider: string): Promise<DiscoverReport> {
+    return request("/api/models/discover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider }) });
+  },
+
+  /** 确认导入：全选（"all"）或所选新增 id 子集，合并写回 models.json */
+  async importDiscoveredModels(provider: string, ids: string[] | "all"): Promise<DiscoverReport> {
+    return request("/api/models/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider, import: ids }),
+    });
   },
 
   // ---- 斜杠命令枚举（docs08-r3 任务 19：SlashHints 三段下拉数据源） ----

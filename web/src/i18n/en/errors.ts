@@ -76,4 +76,15 @@ export const errors = {
   scheduleRunnerUnavailable: "Schedule runner unavailable, creating is disabled (list/cancel still work)",
   unauthorized: "Not signed in or session expired",
   invalidEvent: "Delivery event is missing required fields",
+  // Model discovery (codes added by docs08 batch task 23 backend)
+  invalidProvider: "provider is required",
+  invalidImport: "Invalid import selection (must be \"all\" or a list of model ids)",
+  invalidBaseurl: "Provider has no valid baseUrl",
+  providerNotFound: "Provider not found",
+  providerNotCompatible: "Provider is not an OpenAI-compatible type",
+  modelsUnreadable: "models.json cannot be read",
+  modelsInvalid: "models.json has an invalid structure",
+  modelsWriteFailed: "Failed to write models.json back",
+  discoverUpstreamFailed: "Model discovery request failed (upstream unreachable, auth failure, or non-JSON response)",
+  discoverBadListing: "Upstream did not return a model list",
 } as const;
