@@ -32,6 +32,7 @@ import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
 import { TipsSection } from "@/components/layout/tips-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
+import { TrafficSection } from "@/components/stats/traffic-section";
 import { ContextWaterRing } from "@/components/layout/context-ring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -899,6 +900,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <SidebarSortSection />
       <TagDisplaySection />
       <ModelsDiscoverSection />
+      <TrafficSection />
       <ScheduleSection />
       <ConversationSection />
       <TipsSection />

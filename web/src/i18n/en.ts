@@ -12,6 +12,7 @@ import { diff } from "./en/diff";
 import { fileTree } from "./en/fileTree";
 import { schedule } from "./en/schedule";
 import { models } from "./en/models";
+import { stats } from "./en/stats";
 import { errors } from "./en/errors";
 
 export const en = {
@@ -26,5 +27,6 @@ export const en = {
   fileTree,
   schedule,
   models,
+  stats,
   errors,
 } satisfies MessageCatalogShape;

@@ -1,0 +1,20 @@
+// stats domain (en): settings dialog traffic section (docs08 batch task 28).
+export const stats = {
+  trafficHeading: "Traffic",
+  trafficNote: "Per-endpoint daily accounting for browser↔webui requests (in-memory, resets at midnight) + system NIC accounting (vnstat).",
+  loadFailed: "Failed to load traffic stats",
+  refresh: "Refresh",
+  systemHeading: "System NIC",
+  systemToday: "Latest day",
+  systemMonth: "This month",
+  systemRx: "Down",
+  systemTx: "Up",
+  systemUnavailable: "System accounting unavailable",
+  endpointHeading: "Endpoint daily usage",
+  endpointCol: "Endpoint",
+  requestsCol: "Requests",
+  uplinkCol: "Up",
+  downlinkCol: "Down",
+  sseCol: "SSE (conn/events/bytes)",
+  empty: "No requests recorded today",
+};

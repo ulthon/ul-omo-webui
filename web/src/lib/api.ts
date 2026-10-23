@@ -248,6 +248,34 @@ export interface DiscoverReport {
   written: boolean;
 }
 
+/** 宽带流量监控（docs08-2026-10-22 批次任务 28）：服务端请求级日账 + vnstat 系统账 */
+export interface TrafficEndpointStat {
+  endpoint: string;
+  requests: number;
+  reqBytes: number;
+  resBytes: number;
+  sseConnections: number;
+  sseEvents: number;
+  sseBytes: number;
+  sseDurationMs: number;
+}
+export interface VnstatSystem {
+  available: true;
+  interface: string;
+  day: { date: string; rx: number; tx: number };
+  month: { rx: number; tx: number };
+}
+export interface VnstatUnavailable {
+  available: false;
+  reason: string;
+}
+export interface TrafficSnapshot {
+  day: string;
+  generatedAt: string;
+  endpoints: TrafficEndpointStat[];
+  system: VnstatSystem | VnstatUnavailable;
+}
+
 export interface ModelsResponse {
   project: string | null;
   models: ModelInfo[];
@@ -635,6 +663,12 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ provider, import: ids }),
     });
+  },
+
+  // ---- 宽带流量监控（docs08-2026-10-22 批次任务 28）----
+  /** webui 请求级日账 + vnstat 系统账快照（服务端内存日账，零点自动重置） */
+  async getTraffic(): Promise<TrafficSnapshot> {
+    return request("/api/stats/traffic");
   },
 
   // ---- 斜杠命令枚举（docs08-r3 任务 19：SlashHints 三段下拉数据源） ----

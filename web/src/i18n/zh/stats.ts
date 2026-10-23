@@ -1,0 +1,20 @@
+// stats 域词条（zh-CN）：设置面板「流量统计」分区（docs08-2026-10-22 批次任务 28）。
+export const stats = {
+  trafficHeading: "流量统计",
+  trafficNote: "浏览器↔webui 请求级日账（服务端内存累计，零点自动重置）+ 系统网卡账（vnstat）。",
+  loadFailed: "流量统计加载失败",
+  refresh: "刷新",
+  systemHeading: "系统网卡账",
+  systemToday: "最近日账",
+  systemMonth: "本月累计",
+  systemRx: "下行",
+  systemTx: "上行",
+  systemUnavailable: "系统账不可用",
+  endpointHeading: "端点日账",
+  endpointCol: "端点",
+  requestsCol: "请求数",
+  uplinkCol: "上行",
+  downlinkCol: "下行",
+  sseCol: "SSE（连接/事件/字节）",
+  empty: "本日暂无请求记账",
+};

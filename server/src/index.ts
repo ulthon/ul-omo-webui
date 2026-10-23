@@ -34,6 +34,7 @@ import { createNotesRoutes } from "./api/routes-notes";
 import { createMemoryRoutes } from "./api/routes-memory";
 import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
 import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
+import { TrafficMeter, trafficMiddleware, createTrafficRoutes } from "./api/traffic";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
 
@@ -191,6 +192,11 @@ app.post("/api/auth/logout", auth.logout);
 app.use("/api/*", auth.middleware);
 app.get("/api/health", (c) => c.json({ ok: true }));
 
+// 请求级流量计量（docs08 批次任务 28）：/api/* 全端点按路由模板聚合 req/res 字节，
+// 内存日账零点自动重置；GET /api/stats/traffic 只读查询（下方业务路由块挂载）
+const trafficMeter = new TrafficMeter();
+app.use("/api/*", trafficMiddleware(trafficMeter));
+
 // 业务路由（todo 9）。SSE 事件桥（todo 10）由后续任务统一收口挂载。
 // configs（todo 4）：全局目录取 UL_OMO_WEBUI_CONFIG_DIR / ~/.config/ul-omo-webui/；
 // 项目 scope 配置经 projectConfigs 按注册项目派生（todo 6 合并读取与迁移共用）。
@@ -219,6 +225,7 @@ app.route("/", createNotesRoutes(deps));
 app.route("/", createMemoryRoutes(deps));
 app.route("/", createTipsRoutes(tipsDeps));
 app.route("/", createScheduleRoutes(scheduleDeps));
+app.route("/", createTrafficRoutes({ meter: trafficMeter }));
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，

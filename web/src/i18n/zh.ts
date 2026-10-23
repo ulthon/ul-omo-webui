@@ -11,6 +11,7 @@ import { diff } from "./zh/diff";
 import { fileTree } from "./zh/fileTree";
 import { schedule } from "./zh/schedule";
 import { models } from "./zh/models";
+import { stats } from "./zh/stats";
 import { errors } from "./zh/errors";
 
 export const zh = {
@@ -25,5 +26,6 @@ export const zh = {
   fileTree,
   schedule,
   models,
+  stats,
   errors,
 } as const;
