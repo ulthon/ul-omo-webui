@@ -9,6 +9,7 @@ import { sessionList } from "./zh/sessionList";
 import { notes } from "./zh/notes";
 import { diff } from "./zh/diff";
 import { fileTree } from "./zh/fileTree";
+import { schedule } from "./zh/schedule";
 import { errors } from "./zh/errors";
 
 export const zh = {
@@ -21,5 +22,6 @@ export const zh = {
   notes,
   diff,
   fileTree,
+  schedule,
   errors,
 } as const;

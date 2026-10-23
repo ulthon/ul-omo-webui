@@ -67,4 +67,13 @@ export const errors = {
   noteNotFound: "Note not found",
   versionNotFound: "Version not found",
   purgeRequiresDeleted: "Only trashed notes can be permanently deleted",
+  // Scheduled tasks (codes added by docs08 batch task 21 backend)
+  invalidSession: "Target session is missing",
+  invalidPrompt: "Prompt must not be empty or exceed 16KiB",
+  invalidDue: "Invalid trigger time or out of the bookable range (max 366 days)",
+  invalidEvery: "Invalid repeat interval (minimum 60 seconds)",
+  scheduleLimit: "Scheduled task limit reached",
+  scheduleRunnerUnavailable: "Schedule runner unavailable, creating is disabled (list/cancel still work)",
+  unauthorized: "Not signed in or session expired",
+  invalidEvent: "Delivery event is missing required fields",
 } as const;

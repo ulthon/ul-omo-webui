@@ -76,6 +76,7 @@ export const sessionList = {
     copyTitle: "Copy title",
     exportHtml: "Export HTML",
     tags: "Tags",
+    schedule: "Scheduled tasks…",
     noChildren: "No sub-sessions",
     // 任务11 键化：行操作失败兜底（apiErrorMessage 未命中/纯 Error 时）与复制 toast
     operationFailed: "Operation failed",

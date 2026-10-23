@@ -539,7 +539,7 @@ export function SessionList() {
   /** 行内菜单分流（todo 11 / 任务 13）：rename/delete 走既有弹窗单例；tags 打开锚定
    *  下拉（锚点 = 行菜单钮元素，由 session-item 传入） */
   const handleItemDialog = useCallback(
-    (kind: "rename" | "delete" | "tags", session: SessionListItem, anchor?: HTMLElement) => {
+    (kind: "rename" | "delete" | "tags" | "schedule", session: SessionListItem, anchor?: HTMLElement) => {
       if (kind === "tags") {
         if (anchor) setTagDropdown({ sessions: [session], anchor });
         return;

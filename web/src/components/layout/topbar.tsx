@@ -29,6 +29,7 @@ import { definedTagKeys, type TagDefs, type TagDisplayMode } from "@/components/
 import { TagBadges } from "@/components/session-list/tag-badge";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
+import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { ContextWaterRing } from "@/components/layout/context-ring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -895,6 +896,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <ProjectManagementSection />
       <SidebarSortSection />
       <TagDisplaySection />
+      <ScheduleSection />
       <ConversationSection />
       <LanguageSection />
     </>

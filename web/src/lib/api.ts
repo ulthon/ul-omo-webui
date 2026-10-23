@@ -708,7 +708,49 @@ export const api = {
   async getMemoryFacts(project: string): Promise<MemoryFactsResponse> {
     return request(`/api/memory/facts?project=${encodeURIComponent(project)}`);
   },
+
+  // ---- 定时任务（docs08-2026-10-22 批次任务 21 后端 / 任务 22 前端）----
+  /** 全量列表（三状态目录直读）：jobs 按到期升序；invalid 如实回显；runner 存活态供状态列 */
+  async listSchedule(): Promise<ScheduleListResponse> {
+    return request("/api/schedule");
+  },
+  /** 创建：due 支持 epoch 毫秒或 ISO 字符串（过去时刻合法——runner 下次扫描即触发）；
+   * everyMs 最小 60000（runner 轮询语义）。错误码 invalid_session/invalid_prompt/invalid_due/
+   * invalid_every/schedule_limit（400）、session_not_found（404）、schedule_runner_unavailable（503） */
+  async createSchedule(body: { sessionId: string; prompt: string; due: number | string; everyMs?: number | null }): Promise<{ job: ScheduleJobItem }> {
+    return request("/api/schedule", jsonInit("POST", body));
+  },
+  /** 取消：pending → cancelled 墓碑移动；不存在 404（已在触发中/已取消同形） */
+  async cancelSchedule(id: string): Promise<{ ok: boolean; id: string }> {
+    return request(`/api/schedule/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
 };
+
+/** 定时任务行（server ScheduleJob + 目录派生 state；时间字段均为 epoch 毫秒） */
+export interface ScheduleJobItem {
+  version: number;
+  id: string;
+  sessionId: string;
+  sessionFile: string | null;
+  cwd: string;
+  prompt: string;
+  createdAt: number;
+  dueAt: number;
+  everyMs: number | null;
+  fireCount: number;
+  lastFiredAt: number | null;
+  lastError: string | null;
+  state: "pending" | "firing" | "failed";
+  /** firing/failed 记录的 occurrence 序号（引擎命名契约 @n 段）；pending 无 */
+  occurrence?: number;
+}
+
+export interface ScheduleListResponse {
+  jobs: ScheduleJobItem[];
+  /** 不可解析/命名异常的记录（如实报告，不静默丢） */
+  invalid: { file: string; error: string }[];
+  runner: { alive: boolean };
+}
 
 export interface FsBrowseEntry {
   name: string;

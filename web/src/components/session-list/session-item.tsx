@@ -9,7 +9,7 @@
 // + 元数据操作菜单（置顶/重命名/生成标题/归档/复制会话 ID/复制标题/导出 HTML/标签/删除——
 // 重命名与删除弹窗由父级单例托管，标签走锚定下拉（docs08-r3 任务 13，锚点=行菜单钮））。
 import { useRef, useState } from "react";
-import { ChevronRight, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { ChevronRight, CalendarClock, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -132,7 +132,7 @@ export interface SessionItemProps {
   expandable: boolean;
   /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开锚定下拉（父级接线，任务 13；
    *  anchor = 行菜单钮元素，供父级把 TagDropdown 锚定到本行） */
-  onDialog: (kind: "rename" | "delete" | "tags", session: SessionListItem, anchor?: HTMLElement) => void;
+  onDialog: (kind: "rename" | "delete" | "tags" | "schedule", session: SessionListItem, anchor?: HTMLElement) => void;
   /** 两源定义键集（todo 11 徽标孤儿判定；null = 定义未就绪不渲染徽标） */
   definedKeys?: Set<string> | null;
   /** 两源定义集（todo 20 v2 色源与 display 覆盖判定；null = 定义未就绪视为无覆盖） */
@@ -410,6 +410,14 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
             >
               <Tag className="mr-2 size-4" />
               {t("sessionList.item.tags")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => onDialog("schedule", session)}
+              data-testid="item-schedule"
+            >
+              <CalendarClock className="mr-2 size-4" />
+              {t("sessionList.item.schedule")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => onDialog("delete", session)}>

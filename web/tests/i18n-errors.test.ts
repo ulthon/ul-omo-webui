@@ -16,6 +16,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 
 // 2026-10-20 扫描留痕：rg 'ApiError\(' server/src 全量字面量构造点的 distinct code，
 // 实测 60 个（编排口述 59 与实测差 1，含 routes-project.ts 两处多行构造；以本清单为准）。
+// docs08-2026-10-22 批次任务 21（schedule 后端）追加 8 码：invalid_due/invalid_event/
+// invalid_every/invalid_prompt/invalid_session/schedule_limit/schedule_runner_unavailable/
+// unauthorized（含投递回注端点两码），合计 70。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -32,7 +35,10 @@ const SCANNED_CODES = [
   "invalid_archived",
   "invalid_content",
   "invalid_deleted",
+  "invalid_due",
   "invalid_entry",
+  "invalid_event",
+  "invalid_every",
   "invalid_hidden",
   "invalid_images",
   "invalid_json",
@@ -47,10 +53,12 @@ const SCANNED_CODES = [
   "invalid_preferred_model",
   "invalid_preferred_thinking_level",
   "invalid_project",
+  "invalid_prompt",
   "invalid_purge",
   "invalid_renamed_title",
   "invalid_request",
   "invalid_scope",
+  "invalid_session",
   "invalid_settings",
   "invalid_snippets",
   "invalid_streaming_behavior",
@@ -74,10 +82,13 @@ const SCANNED_CODES = [
   "project_not_found",
   "project_not_registered",
   "purge_requires_deleted",
+  "schedule_limit",
+  "schedule_runner_unavailable",
   "session_not_found",
   "session_not_persisted",
   "title_gen_failed",
   "title_gen_unavailable",
+  "unauthorized",
   "version_not_found",
 ];
 
@@ -96,7 +107,10 @@ function leafAt(root: Catalog, keyPath: string): string {
 
 /** 活扫 server/src：提取全部 ApiError(status, "code", ...) 字面量构造的 distinct code。
  * \s* 跨行覆盖多行构造；注释中的 ApiError(...) 同形命中——仓库注释只复述真实构造码，
- * 不影响 distinct 集合（与 tests/i18n.test.ts 的源码扫描断言同款思路）。 */
+ * 不影响 distinct 集合（与 tests/i18n.test.ts 的源码扫描断言同款思路）。
+ * 生成物排除：static-assets.generated.ts（根构建内嵌 web 产物）里的压缩前端代码
+ * 同样含 ApiError 字面量（如客户端 network/unauthorized），但那是 web 侧构造非 server
+ * 码——凡 *.generated.ts 一律跳过（任务 22 实证：根构建后该文件入扫致计数漂移）。 */
 function scanServerCodes(): string[] {
   const out = new Set<string>();
   const walk = (dir: string): void => {
@@ -107,6 +121,7 @@ function scanServerCodes(): string[] {
         continue;
       }
       if (!name.endsWith(".ts")) continue;
+      if (name.endsWith(".generated.ts")) continue; // 根构建生成物（内嵌 web 产物），见上注
       const text = fs.readFileSync(full, "utf8");
       for (const m of text.matchAll(/ApiError\(\s*\d+\s*,\s*"([a-z0-9_]+)"/g)) out.add(m[1]);
     }
@@ -120,12 +135,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（62 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（70 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(62);
+    expect(scanned).toHaveLength(70);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(62);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(70);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

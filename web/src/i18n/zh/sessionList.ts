@@ -77,6 +77,7 @@ export const sessionList = {
     copyTitle: "复制标题",
     exportHtml: "导出 HTML",
     tags: "标签",
+    schedule: "定时任务…",
     noChildren: "无子会话",
     // 任务11 键化：行操作失败兜底（apiErrorMessage 未命中/纯 Error 时）与复制 toast
     operationFailed: "操作失败",

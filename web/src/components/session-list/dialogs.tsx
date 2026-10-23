@@ -11,6 +11,7 @@ import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScheduleDialog } from "@/components/schedule/schedule-dialog";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,7 @@ import {
 
 export type SessionDialogState =
   | { kind: "rename" | "delete"; session: SessionListItem }
+  | { kind: "schedule"; session: SessionListItem }
   | { kind: "batch-delete"; ids: string[]; titles: string[] };
 
 /** 批量删除强化确认阈值（MUST DO：一次 >20 个二次确认强化） */
@@ -206,6 +208,10 @@ export function SessionDialogs({ state, onClose, onChanged }: { state: SessionDi
   }
 
   const { session } = state;
+  if (state.kind === "schedule") {
+    // 定时任务弹框（docs08 批次任务 22）：过滤列表+新建表单自含状态，独立组件自管开关
+    return <ScheduleDialog session={state.session} onClose={onClose} />;
+  }
   return state.kind === "rename" ? (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">

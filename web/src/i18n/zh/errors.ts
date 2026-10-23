@@ -69,4 +69,13 @@ export const errors = {
   noteNotFound: "笔记不存在",
   versionNotFound: "版本不存在",
   purgeRequiresDeleted: "仅回收站中的笔记可彻底删除",
+  // 定时任务（docs08-2026-10-22 批次任务 21 后端新增码）
+  invalidSession: "缺少目标会话",
+  invalidPrompt: "提示词不能为空或超过 16KiB",
+  invalidDue: "触发时间无效或超出可预约范围（最远 366 天）",
+  invalidEvery: "循环间隔无效（最小 60 秒）",
+  scheduleLimit: "定时任务数量已达上限",
+  scheduleRunnerUnavailable: "定时任务 runner 不可用，创建已禁用（列表/取消仍可用）",
+  unauthorized: "未登录或登录已过期",
+  invalidEvent: "投递事件缺少必要字段",
 } as const;
