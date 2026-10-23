@@ -103,6 +103,9 @@ class FakeProjectGateway implements EngineGateway {
     throw new ApiError(404, "session_not_found", `会话不存在：${sessionId}`);
   }
   async restartProject(_project: string): Promise<void> {}
+  async commandsList(): Promise<null> {
+    return null;
+  }
   async stopAll(): Promise<void> {}
 }
 

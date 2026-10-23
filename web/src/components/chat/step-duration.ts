@@ -17,13 +17,13 @@ export function entryTimestampMs(value: unknown): number | null {
   return null;
 }
 
-/** ms → 耗时标签。负值（时钟偏移/乱序）按 0 处理；同秒差显 "0.0s"（非空非 NaN）。 */
+/** ms → 耗时标签。负值（时钟偏移/乱序）按 0 处理；同秒差显 "0.0s"（非空非 NaN）。
+ *  边界先按整秒四舍五入再分档：59.95s 起进位到 "1m 0s"，永不出现 "60.0s"/"1m 60s"（t7 终验微修）。 */
 export function formatStepDuration(ms: number): string {
   const clamped = Math.max(0, ms);
-  if (clamped < 60_000) return `${(clamped / 1000).toFixed(1)}s`;
-  const m = Math.floor(clamped / 60_000);
-  const s = Math.round((clamped % 60_000) / 1000);
-  return `${m}m ${s}s`;
+  const totalSec = Math.round(clamped / 1000);
+  if (totalSec < 60) return `${(clamped / 1000).toFixed(1)}s`;
+  return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`;
 }
 
 /** 起止时间戳 → 标签；任一缺失 → null（不显示）。 */

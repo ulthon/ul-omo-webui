@@ -159,6 +159,43 @@ describe("POST /api/schedule 校验矩阵", () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("schedule_limit");
   });
+
+  test("上限：总数达 1000 时 400 schedule_limit（total 先于 perSession 判定）", async () => {
+    const h = makeHarness();
+    const dir = scheduleDir(h.agentDir);
+    mkdirSync(join(dir, "pending"), { recursive: true });
+    // 直写 pending 文件绕过 perSession 上限，铺满 total；路由校验需 sessionId 可解析
+    for (let i = 0; i < DEFAULT_CAPS.total; i++) {
+      const job = makeJob(dir, { sessionId: `ses-fill-${i}` });
+      writeFileSync(join(dir, "pending", `${job.id}.json`), JSON.stringify(job));
+    }
+    const res = await post(h, { sessionId: "ses-a", prompt: "p", due: Date.now() + 1000 });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("schedule_limit");
+  });
+
+  test("路由级降级：degraded() → 创建 503 schedule_runner_unavailable（列表仍可用）", async () => {
+    const agentDir = makeAgentDir();
+    const deps: ScheduleRouteDeps = {
+      agentDir,
+      resolveSession: async (id) => (id === "ses-a" ? { path: join(agentDir, "s.jsonl"), cwd: "/proj" } : null),
+      promptSession: async () => ({ disposition: "handled" }),
+      runnerAlive: () => false,
+      degraded: () => true,
+      deliverToken: "test-token",
+    };
+    const app = new Hono();
+    app.route("/", createScheduleRoutes(deps));
+    const res = await app.request("/api/schedule", {
+      method: "POST",
+      body: JSON.stringify({ sessionId: "ses-a", prompt: "p", due: Date.now() + 1000 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("schedule_runner_unavailable");
+    expect((await app.request("/api/schedule")).status).toBe(200);
+  });
 });
 
 // ---------------------------------------------------------------- GET / DELETE / 持久化

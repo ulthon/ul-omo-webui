@@ -7,7 +7,7 @@ import { api, type DiscoverProvider, type DiscoverReport } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { Button } from "@/components/ui/button";
-import { isAllSelected, providerOptionLabel, summarizeImport, toggleSelected } from "./models-discover-data";
+import { providerOptionLabel, summarizeImport, toggleSelected } from "./models-discover-data";
 
 export function ModelsDiscoverSection() {
   const t = useT();
@@ -174,11 +174,7 @@ export function ModelsDiscoverSection() {
                 onClick={() => void runImport()}
                 className="min-h-9 shrink-0 px-3 text-xs lg:min-h-7"
               >
-                {importing
-                  ? t("models.importing")
-                  : isAllSelected(report.added, selected)
-                    ? t("models.importSelected")
-                    : t("models.importSelected")}
+                {importing ? t("models.importing") : t("models.importSelected")}
               </Button>
             </>
           ) : (

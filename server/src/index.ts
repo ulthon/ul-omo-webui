@@ -228,7 +228,6 @@ app.route("/", createMemoryRoutes(deps));
 app.route("/", createTipsRoutes(tipsDeps));
 // 扩展资源面与 auth 凭证检查（docs08-r7 任务 24）：CLI 缺失时 install/remove/update 降级报错
 app.route("/", createExtensionsRoutes({ agentDir: agentDir(), engineCli: resolveEngineCli(resolveEnginePaths().pluginDir) }));
-app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/", createTrafficRoutes({ meter: trafficMeter }));
 app.route("/api", sseRoutes);
 

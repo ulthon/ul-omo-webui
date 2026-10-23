@@ -3,8 +3,8 @@
 //   / 跨块长行 / before 翻页拼缝零重复零丢失 / cursor_invalid
 // - 路由：无 cursor 走直读、?before= 409、?cursor= 与 ?full=1 走引擎、
 //   fake 网关（无 sessionPath）回退引擎
-import { describe, expect, test } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, test, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -23,6 +23,17 @@ import { openMetaDb } from "../src/db/meta";
 import { openConfigStore } from "../src/conf/config-store";
 import { createProjectConfigStores } from "../src/api/config-migration";
 
+// 临时目录登记与统一清理（终验微修）：测试结束后 /tmp 零 t16-* 残留
+const tempDirs: string[] = [];
+function mkTemp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 function line(i: number, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type: "message",
@@ -39,7 +50,7 @@ function header(id: string): string {
 }
 
 function makeSessionFile(n: number, opts?: { trailingPartial?: boolean; id?: string }): string {
-  const dir = mkdtempSync(join(tmpdir(), "t16-session-"));
+  const dir = mkTemp("t16-session-");
   const path = join(dir, "s.jsonl");
   const lines = [header(opts?.id ?? "hdr-1")];
   for (let i = 0; i < n; i++) lines.push(line(i));
@@ -101,7 +112,7 @@ describe("readTailEntries 尾窗直读", () => {
   });
 
   test("超 64KB 大条目跨块解析不丢", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "t16-session-"));
+    const dir = mkTemp("t16-session-");
     const path = join(dir, "s.jsonl");
     const big = "x".repeat(200 * 1024);
     const lines = [header("h")];
@@ -243,8 +254,8 @@ function row(id: string, path: string): EngineSessionSummary {
 }
 
 function buildApp(engines: EngineGateway): Hono {
-  const meta = openMetaDb({ path: join(mkdtempSync(join(tmpdir(), "t16-meta-")), "meta.db") });
-  const configs = openConfigStore({ globalDir: join(mkdtempSync(join(tmpdir(), "t16-cfg-")), "global") });
+  const meta = openMetaDb({ path: join(mkTemp("t16-meta-"), "meta.db") });
+  const configs = openConfigStore({ globalDir: join(mkTemp("t16-cfg-"), "global") });
   const app = new Hono();
   app.route("/", createSessionRoutes({ meta, engines, configs, projectConfigs: createProjectConfigStores(configs) }));
   return app;
@@ -304,7 +315,7 @@ describe("GET messages 尾窗直读路由", () => {
   });
 
   test("会话无文件（未落盘/别名）：回退引擎全量", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "t16-empty-"));
+    const dir = mkTemp("t16-empty-");
     const engines = new TailFakeGateway([row("s1", join(dir, "missing.jsonl"))], {
       entries: [{ type: "message", id: "x", parentId: null, timestamp: "t" }],
       leafId: "x",

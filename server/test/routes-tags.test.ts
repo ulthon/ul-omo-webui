@@ -94,6 +94,9 @@ class FakeGateway implements EngineGateway {
     throw new Error("tags routes must not fork");
   }
   async restartProject(): Promise<void> {}
+  async commandsList(): Promise<null> {
+    return null;
+  }
   async stopAll(): Promise<void> {}
 }
 

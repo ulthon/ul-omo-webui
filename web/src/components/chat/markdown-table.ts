@@ -1,4 +1,4 @@
-// markdown 表格行操作助手（todo 8）：原始管道行重建、RFC4180 CSV 序列化、
+// markdown 表格行操作助手（todo 8）：TSV 行序列化、RFC4180 CSV 序列化、
 // Blob 下载与 DOM 侧表格数据读取（点击时经 closest 取当前行/表，无需组件覆写 table）。
 
 /** 表格原始数据：表头与数据行（每格为归一后的纯文本） */

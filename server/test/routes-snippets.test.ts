@@ -70,6 +70,9 @@ class NoEngines implements EngineGateway {
     return null;
   }
   async restartProject(): Promise<void> {}
+  async commandsList(): Promise<null> {
+    return null;
+  }
   async stopAll(): Promise<void> {}
 }
 

@@ -192,7 +192,7 @@ describe("POST /api/sessions/:id/compact 超时映射（docs08-r6 任务 18 ④�
     vi.useFakeTimers();
     const gateway = new FakeGateway();
     // 引擎侧压缩慢于 HTTP 期限：永不 resolve（后台仍在进行的模拟）
-    (gateway as { compact: (id: string) => Promise<never> }).compact = () => new Promise(() => {});
+    (gateway as unknown as { compact: (id: string) => Promise<never> }).compact = () => new Promise(() => {});
     const resPromise = buildApp(gateway).request("/api/sessions/s1/compact", { method: "POST" });
     // 让请求链微任务跑起来再推进期限时钟
     await vi.advanceTimersByTimeAsync(0);

@@ -30,6 +30,13 @@ describe("formatStepDuration", () => {
     expect(formatStepDuration(9 * 60_000 + 46_000)).toBe("9m 46s");
     expect(formatStepDuration(75 * 60_000 + 3_000)).toBe("75m 3s");
   });
+
+  test("59/60/61s 边界：59s 显秒、60s 进位 \"1m 0s\"，永不出现 60.0s/1m 60s（t7 微修）", () => {
+    expect(formatStepDuration(59_000)).toBe("59.0s");
+    expect(formatStepDuration(59_950)).toBe("1m 0s"); // 整秒四舍五入进位，不显 "60.0s"
+    expect(formatStepDuration(60_000)).toBe("1m 0s");
+    expect(formatStepDuration(61_000)).toBe("1m 1s");
+  });
 });
 
 describe("entryTimestampMs", () => {

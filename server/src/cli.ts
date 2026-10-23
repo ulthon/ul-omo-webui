@@ -17,4 +17,7 @@ if (args[0] === "startup") {
   process.exit(0);
 }
 
+// 顶层 await 要求本文件是模块（TS1375）；空导出零运行时影响
+export {};
+
 await import("./index");
