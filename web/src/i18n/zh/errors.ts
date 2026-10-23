@@ -89,4 +89,9 @@ export const errors = {
   modelsWriteFailed: "models.json 写回失败",
   discoverUpstreamFailed: "模型发现请求失败（上游不可达、鉴权失败或非 JSON 响应）",
   discoverBadListing: "上游未返回模型列表",
+  // 扩展资源面（docs08-2026-10-22 批次任务 24 后端新增码）
+  extensionNotFound: "扩展资源不存在",
+  invalidEnabled: "enabled 必须是布尔值",
+  invalidKind: "资源类型无效",
+  invalidSource: "安装源必填（如 npm:<package>）",
 } as const;

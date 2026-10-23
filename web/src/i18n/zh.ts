@@ -10,6 +10,7 @@ import { notes } from "./zh/notes";
 import { diff } from "./zh/diff";
 import { fileTree } from "./zh/fileTree";
 import { schedule } from "./zh/schedule";
+import { extensions } from "./zh/extensions";
 import { models } from "./zh/models";
 import { stats } from "./zh/stats";
 import { errors } from "./zh/errors";
@@ -25,6 +26,7 @@ export const zh = {
   diff,
   fileTree,
   schedule,
+  extensions,
   models,
   stats,
   errors,

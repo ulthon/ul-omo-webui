@@ -33,6 +33,8 @@ import { createTagsRoutes } from "./api/routes-tags";
 import { createNotesRoutes } from "./api/routes-notes";
 import { createMemoryRoutes } from "./api/routes-memory";
 import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
+import { createExtensionsRoutes } from "./api/routes-extensions";
+import { resolveEngineCli } from "./api/extensions-store";
 import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
 import { TrafficMeter, trafficMiddleware, createTrafficRoutes } from "./api/traffic";
 
@@ -224,6 +226,8 @@ app.route("/", createTagsRoutes(deps));
 app.route("/", createNotesRoutes(deps));
 app.route("/", createMemoryRoutes(deps));
 app.route("/", createTipsRoutes(tipsDeps));
+// 扩展资源面与 auth 凭证检查（docs08-r7 任务 24）：CLI 缺失时 install/remove/update 降级报错
+app.route("/", createExtensionsRoutes({ agentDir: agentDir(), engineCli: resolveEngineCli(resolveEnginePaths().pluginDir) }));
 app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/", createTrafficRoutes({ meter: trafficMeter }));
 app.route("/api", sseRoutes);

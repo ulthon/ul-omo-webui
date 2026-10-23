@@ -87,4 +87,8 @@ export const errors = {
   modelsWriteFailed: "Failed to write models.json back",
   discoverUpstreamFailed: "Model discovery request failed (upstream unreachable, auth failure, or non-JSON response)",
   discoverBadListing: "Upstream did not return a model list",
+  extensionNotFound: "Extension resource not found",
+  invalidEnabled: "enabled must be a boolean",
+  invalidKind: "Invalid resource kind",
+  invalidSource: "Source is required (e.g. npm:<package>)",
 } as const;

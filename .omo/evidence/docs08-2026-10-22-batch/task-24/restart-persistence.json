@@ -1,0 +1,1 @@
+200{"items":[{"name":"diff","kind":"extension","enabled":false},{"name":"tps","kind":"extension","enabled":true},{"name":"mail","kind":"skill","enabled":false},{"name":"pause-plan","kind":"prompt","enabled":true},{"name":"oh-my-pi","kind":"package","enabled":true,"source":"npm:oh-my-pi@0.2.0"}],"cliAvailable":true}

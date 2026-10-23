@@ -811,6 +811,24 @@ export const api = {
   async cancelSchedule(id: string): Promise<{ ok: boolean; id: string }> {
     return request(`/api/schedule/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
+
+  // ---- 扩展资源面与凭证检查（docs08-2026-10-22 批次任务 24）----
+  /** 资源清单：extensions/skills/prompts 三目录 + settings packages；cliAvailable=false 降级 */
+  async listExtensions(): Promise<ExtensionsResponse> {
+    return request("/api/extensions");
+  },
+  /** 启停写入（服务端串行锁）；错误码 invalid_name/invalid_enabled/invalid_kind/extension_not_found */
+  async setExtensionEnabled(name: string, kind: string, enabled: boolean): Promise<{ name: string; kind: string; enabled: boolean }> {
+    return request(`/api/extensions/${encodeURIComponent(name)}`, jsonInit("PUT", { enabled, kind }));
+  },
+  /** 凭证检查三态（绝不回显凭证材料） */
+  async getAuthStatus(): Promise<AuthStatusResponse> {
+    return request("/api/auth/status");
+  },
+  /** 非交互 install/remove/update（async spawn 有界超时；失败 502 ok=false） */
+  async runExtensionAction(action: "install" | "remove" | "update", source?: string): Promise<{ ok: boolean; message: string }> {
+    return request(`/api/extensions/${action}`, jsonInit("POST", source ? { source } : {}));
+  },
 };
 
 /** 定时任务行（server ScheduleJob + 目录派生 state；时间字段均为 epoch 毫秒） */
@@ -911,4 +929,27 @@ export interface MemoryFactsResponse {
   facts: MemoryFactsGroup[];
   system: MemorySystemDoc[];
   telemetry: MemoryTelemetry | null;
+}
+
+/** 扩展资源条目（GET /api/extensions；docs08-2026-10-22 批次任务 24） */
+export interface ExtensionItem {
+  name: string;
+  kind: "extension" | "skill" | "prompt" | "package";
+  enabled: boolean;
+  /** package 项的安装源（remove 动作入参） */
+  source?: string;
+}
+
+export interface ExtensionsResponse {
+  items: ExtensionItem[];
+  /** false = omo CLI 缺失，install/remove/update 与凭证检查降级 */
+  cliAvailable: boolean;
+}
+
+/** 凭证检查三态（0/1/2 → ready/not_configured/error；绝不回显凭证材料） */
+export interface AuthStatusResponse {
+  status: "ready" | "not_configured" | "error";
+  provider: string | null;
+  checkedAt: number;
+  detail: string | null;
 }

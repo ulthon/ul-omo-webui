@@ -20,7 +20,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // invalid_every/invalid_prompt/invalid_session/schedule_limit/schedule_runner_unavailable/
 // docs08-2026-10-22 批次任务 23（模型发现后端）追加 10 码：discover_bad_listing/
 // discover_upstream_failed/invalid_baseurl/invalid_import/invalid_provider/models_invalid/
-// models_unreadable/models_write_failed/provider_not_compatible/provider_not_found，合计 80。
+// models_unreadable/models_write_failed/provider_not_compatible/provider_not_found；docs08-2026-10-22 批次任务 24（扩展资源面）
+// 追加 4 码：extension_not_found/invalid_enabled/invalid_kind/invalid_source，合计 84。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -33,6 +34,7 @@ const SCANNED_CODES = [
   "discover_bad_listing",
   "discover_upstream_failed",
   "engine_not_ready",
+  "extension_not_found",
   "fork_cancelled",
   "fork_failed",
   "git_error",
@@ -41,6 +43,7 @@ const SCANNED_CODES = [
   "invalid_content",
   "invalid_deleted",
   "invalid_due",
+  "invalid_enabled",
   "invalid_entry",
   "invalid_event",
   "invalid_every",
@@ -48,6 +51,7 @@ const SCANNED_CODES = [
   "invalid_images",
   "invalid_import",
   "invalid_json",
+  "invalid_kind",
   "invalid_last_opened_at",
   "invalid_limit",
   "invalid_model",
@@ -68,6 +72,7 @@ const SCANNED_CODES = [
   "invalid_session",
   "invalid_settings",
   "invalid_snippets",
+  "invalid_source",
   "invalid_streaming_behavior",
   "invalid_tags",
   "invalid_text",
@@ -147,12 +152,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（80 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（84 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(80);
+    expect(scanned).toHaveLength(84);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(80);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(84);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {
