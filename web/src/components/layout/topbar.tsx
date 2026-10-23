@@ -29,6 +29,7 @@ import { definedTagKeys, type TagDefs, type TagDisplayMode } from "@/components/
 import { TagBadges } from "@/components/session-list/tag-badge";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
+import { TipsSection } from "@/components/layout/tips-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
 import { ContextWaterRing } from "@/components/layout/context-ring";
@@ -900,6 +901,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       <ModelsDiscoverSection />
       <ScheduleSection />
       <ConversationSection />
+      <TipsSection />
       <LanguageSection />
     </>
   );

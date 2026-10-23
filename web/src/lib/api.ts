@@ -266,6 +266,14 @@ export interface InputHistoryItem {
   createdAt: string;
 }
 
+/** 用法提示条目（docs08-2026-10-22 批次任务 25）：GET /api/tips 返回项，契约同引擎
+ *  omo --list-tips（requiresCommand 为关联命令名/布尔，原样透传不过滤，对拍口径 GET=CLI）。 */
+export interface TipItem {
+  id: string;
+  text: string;
+  requiresCommand?: string | boolean;
+}
+
 /** 斜杠命令行（GET /api/commands；docs08-r3 任务 19，通道实证 docs/verification/06） */
 export interface SlashCommandInfo {
   name: string;
@@ -686,6 +694,12 @@ export const api = {
   },
   async putSettings(kv: Record<string, string>): Promise<{ ok: boolean; settings: Record<string, string> }> {
     return request("/api/settings", jsonInit("PUT", kv));
+  },
+
+  // ---- 用法提示（docs08-2026-10-22 批次任务 25）----
+  /** 空态提示卡数据源：服务端缓存 omo --list-tips（失败降级空表，前端无 tip 区） */
+  async listTips(): Promise<{ tips: TipItem[] }> {
+    return request("/api/tips");
   },
 
   // ---- git / fs（只读）----

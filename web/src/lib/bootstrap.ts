@@ -3,7 +3,7 @@
 import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
-import { THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, parseTagDisplayMode, parseThinkingExpanded, useUiStore } from "@/stores/ui";
+import { THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, parseLocale, useLocaleStore, t } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -134,6 +134,8 @@ export async function bootstrap(): Promise<void> {
     ui.setThinkingDefaultExpanded(parseThinkingExpanded(settings[THINKING_EXPANDED_KV]));
     // 标签全局展示模式（todo 20 v2）：键缺失/非 "grid" 回退 text（缺省文字）
     ui.setTagDisplayMode(parseTagDisplayMode(settings[TAG_DISPLAY_MODE_KV]));
+    // 用法提示开关（docs08 2026-10-22 批次任务 25）：键缺失/非 "false" 一律开启（缺省开）
+    ui.setTipsEnabled(parseTipsEnabled(settings[TIPS_ENABLED_KV]));
     // 界面语言（任务2）：kv 为准——键存在且合法才 setLocale（同步 document.lang 并回写
     // localStorage 镜像）；键缺失/非法值不动当前语言（保留 localStorage/navigator 先行值）
     const kvLocale = parseLocale(settings[LANGUAGE_KV]);

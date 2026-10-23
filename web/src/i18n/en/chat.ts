@@ -245,6 +245,12 @@ export const chat = {
     syncing: "Syncing history…",
     jumpToBottom: "Back to bottom",
   },
+  // tip-card.tsx (docs08 2026-10-22 batch task 25: empty-state tip card)
+  tipCard: {
+    label: "Tip",
+    next: "Show another",
+    dismiss: "Dismiss",
+  },
   // nav-rail.tsx
   navRail: {
     jumpTo: "Jump to: {title}",

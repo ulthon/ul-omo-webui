@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, shouldShowStickyUser, stickyUserOf, type ChatListItem, type CompactionMarker } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
+import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
 
 /** 记忆标记块（docs08-r4 任务 13）：图标 + 一句话摘要 + 点击展开原文；折叠时不渲染原文
@@ -232,8 +233,10 @@ export function MessageList({
         className="h-full overflow-y-auto overscroll-contain px-3 py-4 sm:px-4"
       >
         {mergedItems.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            {t("chat.messageList.empty")}
+          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-sm text-muted-foreground">
+            <p>{t("chat.messageList.empty")}</p>
+            {/* 空态用法提示卡（docs08 2026-10-22 批次任务 25）：开关关/已关/无数据时自隐藏 */}
+            <TipCard />
           </div>
         ) : (
           <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>

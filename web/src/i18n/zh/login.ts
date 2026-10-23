@@ -140,6 +140,11 @@ export const login = {
     chatHeading: "对话",
     thinkingExpanded: "思考块默认展开",
     thinkingNote: "开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。",
+    // 提示分区（docs08 2026-10-22 批次任务 25：用法提示开关，缺省开）
+    tipsSaveFailed: "保存提示设置失败",
+    tipsHeading: "提示",
+    tipsEnabled: "显示用法提示",
+    tipsNote: "会话空态显示用法提示卡（内容来自 omo CLI）；关闭后不再显示。重新开启会清除「本会话不再显」记忆。",
     // 标签分区（任务 20：展示模式二档，行级覆盖之上才是全局档）
     tagsHeading: "标签",
     tagDisplayMode: "标签展示模式",

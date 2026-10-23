@@ -32,6 +32,7 @@ import { createSnippetsRoutes } from "./api/routes-snippets";
 import { createTagsRoutes } from "./api/routes-tags";
 import { createNotesRoutes } from "./api/routes-notes";
 import { createMemoryRoutes } from "./api/routes-memory";
+import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
 import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
@@ -165,6 +166,17 @@ const scheduleDeps: ScheduleRouteDeps = {
   deliverToken: scheduleDeliverToken,
 };
 
+// tips 用法提示（docs08 plan 任务 25）：引擎 CLI --list-tips 缓存路由（启动缓存+5min
+// TTL，失败用缓存）。引擎运行时缺失时回落 PATH 上的 omo；仍失败即空表，前端无 tip 区。
+let tipsCliPath: string | undefined;
+try {
+  tipsCliPath = resolveEnginePaths().cliPath;
+} catch {
+  // 引擎运行时缺失：路由内回落 PATH omo（resolveEnginePaths 已在 schedule 装配尝试过，
+  // 此处重复调用命中其模块级缓存，无额外开销）
+}
+const tipsDeps: TipsRouteDeps = { agentDir: agentDir(), cliPath: tipsCliPath };
+
 const app = new Hono();
 
 // 投递回注端点：免登录中间件（自带每次启动随机 bearer token 校验），
@@ -205,6 +217,7 @@ app.route("/", createSnippetsRoutes(deps));
 app.route("/", createTagsRoutes(deps));
 app.route("/", createNotesRoutes(deps));
 app.route("/", createMemoryRoutes(deps));
+app.route("/", createTipsRoutes(tipsDeps));
 app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/api", sseRoutes);
 

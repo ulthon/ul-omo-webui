@@ -246,6 +246,12 @@ export const chat = {
     syncing: "同步历史…",
     jumpToBottom: "回到底部",
   },
+  // tip-card.tsx chat 空态用法提示卡（docs08 2026-10-22 批次任务 25）
+  tipCard: {
+    label: "用法提示",
+    next: "换一条",
+    dismiss: "关闭",
+  },
   // nav-rail.tsx 右缘导航轨
   navRail: {
     jumpTo: "跳转到：{title}",

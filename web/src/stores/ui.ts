@@ -38,6 +38,16 @@ export function parseThinkingExpanded(raw: string | null | undefined): boolean {
   return raw === "true";
 }
 
+/** 用法提示显示开关（docs08 2026-10-22 批次任务 25）：meta_kv 键，字符串 "false"=关；
+ * 键缺失/其他任何值一律视为开（缺省开，计划口径）。bootstrap 读 GET /api/settings 填充，
+ * 设置弹层「提示」分区改档即 PUT，跨设备一致不落 localStorage。 */
+export const TIPS_ENABLED_KV = "tips.enabled";
+
+/** 仅精确 "false" 视为关闭；键缺失/空串/其他任何值回退 true（缺省开） */
+export function parseTipsEnabled(raw: string | null | undefined): boolean {
+  return raw !== "false";
+}
+
 interface UiState {
   /** SSE 连接状态（todo 14 写入；初始 online） */
   connection: ConnectionStatus;
@@ -80,6 +90,9 @@ interface UiState {
   /** 标签全局展示模式（todo 20 v2）：meta_kv tags.displayMode 持久（缺省 text）；
    * 行级渲染面（侧栏行/切换 sheet）消费，筛选/选择/管理面永远文字+色点不读此档。 */
   tagDisplayMode: TagDisplayMode;
+  /** 用法提示显示开关（docs08 2026-10-22 批次任务 25）：meta_kv tips.enabled 持久
+   * （缺省开）；空态提示卡与设置「提示」分区共同消费。 */
+  tipsEnabled: boolean;
   toast: Toast | null;
 
   setConnection(status: ConnectionStatus): void;
@@ -100,6 +113,7 @@ interface UiState {
   setProjectOrder(order: string[]): void;
   setThinkingDefaultExpanded(expanded: boolean): void;
   setTagDisplayMode(mode: TagDisplayMode): void;
+  setTipsEnabled(enabled: boolean): void;
   showToast(text: string, kind?: "info" | "error"): void;
   clearToast(): void;
 }
@@ -124,6 +138,7 @@ export const useUiStore = create<UiState>()((set) => ({
   projectOrder: [],
   thinkingDefaultExpanded: false,
   tagDisplayMode: "text",
+  tipsEnabled: true,
   toast: null,
 
   setConnection: (status) => set({ connection: status }),
@@ -143,6 +158,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setProjectOrder: (order) => set({ projectOrder: order }),
   setThinkingDefaultExpanded: (thinkingDefaultExpanded) => set({ thinkingDefaultExpanded }),
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
+  setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
   showToast: (text, kind = "info") => {
     if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;
