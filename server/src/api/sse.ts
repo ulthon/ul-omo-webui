@@ -75,6 +75,12 @@ export const sseRoutes = new Hono()
  * EventSource 只对客户端监听列表内的类型派发事件，看门狗续期依赖 hb 可派发。 */
 export const SSE_HEARTBEAT_TYPE = "hb"
 
+/** 新连接回放尾窗宽度（docs08-2026-10-23/24 批次任务 8）：无 Last-Event-ID 的
+ * 新连接不再 replay(0) 全量环形缓冲（容量 1000），只回放最近 N 帧（与 r7
+ * TAIL_WINDOW=200 对齐，取值论证见任务 3 设计文档第二节）。只作用于窗口读取，
+ * 不动存储容量。 */
+export const REPLAY_TAIL_WINDOW = 200
+
 /** 发布一条全局心跳事件：占用 id 流水（重放透传、Last-Event-ID 序列参与、客户端
  * 游标跟随推进——三处语义核对见计划任务 2）。projectPath 空串 = 全局帧，无
  * sessionId，客户端分发层游标记账后短路返回，不进任何 store。 */
@@ -291,6 +297,38 @@ function filterStaleUiRequests(
   return kept
 }
 
+/**
+ * 新连接回放尾窗截取（任务 8）：从尾向前扫，保留最近 limit 帧；
+ * message_update 流式中间帧只保留每会话最后一条（流式态快照，设计文档
+ * 「可跳」类——终态由 entry_appended/message_end 表达，REST 尾窗可恢复已落库段）。
+ * 只因窗口上限截断（循环未扫到头部）才报 truncated=true —— 中间帧主动跳过
+ * 不算截断，不触发 gap（无恢复需求）。仅作用于无 Last-Event-ID 的新连接。
+ */
+function replayTailWindow(
+  events: BridgeEvent[],
+  limit: number,
+): { events: BridgeEvent[]; truncated: boolean; windowStartId: number | null } {
+  const kept: BridgeEvent[] = []
+  const streamingSnapshots = new Set<string>()
+  let i = events.length - 1
+  for (; i >= 0 && kept.length < limit; i--) {
+    const e = events[i]
+    if ((e.event as { type?: unknown }).type === "message_update") {
+      const key = rawKey(e.projectPath, wireSessionId(e) ?? "")
+      if (streamingSnapshots.has(key)) continue
+      streamingSnapshots.add(key)
+    }
+    kept.push(e)
+  }
+  kept.reverse()
+  const truncated = i >= 0
+  return {
+    events: kept,
+    truncated,
+    windowStartId: kept.length > 0 ? kept[0].id : null,
+  }
+}
+
 async function writeBridgeEvent(
   stream: SSEStreamingApi,
   e: BridgeEvent,
@@ -384,6 +422,26 @@ sseRoutes.get("/events", (c) => {
     // 否则两个动作之间的 publish 会丢或乱序。replay 快照事件与 subscribe 之后
     // 的实时事件 id 空间不重叠（前者 id 更小），合并不重不丢。
     const replay = bus.replay(afterId)
+    // 任务 8：无 Last-Event-ID 的新连接（原生 EventSource 首连不带该头）不做
+    // 全量 replay(0)，改为尾窗 N 帧收敛：message_update 中间帧跳过（每会话留
+    // 末帧快照）、越窗截断发 gap 帧（复用现语义，客户端缺帧走对账补齐而非回放）。
+    // 带 Last-Event-ID 的断点续传（含非法值按 0）行为完全不变。
+    const isFreshConnect = raw === undefined
+    let replaySource = replay.events
+    let gapFrom = replay.gap ? replay.gapFrom : 0
+    let gapTo = replay.gap ? replay.gapTo : 0
+    let hasGap = replay.gap
+    if (isFreshConnect) {
+      const tail = replayTailWindow(replay.events, REPLAY_TAIL_WINDOW)
+      replaySource = tail.events
+      if (tail.truncated && tail.windowStartId !== null) {
+        // 越窗截断：缺口 = [afterId + 1, windowStart - 1]，与环缓海汰越界同语义
+        //（与 replay.gap 同时成立时窗口起点更靠后，区间自然覆盖环缓缺口）
+        hasGap = true
+        gapFrom = afterId + 1
+        gapTo = tail.windowStartId - 1
+      }
+    }
     unsubscribe = bus.subscribe((e) => {
       if (!matchesFilter(e)) return
       conn.queue.push({ kind: "event", event: e })
@@ -391,23 +449,23 @@ sseRoutes.get("/events", (c) => {
     })
 
     try {
-      if (replay.gap) {
+      if (hasGap) {
         // gap 事件的 id 取续发基点：有续发内容时为其最后一条（同步块内
         // subscribe 尚未收到新事件，即缓冲末条）；无续发内容时为当前游标，
         // 客户端收到后以该基点继续增量听流。
-        const gapBaseId = replay.events.length > 0 ? replay.events[replay.events.length - 1].id : bus.latestId
-        conn.queue.push({ kind: "gap", from: replay.gapFrom, to: replay.gapTo, id: gapBaseId })
+        const gapBaseId = replaySource.length > 0 ? replaySource[replaySource.length - 1].id : bus.latestId
+        conn.queue.push({ kind: "gap", from: gapFrom, to: gapTo, id: gapBaseId })
       }
       // W1 #4：重放序列先滤掉陈旧权限请求帧（三条件 + 会话身份归一化，
       // 见 filterStaleUiRequests）；实时扇出路径不经过此过滤。
       const replayEvents = filterStaleUiRequests(
-        replay.events,
+        replaySource,
         durableLookup,
         isEngineRunning ?? (() => true),
       )
       dlog(
-        `replay after=${afterId} buffered=${replay.events.length} kept=${replayEvents.length} gap=${
-          replay.gap ? `${replay.gapFrom}->${replay.gapTo}` : "no"
+        `replay after=${afterId} buffered=${replay.events.length} windowed=${replaySource.length} kept=${replayEvents.length} gap=${
+          hasGap ? `${gapFrom}->${gapTo}` : "no"
         }`,
       )
       // docs08-r5 任务 5：单次恢复窗口界定标记。重放序列首尾各一条桥级帧，客户端在

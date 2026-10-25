@@ -292,10 +292,13 @@ describe("GET /api/events", () => {
     const res = await app.request("/api/events?session=s1")
     // replay：1,3（s2 的 2 被滤掉），被窗口标记包夹（标记为连接级帧，不过 ?session= 过滤，
     // 同 gap 口径——窗口界定不依赖会话身份）
-    const replayBlocks = await readSseBlocks(res.body!, 4)
+    // 任务 8：无 Last-Event-ID 新连接走尾窗收敛：s2 的帧被会话过滤、s1 的两条
+    // message_update 因“每会话只留末帧快照”只剩末条（seq=3）——序列为 [begin][3][done]，
+    // 窗口收敛与过滤叠加；标记仍包夹（连接级帧，不过 ?session= 过滤，同 gap 口径）
+    const replayBlocks = await readSseBlocks(res.body!, 3)
     expect(parseBlock(replayBlocks[0]).event).toBe("replay_begin")
-    expect(replayBlocks.slice(1, 3).map((b) => parseBlock(b).id)).toEqual(["1", "3"])
-    expect(parseBlock(replayBlocks[3]).event).toBe("replay_done")
+    expect(replayBlocks.slice(1, 2).map((b) => parseBlock(b).id)).toEqual(["3"])
+    expect(parseBlock(replayBlocks[2]).event).toBe("replay_done")
     // 实时路径：s2 事件不透出
     bus.publish(PROJ, wireEvent("s2", 4))
     bus.publish(PROJ, wireEvent("s1", 5))
