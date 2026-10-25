@@ -638,6 +638,17 @@ export const api = {
   async removeAttachment(sessionId: string, path: string): Promise<{ ok: boolean }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/attachments?path=${encodeURIComponent(path)}`, { method: "DELETE" });
   },
+  /** 通用二进制附件上传（docs08 2026-10-23/24 批次 t17 双通道之二进制面，任务 18 消费）：
+   * 原始 body + application/octet-stream，文件名经 ?name= 查询参数（纯文件名白名单
+   * 服务端校验）；≤10MB 超限 413 attachment_too_large。返回 { path 绝对路径, name, bytes }。 */
+  async postBinaryAttachment(sessionId: string, file: Blob, name?: string): Promise<{ path: string; name: string; bytes: number }> {
+    const qs = name ? `?name=${encodeURIComponent(name)}` : "";
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/attachments${qs}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    });
+  },
 
   // ---- models ----
   async listModels(project?: string): Promise<ModelsResponse> {

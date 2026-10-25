@@ -19,7 +19,7 @@
 // 原文插入输入框（内容永不丢）+toast。三按钮选择条退役；占位符改语法教学（桌面长版/
 // 手机短版按视口）。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, SkipForward, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { isSendKey } from "@/lib/shortcuts";
@@ -42,25 +42,36 @@ import { compactToastText, runCompact } from "@/components/chat/compact-run";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   EMPTY_SLASH_GROUPS,
+  FILE_ATTACHMENT_MAX_BYTES,
   MAX_IMAGES,
   appendAttachmentLines,
+  appendFileAttachmentLines,
   dataUrlToBase64,
+  detachFileChip,
   detachPasteChip,
+  failFileChip,
   filterSlashGroups,
   flattenSlashItems,
   formatPasteKb,
+  hasUploadingFileChip,
   historyPreview,
   pasteExceedsThreshold,
   readFileAsDataUrl,
+  resetFileChip,
+  sendableFileChipCount,
+  sendableFileChips,
   sendablePasteChips,
+  settleFileChip,
   settlePasteChip,
   slashReplaceToken,
   slashTriggerToken,
+  startFileChip,
   startPasteChip,
   stepHistoryIndex,
   stopIntent,
   utf8ByteLength,
   validateImageFile,
+  type FileChip,
   type PasteChip,
   type SlashItem,
 } from "./composer-logic";
@@ -160,6 +171,16 @@ export function Composer({
   const setAttachmentsBoth = useCallback((next: PasteChip[]) => {
     attachmentsRef.current = next;
     setAttachments(next);
+  }, []);
+
+  // 通用文件附件三态 chip（docs08 2026-10-23/24 批次任务 18）：任意格式非图片文件
+  //（粘贴/选择）→ 二进制附件通道；fileSourcesRef 保留 id→File 供失败重试重新 POST
+  const [fileChips, setFileChips] = useState<FileChip[]>([]);
+  const fileChipsRef = useRef<FileChip[]>([]);
+  const fileSourcesRef = useRef(new Map<string, File>());
+  const setFileChipsBoth = useCallback((next: FileChip[]) => {
+    fileChipsRef.current = next;
+    setFileChips(next);
   }, []);
 
   const [history, setHistory] = useState<ActiveHistory | null>(null);
@@ -396,12 +417,19 @@ export function Composer({
       const trimmed = rawText.trim();
       const imgs = opts.clearInputs ? imagesRef.current : undefined;
       const atts = opts.clearInputs ? sendablePasteChips(attachmentsRef.current) : [];
+      // stale_state 钉死（任务 18）：文件 chip 上传在途时发送门拦截（不排队不吞 chip，
+      // 落定后用户再发）——避免路径行缺失的半截发送
+      if (opts.clearInputs && hasUploadingFileChip(fileChipsRef.current)) {
+        setError(t("composer.fileUploadInFlight"));
+        return;
+      }
+      const fileAtts = opts.clearInputs ? sendableFileChips(fileChipsRef.current) : [];
       // busy 语义定则（docs08-r4 任务 11）：权限锁禁发送；流式态放行（发送变排队）。
       // 水合锁（docs08-r5 任务 6）同禁发送：运行态未知窗口悲观默认阻塞。
       // 排队判定读发送瞬间的 store 流式态与运行态（不经渲染闭包，回合刚结束/开始的窗口也对）
       if (permissionLocked || hydrationLocked || sending) return;
       // 普通发送：文本/图片/附件皆空早退（原校验扩展，有图或有附件无文本仍可发）；直发必须有文本
-      if (!trimmed && imgs && imgs.length === 0 && atts.length === 0) return;
+      if (!trimmed && imgs && imgs.length === 0 && atts.length === 0 && fileAtts.length === 0) return;
       if (!trimmed && !opts.clearInputs) return;
       // /compact 精确解析（docs08-r5 任务 8）：裸命令直调压缩端点后返回——不追加本地
       // 用户气泡、不写输入历史、绝不落入 api.prompt（无此拦截则翻案后的放行命令会被
@@ -434,7 +462,7 @@ export function Composer({
       try {
         const outgoingImages =
           imgs && imgs.length > 0 ? imgs.map(({ data, mimeType }) => ({ data, mimeType })) : undefined;
-        const outgoingText = appendAttachmentLines(trimmed, atts);
+        const outgoingText = appendFileAttachmentLines(appendAttachmentLines(trimmed, atts), fileAtts);
         const msgStreaming = useMessagesStore.getState().bySession[sessionId]?.streaming ?? false;
         const rs = useSessionsStore.getState().runStates[sessionId];
         // 已知 running（SSE 权威链）同样转排队（docs08-r5 任务 6：r4 排队语义不回退）
@@ -473,6 +501,8 @@ export function Composer({
           if (opts.clearInputs) {
             // 附件路径行已随排队文本投递 → 附件条清空；图片未投递 → 保留待直发
             setAttachmentsBoth([]);
+            setFileChipsBoth([]);
+            fileSourcesRef.current.clear();
             clearDraft();
             setHistory(null);
             draftBeforeHistoryRef.current = "";
@@ -497,6 +527,8 @@ export function Composer({
           if (opts.clearInputs) {
             setImagesBoth([]);
             // 附件仅本地清空，不调 DELETE（文件留引擎按需读取，48h 清理兜底）
+            setFileChipsBoth([]);
+            fileSourcesRef.current.clear();
             setAttachmentsBoth([]);
             clearDraft();
             setHistory(null);
@@ -518,7 +550,7 @@ export function Composer({
         setSending(false);
       }
     },
-    [permissionLocked, hydrationLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, onSent, showToast, t],
+    [permissionLocked, hydrationLocked, sending, sessionId, project, clearDraft, setImagesBoth, setAttachmentsBoth, setFileChipsBoth, onSent, showToast, t],
   );
 
   const send = useCallback(() => sendText(textRef.current, { clearInputs: true }), [sendText, textRef]);
@@ -616,13 +648,89 @@ export function Composer({
     [sessionId, setAttachmentsBoth, insertSnippetText, showToast],
   );
 
+  // ---------- 通用文件附件（docs08 2026-10-23/24 批次任务 18） ----------
+
+  /** 文件 chip POST（二进制通道）：成功落就绪态（path 填充）；chip 已被抢先移除/发送
+   * 清空时孤儿文件 best-effort DELETE；失败落 failed 态（chip 保留供重试）。 */
+  const uploadFileAttachment = useCallback(
+    async (id: string) => {
+      const file = fileSourcesRef.current.get(id);
+      if (!file) return;
+      try {
+        const res = await api.postBinaryAttachment(sessionId, file, file.name);
+        const settled = settleFileChip(fileChipsRef.current, id, res.path);
+        setFileChipsBoth(settled.chips);
+        if (settled.orphan) {
+          void api.removeAttachment(sessionId, res.path).catch(() => {});
+        }
+      } catch (err) {
+        setFileChipsBoth(failFileChip(fileChipsRef.current, id, apiErrorMessage(err, "composer.fileUploadFailed")));
+      }
+    },
+    [sessionId, setFileChipsBoth],
+  );
+
+  /** 非图片文件入口（粘贴/选择共用）：空文件与超限（10MB）跳过 + toast（重试也必败，
+   * 不出 chip）；其余挂上传中 chip 后立即 POST */
+  const addFileFiles = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        if (file.size === 0) {
+          showToast(t("composer.fileEmptySkipped"), "error");
+          continue;
+        }
+        if (file.size > FILE_ATTACHMENT_MAX_BYTES) {
+          showToast(t("composer.fileTooLarge", { name: file.name }), "error");
+          continue;
+        }
+        const id = `file-${++attachmentSeq}`;
+        fileSourcesRef.current.set(id, file);
+        setFileChipsBoth(
+          startFileChip(fileChipsRef.current, { id, name: file.name, bytes: file.size, path: "", stage: "uploading", error: "" }),
+        );
+        void uploadFileAttachment(id);
+      }
+    },
+    [showToast, t, setFileChipsBoth, uploadFileAttachment],
+  );
+
+  /** 失败重试：回上传中态后重新 POST（重用 fileSourcesRef 里的原始 File） */
+  const retryFileChip = useCallback(
+    (id: string) => {
+      setFileChipsBoth(resetFileChip(fileChipsRef.current, id));
+      void uploadFileAttachment(id);
+    },
+    [setFileChipsBoth, uploadFileAttachment],
+  );
+
+  /** 文件 chip 移除：本地即删 + 源 Map 清理；就绪态另发 DELETE（失败 toast；48h 按龄
+   * 清理兑底）；发送成功清空条绝不走这里 */
+  const removeFileChip = useCallback(
+    (id: string) => {
+      const { chips, detached } = detachFileChip(fileChipsRef.current, id);
+      setFileChipsBoth(chips);
+      fileSourcesRef.current.delete(id);
+      if (detached && detached.stage === "ready" && detached.path !== "") {
+        void api.removeAttachment(sessionId, detached.path).catch((err: unknown) => {
+          showToast(apiErrorMessage(err, "composer.attachmentCleanupFailed"), "error");
+        });
+      }
+    },
+    [sessionId, setFileChipsBoth, showToast],
+  );
+
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      // 图片粘贴链路原样（B10 不改语义）：图片文件优先于文本分支
-      const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+      // 粘贴分流（任务 18）：剪贴板文件按类型分拆——图片走内联链路（B10 不改语义，
+      // 分流是任务 19），其余任意格式挂文件 chip 走二进制附件通道；混合剪贴板
+      //（图片+文件）两路各自行处理
+      const files = Array.from(e.clipboardData.files);
       if (files.length > 0) {
         e.preventDefault();
-        void addImageFiles(files);
+        const images = files.filter((f) => f.type.startsWith("image/"));
+        const others = files.filter((f) => !f.type.startsWith("image/"));
+        if (images.length > 0) void addImageFiles(images);
+        if (others.length > 0) void addFileFiles(others);
         return;
       }
       // 大段文本（docs08-r7 任务 3）：text/plain 超 4KB 拦截默认粘贴，零点击立即挂
@@ -645,7 +753,7 @@ export function Composer({
         void uploadPasteAttachment(id, text);
       }
     },
-    [addImageFiles, setAttachmentsBoth, uploadPasteAttachment],
+    [addImageFiles, addFileFiles, setAttachmentsBoth, uploadPasteAttachment],
   );
 
   // ---------- 大段粘贴零点击三态（docs08-r7 任务 3） ----------
@@ -832,7 +940,9 @@ export function Composer({
   }
 
   const canSend =
-    (text.trim().length > 0 || images.length > 0 || attachments.length > 0) && !sending && !hydrationLocked;
+    (text.trim().length > 0 || images.length > 0 || attachments.length > 0 || sendableFileChipCount(fileChips) > 0) &&
+    !sending &&
+    !hydrationLocked;
   // 发送中忙碌态（docs08-r7 任务 13）：POST 在途时发送钮呼吸（busy-pulse），
   // 桌面/手机双分支同源；禁用态语义不变，仅叠加视觉节奏
   const sendBusyCls = sending ? " animate-busy-pulse" : "";
@@ -933,6 +1043,60 @@ export function Composer({
         ))}
       </div>
     ) : null;
+  // 文件附件三态 chip 条（任务 18）：uploading=旋转图标 + 文件名·体积；ready=文件
+  // 图标 + 文件名（title 路径）；failed=警示图标 + 错误文案 + 重试/移除双钮
+  const fileAttachmentStrip =
+    fileChips.length > 0 ? (
+      <div className="flex gap-2 overflow-x-auto overscroll-x-contain py-0.5" data-testid="file-attachment-strip">
+        {fileChips.map((fc) => (
+          <div
+            key={fc.id}
+            data-testid="file-attachment-chip"
+            data-stage={fc.stage}
+            className="flex h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-lg border bg-muted/40 px-2 text-xs"
+          >
+            {fc.stage === "uploading" ? (
+              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+            ) : fc.stage === "failed" ? (
+              <TriangleAlert className="size-4 shrink-0 text-destructive" aria-hidden />
+            ) : (
+              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <span
+              className="max-w-44 truncate"
+              title={fc.stage === "ready" ? fc.path : fc.error || fc.name || undefined}
+            >
+              {fc.stage === "uploading"
+                ? `${fc.name} · ${formatPasteKb(fc.bytes)}`
+                : fc.stage === "failed"
+                  ? fc.name
+                  : fc.name}
+            </span>
+            {fc.stage === "failed" ? (
+              <button
+                type="button"
+                aria-label={t("composer.fileRetry")}
+                title={fc.error}
+                data-testid="file-attachment-retry"
+                onClick={() => retryFileChip(fc.id)}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <RotateCcw className="size-4" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              aria-label={t("composer.attachmentRemove")}
+              data-testid="file-attachment-remove"
+              onClick={() => removeFileChip(fc.id)}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    ) : null;
   // 低频工具按钮本体：桌面工具条与手机"更多"工具行共用（仅收纳位置不同，逻辑零改动）。
   // docs08-r5 任务 9：常用语钮拆出为独立钮（snippetButton）——手机档常驻胶囊内
   // 一步直达，桌面档仍排在工具行末位（顺序/形态零改动）。
@@ -1011,14 +1175,18 @@ export function Composer({
     <input
       ref={fileInputRef}
       type="file"
-      accept="image/*"
       multiple
       data-testid="composer-file-input"
       className="hidden"
       onChange={(e) => {
+        // 选择器开放任意格式（任务 18）：图片走内联链路不变，其余挂文件 chip 走
+        // 二进制附件通道；不再限制 accept（无 accept 即全格式）
         const files = Array.from(e.target.files ?? []);
         e.target.value = "";
-        void addImageFiles(files);
+        const images = files.filter((f) => f.type.startsWith("image/"));
+        const others = files.filter((f) => !f.type.startsWith("image/"));
+        if (images.length > 0) void addImageFiles(images);
+        if (others.length > 0) void addFileFiles(others);
       }}
     />
   );
@@ -1163,6 +1331,7 @@ export function Composer({
         {historyBar}
         {imageStrip}
         {attachmentStrip}
+        {fileAttachmentStrip}
         {waitingHintNode}
         {toolsOpen && (
           <div className="flex flex-wrap items-center gap-1" data-testid="composer-tools-row">
@@ -1246,6 +1415,7 @@ export function Composer({
       {historyBar}
       {imageStrip}
       {attachmentStrip}
+      {fileAttachmentStrip}
       {waitingHintNode}
       {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
       <textarea

@@ -210,6 +210,84 @@ export function sendablePasteChips(chips: readonly PasteChip[]): Array<{ path: s
   return chips.filter((c) => c.stage === "ready" && c.path !== "").map(({ path }) => ({ path }));
 }
 
+// ---------- 通用文件附件三态 chip（docs08 2026-10-23/24 批次任务 18） ----------
+// 任意格式非图片文件（粘贴/选择）→ 二进制附件通道（t17）→ 三态 chip；
+// 与 PasteChip（大段文本）完全分离：无「取消勾选回插」语义（文件内容不可回插
+// 输入框），失败态改为行内重试/移除。图片仍走内联链路（分流是任务 19）。
+
+/** 二进制通道单附件上限（与服务端 ATTACHMENT_BINARY_MAX_BYTES 对齐）：客户端预检，
+ * 超限不出 chip（重试也必败，无意义）；服务端流式计数仍是唯一真相 */
+export const FILE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+export type FileChipStage = "uploading" | "ready" | "failed";
+
+export interface FileChip {
+  id: string;
+  /** 原始文件名（chip 展示 + ?name= 参数）；重试沿用 */
+  name: string;
+  /** 原始字节数（上传中体积文案 + 预检） */
+  bytes: number;
+  /** 服务端临时区绝对路径；非就绪态为空串（不可拼路径行、不可 DELETE） */
+  path: string;
+  stage: FileChipStage;
+  /** failed 态行内错误文案（apiErrorMessage 产出）；其余态空串 */
+  error: string;
+}
+
+/** 发送时文件附件路径行拼装（B10 铁律同文：内容不进 prompt，只带绝对路径行） */
+export function appendFileAttachmentLines(text: string, files: ReadonlyArray<{ path: string }>): string {
+  if (files.length === 0) return text;
+  const lines = files.map((f) => `[已附加文件：${f.path}（按需读取）]`);
+  return text ? `${text}\n${lines.join("\n")}` : lines.join("\n");
+}
+
+/** 入列：上传中 chip 追加队尾 */
+export function startFileChip(chips: readonly FileChip[], chip: FileChip): FileChip[] {
+  return [...chips, chip];
+}
+
+/** 上传落定：填 path 转 ready。chip 已出列（在途移除/发送清空）返回 orphan=true
+ * 且列表原样——调用方 best-effort DELETE 孤儿文件（48h 按龄清理兑底）。 */
+export function settleFileChip(chips: readonly FileChip[], id: string, path: string): { chips: FileChip[]; orphan: boolean } {
+  if (!chips.some((c) => c.id === id)) return { chips: [...chips], orphan: true };
+  return {
+    chips: chips.map((c) => (c.id === id ? { ...c, path, stage: "ready" satisfies FileChipStage, error: "" } : c)),
+    orphan: false,
+  };
+}
+
+/** 上传失败：转 failed 态携带行内错误文案（chip 保留供重试）；未知 id 原样 */
+export function failFileChip(chips: readonly FileChip[], id: string, error: string): FileChip[] {
+  return chips.map((c) => (c.id === id ? { ...c, stage: "failed" satisfies FileChipStage, error } : c));
+}
+
+/** 重试复位：回上传中态（path 清空，POST 成功后重新填）；未知 id 原样 */
+export function resetFileChip(chips: readonly FileChip[], id: string): FileChip[] {
+  return chips.map((c) => (c.id === id ? { ...c, path: "", stage: "uploading" satisfies FileChipStage, error: "" } : c));
+}
+
+/** 出列（移除）：带回整条 chip（ready 态由调用方 DELETE） */
+export function detachFileChip(chips: readonly FileChip[], id: string): { chips: FileChip[]; detached: FileChip | null } {
+  const detached = chips.find((c) => c.id === id) ?? null;
+  return { chips: chips.filter((c) => c.id !== id), detached };
+}
+
+/** 发送携带：仅 ready chip（uploading 由发送门拦截，failed 不携带）；纯 failed/空文本
+ * 发送早退由发送可达性判定处理 */
+export function sendableFileChips(chips: readonly FileChip[]): Array<{ path: string }> {
+  return chips.filter((c) => c.stage === "ready" && c.path !== "").map(({ path }) => ({ path }));
+}
+
+/** 上传在途判定（stale_state 语义钉死）：任一 uploading chip 在场则发送门拦截 */
+export function hasUploadingFileChip(chips: readonly FileChip[]): boolean {
+  return chips.some((c) => c.stage === "uploading");
+}
+
+/** 发送可达：存在可随消息携带的 chip（ready 文件 chip；failed 单独不使能发送） */
+export function sendableFileChipCount(chips: readonly FileChip[]): number {
+  return sendableFileChips(chips).length;
+}
+
 // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
 
 export type SlashSection = "extension" | "skill" | "prompt" | "webui";

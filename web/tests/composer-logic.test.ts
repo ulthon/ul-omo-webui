@@ -6,18 +6,27 @@ import {
   MAX_IMAGE_BYTES,
   PASTE_ATTACHMENT_THRESHOLD,
   appendAttachmentLines,
+  appendFileAttachmentLines,
   dataUrlToBase64,
+  detachFileChip,
   detachPasteChip,
+  failFileChip,
   formatPasteKb,
+  hasUploadingFileChip,
   historyPreview,
   pasteExceedsThreshold,
+  resetFileChip,
   resolveDraftSource,
+  sendableFileChipCount,
+  sendableFileChips,
   sendablePasteChips,
+  settleFileChip,
   settlePasteChip,
   startPasteChip,
   stepHistoryIndex,
   utf8ByteLength,
   validateImageFile,
+  type FileChip,
   type LocalDraft,
   type PasteChip,
 } from "@/components/composer/composer-logic";
@@ -217,5 +226,73 @@ describe("大段粘贴零点击三态（docs08-r7 任务 3）", () => {
     expect(appendAttachmentLines("", sendablePasteChips(chips))).toBe(
       "[大段文本已保存为附件：/a/a.txt（按需读取）]",
     );
+  });
+});
+
+describe("通用文件附件三态 chip（docs08 2026-10-23/24 批次任务 18）", () => {
+  const fchip = (over: Partial<FileChip> = {}): FileChip => ({
+    id: "file-1",
+    name: "demo.zip",
+    bytes: 2048,
+    path: "",
+    stage: "uploading",
+    error: "",
+    ...over,
+  });
+
+  test("appendFileAttachmentLines：文本+换行+路径行；纯文件发送仅路径行；无文件原样返回；内容不进 prompt", () => {
+    const files = [{ path: "/data/attachments/abc123/upload-1.zip" }];
+    expect(appendFileAttachmentLines("你好", files)).toBe(
+      "你好\n[已附加文件：/data/attachments/abc123/upload-1.zip（按需读取）]",
+    );
+    expect(appendFileAttachmentLines("", files)).toBe(
+      "[已附加文件：/data/attachments/abc123/upload-1.zip（按需读取）]",
+    );
+    expect(appendFileAttachmentLines("原文", [])).toBe("原文");
+  });
+
+  test("appendFileAttachmentLines：多文件多行；与大段文本行可叠加拼接", () => {
+    const files = [{ path: "/a/1.zip" }, { path: "/b/2.pdf" }];
+    expect(appendFileAttachmentLines("hi", files)).toBe(
+      "hi\n[已附加文件：/a/1.zip（按需读取）]\n[已附加文件：/b/2.pdf（按需读取）]",
+    );
+    expect(appendFileAttachmentLines(appendAttachmentLines("hi", [{ path: "/t/1.txt" }]), files)).toBe(
+      "hi\n[大段文本已保存为附件：/t/1.txt（按需读取）]\n[已附加文件：/a/1.zip（按需读取）]\n[已附加文件：/b/2.pdf（按需读取）]",
+    );
+  });
+
+  test("settleFileChip：落就绪态填 path 清 error；在途出列 → orphan=true 列表原样", () => {
+    const { chips, orphan } = settleFileChip([fchip()], "file-1", "/a/upload-1.zip");
+    expect(orphan).toBe(false);
+    expect(chips[0]).toMatchObject({ stage: "ready", path: "/a/upload-1.zip", name: "demo.zip" });
+    expect(settleFileChip([], "file-9", "/p")).toEqual({ chips: [], orphan: true });
+  });
+
+  test("failFileChip / resetFileChip：失败带错误文案保留 chip；重试回上传中态清 path 与 error", () => {
+    const failed = failFileChip([fchip()], "file-1", "附件超过 10MB 上限");
+    expect(failed[0]).toMatchObject({ stage: "failed", error: "附件超过 10MB 上限", path: "" });
+    const retried = resetFileChip(failed, "file-1");
+    expect(retried[0]).toMatchObject({ stage: "uploading", error: "", path: "" });
+    // 未知 id 原样
+    expect(failFileChip([fchip()], "file-x", "e")[0]).toMatchObject({ stage: "uploading" });
+  });
+
+  test("detachFileChip：出列带回整条；未知 id 原样 detached=null", () => {
+    const c = fchip({ path: "/a/x.zip", stage: "ready" });
+    expect(detachFileChip([c], "file-1")).toEqual({ chips: [], detached: c });
+    expect(detachFileChip([c], "file-x")).toEqual({ chips: [c], detached: null });
+  });
+
+  test("sendableFileChips / hasUploadingFileChip / sendableFileChipCount：仅 ready 可携带；uploading 触发送门；failed 不使能发送", () => {
+    const chips = [
+      fchip({ id: "a", path: "/a.zip", stage: "ready" }),
+      fchip({ id: "b" }),
+      fchip({ id: "c", stage: "failed", error: "x" }),
+    ];
+    expect(sendableFileChips(chips)).toEqual([{ path: "/a.zip" }]);
+    expect(hasUploadingFileChip(chips)).toBe(true);
+    expect(hasUploadingFileChip([chips[0]!, chips[2]!])).toBe(false);
+    expect(sendableFileChipCount(chips)).toBe(1);
+    expect(sendableFileChipCount([chips[2]!])).toBe(0);
   });
 });

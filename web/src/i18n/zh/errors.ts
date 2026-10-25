@@ -1,7 +1,7 @@
 // errors 域词条（zh-CN）：server ApiError code 命中映射后的客户端改写文案（任务11）。
 // 简短自然中文，语义对齐 server 各构造点的原 message；服务端原文不经此域——
 // 未命中映射的 code 一律回退 err.message 原文透传（见 ../errors.ts 的 apiErrorMessage）。
-// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（60 个，tests/i18n-errors.test.ts 锁定）。
+// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（86 个，tests/i18n-errors.test.ts 锁定）。
 export const errors = {
   // 引擎与回合状态
   engineNotReady: "引擎未就绪，请稍后重试",
@@ -51,7 +51,9 @@ export const errors = {
   // 路径与文件系统
   pathEscape: "路径越界被拒绝",
   attachmentEscape: "附件路径越界被拒绝",
+  attachmentExpired: "附件已过期（48h 清理），请重新上传",
   attachmentNotFound: "附件不存在或已清理",
+  attachmentTooLarge: "附件超过 10MB 上限",
   memoryEscape: "记忆库路径越界被拒绝",
   contentTooLarge: "内容过大，超出上限",
   notFound: "路径不存在",
