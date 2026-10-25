@@ -626,6 +626,100 @@ describe("warmup 钩子", () => {
   })
 })
 
+describe("健康守卫（任务 5：换引擎前 ping，健康不重拉）", () => {
+  test("分支 1：现有引擎 ping 健康 → 复用，不重 spawn，注册表行不变", async () => {
+    const h = makeHarness()
+    try {
+      await h.manager.ensureRunning(PROJ)
+      const pid1 = h.fakes[0].pid
+      h.fakes[0].probeAttempts = 0
+      const snap = await h.manager.ensureRunning(PROJ)
+      expect(h.fakes.length).toBe(1) // 无新 spawn
+      expect(snap.state).toBe("ready")
+      expect(snap.pid).toBe(pid1) // 注册表无搅动：同一 pid 仍在登记
+      expect(h.fakes[0].probeAttempts).toBeGreaterThan(0) // 确实 ping 过
+      const { PidRegistry } = await import("../src/engine/pid-registry")
+      const pids = new PidRegistry(h.registryPath).load().map((r) => r.pid)
+      expect(pids).toEqual([pid1])
+      expect(h.events.some((e) => e.type === "process_crashed")).toBe(false)
+    } finally {
+      await h.manager.stopAll()
+      cleanup(h)
+    }
+  })
+
+  test("分支 2：ping 失败（RPC 拒绝）→ 重拉，注册表更新为新 pid", async () => {
+    const h = makeHarness()
+    try {
+      await h.manager.ensureRunning(PROJ)
+      const pid1 = h.fakes[0].pid
+      h.fakes[0].probeAlwaysFail = true // 现有引擎挂死/拒绝
+      const snap = await h.manager.ensureRunning(PROJ)
+      expect(snap.state).toBe("ready")
+      expect(h.fakes.length).toBe(2) // 重拉了新引擎
+      expect(snap.pid).toBe(h.fakes[1].pid)
+      expect(snap.pid).not.toBe(pid1)
+      const { PidRegistry } = await import("../src/engine/pid-registry")
+      const pids = new PidRegistry(h.registryPath).load().map((r) => r.pid)
+      expect(pids).toEqual([h.fakes[1].pid]) // 旧行已清、只余新 pid
+      expect(h.events.some((e) => e.type === "process_crashed" && e.pid === pid1)).toBe(true)
+    } finally {
+      await h.manager.stopAll()
+      cleanup(h)
+    }
+  })
+
+  test("分支 2b：pid 已死（恶意/陈旧记录）→ 不复用，直接重拉", async () => {
+    const h = makeHarness()
+    try {
+      await h.manager.ensureRunning(PROJ)
+      const pid1 = h.fakes[0].pid
+      h.probe.procs.delete(pid1) // 进程表摘除：send 仍健康但 pid 不存活
+      const snap = await h.manager.ensureRunning(PROJ)
+      expect(h.fakes.length).toBe(2)
+      expect(snap.state).toBe("ready")
+      expect(snap.pid).toBe(h.fakes[1].pid)
+      expect(snap.pid).not.toBe(pid1)
+    } finally {
+      await h.manager.stopAll()
+      cleanup(h)
+    }
+  })
+
+  test("分支 3：ping 超时（send 挂死不落定）→ 按失败处理重拉", async () => {
+    const registryPath = `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`
+    const fakes: FakeRpcClient[] = []
+    const probe = new MemProbe()
+    const m = new EngineProcessManager({
+      registryPath,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      healthPingTimeoutMs: 50, // 短有界：挂死引擎快速判死
+      probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        fakes.push(fake)
+        return wireProbe(fake, probe)
+      },
+    })
+    try {
+      await m.ensureRunning(PROJ)
+      const pid1 = fakes[0].pid
+      fakes[0].probeHang = true // 现有引擎挂死：send 永不落定
+      const snap = await m.ensureRunning(PROJ)
+      expect(snap.state).toBe("ready")
+      expect(fakes.length).toBe(2)
+      expect(snap.pid).toBe(fakes[1].pid)
+      expect(snap.pid).not.toBe(pid1)
+      // 挂死旧进程被兑底强杀（进程表已摘除）
+      expect(probe.procs.has(pid1)).toBe(false)
+    } finally {
+      await m.stopAll().catch(() => {})
+      rmSync(registryPath, { force: true })
+    }
+  })
+})
+
 // joinCheck：避免只为断言引 node:path 的顶层 import 报 unused
 function joinCheck(...parts: string[]): string {
   return parts.join("/")

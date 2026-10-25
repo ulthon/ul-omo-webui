@@ -22,6 +22,8 @@ export class FakeRpcClient implements EngineClientLike {
   probeFailures = 0
   /** 健康检查永久失败（测轮询超限）。 */
   probeAlwaysFail = false
+  /** send 永不落定（测健康守卫 ping 超时臂）。 */
+  probeHang = false
   probeAttempts = 0
 
   private listeners: Array<(e: RpcClientEvent) => void> = []
@@ -66,6 +68,7 @@ export class FakeRpcClient implements EngineClientLike {
 
   async send(message: unknown): Promise<{ success: boolean; data: unknown }> {
     this.probeAttempts++
+    if (this.probeHang) return new Promise(() => {})
     if (this.probeAlwaysFail || this.probeAttempts <= this.probeFailures) {
       throw new Error(`request deadline exceeded (${JSON.stringify(message)})`)
     }

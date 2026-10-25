@@ -88,6 +88,8 @@ export interface EngineManagerOptions {
   readyProbeIntervalMs?: number
   /** 健康检查轮询上限（默认 40 次）。 */
   readyProbeMaxAttempts?: number
+  /** 健康守卫 ping 超时（默认 3s，短有界：挂死引擎快速判死走重拉）。 */
+  healthPingTimeoutMs?: number
   /** 优雅关停宽限（默认 3s）。 */
   stopGraceMs?: number
   /** 崩溃监督轮询间隔（默认 1s）。RpcClient 的 stdio 进程路径崩溃时**不回调**
@@ -141,6 +143,7 @@ const DEFAULTS = {
   maxConsecutiveFailures: 5,
   readyProbeIntervalMs: 1000,
   readyProbeMaxAttempts: 40,
+  healthPingTimeoutMs: 3000,
   stopGraceMs: 3000,
   crashPollMs: 1000,
 } as const
@@ -260,7 +263,7 @@ function withTimeout(p: Promise<void>, ms: number, label: string): Promise<void>
 const DEFAULT_FACTORY: EngineClientFactory = (opts) => new RpcClient(opts)
 
 export class EngineProcessManager {
-  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "stopGraceMs">> & EngineManagerOptions
+  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "healthPingTimeoutMs" | "stopGraceMs">> & EngineManagerOptions
   private readonly registry: PidRegistry
   private readonly probe: ProcProbe
   private readonly engines = new Map<string, ProjectEngine>()
@@ -275,6 +278,7 @@ export class EngineProcessManager {
       maxConsecutiveFailures: options.maxConsecutiveFailures ?? DEFAULTS.maxConsecutiveFailures,
       readyProbeIntervalMs: options.readyProbeIntervalMs ?? DEFAULTS.readyProbeIntervalMs,
       readyProbeMaxAttempts: options.readyProbeMaxAttempts ?? DEFAULTS.readyProbeMaxAttempts,
+      healthPingTimeoutMs: options.healthPingTimeoutMs ?? DEFAULTS.healthPingTimeoutMs,
       stopGraceMs: options.stopGraceMs ?? DEFAULTS.stopGraceMs,
       ...options,
     }
@@ -346,7 +350,25 @@ export class EngineProcessManager {
   /** 确保项目引擎已 spawn 且健康检查通过。并发调用去重；unavailable 时抛错。 */
   async ensureRunning(projectPath: string): Promise<EngineStatusSnapshot> {
     const engine = this.engines.get(projectPath) ?? this.createEngine(projectPath)
-    if (engine.state === "ready") return this.snapshot(engine)
+    if (engine.state === "ready") {
+      // 健康守卫（任务 5）：换引擎前先短超时 RPC ping 现有引擎——健康直接复用
+      // （不重拉、不搅动注册表）；ping 失败/超时或 pid 已死按崩溃处理（杀残留
+      // 进程、清注册表行）后走下方 doStart 重拉。ping 一次 get_protocol_info 是
+      // 本地子进程单往返，量级远小于 spawn+握手，换取挂死引擎的快速自愈。
+      if (engine.client && (await this.pingBounded(engine))) {
+        return this.snapshot(engine)
+      }
+      const deadPid = engine.pid
+      engine.lastError = `健康守卫：现有引擎 ping 未通过（pid=${deadPid ?? "?"}），按崩溃处理重拉`
+      await this.discardClient(engine) // 杀仍存活的挂死进程 + 清注册表行
+      this.emit({
+        type: "process_crashed",
+        projectPath: engine.projectPath,
+        pid: deadPid,
+        consecutiveRestarts: engine.consecutiveRestarts + 1,
+      })
+      this.scheduleRestart(engine) // 计数/退避语义与真实崩溃一致；随后的 doStart 清退避定时器立即重拉
+    }
     if (engine.state === "unavailable") {
       throw new Error(
         `项目引擎不可用（连续失败 ${engine.consecutiveRestarts} 次达上限）：${engine.lastError ?? "未知原因"}。需调用 recover() 显式重试`,
@@ -469,6 +491,25 @@ export class EngineProcessManager {
       await this.discardClient(engine)
       this.scheduleRestart(engine)
     }
+  }
+
+  /** 有界健康 ping：协议层复用 protocolPing（get_protocol_info），超时臂走
+   * probe.sleep（测试可注入确定时钟）；任一臂先落定即定音，失败/超时一律 false。 */
+  private async pingBounded(engine: ProjectEngine): Promise<boolean> {
+    const client = engine.client
+    if (!client) return false
+    if (engine.pid !== undefined && !this.probe.alive(engine.pid)) return false
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const done = (ok: boolean) => {
+        if (!settled) {
+          settled = true
+          resolve(ok)
+        }
+      }
+      void this.probe.sleep(this.opts.healthPingTimeoutMs).then(() => done(false))
+      void protocolPing(client).then((ok) => done(ok), () => done(false))
+    })
   }
 
   private get clientFactory(): EngineClientFactory {
