@@ -1085,18 +1085,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
           >
             <ListTodo className="size-5" />
           </Button>
-          {/* 快捷键帮助（docs08-r7 任务 12）：顶栏帮助钮挂载对话框，手机档即无键盘入口 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-11"
-            aria-label={t("shortcuts.title")}
-            title={t("shortcuts.title")}
-            data-testid="shortcuts-help-button"
-            onClick={() => setShortcutsHelpOpen(true)}
-          >
-            <Keyboard className="size-5" />
-          </Button>
+          {/* 快捷键帮助（docs08-2026-10-23-24 任务 16）：手机档无键盘入口，帮助钮仅桌面档保留 */}
           {/* 设置入口（todo 26）：外链地址 kv 配置。size-11=44px 触控达标 */}
           <Button
             variant="ghost"
