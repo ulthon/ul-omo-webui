@@ -475,6 +475,11 @@ class ProjectRuntime {
   private readonly knownDurable = new Set<string>();
   /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化） */
   private readonly aliases = new Map<string, string>();
+  /** 引擎已认领 durable id 但会话文件从未落盘（docs08-2026-10-23-24-batch 任务 6，
+   * t1 根因形态：RpcClient × 旧版引擎 open_session 认领 sessionFile 却不写盘）。
+   * id → 认领的 sessionPath；resolveSession 对这类 id 报结构化 session_not_persisted
+   * 而非笼统 404，落盘补齐（prompt 回执复核）后解除。 */
+  private readonly unpersistedClaims = new Map<string, string>();
   /** 操作互斥链：串行化「切换活跃会话 + 作用于活跃会话」的关键区 */
   private chain: Promise<unknown> = Promise.resolve();
   /** 回合进行中会话的 sessionPath（GET /api/sessions 的 active 字段依据，todo 15 修复） */
@@ -526,6 +531,7 @@ class ProjectRuntime {
       this.streamingId = null;
       this.streamingPath = null;
       this.aliases.clear();
+      this.unpersistedClaims.clear();
       this.handleToDurable.clear();
       this.knownDurable.clear();
       this.stopSettleWatch();
@@ -765,6 +771,7 @@ class ProjectRuntime {
     this.streamingId = null;
     this.streamingPath = null;
     this.aliases.clear();
+    this.unpersistedClaims.clear();
     this.handleToDurable.clear();
     this.knownDurable.clear();
     this.stopSettleWatch();
@@ -854,6 +861,22 @@ class ProjectRuntime {
 
   /** 在本项目中按 id 查会话（活跃态 → store 行 → 未落盘别名）；查不到抛 404 */
   async resolveSession(sessionId: string): Promise<EngineSessionSummary> {
+    // 引擎认领却从未落盘的会话（t1 根因形态）：先于三级查找报结构化错误——
+    // 笼统 404「会话不存在」会让用户误以为删库，实际是引擎承诺的 sessionFile
+    // 从未写盘（任务 6 消静默）。409 与 exportSessionHtml 的 session_not_persisted 同码。
+    const claimedPath = this.unpersistedClaims.get(sessionId);
+    if (claimedPath) {
+      // 自愈：若引擎此后补写了文件（懒落盘），解除认领记录按正常会话解析
+      if (existsSync(claimedPath)) {
+        this.unpersistedClaims.delete(sessionId);
+      } else {
+        throw new ApiError(
+          409,
+          "session_not_persisted",
+          `会话被引擎认领但从未落盘（${claimedPath}），数据可能未持久化：${sessionId}`,
+        );
+      }
+    }
     // 活跃会话快捷路径：刚创建未落盘的会话不在 store 行内，活跃态即可定位
     if (this.activeId === sessionId) {
       const active = this.adapter?.getActiveSession();
@@ -966,19 +989,25 @@ class ProjectRuntime {
       // 新会话未落盘时行可能缺失 durableSessionId，退化为 holder 别名（仅内存）。
       let id = opened.sessionId;
       let durable = false;
+      let claimed = false;
       try {
         const rows = await adapter.activeSessions();
         this.rememberHandleRows(rows);
         const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
         if (row?.durableSessionId) {
           id = row.durableSessionId;
-          durable = true;
+          claimed = true;
+          // durable 判定以磁盘为准（t1 根因：旧版引擎 list_sessions 行带 durableSessionId
+          // 但会话 JSONL 从未写盘——口头认领不可信）。文件不存在时降级为别名并登记
+          // 未落盘认领，resolveSession 据此报结构化 session_not_persisted 而非 404。
+          durable = existsSync(opened.sessionPath);
         }
       } catch {
         // 活跃行查询失败不影响建会话，退化为别名
       }
       if (!durable) {
         this.aliases.set(id, opened.sessionPath);
+        if (claimed) this.unpersistedClaims.set(id, opened.sessionPath);
       } else {
         // open_session 响应顶层 sessionId 即 routing handle（wire 事件同源）
         this.rememberHandle(opened.routingId, id);
@@ -1056,15 +1085,28 @@ class ProjectRuntime {
             this.rememberHandleRows(rows);
             const sessionPath = this.aliases.get(sessionId);
             const row = rows.find((r) => r.sessionPath === sessionPath && r.durableSessionId);
-            if (row?.durableSessionId) {
+            if (row?.durableSessionId && sessionPath) {
+              // 落盘复核（任务 6）：引擎此时认领了 durable id 但文件仍不存在，
+              // 说明回合结果不会持久化——立即回传结构化错误，绝不静默放行
+              // （否则下游 messages/resolve 全部 404「会话不存在」，t1 事发现场形态）。
+              if (!existsSync(sessionPath)) {
+                this.unpersistedClaims.set(row.durableSessionId, sessionPath);
+                throw new ApiError(
+                  409,
+                  "session_not_persisted",
+                  `引擎已认领会话 ${row.durableSessionId} 但会话文件未落盘（${sessionPath}），回合结果无法持久化`,
+                );
+              }
+              this.unpersistedClaims.delete(row.durableSessionId);
               // 别名保留（resolveSession 仍需兜底在途的旧 id 请求）；活跃/流式位切到
               // 真实 id——单驱动 409 守卫按 id 比较，前端换 key 后以真实 id 再来也拦得住
               this.activeId = row.durableSessionId;
               if (this.streamingId === sessionId) this.streamingId = row.durableSessionId;
               return { disposition: receipt.disposition, durableSessionId: row.durableSessionId, appliedModel };
             }
-          } catch {
-            // 活跃行查询失败不阻塞回合：退回原回执，事件归属靠 miss 防抖刷新兜底
+          } catch (err) {
+            // 落盘复核的结构化错误必须上抛（消静默）；仅活跃行查询失败才退回原回执
+            if (err instanceof ApiError) throw err
           }
         }
         return appliedModel !== undefined ? { ...receipt, appliedModel } : receipt;
@@ -1262,6 +1304,7 @@ class ProjectRuntime {
       // 残留不阻塞删除主流程
     }
     this.aliases.delete(sessionId);
+    this.unpersistedClaims.delete(sessionId);
     this.countedMessages.clear();
     return { sessionPath: row.path, fileExisted };
   }

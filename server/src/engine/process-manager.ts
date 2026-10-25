@@ -36,7 +36,7 @@ import { RpcClient } from "@code-yeongyu/senpi"
 import { createRequire } from "node:module"
 import { existsSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { isCompiledBinary, releaseRoot, selfDir } from "../runtime-paths"
 import { PidRegistry } from "./pid-registry"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "./rpc-capabilities"
@@ -260,6 +260,13 @@ function withTimeout(p: Promise<void>, ms: number, label: string): Promise<void>
   })
 }
 
+/** 注册表 projectPath 合法性（docs08-2026-10-23-24-batch 任务 6）：拒绝文件系统根
+ * （"/"、"//" 等 resolve 后为根的形态）与空串——10-24 事发现场曾登记过 "/" 项目。 */
+export function isRegistrableProjectPath(projectPath: string): boolean {
+  if (!projectPath) return false
+  return resolve(projectPath) !== "/"
+}
+
 const DEFAULT_FACTORY: EngineClientFactory = (opts) => new RpcClient(opts)
 
 export class EngineProcessManager {
@@ -465,12 +472,21 @@ export class EngineProcessManager {
       // spawn + launcher 握手约 2-5s（verification/01）
       await client.start()
       engine.pid = extractPid(client)
+      // 注册表 projectPath 校验（docs08-2026-10-23-24-batch 任务 6）：10-24 事发现场
+      // 曾出现 "/" 项目（slug 形态 ----）污染注册表——文件系统根目录不是合法项目，
+      // 拒绝登记（清扫仅按登记表判定，脏行只会误导 orphan-reaper）。引擎本身照常运行。
       if (engine.pid !== undefined) {
-        this.registry.upsert({
-          pid: engine.pid,
-          projectPath: engine.projectPath,
-          startedAt: this.now(),
-        })
+        if (!isRegistrableProjectPath(engine.projectPath)) {
+          console.warn(
+            `[process-manager] 拒绝登记非法项目路径（文件系统根/空）：${JSON.stringify(engine.projectPath)}`,
+          )
+        } else {
+          this.registry.upsert({
+            pid: engine.pid,
+            projectPath: engine.projectPath,
+            startedAt: this.now(),
+          })
+        }
       }
       const ready = await this.waitUntilReady(engine, client)
       if (!ready) {

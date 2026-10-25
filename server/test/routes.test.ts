@@ -1626,9 +1626,18 @@ class FakeEngineClient implements EngineClientLike {
     sessionId: string;
     state: { sessionId: string; sessionFile?: string };
   }> {
+    const sessionFile = options.sessionPath ?? `${this.spawnOpts.cwd}/sessions/2026_new.jsonl`;
+    // 健康 durable 契约（docs08 任务 6）：引擎认领 durableSessionId 即同步写盘 header，
+    // 只认领不写盘属于 t1 事故形态（见 runtime-session-persist.test.ts）
+    if (this.durableSessionId !== undefined) {
+      writeFileSync(
+        sessionFile,
+        `${JSON.stringify({ type: "session", version: 3, id: this.durableSessionId, cwd: this.spawnOpts.cwd })}\n`,
+      );
+    }
     return {
       sessionId: "routing-1",
-      state: { sessionId: "holder-1", sessionFile: options.sessionPath ?? `${this.spawnOpts.cwd}/sessions/2026_new.jsonl` },
+      state: { sessionId: "holder-1", sessionFile },
     };
   }
   async closeSession(): Promise<void> {

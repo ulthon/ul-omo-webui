@@ -720,6 +720,50 @@ describe("健康守卫（任务 5：换引擎前 ping，健康不重拉）", () 
   })
 })
 
+describe("注册表 projectPath 校验（docs08-2026-10-23-24-batch 任务 6）", () => {
+  test.each(["/", "//", ""])("非法项目路径 %j：引擎照常 ready，但不登记注册表且告警", async (badPath) => {
+    const registryPath = `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`
+    const fakes: FakeRpcClient[] = []
+    const probe = new MemProbe()
+    const m = new EngineProcessManager({
+      registryPath,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        fakes.push(fake)
+        return wireProbe(fake, probe, badPath || "/")
+      },
+    })
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const snap = await m.ensureRunning(badPath)
+      expect(snap.state).toBe("ready") // 引擎本身照常运行，仅拒绝登记
+      const { PidRegistry } = await import("../src/engine/pid-registry")
+      expect(new PidRegistry(registryPath).load()).toEqual([]) // 注册表零脏行
+      expect(
+        warnSpy.mock.calls.some((args) =>
+          String(args[0]).includes("[process-manager] 拒绝登记非法项目路径"),
+        ),
+      ).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+      await m.stopAll().catch(() => {})
+      rmSync(registryPath, { force: true })
+    }
+  })
+
+  test("isRegistrableProjectPath：根/空拒绝，常规与相对路径放行", async () => {
+    const { isRegistrableProjectPath } = await import("../src/engine/process-manager")
+    expect(isRegistrableProjectPath("/")).toBe(false)
+    expect(isRegistrableProjectPath("//")).toBe(false)
+    expect(isRegistrableProjectPath("")).toBe(false)
+    expect(isRegistrableProjectPath(PROJ)).toBe(true)
+    expect(isRegistrableProjectPath("relative/proj")).toBe(true) // resolve 后非根，放行
+  })
+})
+
 // joinCheck：避免只为断言引 node:path 的顶层 import 报 unused
 function joinCheck(...parts: string[]): string {
   return parts.join("/")
