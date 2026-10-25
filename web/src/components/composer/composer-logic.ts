@@ -283,3 +283,14 @@ export function flattenSlashItems(groups: Record<SlashSection, SlashItem[]>): Sl
 export function slashReplaceToken(text: string, name: string): string {
   return `/${name} ${text.replace(/^\/\S*/, "")}`;
 }
+
+/** 停止钮意图（docs08-2026-10-23-24-batch 任务 12）：后台态（runState=background_running）
+ *  且当前无流式回合（queueAvailable=false）时点击停止钮不给中断语义——后台任务不受
+ *  abort 协议面作用，返回 background-hint 由调用方出「有后台任务」提示；其余一切
+ *  组合（含后台态叠加流式回合——中断的是当前回合）保持原 abort 语义。 */
+export function stopIntent(
+  runState: string | null | undefined,
+  queueAvailable: boolean,
+): "abort" | "background-hint" {
+  return runState === "background_running" && !queueAvailable ? "background-hint" : "abort";
+}

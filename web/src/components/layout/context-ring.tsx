@@ -41,6 +41,8 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
   const models = useUiStore((s) => s.models);
   const t = useT();
   const running = streaming || hasPendingPermission;
+  // 第四态（任务 12）：后台任务运行中——环色/状态点独立于 running（紫），不与流式回合混同
+  const background = runState === "background_running";
   const appliedModelWindow = appliedModel
     ? (models.find((m) => `${m.provider}/${m.id}` === appliedModel)?.contextWindow ?? null)
     : null;
@@ -122,7 +124,7 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
               strokeLinecap="round"
               strokeDasharray={CIRCUMFERENCE}
               strokeDashoffset={CIRCUMFERENCE * (1 - pct / 100)}
-              className={running ? "stroke-amber-500" : "stroke-primary"}
+              className={background ? "stroke-violet-500" : running ? "stroke-amber-500" : "stroke-primary"}
             />
           </svg>
           <span
@@ -131,10 +133,10 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
           >
             {Math.round(pct)}%
           </span>
-          {running && (
+          {(running || background) && (
             <span
               data-testid="context-ring-running-dot"
-              className="absolute -right-0.5 -top-0.5 size-2 animate-pulse rounded-full bg-amber-500"
+              className={`absolute -right-0.5 -top-0.5 size-2 animate-pulse rounded-full ${background ? "bg-violet-500" : "bg-amber-500"}`}
               aria-hidden
             />
           )}
@@ -143,11 +145,16 @@ export function ContextWaterRing({ sessionId }: { sessionId: string }) {
       <PopoverContent align="end" className="w-60 p-3 text-xs" data-testid="context-ring-detail">
         <div className="mb-2 flex items-center gap-1.5">
           <span
-            className={`inline-block size-1.5 shrink-0 rounded-full ${running ? "animate-pulse bg-primary" : "bg-muted-foreground/40"}`}
+            className={`inline-block size-1.5 shrink-0 rounded-full ${running || background ? "animate-pulse bg-primary" : "bg-muted-foreground/40"}`}
             aria-hidden
           />
-          <span data-testid="context-ring-run-state" data-running={running ? "true" : "false"} className="shrink-0">
-            {running ? t("login.contextRing.running") : t("login.contextRing.idle")}
+          <span
+            data-testid="context-ring-run-state"
+            data-running={running ? "true" : "false"}
+            data-background={background ? "true" : "false"}
+            className="shrink-0"
+          >
+            {background ? t("login.contextRing.background") : running ? t("login.contextRing.running") : t("login.contextRing.idle")}
           </span>
           <span className="ml-auto truncate text-muted-foreground">{t("login.contextRing.usage")}</span>
         </div>

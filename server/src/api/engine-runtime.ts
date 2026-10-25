@@ -59,10 +59,14 @@ function perfErrCode(err: unknown): string {
 /** 关闭态共享哑 span（body 的段写入无读者；省去按调用分配，零行为差异） */
 const INERT_PERF_SPAN = {} as PerfSpan;
 
-/** 会话运行态三态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
+/** 会话运行态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
  *  语义与前端 SSE 驱动的 runStates 同口径（agent_start → running；四型权限/阻塞型
- *  question → waiting；落定 → idle），error 属前端独有态（服务端不合成）。 */
-export type ServerSessionRunState = "running" | "waiting" | "idle";
+ *  question → waiting；落定 → idle），error 属前端独有态（服务端不合成）。
+ *  第四态 background_running（docs08-2026-10-23-24-batch 任务 12）：会话 jsonl 内存在
+ *  未终局的后台任务 spawn 回执时由路由层叠加（解析见 api/background-tasks.ts，与
+ *  web subagent-data.ts dispatched 判定同口径）——纯磁盘派生，服务重启重读 jsonl
+ *  即恢复；三态既有语义与 deriveSessionRunState 映射不变。 */
+export type ServerSessionRunState = "running" | "waiting" | "idle" | "background_running";
 
 /** runState 三态推导（纯函数，全组合断言见 server/test/run-state.test.ts）：
  *  permission / question 任一非空 → waiting（等待用户输入压制 running——与前端

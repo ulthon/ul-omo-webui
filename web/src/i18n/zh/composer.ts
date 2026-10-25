@@ -16,6 +16,7 @@ export const composer = {
   queuedFeedback: "已加入队列，将在当前回合结束后执行",
   stopGeneration: "停止生成",
   stopTitle: "停止当前回合（排队项保留，将在下次发送时执行）",
+  backgroundTaskHint: "有后台任务运行中：停止钮只作用于当前回合，不影响后台任务；任务完成后状态自动回落",
   placeholderTeach: "@ 引用文件 / 斜杠命令 / # 代码片段",
   placeholderTeachMobile: "@ 文件 / 命令 / # 片段",
   historyAria: "输入历史",

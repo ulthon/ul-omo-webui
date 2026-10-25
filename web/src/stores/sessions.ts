@@ -15,14 +15,23 @@ export type ArchivedFilter = "true" | "false" | "all";
 
 /** 会话运行态（SSE 驱动的状态点覆盖值；不在 runStates 中 = 未见 SSE 事件，用引擎探询 active 兜底）。
  * 一旦写入即权威（GET sessions 的 active 字段在本环境回合结束后不回落——learnings todo 14，
- * agent_end/settled/idle 落 "idle" 压过过期的 active=true）。 */
-export type SessionRunState = "running" | "waiting" | "idle" | "error";
+ * agent_end/settled/idle 落 "idle" 压过过期的 active=true）。
+ * 第四态 background_running（docs08-2026-10-23-24-batch 任务 12）：服务端从会话 jsonl
+ * 派生（spawn 回执未终局）经 GET /api/sessions 行下发，setSessions/setAllSessions 与
+ * SSE 重同步（resyncRunStatesFromServer）写入；不压 running/waiting/error（SSE 回合级
+ * 真相源优先），完成后服务端行回落 idle 时同步清除。 */
+export type SessionRunState = "running" | "waiting" | "idle" | "error" | "background_running";
 
 /** 无活动回落阈值（W1 缺陷 #3）：running/waiting 最后活动距今超过阈值由周期清扫回落
  * idle（event-dispatch 每 60s 一扫）。waiting 从宽——权限等待合法滞留数小时，30min 只
  * 兜服务端静默孤儿；活跃会话的事件持续刷新活动时刻，永不被清扫。 */
 export const RUNNING_STALE_MS = 10 * 60_000;
 export const WAITING_STALE_MS = 30 * 60_000;
+/** 后台态专属阈值（任务 12）：后台任务合法长跑（deep 子任务实录可达数十分钟），
+ *  比照 running 10min / waiting 30min 的孤儿兜底档次再放宽一档取 60min——正常长任务
+ *  不被误扫；完成通知丢失的孤儿后台态在 1 小时内由清扫器兜底回落（服务端 jsonl
+ *  已终局时任何一次列表刷新/重同步会提前回落，清扫器是最后兕底）。 */
+export const BACKGROUND_STALE_MS = 60 * 60_000;
 
 interface SessionsState {
   /** 按项目绝对路径分组的会话列表 */
@@ -109,6 +118,34 @@ interface SessionsState {
   markPendingId(id: string): void;
 }
 
+/** 服务端行 → runStates 的后台态同步（任务 12）：行 runState=background_running 且
+ *  当前态非 running/waiting/error（SSE 回合级优先）时写入；行已非后台且当前态是
+ *  background_running 时清除（终局回落——jsonl 终态回执后任何一次列表刷新即收敛）。
+ *  纯同步函数，返回增量分片（无变化返回空对象不产生新引用）。 */
+function syncBackgroundStates(
+  s: Pick<SessionsState, "runStates" | "runStateAt">,
+  rows: SessionListItem[],
+): Partial<Pick<SessionsState, "runStates" | "runStateAt">> {
+  let runStates = s.runStates;
+  let runStateAt = s.runStateAt;
+  for (const row of rows) {
+    const cur = runStates[row.id];
+    if (row.runState === "background_running") {
+      if (cur === "running" || cur === "waiting" || cur === "error" || cur === "background_running") continue;
+      runStates = { ...runStates, [row.id]: "background_running" };
+      runStateAt = { ...runStateAt, [row.id]: Date.now() };
+    } else if (cur === "background_running") {
+      const next = { ...runStates };
+      delete next[row.id];
+      const nextAt = { ...runStateAt };
+      delete nextAt[row.id];
+      runStates = next;
+      runStateAt = nextAt;
+    }
+  }
+  return runStates === s.runStates ? {} : { runStates, runStateAt };
+}
+
 /** 整替合并的保护键（IS-5 task 19f）：别名 id（aliasIds）+ 已 adopt 真实 id 但服务端
  * 列表尚未带回的行（pendingIds）。adoptSessionId 把别名行换 key 到真实 id 时同步把
  * 保护迁到 pendingIds——否则 adopt 后必然的 hydration 探询刷新（ChatSession 按
@@ -185,12 +222,12 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   setSessions: (project, sessions) =>
     set((s) => ({
       byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, mergeKeys(s)) },
+      ...syncBackgroundStates(s, sessions),
     })),
 
   setAllSessions: (sessions) =>
     set((s) => {
-      const byProject: Record<string, SessionListItem[]> = {};
-      for (const session of sessions) {
+      const byProject: Record<string, SessionListItem[]> = {};      for (const session of sessions) {
         (byProject[session.project] ??= []).push(session);
       }
       // 占位行追回（docs08-r6 任务 7）：聚合键内的按项目合并；聚合响应里消失的旧项目
@@ -204,7 +241,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         const restored = mergeAliasRows(prev, [], mergeKeys(s));
         if (restored.length > 0) byProject[project] = restored;
       }
-      return { byProject };
+      return { byProject, ...syncBackgroundStates(s, sessions) };
     }),
 
   refreshSessions: async () => {
@@ -335,10 +372,11 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     set((s) => {
       let next: Record<string, SessionRunState> | null = null;
       for (const [id, state] of Object.entries(s.runStates)) {
-        if (state !== "running" && state !== "waiting") continue;
+        if (state !== "running" && state !== "waiting" && state !== "background_running") continue;
         const at = s.runStateAt[id];
         if (at === undefined) continue; // 账本缺时刻（外部直写残留）不判超时，宁可不回落
-        const staleMs = state === "running" ? RUNNING_STALE_MS : WAITING_STALE_MS;
+        const staleMs =
+          state === "running" ? RUNNING_STALE_MS : state === "waiting" ? WAITING_STALE_MS : BACKGROUND_STALE_MS;
         if (now - at <= staleMs) continue;
         (next ??= { ...s.runStates })[id] = "idle";
       }

@@ -59,6 +59,7 @@ export const sessionList = {
     statusWaiting: "Waiting for permission",
     statusError: "Error",
     statusRunning: "Running",
+    statusBackground: "Background running",
     forkedFrom: "forked from {path}",
     selectSession: "Select session: {title}",
     collapseChildren: "Collapse sub-sessions",

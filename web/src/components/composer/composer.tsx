@@ -58,6 +58,7 @@ import {
   slashTriggerToken,
   startPasteChip,
   stepHistoryIndex,
+  stopIntent,
   utf8ByteLength,
   validateImageFile,
   type PasteChip,
@@ -107,7 +108,8 @@ export function Composer({
   // 提问未决的死局也有中断口。仅作用停止钮，不改排队语义（queueAvailable 独立）。
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
   const hasPendingQuestion = useQuestionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
-  const interruptible = queueAvailable || runState === "running" || runState === "waiting" || hasPendingQuestion;
+  const interruptible =
+    queueAvailable || runState === "running" || runState === "waiting" || hasPendingQuestion || runState === "background_running";
   // 模型待生效判定（docs08-r6 任务 8 ④ + docs08 2026-10-22 批次任务 27）：生效模型源三路
   // ——prompt 回执 appliedModel（下方写入）、SSE model_changed（event-dispatch 写入）、
   // 会话历史水合（messages store setEntries/appendEntries，任务 27a）。判定与基线对齐
@@ -538,6 +540,16 @@ export function Composer({
       onAborted();
     }
   }, [sessionId, onAborted, showToast]);
+
+  const stopClick = useCallback(() => {
+    // 后台态停止钮（任务 12）：非流式回合下不中断——后台任务不在 abort 协议面作用域内，
+    // 出提示代替中断语义；叠加流式回合时 abort 仍作用于当前回合（stopIntent 判定）
+    if (stopIntent(runState, queueAvailable) === "background-hint") {
+      showToast(t("composer.backgroundTaskHint"));
+      return;
+    }
+    void abort();
+  }, [runState, queueAvailable, abort, showToast, t]);
 
   // ---------- 图片 ----------
 
@@ -1117,11 +1129,11 @@ export function Composer({
         type="button"
         data-testid="abort-btn"
         aria-label={t("composer.stopGeneration")}
-        title={t("composer.stopTitle")}
-        onClick={() => void abort()}
+        title={runState === "background_running" ? t("composer.backgroundTaskHint") : t("composer.stopTitle")}
+        onClick={stopClick}
         className={buttonClass}
       >
-        <Square className="size-4" />
+        <Square className={runState === "background_running" && !queueAvailable ? "size-4 text-violet-500" : "size-4"} />
       </button>
     ) : null;
   const stopButtonSm = stopButtonNode(

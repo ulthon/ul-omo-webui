@@ -60,6 +60,7 @@ export const sessionList = {
     statusWaiting: "等待权限",
     statusError: "出错",
     statusRunning: "运行中",
+    statusBackground: "后台运行中",
     forkedFrom: "fork 自 {path}",
     selectSession: "选择会话：{title}",
     collapseChildren: "收起子会话",

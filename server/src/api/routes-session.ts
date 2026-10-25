@@ -20,6 +20,7 @@ import { resolveTitleLanguage, type TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
+import { sessionBackgroundRunning } from "./background-tasks";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { CursorInvalidError, readEntriesBefore, readTailEntries } from "../adapter/session-file";
@@ -241,11 +242,22 @@ async function listProjectSessions(
   // （旧 fake）退回 peekActiveSessionPaths——active 照发，runState 恒 null。
   const runStates = await deps.engines.peekRunStates?.(project);
   const activePaths = runStates ? [...runStates.keys()] : await deps.engines.peekActiveSessionPaths(project);
-  return sessions.map((s) => ({
-    ...s,
-    active: activePaths ? activePaths.includes(s.path) : null,
-    runState: runStates ? (runStates.get(s.path) ?? "idle") : null,
-  }));
+  return sessions.map((s) => {
+    const probed = runStates ? (runStates.get(s.path) ?? "idle") : null;
+    // 第四态叠加（任务 12）：三源探询不在 running/waiting（回合级真相源优先）时读会话
+    // jsonl 判后台任务；纯磁盘派生（mtime+size 缓存摊销，服务重启重读即恢复）。
+    const runState: ServerSessionRunState | null =
+      probed === "running" || probed === "waiting"
+        ? probed
+        : sessionBackgroundRunning(s.path)
+          ? "background_running"
+          : probed;
+    return {
+      ...s,
+      active: activePaths ? activePaths.includes(s.path) : null,
+      runState,
+    };
+  });
 }
 
 export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService }): Hono {

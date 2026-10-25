@@ -51,6 +51,7 @@ export const login = {
     ringTitle: "Context {pct}% · {tokens}",
     ringTitleWithModel: "Context {pct}% · {tokens} · {model}",
     running: "Running",
+    background: "Background running",
     idle: "Idle",
     usage: "Context usage",
     total: "Total",

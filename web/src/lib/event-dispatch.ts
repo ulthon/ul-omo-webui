@@ -263,7 +263,15 @@ function resyncRunStatesFromServer(): void {
       const store = useSessionsStore.getState();
       for (const [id, state] of Object.entries(store.runStates)) {
         const server = byId.get(id)?.runState;
-        if (server !== "running" && server !== "waiting" && server !== "idle") continue; // 缺席 / null（引擎未就绪）不动
+        // 第四态（任务 12）：服务端 jsonl 派生的 background_running 同样参与重同步——
+        // 终局后服务端行回落 idle 时本地后台态随之收敛（完成通知丢失的兑底路径之一）
+        if (
+          server !== "running" &&
+          server !== "waiting" &&
+          server !== "idle" &&
+          server !== "background_running"
+        )
+          continue; // 缺席 / null（引擎未就绪）不动
         if (state !== server) store.setRunState(id, server);
       }
     })

@@ -53,6 +53,7 @@ export const login = {
     ringTitle: "上下文 {pct}% · {tokens}",
     ringTitleWithModel: "上下文 {pct}% · {tokens} · {model}",
     running: "运行中",
+    background: "后台运行中",
     idle: "空闲",
     usage: "上下文水位",
     total: "累计",

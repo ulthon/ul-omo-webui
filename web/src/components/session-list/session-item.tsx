@@ -69,6 +69,10 @@ function StatusDot({
     // reduced-motion 降为静态实心点，颜色与 title 仍可辨
     cls = "bg-amber-500 animate-busy-pulse";
     title = t("sessionList.item.statusWaiting");
+  } else if (effective === "background_running") {
+    // 第四态（任务 12）：后台任务已派发未终局——紫点呼吸与 running 天蓝区分
+    cls = "bg-violet-500 animate-busy-pulse";
+    title = t("sessionList.item.statusBackground");
   } else if (effective === "error") {
     cls = "bg-destructive";
     title = t("sessionList.item.statusError");
