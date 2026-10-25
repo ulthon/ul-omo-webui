@@ -108,6 +108,24 @@ export interface SessionTagRef {
   name: string;
 }
 
+/** 挂载删除审计：整替中被移除挂载的写入入参 */
+export interface TagMountAuditInput {
+  sessionId: string;
+  scope: TagScope;
+  name: string;
+  source: string;
+}
+
+/** 挂载删除审计行（读出形态） */
+export interface TagMountAudit {
+  id: number;
+  sessionId: string;
+  scope: TagScope;
+  name: string;
+  source: string;
+  createdAt: string;
+}
+
 export interface OpenMetaDbOptions {
   /** 库文件路径；缺省依次取 UL_OMO_WEBUI_META_DB 环境变量、server/data/meta.db */
   path?: string;

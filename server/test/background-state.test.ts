@@ -118,6 +118,9 @@ class FakeGateway implements EngineGateway {
   async modelsList(): Promise<never[]> {
     return [];
   }
+  async commandsList(): Promise<null> {
+    return null;
+  }
   async deleteSession(): Promise<{ sessionPath: string; fileExisted: boolean }> {
     throw new Error("unused");
   }
@@ -202,7 +205,7 @@ describe("GET /api/sessions 第四态派生", () => {
   });
 
   test("三态优先：running/waiting 行不被后台态覆盖（既有语义不动）", async () => {
-    const dir = mkdirSync(join(tmpdir(), "bg-priority-"), { recursive: true });
+    const dir = mkdirSync(join(tmpdir(), "bg-priority-"), { recursive: true }) as string;
     cleanup.push(dir);
     const path = join(dir, "s.jsonl");
     writeFileSync(path, toolResultLine("call_1", { run_in_background: true, status: "running", task_id: "st_1" }));

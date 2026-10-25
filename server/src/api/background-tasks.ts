@@ -45,7 +45,8 @@ function structuredTaskId(raw: unknown): string | undefined {
     if (typeof o.details !== "undefined") walk(o.details, depth + 1);
   };
   walk(raw, 0);
-  return found ? str(found.task_id) : undefined;
+  const hit = found as Record<string, unknown> | null;
+  return hit ? str(hit.task_id) : undefined;
 }
 
 /** 完成通知条目 → taskId（结构化优先，文本 "id:" 兜底——两形态均 web 同构） */
