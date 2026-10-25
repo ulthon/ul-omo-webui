@@ -68,7 +68,7 @@ describe("model_change_rejected（任务 8 ③：error toast，不动 runState�
       "d-1",
     );
 
-    const toast = useUiStore.getState().toast;
+    const toast = useUiStore.getState().toasts.at(-1) ?? null;
     expect(toast).not.toBeNull();
     expect(toast?.kind).toBe("error");
     expect(toast?.text).toContain("glm-4.6v");
@@ -83,7 +83,7 @@ describe("model_change_rejected（任务 8 ③：error toast，不动 runState�
   test("载荷缺 detail/model 容错为空串，仍弹 toast 不抛错", () => {
     useSessionsStore.getState().setRunState("d-9", "waiting");
     frame({ type: "model_change_rejected", reason: "auth", sessionId: "rpc-2" }, 5, "d-9");
-    expect(useUiStore.getState().toast?.kind).toBe("error");
+    expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
     expect(useSessionsStore.getState().runStates["d-9"]).toBe("waiting");
   });
 });

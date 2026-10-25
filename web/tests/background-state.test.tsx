@@ -249,7 +249,7 @@ describe("Composer 后台态中断钮：提示语义，不裸中断", () => {
     await act(async () => {
       btn.click();
     });
-    expect(useUiStore.getState().toast?.text ?? "").toContain("有后台任务");
+    expect(useUiStore.getState().toasts.at(-1)?.text ?? "").toContain("有后台任务");
     expect(fetchedUrls.some((u) => u.includes("/abort"))).toBe(false);
   });
 

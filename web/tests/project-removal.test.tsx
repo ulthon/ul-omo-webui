@@ -229,7 +229,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
     });
     await flush();
     expect(deleteCalled).toBe(true);
-    expect(useUiStore.getState().toast?.kind).toBe("error");
+    expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
     expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBe("s1");
 

@@ -320,7 +320,7 @@ describe("通用文件附件（任务 18）：粘贴 → 三态 chip → 路径�
       });
       expect(view.container.querySelector('[data-testid="file-attachment-chip"]')).toBeNull();
       expect(uploadSpy).not.toHaveBeenCalled();
-      expect(useUiStore.getState().toast?.text ?? "").toContain("10MB");
+      expect(useUiStore.getState().toasts.at(-1)?.text ?? "").toContain("10MB");
     } finally {
       await view.unmount();
     }

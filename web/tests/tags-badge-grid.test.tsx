@@ -210,7 +210,7 @@ describe("TagBadges 移动端点格 toast 显名", () => {
       await act(async () => {
         grid?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
-      const toast = useUiStore.getState().toast;
+      const toast = useUiStore.getState().toasts.at(-1) ?? null;
       expect(toast?.text).toContain("乙");
       expect(toast?.text).toContain("甲");
     } finally {

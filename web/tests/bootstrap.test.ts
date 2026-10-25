@@ -90,7 +90,7 @@ describe("bootstrap 死项目守卫", () => {
     expect(log.some((r) => r.method === "PATCH")).toBe(false);
     // UI 态无副作用：当前项目未设、无 toast
     expect(useUiStore.getState().currentProject).toBeNull();
-    expect(useUiStore.getState().toast).toBeNull();
+    expect(useUiStore.getState().toasts).toEqual([]);
     expect(useUiStore.getState().projects).toHaveLength(1);
     // 静默跳过仅留一条 console.info，含指定前缀与路径
     expect(infos).toHaveLength(1);

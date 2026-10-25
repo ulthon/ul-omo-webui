@@ -166,7 +166,7 @@ describe("排队入队可见反馈", () => {
         sendBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
       expect(promptSpy).toHaveBeenCalledTimes(1);
-      return useUiStore.getState().toast?.text ?? null;
+      return useUiStore.getState().toasts.at(-1)?.text ?? null;
     } finally {
       await act(async () => {
         root.unmount();

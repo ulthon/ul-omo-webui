@@ -2,6 +2,7 @@
 export const common = {
   cancel: "Cancel",
   close: "Close",
+  copy: "Copy",
   save: "Save",
   delete: "Delete",
   loadFailed: "Failed to load",

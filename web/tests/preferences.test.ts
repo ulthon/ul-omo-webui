@@ -81,7 +81,7 @@ describe("模型偏好防抖（latest-wins）", () => {
     scheduleModelPreferencePersist(1);
     await sleep(30);
     expect(log).toHaveLength(1);
-    expect(useUiStore.getState().toast?.kind).toBe("error");
+    expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
   });
 });
 

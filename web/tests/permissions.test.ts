@@ -82,7 +82,7 @@ describe("extension_ui_request 分发路由", () => {
     dispatchRequest("id-s", "setStatus", { statusText: "busy" });
     dispatchRequest("id-w", "setWidget", {});
     expect(queue().length).toBe(0);
-    expect(useUiStore.getState().toast?.text).toBe("Editor submitted (4 lines)");
+    expect(useUiStore.getState().toasts.at(-1)?.text).toBe("Editor submitted (4 lines)");
   });
 
   test("回合落定（agent_end）整队清空", () => {

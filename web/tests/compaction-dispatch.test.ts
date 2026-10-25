@@ -37,7 +37,7 @@ let unsubUsage: (() => void) | null = null;
 beforeEach(() => {
   resetDispatchState();
   useMessagesStore.setState({ bySession: {} });
-  useUiStore.setState({ toast: null });
+  useUiStore.setState({ toasts: [] });
   usageCalls = 0;
   // compact-run 的 usageListeners 是模块级单例：先退订上一个用例的订阅，
   // 防跨用例累积导致计数倍增
@@ -129,22 +129,22 @@ describe("stale_progress_bar 防线：end 帧丢失超时兜底", () => {
 describe("⑥ 自动压缩轻提示（reason != manual）", () => {
   test("threshold / overflow / reason 缺失 → info toast；manual 不弹", () => {
     frame({ type: "compaction_start", reason: "threshold" }, 1);
-    expect(useUiStore.getState().toast?.text).toBe(zh.chat.compact.autoStarted);
-    expect(useUiStore.getState().toast?.kind).toBe("info");
+    expect(useUiStore.getState().toasts.at(-1)?.text).toBe(zh.chat.compact.autoStarted);
+    expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("info");
 
-    useUiStore.getState().clearToast();
+    useUiStore.setState({ toasts: [] });
     frame({ type: "compaction_start", reason: "overflow" }, 2);
-    expect(useUiStore.getState().toast?.text).toBe(zh.chat.compact.autoStarted);
+    expect(useUiStore.getState().toasts.at(-1)?.text).toBe(zh.chat.compact.autoStarted);
 
-    useUiStore.getState().clearToast();
+    useUiStore.setState({ toasts: [] });
     frame({ type: "compaction_start", reason: "manual" }, 3);
-    expect(useUiStore.getState().toast).toBeNull();
+    expect(useUiStore.getState().toasts).toEqual([]);
   });
 
   test("重放窗口内（replay_begin 包夹）不弹 toast（重连重播防重复提示），进行态照常置位", () => {
     dispatchSseEvent("replay_begin", "{}", 4);
     frame({ type: "compaction_start", reason: "threshold" }, 5);
-    expect(useUiStore.getState().toast).toBeNull();
+    expect(useUiStore.getState().toasts).toEqual([]);
     expect(compactingOf()).toBe(true);
     dispatchSseEvent("replay_done", "{}", 6);
   });

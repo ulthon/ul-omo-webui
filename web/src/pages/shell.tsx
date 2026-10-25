@@ -12,14 +12,15 @@
 // 粘滞污染同进程后跑的测试文件）。
 // oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
-import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, GitBranch } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, CircleAlert, Copy, FolderOpen, GitBranch, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
 import { useT } from "@/i18n/i18n";
 import { readSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
+import type { Toast } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
 import { Topbar } from "@/components/layout/topbar";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -30,6 +31,86 @@ import { RightRail } from "@/components/layout/right-rail";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { isModelPickerTrigger } from "@/lib/shortcuts";
 import { useShortcutsHelp } from "@/lib/use-shortcuts-help";
+
+/** 复制到剪贴板（toast 复制钮）：优先 navigator.clipboard（https/localhost），
+ * 本应用常经局域网 http 访问（非安全上下文 clipboard 为 undefined）降级
+ * 隐藏 textarea + execCommand——两路都不成时返回 false 让按钮回退无反馈态。 */
+function copyTextCompat(text: string): boolean {
+  try {
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text);
+      return true;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 单条轻提示（docs08 2026-10-25 用户反馈）：文字可选中可复制（点文字不触发任何动作），
+ * 右侧操作钮 error=[复制+关闭]、info=[关闭]；error 左侧警示图标常驻，长文本折行。 */
+function ToastItem({ toast, onClose, closeLabel, copyLabel }: {
+  toast: Toast;
+  onClose: () => void;
+  closeLabel: string;
+  copyLabel: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  // 复制成功反馈 1.5s 后回退图标；卸载/重复点击时重置旧 timer（不依赖定时泄漏）
+  const revertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (revertTimer.current) clearTimeout(revertTimer.current);
+  }, []);
+  const onCopy = () => {
+    if (!copyTextCompat(toast.text)) return;
+    setCopied(true);
+    if (revertTimer.current) clearTimeout(revertTimer.current);
+    revertTimer.current = setTimeout(() => setCopied(false), 1500);
+  };
+  const isError = toast.kind === "error";
+  return (
+    <div
+      data-testid="toast-item"
+      role={isError ? "alert" : "status"}
+      className={`flex w-full items-start gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-md max-w-full ${
+        isError
+          ? "border-destructive/40 bg-destructive text-destructive-foreground"
+          : "border-transparent bg-foreground text-background"
+      }`}
+    >
+      {isError && <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />}
+      <span className="min-w-0 flex-1 select-text whitespace-pre-wrap break-words">{toast.text}</span>
+      {isError && (
+        <button
+          type="button"
+          onClick={onCopy}
+          aria-label={copyLabel}
+          title={copyLabel}
+          className="shrink-0 cursor-pointer rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+        >
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label={closeLabel}
+        title={closeLabel}
+        className="shrink-0 cursor-pointer rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  );
+}
 
 /** 手机触控目标外链按钮（44px；desktop 同尺寸不碍事） */
 const EXTERNAL_LINK_CLASS =
@@ -81,8 +162,8 @@ export function useCtrlPModelPicker(): void {
 export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
-  const toast = useUiStore((s) => s.toast);
-  const clearToast = useUiStore((s) => s.clearToast);
+  const toasts = useUiStore((s) => s.toasts);
+  const dismissToast = useUiStore((s) => s.dismissToast);
   const gitUrl = useUiStore((s) => s.externalLinks.gitUrl);
   const filesUrl = useUiStore((s) => s.externalLinks.filesUrl);
   const [booted, setBooted] = useState(false);
@@ -247,20 +328,24 @@ export function AppShell() {
         <RightRail open={todoPanelOpen} onToggle={toggleTodoPanel} sessionId={todoSessionId} />
       </div>
 
-      {/* 轻提示：info 3.2s 自动消失；error 常驻展示，点击关闭 */}
-      {toast && (
-        <button
-          type="button"
-          onClick={() => clearToast()}
-          className={`fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border px-4 py-2 text-sm shadow-md cursor-pointer ${
-            toast.kind === "error"
-              ? "border-destructive/30 bg-destructive text-destructive-foreground"
-              : "bg-foreground text-background"
-          }`}
-          role="status"
+      {/* 轻提示栈：info 3.2s 自动消失；error 常驻直到显式关闭。至多 3 条同列堆叠
+          （超出丢最旧并 console.warn），文字可选中可复制，点文字本体不触发任何动作 */}
+      {toasts.length > 0 && (
+        <div
+          data-testid="toast-stack"
+          className="pointer-events-none fixed bottom-5 left-1/2 z-50 flex w-max max-w-[90vw] -translate-x-1/2 flex-col items-stretch gap-2"
         >
-          {toast.text}
-        </button>
+          {toasts.map((item) => (
+            <div key={item.id} className="pointer-events-auto flex justify-center">
+              <ToastItem
+                toast={item}
+                onClose={() => dismissToast(item.id)}
+                closeLabel={t("common.close")}
+                copyLabel={t("common.copy")}
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

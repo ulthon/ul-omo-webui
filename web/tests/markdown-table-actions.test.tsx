@@ -166,7 +166,7 @@ describe("markdown 表格行操作 wiring（happy-dom 真点击）", () => {
     });
     expect(copyText).toHaveBeenCalledTimes(1);
     expect(copyText).toHaveBeenCalledWith('名称\t数值\t备注\n甲\t1\t普通\n乙,丙\t2\t含"引号"');
-    expect(useUiStore.getState().toast?.text).toBe("已复制表格");
+    expect(useUiStore.getState().toasts.at(-1)?.text).toBe("已复制表格");
     await act(async () => {
       root.unmount();
     });

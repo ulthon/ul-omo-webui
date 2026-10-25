@@ -93,7 +93,7 @@ interface UiState {
   /** 用法提示显示开关（docs08 2026-10-22 批次任务 25）：meta_kv tips.enabled 持久
    * （缺省开）；空态提示卡与设置「提示」分区共同消费。 */
   tipsEnabled: boolean;
-  toast: Toast | null;
+  toasts: Toast[];
 
   setConnection(status: ConnectionStatus): void;
   setDrawerOpen(open: boolean): void;
@@ -115,11 +115,24 @@ interface UiState {
   setTagDisplayMode(mode: TagDisplayMode): void;
   setTipsEnabled(enabled: boolean): void;
   showToast(text: string, kind?: "info" | "error"): void;
-  clearToast(): void;
+  dismissToast(id: number): void;
 }
 
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
+// 轻提示栈（docs08 2026-10-25 用户反馈）：底部同列堆叠至多 MAX_TOASTS 条，各自独立关闭，
+// 文字可选中可复制（点文字本体不触发任何动作）。info 各自计时自动消失（timer 按 id 归档）；
+// error 常驻直到显式关闭（遗漏错误比多看一眼代价高）。超限丢最旧并 console.warn 留痕。
+const MAX_TOASTS = 3;
+const INFO_TOAST_MS = 3200;
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
 let toastSeq = 0;
+
+function clearToastTimer(id: number): void {
+  const timer = toastTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    toastTimers.delete(id);
+  }
+}
 
 export const useUiStore = create<UiState>()((set) => ({
   connection: "online",
@@ -139,7 +152,7 @@ export const useUiStore = create<UiState>()((set) => ({
   thinkingDefaultExpanded: false,
   tagDisplayMode: "text",
   tipsEnabled: true,
-  toast: null,
+  toasts: [],
 
   setConnection: (status) => set({ connection: status }),
   setDrawerOpen: (open) => set({ drawerOpen: open }),
@@ -160,18 +173,32 @@ export const useUiStore = create<UiState>()((set) => ({
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
   showToast: (text, kind = "info") => {
-    if (toastTimer) clearTimeout(toastTimer);
     const id = ++toastSeq;
-    set({ toast: { id, kind, text } });
-    // 仅 info 自动消失；error 持续展示直到用户点击关闭（遗漏错误比多看一眼代价高）
+    set((s) => {
+      let rest = s.toasts;
+      if (rest.length >= MAX_TOASTS) {
+        // 丢最旧：同步清它的自动消失 timer，丢的内容 console.warn 留痕（控制台仍可查）
+        for (const old of rest.slice(0, rest.length - MAX_TOASTS + 1)) {
+          clearToastTimer(old.id);
+          console.warn(`[toast] cap ${MAX_TOASTS} exceeded, dropped oldest:`, old.text);
+        }
+        rest = rest.slice(rest.length - MAX_TOASTS + 1);
+      }
+      return { toasts: [...rest, { id, kind, text }] };
+    });
+    // 仅 info 自动消失；error 常驻展示直到用户点关闭钮（遗漏错误比多看一眼代价高）
     if (kind === "info") {
-      toastTimer = setTimeout(() => {
-        set((s) => (s.toast?.id === id ? { toast: null } : s));
-      }, 3200);
+      toastTimers.set(
+        id,
+        setTimeout(() => {
+          toastTimers.delete(id);
+          set((s) => ({ toasts: s.toasts.filter((it) => it.id !== id) }));
+        }, INFO_TOAST_MS),
+      );
     }
   },
-  clearToast: () => {
-    if (toastTimer) clearTimeout(toastTimer);
-    set({ toast: null });
+  dismissToast: (id) => {
+    clearToastTimer(id);
+    set((s) => ({ toasts: s.toasts.filter((it) => it.id !== id) }));
   },
 }));
