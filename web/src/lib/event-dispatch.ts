@@ -344,6 +344,10 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   if (wire.type === "agent_start") {
     sessions.patchSession(sessionId, { active: true });
     sessions.setRunState(sessionId, "running");
+    // 发消息即上浮·多时点刷新（docs08 2026-10-23/24 批次任务 13 ③）：回合启动即拉
+    // 服务端真相——排队投递 / 异端发送后列表元数据（modified、消息计数）即时对齐；
+    // 失败静默（回合落定路径 refreshSessions 兜底）。
+    void sessions.refreshSessions();
   } else if (wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle") {
     sessions.patchSession(sessionId, { active: false });
     // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
@@ -417,7 +421,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   // 全量真相（入队与出队都宣布）。主通道 applyWireEvent 对未知类型静默忽略，此处分流。
   if (wire.type === "queue_update") {
     const ordered = Array.isArray(wire.ordered) ? (wire.ordered as Array<Record<string, unknown>>) : [];
+    // 发消息即上浮·多时点刷新（任务 13 ④）：排队项投递（followUp 出队宣布——引擎
+    // 全量 ordered 不再含该文本）即刷新会话列表：投递落盘的消息计数/modified 对齐。
+    // 判定取投递前快照对比（applyUpdate 后旧项已并入引擎真相无法区分）。
+    const prevItems = useQueueStore.getState().bySession[sessionId]?.items ?? [];
+    const deliveredTexts = new Set(ordered.map((o) => String(o.text ?? "")));
+    const delivered = prevItems.length > 0 && prevItems.some((i) => !deliveredTexts.has(i.text));
     useQueueStore.getState().applyUpdate(sessionId, ordered);
+    if (delivered) void useSessionsStore.getState().refreshSessions();
   }
 
   // 模型切换可观测（docs08-r6 任务 8 ③④⑤⑥）：

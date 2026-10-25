@@ -477,6 +477,9 @@ export function Composer({
           }
         } else {
           messages.appendLocalUserEntry(sessionId, outgoingText, outgoingImages);
+          // 发消息即上浮（任务 13 ②）：直发乐观入列同时上浮会话行（不等待 onSent /
+          // agent_start 刷新）；此刻行仍以当前 sessionId 入键（adopt 在其后才换 key）
+          useSessionsStore.getState().floatSessionUp(sessionId);
           if (receipt.streaming) messages.setStreaming(sessionId, true);
           if (typeof receipt.durableSessionId === "string" && receipt.durableSessionId !== sessionId) {
             messages.adoptDurableId(sessionId, receipt.durableSessionId);

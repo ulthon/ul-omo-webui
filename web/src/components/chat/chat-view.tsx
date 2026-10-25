@@ -307,12 +307,20 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传入处并入 runState
               running/waiting 显式并集（knownRunning 虽已含，此处按计划定死保守并集，
               中断口宁多勿少，防 hydration-lock 口径演进回归） */}
+          {/* 发消息即上浮（docs08 2026-10-23/24 批次任务 13 ①）：回执时刻本地乐观上浮
+              （排队/直发两路回执都走 onSent）。取值从 store 现读 selectedId 兑底
+              props sessionId——直发首条消息 adopt 换 key 后闭包里的旧 id 已不在
+              byProject，浮到新 id 才不落空 */}
           <Composer
             sessionId={sessionId}
             queueAvailable={streaming || knownRunning || runState === "running" || runState === "waiting"}
             permissionLocked={hasPendingPermission}
             hydrationLocked={hydrationLocked}
-            onSent={() => setInterrupted(false)}
+            onSent={() => {
+              setInterrupted(false);
+              const cur = useSessionsStore.getState();
+              cur.floatSessionUp(cur.selectedId ?? sessionId);
+            }}
             onAborted={() => setInterrupted(true)}
           />
         </div>

@@ -94,6 +94,12 @@ interface SessionsState {
   /** 未落盘占位行采用真实 id（首条消息落盘后服务端回执带回，缺陷修复：新会话首条
    *  消息不显示）：行 id、当前选中、运行态点一并迁移 */
   adoptSessionId(oldId: string, newId: string): void;
+  /** 发消息即上浮（docs08 2026-10-23/24 批次任务 13）：本地乐观把该会话行移到
+   *  服务端排序口径（byPinnedThenModified 镜像：置顶优先 + modified 降序）应有的
+   *  位置——置顶行永不下沉，非置顶行浮到非置顶区之首；modified 同步写当前时刻，
+   *  后续 refreshSessions 返回服务端真相时位置已一致，无视觉跳变。行不存在（如
+   *  adopt 换 key 竞态窗口）时 no-op，刷新时点兜底。 */
+  floatSessionUp(id: string): void;
   /** createSession 回执 id 记入别名集合（session-list 新建会话路径调用，先于 select） */
   markAliasId(id: string): void;
   /** durable=true 创建回执 id 记入整替保护集合（task 19h）：真实创建路径无别名换 key，
@@ -392,6 +398,22 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     // 选中态换 key：URL 同步换写真实 id（URL 里若是别名 id，此处原地纠正）
     if (wasSelected && oldId !== newId) writeSessionUrl(newId);
   },
+
+  floatSessionUp: (id) =>
+    set((s) => {
+      const now = new Date().toISOString();
+      for (const [project, list] of Object.entries(s.byProject)) {
+        const idx = list.findIndex((item) => item.id === id);
+        if (idx < 0) continue;
+        const next = list.slice();
+        next[idx] = { ...next[idx], modified: now };
+        // 服务端 byPinnedThenModified 镜像（routes-session.ts:196）；Array.sort 稳定，
+        // 未动行保持既有（服务端）相对序，乐观位与刷新后位一致
+        next.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified));
+        return { byProject: { ...s.byProject, [project]: next } };
+      }
+      return s;
+    }),
 
   markAliasId: (id) =>
     set((s) => (id in s.aliasIds ? s : { aliasIds: { ...s.aliasIds, [id]: true } })),
