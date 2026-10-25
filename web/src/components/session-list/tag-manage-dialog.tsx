@@ -403,7 +403,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-sm" data-testid="tag-manage-dialog">
+      <DialogContent className="sm:max-w-sm" data-testid="tag-manage-dialog">
         <DialogHeader>
           <DialogTitle>{t("sessionList.tagManage.title")}</DialogTitle>
           <DialogDescription>{t("sessionList.tagManage.description")}</DialogDescription>
