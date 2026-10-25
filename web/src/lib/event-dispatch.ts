@@ -3,8 +3,10 @@
 // wire sessionId（holder 别名 rpc-N，服务端映射不明时如实不注入）。主通道 messages.applyWireEvent
 // （消息/流式/工具生命周期，未知类型静默忽略）；会话级运行状态（agent_start/end/settled/idle）
 // 同步进 sessions store，供 todo 15 状态点消费。
-// gap 帧 / 游标回退（服务端重启游标归零）→ 对已加载会话做全量 refetch（GET messages
-// 先取后换，重取期间界面不清空），替代增量补发——覆盖手机杀后台数分钟的场景。
+// gap 帧 / 游标回退（服务端重启游标归零）→ 对账分级（docs08-2026-10-23-24 任务 9）：
+// 小缺口（宽度 ≤ GAP_INCREMENTAL_WINDOW）按 ?before=<锚点> 增量补齐，大缺口 / 畸形 /
+// 纪元回退保持 GET messages?full=1 全量重取（先取后换，重取期间界面不清空），
+// 覆盖手机杀后台数分钟的场景。
 // docs08-r5 任务 5：服务端重放窗口标记（replay_begin/replay_done 桥级帧，包夹重放序列）
 // 转译为 messages store 恢复窗口置位/复位，窗口内抑制已落库段的重播重建（语义见 store）。
 // 运行态自愈（W1 缺陷 #3）：服务重启会孤儿化前端 runStates（状态点永卡「运行中」）。
@@ -12,7 +14,7 @@
 // 常量在 stores/sessions.ts），该会话任何 SSE 帧都刷新活动时刻，活跃会话不被误回落；
 // (2) 游标回退（=服务重启强信号）时在 refetchLoadedSessions 旁并行 fire-and-forget
 // GET /api/sessions 重同步（active 三态校准，见 resyncRunStatesFromServer）。
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
 import { broadcastUsageRefresh } from "@/components/chat/compact-run";
@@ -28,6 +30,15 @@ let lastCursor: number | null = null;
 
 /** 进行中的全量重取（按会话去重：gap + 游标回退连击时不重复拉取） */
 const refetching = new Set<string>();
+
+/** 进行中的小缺口增量补齐（docs08-2026-10-23-24 任务 9）：与全量重取分账——
+ * 增量在途不阻断全量层（纪元回退仍可立即升级全量），仅对增量连击去重 */
+const reconciling = new Set<string>();
+
+/** 任务 9：gap 对账分级小缺口阈值——与 r7 TAIL_WINDOW / t8 REPLAY_TAIL_WINDOW
+ *（=200）对齐：gap 宽度不超过该值时帧只是被环形缓冲淘汰的近期事件，REST
+ * ?before= 后向翻页一窗即可覆盖；超过则走既有 full=1 全量对账（承重不动） */
+export const GAP_INCREMENTAL_WINDOW = 200;
 
 /** 运行态清扫周期（W1 缺陷 #3）：60s 一扫；回落阈值常量见 stores/sessions.ts。 */
 export const SWEEP_INTERVAL_MS = 60_000;
@@ -114,6 +125,7 @@ export function getDispatchCursor(): number | null {
 export function resetDispatchState(): void {
   lastCursor = null;
   refetching.clear();
+  reconciling.clear();
   disarmRunStateSweep();
 }
 
@@ -140,6 +152,72 @@ function refetchSession(sessionId: string): void {
     .finally(() => {
       refetching.delete(sessionId);
     });
+}
+
+/** 小缺口增量补齐（任务 9，t3 伪码「?before=<本地最旧已知 id>」/ t8 接缝契约 2）：
+ * ?before=<锚点（store.oldestId）> 拉一窗更早条目，prependEntries 按 id 去重头插
+ * 合并（拼缝零重复零丢失），不触碰 streaming/toolRuns 等活跃流式态。
+ * ?before= 遇 409 cursor_invalid（锚点条目已被压缩/截断出会话文件，t8 契约 5）
+ * 升级 refetchSession 全量；其余失败静默（下次 gap / 游标回退 / 重连重放兜底）。 */
+function reconcileSessionIncremental(sessionId: string, anchor: string): void {
+  if (reconciling.has(sessionId) || refetching.has(sessionId)) return;
+  reconciling.add(sessionId);
+  api
+    .listMessages(sessionId, { before: anchor })
+    .then((page) => {
+      // 补齐完成时会话可能已被 clearSession，仅在仍存在时合并
+      if (useMessagesStore.getState().bySession[sessionId]) {
+        useMessagesStore.getState().prependEntries(sessionId, page.entries, {
+          hasMore: page.hasMore ?? false,
+          oldestId: page.oldestId ?? null,
+        });
+      }
+    })
+    .catch((err) => {
+      if (err instanceof ApiError && err.code === "cursor_invalid") {
+        refetchSession(sessionId); // 边界失效 → 全量层升级（承重路径）
+      }
+      // 其余失败静默：同全量层的兜底哲学
+    })
+    .finally(() => {
+      reconciling.delete(sessionId);
+    });
+}
+
+/** gap 帧对账分级入口（任务 9）：解析 {from,to}（事件游标序缺口区间）。
+ * 畸形载荷（非 JSON / from/to 非数字 / 无下界 / from>to）与大缺口（宽度 >
+ * GAP_INCREMENTAL_WINDOW，REST 尾窗不可一窗覆盖）→ 既有全量层（refetchLoaded
+ * Sessions full=1，承重语义冻结）；小缺口 → 有锚点（尾窗已加载，oldestId 在）的
+ * 会话逐个增量补齐，无锚点（全量加载完 / 条目为空）的会话仍走全量兜底。
+ * 首连 store 为空（bySession 空）自然零请求——首连全量建库本就不依赖 gap 对账。 */
+function reconcileGapFrame(data: string): void {
+  let from: unknown;
+  let to: unknown;
+  try {
+    const parsed = JSON.parse(data) as { from?: unknown; to?: unknown };
+    from = parsed.from;
+    to = parsed.to;
+  } catch {
+    refetchLoadedSessions();
+    return;
+  }
+  const smallGap =
+    typeof from === "number" && Number.isFinite(from) && from >= 1 &&
+    typeof to === "number" && Number.isFinite(to) && to >= from &&
+    to - from + 1 <= GAP_INCREMENTAL_WINDOW;
+  if (!smallGap) {
+    refetchLoadedSessions();
+    return;
+  }
+  const { bySession } = useMessagesStore.getState();
+  for (const [sessionId, state] of Object.entries(bySession)) {
+    const anchor = state.oldestId;
+    if (state.entries.length > 0 && typeof anchor === "string" && anchor) {
+      reconcileSessionIncremental(sessionId, anchor);
+    } else {
+      refetchSession(sessionId);
+    }
+  }
 }
 
 /** 已加载 / 有过活动的会话全量重取。
@@ -220,7 +298,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   }
 
   if (eventType === "gap") {
-    refetchLoadedSessions();
+    reconcileGapFrame(data);
     resyncQueues();
     return;
   }
