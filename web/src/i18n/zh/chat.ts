@@ -292,6 +292,7 @@ export const chat = {
     bound: "已绑定记忆库",
     boundWith: "已绑定记忆库 {identity}",
     acceptedTurns: "本轮已计入记忆",
+    acceptedTurnsCount: "本轮已计入记忆 ×{count}",
     projectionPin: "记忆投影已固定",
     kibitzerNudged: "收到 kibitzer 提示",
     memorianNudged: "收到 memorian 提示",

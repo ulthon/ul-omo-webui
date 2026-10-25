@@ -91,6 +91,40 @@ export const CompactionMarkerBlock = memo(function CompactionMarkerBlock({ marke
   );
 });
 
+/** acceptedTurns 同簇聚合块（docs08 2026-10-23/24 批次任务 14）：折叠态一行「本轮已计入
+ *  记忆 ×N」；点击展开逐条渲染（复用 MemoryMarkerBlock，逐条自身仍可展开原文）。
+ *  样式与记忆标记同族（weak 弱标记）；不删任何事件——折叠仅呈现层，全量 markers 携带。 */
+export const AcceptedTurnsClusterBlock = memo(function AcceptedTurnsClusterBlock({
+  markers,
+}: {
+  markers: MemoryMarker[];
+}) {
+  const [open, setOpen] = useState(false);
+  const t = useT();
+  return (
+    <div data-testid="memory-cluster" data-count={markers.length} className="my-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted lg:min-h-0 text-xs text-muted-foreground"
+      >
+        <BookCheck className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{t("chat.memoryMarkers.acceptedTurnsCount", { count: markers.length })}</span>
+        <span className="shrink-0 rounded-sm bg-muted px-1 py-px">×{markers.length}</span>
+        <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 pl-2">
+          {markers.map((m) => (
+            <MemoryMarkerBlock key={m.entryId} marker={m} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
@@ -98,6 +132,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   if (item.kind === "loopGuardGroup")
     return <LoopGuardGroupBubble sessionId={sessionId} loopGuardKind={item.loopGuardKind} entryIds={item.entryIds} />;
   if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;
+  if (item.kind === "memoryMarkerCluster") return <AcceptedTurnsClusterBlock markers={item.markers} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 

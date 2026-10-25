@@ -292,6 +292,7 @@ export const chat = {
     bound: "Memory library bound",
     boundWith: "Memory library bound {identity}",
     acceptedTurns: "Counted into memory this turn",
+    acceptedTurnsCount: "Counted into memory this turn ×{count}",
     projectionPin: "Memory projection pinned",
     kibitzerNudged: "kibitzer nudge received",
     memorianNudged: "memorian nudge received",

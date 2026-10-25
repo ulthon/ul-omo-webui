@@ -180,7 +180,9 @@ export function resolveTimelineModels(
  *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
  *  这类条目此前无渲染分支——入列却无内容可渲染即空壳路径）；
  *  loopGuardGroup=相邻同型 loop-guard 条目聚合组（docs08 2026-10-22 批次任务 2）；
- *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生） */
+ *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生）；
+ *  memoryMarkerCluster=相邻同簇 acceptedTurns 聚合组（docs08 2026-10-23/24 批次任务 14，
+ *  「本轮已计入记忆 ×N」可展开，同 loopGuardGroup 连排语义） */
 export type ChatListItem =
   | {
       key: string;
@@ -195,7 +197,8 @@ export type ChatListItem =
   | { key: string; kind: "memoryMarker"; marker: MemoryMarker }
   | { key: string; kind: "customMessage"; entryId: string }
   | { key: string; kind: "loopGuardGroup"; loopGuardKind: LoopGuardKind; entryIds: string[] }
-  | { key: string; kind: "compactionMarker"; marker: CompactionMarker };
+  | { key: string; kind: "compactionMarker"; marker: CompactionMarker }
+  | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] };
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
 function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
@@ -366,5 +369,34 @@ export function mergeMemoryItems(items: ChatListItem[], entries: readonly WireEn
     scored.push({ ord, seq: seq++, item });
   }
   scored.sort((a, b) => a.ord - b.ord || a.seq - b.seq);
-  return scored.map((s) => s.item);
+  // acceptedTurns 同簇连排聚合（docs08 2026-10-23/24 批次任务 14）：排序后的最终渲染流里
+  // 用户所见相邻的 acceptedTurns 标记折叠为一组「×N」。「连排」同 loopGuardGroup 语义 =
+  // 渲染流相邻（不产生可见行的条目如 toolResult 不打断）；其他任何可见项（消息、
+  // sessionBinding / memoryRecall 等异类标记）打断——绝不跨语义合并。单条不折叠
+  // （保持 memoryMarker 原形态，渲染与既有完全一致）；组 key 锚定首条 entryId，
+  // 新事件追加进既有簇时 key 不变，虚拟化行复用、展开态不丢（stale_state 防线）。
+  const folded: ChatListItem[] = [];
+  for (const s of scored) {
+    const item = s.item;
+    if (item.kind === "memoryMarker" && item.marker.kind === "acceptedTurns") {
+      const last = folded[folded.length - 1];
+      if (last !== undefined && last.kind === "memoryMarkerCluster") {
+        last.markers.push(item.marker);
+        continue;
+      }
+      folded.push({ key: `memory-cluster-${item.marker.entryId}`, kind: "memoryMarkerCluster", markers: [item.marker] });
+      continue;
+    }
+    folded.push(item);
+  }
+  return foldSingletonClusters(folded);
+}
+
+/** 单元素簇还原为普通 memoryMarker（渲染与聚合前完全一致，×1 不产生 ×N 角标语义） */
+function foldSingletonClusters(items: ChatListItem[]): ChatListItem[] {
+  return items.map((i) =>
+    i.kind === "memoryMarkerCluster" && i.markers.length === 1
+      ? { key: `memory-${i.markers[0]!.entryId}`, kind: "memoryMarker", marker: i.markers[0]! }
+      : i,
+  );
 }
