@@ -580,3 +580,65 @@ describe("PUT /api/tags v2 color/display", () => {
     expect(readBack.project).toEqual([{ name: "项目色", sort: 1, color: "#aabbcc", display: "text" }]);
   });
 });
+
+// --------------------------------------------- 挂载删除审计（docs08 2026-10-23/24 批次任务 10）
+
+describe("PUT /api/sessions/:id/tags 挂载删除审计", () => {
+  test("整替移除的挂载逐条写审计行（会话 id、tag、时间、source）", async () => {
+    const { app, meta } = setup();
+    await putJson(app, "/api/sessions/s1/tags", {
+      tags: [
+        { scope: "global", name: "保留" },
+        { scope: "global", name: "被删" },
+        { scope: "project", name: "也删" },
+      ],
+    });
+    const res = await putJson(app, "/api/sessions/s1/tags", {
+      tags: [{ scope: "global", name: "保留" }],
+      source: "tag-manage-dialog:orphan-clean",
+    });
+    expect(res.status).toBe(200);
+    const rows = meta.listTagMountAudit("s1");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => `${r.scope}:${r.name}`).sort()).toEqual(["global:被删", "project:也删"]);
+    for (const row of rows) {
+      expect(row.sessionId).toBe("s1");
+      expect(row.source).toBe("tag-manage-dialog:orphan-clean");
+      expect(Number.isNaN(Date.parse(row.createdAt))).toBe(false);
+    }
+  });
+
+  test("审计行落库持久：重开库仍可读（stale state：不因连接关闭丢失）", async () => {
+    const dir = mkdtempSync(join(tmp, "audit-reopen-"));
+    const dbPath = join(dir, "meta.db");
+    const meta = openMetaDb({ path: dbPath });
+    const app = new Hono();
+    const configs = openConfigStore({ globalDir: join(dir, "global"), projectRoot: join(dir, "host") });
+    app.route("/", createTagsRoutes({ meta, engines: new FakeGateway(), configs }));
+    await putJson(app, "/api/sessions/s9/tags", { tags: [{ scope: "global", name: "旧" }] });
+    await putJson(app, "/api/sessions/s9/tags", { tags: [], source: "tag-dropdown" });
+    meta.close();
+    const reopened = openMetaDb({ path: dbPath });
+    const rows = reopened.listTagMountAudit("s9");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: "s9", scope: "global", name: "旧", source: "tag-dropdown" });
+    reopened.close();
+  });
+
+  test("无 source 缺省 api；仅新增/无变化不产生审计行", async () => {
+    const { app, meta } = setup();
+    await putJson(app, "/api/sessions/s2/tags", { tags: [{ scope: "global", name: "a" }] });
+    expect(meta.listTagMountAudit("s2")).toHaveLength(0);
+    // 仅新增
+    await putJson(app, "/api/sessions/s2/tags", { tags: [{ scope: "global", name: "a" }, { scope: "global", name: "b" }] });
+    expect(meta.listTagMountAudit("s2")).toHaveLength(0);
+    // 幂等同内容
+    await putJson(app, "/api/sessions/s2/tags", { tags: [{ scope: "global", name: "a" }, { scope: "global", name: "b" }] });
+    expect(meta.listTagMountAudit("s2")).toHaveLength(0);
+    // 删除且无 source → 缺省 "api"
+    await putJson(app, "/api/sessions/s2/tags", { tags: [{ scope: "global", name: "a" }] });
+    const rows = meta.listTagMountAudit("s2");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ scope: "global", name: "b", source: "api" });
+  });
+});

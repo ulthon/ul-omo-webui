@@ -769,9 +769,10 @@ export const api = {
   async putTags(body: { scope: "global" | "project"; project?: string; tags: TagDefinition[] }): Promise<{ tags: TagDefinition[] }> {
     return request("/api/tags", jsonInit("PUT", body));
   },
-  /** 会话标签挂载整替（挂载与定义解耦：不校验定义存在；重复项服务端按 (scope,name) 去重） */
-  async setSessionTags(sessionId: string, tags: TagRef[]): Promise<{ tags: TagRef[] }> {
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", { tags }));
+  /** 会话标签挂载整替（挂载与定义解耦：不校验定义存在；重复项服务端按 (scope,name) 去重）。
+   * source：触发本次整替的 UI 动作标识（服务端对被移除挂载写审计行用，缺省 "api"） */
+  async setSessionTags(sessionId: string, tags: TagRef[], source?: string): Promise<{ tags: TagRef[] }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", source ? { tags, source } : { tags }));
   },
 
   // ---- 常用语（todo 14）----

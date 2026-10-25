@@ -126,7 +126,7 @@ export const sessionList = {
   tagBadge: {
     cleaned: "Stale tags cleaned",
     cleanFailed: "Cleanup failed",
-    orphanTitle: "Tag \"{name}\" definition deleted; click to clean up",
+    orphanTitle: "Tag \"{name}\" definition deleted (stale); clean it up in tag management",
     title: "Tag: {name}",
     more: { one: "1 more tag", other: "{n} more tags" },
     gridTitle: "Tags: {names}",
@@ -157,7 +157,10 @@ export const sessionList = {
     displayGrid: "Grid",
     title: "Manage tags",
     description:
-      "Renaming or deleting a definition does not affect existing mounts — old tags on sessions will show as stale (grayed out) and can be cleaned up by clicking.",
+      "Renaming or deleting a definition does not affect existing mounts — old tags on sessions will show as stale (grayed out) and can be cleaned up below.",
+    orphanSection: "Stale tag mounts (orphans)",
+    orphanClean: "Clean stale tags of {title}",
+    orphanCleanConfirm: "Confirm cleanup",
   },
   // tag-dropdown.tsx 打标签锚定下拉
   tagDropdown: {

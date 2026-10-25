@@ -66,7 +66,7 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
       if (targets.length > 1) setProgress({ done, total: targets.length });
       const payload = nextSessionTags(mounts.get(s.id), ref, on);
       try {
-        const res = await api.setSessionTags(s.id, payload);
+        const res = await api.setSessionTags(s.id, payload, "tag-dropdown");
         setMounts((prev) => new Map(prev).set(s.id, res.tags));
         useSessionsStore.getState().patchSession(s.id, { tags: res.tags });
       } catch (err) {

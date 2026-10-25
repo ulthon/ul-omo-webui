@@ -4,7 +4,7 @@
 // - 全局 text 档（缺省）渲染文字徽标（历史形态回归）；任一 display:"text" 覆盖 →
 //   全局 grid 档下整行回退文字徽标（rowTagDisplayMode 行级判定）；
 // - 孤儿格灰显 + title 显名清单；移动端点格 toast 显名（视口 390）；
-// - 点孤儿格清理（setSessionTags 整替去孤儿，api 打桩）。
+// - 点孤儿格/徽标不再触发清理（任务 10：清理移入标签管理弹框带确认）。
 // 渲染走真实组件（happy-dom + createRoot，stat-panel-panorama 同款）；ui store 直注。
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -167,7 +167,7 @@ describe("TagBadges 模式判定回归", () => {
     expect(c.querySelector('[data-testid="tag-color-grid"]')).toBeNull();
   });
 
-  test("孤儿格灰显入格，title 仍显名；点格清理走整替（api 打桩）", async () => {
+  test("孤儿格灰显入格，title 仍显名；点格不再触发清理（任务 10：清理移入管理弹框）", async () => {
     seed("grid");
     setSessionTagsMock.mockResolvedValue({ tags: [] });
     const c = await render(
@@ -178,11 +178,23 @@ describe("TagBadges 模式判定回归", () => {
     expect(orphanCell?.getAttribute("data-orphan")).toBe("true");
     expect(orphanCell?.className).toContain("bg-muted-foreground/40");
     expect(grid?.getAttribute("title")).toContain("已删");
-    // 点格 = 清理全部孤儿（甲保留）
+    // 点格无删除副作用（旧语义点按即整替删孤儿，已移入标签管理弹框带确认）
     await act(async () => {
       grid?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(setSessionTagsMock).toHaveBeenCalledWith("s-grid", [g("甲")]);
+    expect(setSessionTagsMock).not.toHaveBeenCalled();
+  });
+
+  test("文字徽标孤儿灰显，点按不再触发清理（任务 10）", async () => {
+    seed("text");
+    setSessionTagsMock.mockResolvedValue({ tags: [] });
+    const c = await render(createElement(TagBadges, { session: session([g("已删")]), definedKeys: KEYS, defs: DEFS }));
+    const badge = c.querySelector('[data-testid="tag-badge"][data-tag="已删"]');
+    expect(badge?.getAttribute("data-orphan")).toBe("true");
+    await act(async () => {
+      badge?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(setSessionTagsMock).not.toHaveBeenCalled();
   });
 });
 

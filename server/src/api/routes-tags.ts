@@ -137,12 +137,18 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
   // 单用户产品、UI 驱动，误写垃圾 id 的代价只是不可见行，可接受。
   // 无需校验会话属于某项目。数组内重复项先去重再写（库层 PK 冲突由
   // REST 层消化）。
+  // 挂载删除审计（docs08 2026-10-23/24 批次任务 10）：本端点是挂载写入的唯一缝隙，
+  // 整替前后做差，被移除的挂载逐条写 meta_tag_mount_audit（会话 id、tag、时间、
+  // source=触发删除的 UI 动作标识，缺省 "api"）；新增/保留不产生审计行。
   app.put("/api/sessions/:id/tags", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const body = await parseJsonBody(c);
     if (!Array.isArray(body.tags)) {
       throw new ApiError(400, "invalid_tags", "tags 必须是条目数组");
     }
+    const rawSource = (body as { source?: unknown }).source;
+    const source =
+      typeof rawSource === "string" && rawSource.trim() !== "" ? rawSource.trim().slice(0, 64) : "api";
     const seen = new Set<string>();
     const refs: SessionTagRef[] = [];
     for (const item of body.tags) {
@@ -160,7 +166,14 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
       seen.add(key);
       refs.push({ scope, name });
     }
+    const before = deps.meta.listSessionTags(id);
     deps.meta.setSessionTags(id, refs);
+    const removed = before.filter(
+      (tag) => !refs.some((ref) => ref.scope === tag.scope && ref.name === tag.name),
+    );
+    deps.meta.appendTagMountAudit(
+      removed.map((tag) => ({ sessionId: id, scope: tag.scope, name: tag.name, source })),
+    );
     return c.json({ tags: deps.meta.listSessionTags(id).map(({ scope, name }) => ({ scope, name })) });
   }));
 

@@ -123,7 +123,7 @@ export const sessionList = {
   tagBadge: {
     cleaned: "已清理失效标签",
     cleanFailed: "清理失败",
-    orphanTitle: "标签「{name}」定义已删除，点击清理",
+    orphanTitle: "标签「{name}」定义已删除（失效标签），可在标签管理中清理",
     title: "标签：{name}",
     more: { one: "还有 {n} 个标签", other: "还有 {n} 个标签" },
     gridTitle: "标签：{names}",
@@ -153,7 +153,10 @@ export const sessionList = {
     displayText: "文字",
     displayGrid: "色格",
     title: "管理标签",
-    description: "重命名/删除定义不影响已有挂载记录——会话上的旧标签将显示为失效标签（灰显），可点击清理。",
+    description: "重命名/删除定义不影响已有挂载记录——会话上的旧标签将显示为失效标签（灰显），可在下方清理。",
+    orphanSection: "失效标签挂载（孤儿）",
+    orphanClean: "清理 {title} 的失效标签",
+    orphanCleanConfirm: "确认清理",
   },
   // tag-dropdown.tsx 打标签锚定下拉（批量打标 toast 为整句单键插值）
   tagDropdown: {

@@ -284,6 +284,10 @@ export interface MetaDb {
   listSessionsByTag(scope: TagScope, name: string): string[];
   countSessionsByTag(scope: TagScope, name: string): number;
 
+  // meta_tag_mount_audit（挂载删除审计：每次整替中被移除的挂载逐条落行）
+  appendTagMountAudit(rows: TagMountAuditInput[]): void;
+  listTagMountAudit(sessionId?: string): TagMountAudit[];
+
   // meta_session.generated_title（标题生成写入，独立于 renamed_title）
   setSessionGeneratedTitle(sessionId: string, title: string | null): void;
   getSessionGeneratedTitle(sessionId: string): string | null;
@@ -749,6 +753,42 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
         name,
       );
       return row ? row.n : 0;
+    },
+
+    appendTagMountAudit(rows) {
+      if (rows.length === 0) return;
+      const now = nowIso();
+      immediate(() => {
+        for (const row of rows) {
+          run(
+            "INSERT INTO meta_tag_mount_audit (session_id, tag_scope, tag_name, source, created_at) VALUES (?, ?, ?, ?, ?)",
+            row.sessionId,
+            row.scope,
+            row.name,
+            row.source,
+            now,
+          );
+        }
+      });
+    },
+
+    listTagMountAudit(sessionId) {
+      const rows = sessionId
+        ? all<{ id: number; session_id: string; tag_scope: string; tag_name: string; source: string; created_at: string }>(
+            "SELECT * FROM meta_tag_mount_audit WHERE session_id = ? ORDER BY id",
+            sessionId,
+          )
+        : all<{ id: number; session_id: string; tag_scope: string; tag_name: string; source: string; created_at: string }>(
+            "SELECT * FROM meta_tag_mount_audit ORDER BY id",
+          );
+      return rows.map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        scope: row.tag_scope as TagScope,
+        name: row.tag_name,
+        source: row.source,
+        createdAt: row.created_at,
+      }));
     },
 
     setSessionGeneratedTitle(sessionId, title) {

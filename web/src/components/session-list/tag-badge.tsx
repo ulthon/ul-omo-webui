@@ -2,22 +2,20 @@
 // （ui store，默认 text）下行内渲染分两态——
 // - text：文字徽标，最多 TAG_BADGE_LIMIT 个 + "+N"（r3 C14 形态不变）；
 // - grid：色格 A 方格（size-2.5 rounded-sm CSS grid：2=左右半/3=三分/4=四象限/
-//   >4 首色+计数角标），色源 = tagColor(定义)（显式色 ?? 名称 hash），孤儿灰格，
-//   点按语义 = 有孤儿先清理（r3 语义保留），移动端点格 toast 显名清单。
+//   >4 首色+计数角标），色源 = tagColor(定义)（显式色 ?? 名称 hash），孤儿灰显，
+//   移动端点格 toast 显名清单。
+// 标签守卫（docs08 2026-10-23/24 批次任务 10）：孤儿徽标/色格点按不再直接清理挂载
+// （旧语义点按即整替删除，无确认无审计）；孤儿清理统一移入标签管理弹框带确认。
 // 任一标签 display:"text" 覆盖 → 整行回退文字（rowTagDisplayMode 判定，纯函数单测锁定）。
 // 孤儿判定/展示模式判定在 tag-data.ts（纯函数）；样式对齐既有行内徽标形态。
 import { Tag, X } from "lucide-react";
-import { api } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
-import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useT } from "@/i18n/i18n";
-import { apiErrorMessage } from "@/i18n/errors";
 import {
   findTagDef,
   isOrphanTag,
-  orphanTags,
   rowTagDisplayMode,
   tagColor,
   visibleTags,
@@ -43,20 +41,6 @@ export function TagBadges({ session, definedKeys, defs = null }: TagBadgesProps)
   const { shown, extra } = visibleTags(session.tags);
   if (tags.length === 0 || definedKeys === null) return null;
 
-  /** 孤儿清理：整替去掉该会话全部孤儿挂载（点单个孤儿徽标/色格一并清掉其他孤儿，语义一致） */
-  const cleanOrphans = async () => {
-    const stale = orphanTags(session.tags, definedKeys);
-    if (stale.length === 0) return;
-    const keep = (session.tags ?? []).filter((t) => !stale.some((s) => s.scope === t.scope && s.name === t.name));
-    try {
-      await api.setSessionTags(session.id, keep);
-      useSessionsStore.getState().patchSession(session.id, { tags: keep });
-      useUiStore.getState().showToast(t("sessionList.tagBadge.cleaned"));
-    } catch (err) {
-      useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.tagBadge.cleanFailed"), "error");
-    }
-  };
-
   // 色格模式（todo 20 (d)）：A 方格，逐格一标签；title/toast 显名清单
   if (mode === "grid") {
     const cells = tags.map((tag: TagRef) => {
@@ -66,7 +50,6 @@ export function TagBadges({ session, definedKeys, defs = null }: TagBadgesProps)
     });
     const n = cells.length;
     const names = tags.map((t) => t.name).join(", ");
-    const hasOrphans = cells.some((c) => c.orphan);
     // 2=左右半 / 3=三分 / 4=四象限；>4 只渲染首色单色格（细条堆叠不可读，计数角标补全）
     const shapeClass = n === 2 ? "grid-cols-2" : n === 3 ? "grid-cols-3" : n === 4 ? "grid-cols-2 grid-rows-2" : "";
     const gridCells = n > 4 ? cells.slice(0, 1) : cells;
@@ -78,11 +61,7 @@ export function TagBadges({ session, definedKeys, defs = null }: TagBadgesProps)
         className="relative inline-flex size-2.5 shrink-0 cursor-pointer align-middle"
         onClick={(e) => {
           e.stopPropagation();
-          if (hasOrphans) {
-            void cleanOrphans();
-            return;
-          }
-          // 移动端点格 toast 显名（桌面悬停已有 title；无孤儿桌面点按无动作）
+          // 移动端点格 toast 显名（桌面悬停已有 title；点按无删除副作用）
           if (isMobile) showToast(t("sessionList.tagBadge.gridTitle", { names }));
         }}
       >
@@ -124,14 +103,6 @@ export function TagBadges({ session, definedKeys, defs = null }: TagBadgesProps)
             className={`inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground ${
               orphan ? "border-dashed bg-transparent text-muted-foreground/50" : "bg-muted"
             }`}
-            onClick={
-              orphan
-                ? (e) => {
-                    e.stopPropagation();
-                    void cleanOrphans();
-                  }
-                : undefined
-            }
           >
             <Tag className="size-2.5" />
             {tag.name}

@@ -1,13 +1,17 @@
 // 标签管理弹层（docs08-r3 任务 11 拆域）：scope 参数化——"global" 或 { projectPath }，
 // 只渲染对应单组；新增/重命名/删除/上移下移全部经 PUT /api/tags 按 scope 整替：
 // 重命名 = 定义文件改名（挂载记录以 (scope,name) 为键不跟随 → 提示存量挂载成为孤儿，
-// 不自动迁移）；删除 = 定义删除（挂载成孤儿，列表灰显可清理）；上移下移 = 相邻交换后
+// 不自动迁移）；删除 = 定义删除（挂载成孤儿，灰显）；上移下移 = 相邻交换后
 // sort 重排整替。入口显式传入 scope，不再依赖"当前项目"推断。
+// 孤儿清理（docs08 2026-10-23/24 批次任务 10）：点按徽标不再直接删，清理入口集中到
+// 本弹框——按会话列出本 scope 相关孤儿挂载，两段式确认（点「清理」变确认锺再点才发
+// 整替请求，source 标识写服务端审计行）。
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { TagDefinition } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { useSessionsStore } from "@/stores/sessions";
 import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,16 +27,27 @@ import {
   tagColor,
   type TagDefs,
   type TagDisplayMode,
+  type TagRef,
 } from "./tag-data";
 
 /** 管理弹框的域：全局标签集，或指定项目的项目标签集（projectPath 必由入口显式给出） */
 export type TagManageScope = "global" | { projectPath: string };
+
+/** 本弹框可清理的一条孤儿挂载记录：父级按 definedKeys 算好孤儿与保留集 */
+export interface TagOrphanCleanup {
+  sessionId: string;
+  sessionTitle: string;
+  orphans: TagRef[];
+  keep: TagRef[];
+}
 
 interface TagManageDialogProps {
   /** 本弹框管理的域（单组）：global 或 { projectPath } */
   scope: TagManageScope;
   /** 定义集初始值（仅本 scope 对应组被使用；父级保证组内容与 scope 一致） */
   defs: TagDefs;
+  /** 本 scope 相关的孤儿挂载清单（父级按 definedKeys 算好；缺省/空 = 不渲染清理区） */
+  orphanCleanups?: TagOrphanCleanup[];
   /** 定义集变更通知（父级重拉，列表行孤儿判定与过滤选项同步） */
   onChanged: () => void;
   onClose: () => void;
@@ -40,7 +55,7 @@ interface TagManageDialogProps {
 
 type Scope = "global" | "project";
 
-export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDialogProps) {
+export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClose }: TagManageDialogProps) {
   const showToast = useUiStore((s) => s.showToast);
   const t = useT();
   const isProject = typeof scope === "object";
@@ -53,6 +68,9 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
   const [editing, setEditing] = useState<{ from: string; value: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // 孤儿清理两段式确认：confirmId = 已点「清理」待二次确认的会话 id；busyId = 请求中
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [cleanBusyId, setCleanBusyId] = useState<string | null>(null);
 
   const entriesOf = (): TagDefinition[] => localDefs[groupScope];
 
@@ -114,6 +132,23 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
 
   const moveTag = (name: string, dir: -1 | 1) => {
     void putScope(reorderTagEntries(entriesOf(), name, dir));
+  };
+
+  /** 孤儿清理执行（仅在两段式确认后可达）：整替去孤儿 + 审计 source + 行内数据同步 */
+  const cleanOrphanMounts = async (entry: TagOrphanCleanup) => {
+    if (cleanBusyId) return;
+    setCleanBusyId(entry.sessionId);
+    setError(null);
+    try {
+      const res = await api.setSessionTags(entry.sessionId, entry.keep, "tag-manage-dialog:orphan-clean");
+      useSessionsStore.getState().patchSession(entry.sessionId, { tags: res.tags });
+      setConfirmId(null);
+      showToast(t("sessionList.tagBadge.cleaned"));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("sessionList.tagBadge.cleanFailed"));
+    } finally {
+      setCleanBusyId(null);
+    }
   };
 
   const renderGroup = () => {
@@ -305,6 +340,67 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
     );
   };
 
+  /** 孤儿挂载清理区（任务 10）：本 scope 相关孤儿逐会话列出，两段式确认后整替删除 */
+  const renderOrphanCleanup = () => {
+    if (!orphanCleanups || orphanCleanups.length === 0) return null;
+    return (
+      <section data-testid="tag-orphan-cleanup">
+        <h3 className="px-1 pb-1 text-xs font-medium text-muted-foreground">
+          {t("sessionList.tagManage.orphanSection")}
+        </h3>
+        <ul className="rounded-md border">
+          {orphanCleanups.map((entry) => {
+            const confirming = confirmId === entry.sessionId;
+            return (
+              <li key={entry.sessionId} className="flex items-center gap-1 border-b px-1 py-0.5 last:border-b-0">
+                <span className="min-w-0 flex-1 truncate px-1 text-sm" title={entry.sessionTitle}>
+                  {entry.sessionTitle}
+                </span>
+                <span className="flex shrink-0 flex-wrap justify-end gap-0.5">
+                  {entry.orphans.map((tag) => (
+                    <span
+                      key={`${tag.scope}:${tag.name}`}
+                      className="rounded border border-dashed px-1 py-px text-[10px] leading-none text-muted-foreground/50"
+                      data-testid="tag-orphan-name"
+                    >
+                      {tag.name}
+                    </span>
+                  ))}
+                </span>
+                {!confirming ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="size-11 shrink-0 text-destructive hover:text-destructive lg:size-7"
+                    onClick={() => setConfirmId(entry.sessionId)}
+                    aria-label={t("sessionList.tagManage.orphanClean", { title: entry.sessionTitle })}
+                    data-testid="tag-orphan-clean"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="h-11 shrink-0 px-2 text-xs lg:h-7"
+                    disabled={cleanBusyId === entry.sessionId}
+                    onClick={() => void cleanOrphanMounts(entry)}
+                    data-testid="tag-orphan-clean-confirm"
+                  >
+                    {cleanBusyId === entry.sessionId ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {t("sessionList.tagManage.orphanCleanConfirm")}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    );
+  };
+
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-sm" data-testid="tag-manage-dialog">
@@ -314,6 +410,7 @@ export function TagManageDialog({ scope, defs, onChanged, onClose }: TagManageDi
         </DialogHeader>
         <div className="space-y-4">
           {renderGroup()}
+          {renderOrphanCleanup()}
           {error && (
             <p className="text-xs text-destructive" data-testid="tag-manage-error">
               {error}

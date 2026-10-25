@@ -51,7 +51,7 @@ import {
 import { SessionItem, buildForkIndexes } from "./session-item";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagDropdown } from "./tag-dropdown";
-import { TagManageDialog, type TagManageScope } from "./tag-manage-dialog";
+import { TagManageDialog, type TagManageScope, type TagOrphanCleanup } from "./tag-manage-dialog";
 import { definedTagKeys, dedupeTagDefs, mergeTagOptions, tagColorMap, type TagDefs } from "./tag-data";
 
 function basename(path: string): string {
@@ -418,10 +418,12 @@ export function SessionList() {
       // 合并集会把其他项目的定义整替进本项目
       setPerProjectDefs(Object.fromEntries(registered.map((p, i) => [p.projectPath, projectLists[i]])));
     } catch (err) {
-      if (!(err instanceof ApiError && err.status === 401)) {
-        setTagDefs({ global: [], project: [] });
-        setPerProjectDefs({});
-      }
+      // 标签守卫（docs08 2026-10-23/24 批次任务 10）：非 401 失败不再写空定义集——
+      // 空集会把全部挂载误判为孤儿，配合旧“点按即清理”就是静默删库路径。
+      // 保留 null（未就绪）：definedKeys 为 null，孤儿判定整体跳过（TagBadges
+      // 不渲染，管理/打标入口 disabled），等下次签名变更重拉。
+      if (err instanceof ApiError && err.status === 401) return;
+      // 不写任何状态：tagDefs/perProjectDefs 维持加载前值（初始 null）
     }
   }, []);
 
@@ -577,6 +579,26 @@ export function SessionList() {
     }
     return dedupeTagDefs(tagDefs);
   }, [tagDropdown, tagDefs, perProjectDefs]);
+
+  /** 管理弹框孤儿清理清单（任务 10）：定义就绪时按当前 definedKeys 算本 scope 相关的
+   * 孤儿挂载（global 域 = 全部会话 global 挂载；project 域 = 仅该项目会话）；
+   * definedKeys 为 null（未就绪）时返回 null——定义未知不判定孤儿，更不提供删除 */
+  const orphanCleanups = useMemo<TagOrphanCleanup[] | null>(() => {
+    if (!manageScope || !definedKeys) return null;
+    const out: TagOrphanCleanup[] = [];
+    for (const s of flattenSessions(byProject)) {
+      if (typeof manageScope === "object" && s.project !== manageScope.projectPath) continue;
+      const orphans = (s.tags ?? []).filter(
+        (t) =>
+          (typeof manageScope === "object" ? t.scope === "project" : t.scope === "global") &&
+          !definedKeys.has(`${t.scope}\u0000${t.name}`),
+      );
+      if (orphans.length === 0) continue;
+      const keep = (s.tags ?? []).filter((t) => !orphans.some((o) => o.scope === t.scope && o.name === t.name));
+      out.push({ sessionId: s.id, sessionTitle: s.renamedTitle ?? s.title ?? s.id, orphans, keep });
+    }
+    return out;
+  }, [manageScope, definedKeys, byProject]);
 
   /** 批量模式行 props（todo 25：勾选集合提升到本容器） */
   const itemBatchProps = (s: SessionListItem) =>
@@ -1075,6 +1097,7 @@ export function SessionList() {
               ? { global: [], project: perProjectDefs[manageScope.projectPath] ?? [] }
               : { global: tagDefs.global, project: [] }
           }
+          orphanCleanups={orphanCleanups ?? undefined}
           onChanged={() => void reloadTagDefs()}
           onClose={() => setManageScope(null)}
         />

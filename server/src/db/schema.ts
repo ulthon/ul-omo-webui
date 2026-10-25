@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS meta_session_tag (
 
 CREATE INDEX IF NOT EXISTS idx_meta_session_tag_tag
   ON meta_session_tag (tag_scope, tag_name);
+
+CREATE TABLE IF NOT EXISTS meta_tag_mount_audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT NOT NULL,
+  tag_scope   TEXT NOT NULL,
+  tag_name    TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
 `;
 
 export function ensureSchema(db: Database): void {
