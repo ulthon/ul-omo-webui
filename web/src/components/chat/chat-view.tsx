@@ -82,6 +82,13 @@ function isCustomMessageEntry(entry: WireEntry): entry is WireEntry & { id: stri
   return entry.type === "custom_message" && typeof entry.id === "string";
 }
 
+/** custom 历史条目（docs08 2026-10-25 用户反馈）：记忆停驻通知（reflection-parked）
+ *  的承载型。携 id 即过本门（结构窄化在 buildMessageItems 的 reflectionParkedOf，
+ *  未知 customType 仍不入列——渲染层旧口径不变）。 */
+function isCustomEntry(entry: WireEntry): entry is WireEntry & { id: string } {
+  return entry.type === "custom" && typeof entry.id === "string";
+}
+
 /** model_change 时间线条目（docs08 2026-10-22 批次任务 18）：变体名单遍时间线的
  *  数据源——不入列渲染（buildMessageItems 无 message 载荷自然跳过），仅供解析。
  *  实测 jsonl 形态：{"type":"model_change",id,provider,modelId,...}。 */
@@ -255,7 +262,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   const messageEntries = useMemo(
-    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e) || isModelChangeEntry(e)),
+    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e) || isCustomEntry(e) || isModelChangeEntry(e)),
     [entries],
   );
 

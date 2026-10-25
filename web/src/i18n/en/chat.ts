@@ -301,4 +301,11 @@ export const chat = {
     recall: "Recalled memory {source}",
     recallPlain: "Recalled memory",
   },
+  /** Memory parked warning card (docs08 2026-10-25 user feedback, CLI-parity inline) */
+  notice: {
+    memoryReflectionPausedTitle: "Memory auto-reflection paused · {n} consecutive failures",
+    memoryReflectionPausedWhy: "Recommendation: {path}",
+    memoryReflectionPausedProbe: "Next automatic probe at {time}",
+    memoryReflectionPausedRetry: "Run /reflect to retry now",
+  },
 } as const;

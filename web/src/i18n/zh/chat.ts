@@ -301,4 +301,11 @@ export const chat = {
     recall: "召回记忆 {source}",
     recallPlain: "召回记忆",
   },
+  /** 记忆停驻警示卡（docs08 2026-10-25 用户反馈，CLI 内联同构） */
+  notice: {
+    memoryReflectionPausedTitle: "记忆自动整理已暂停 · 连续 {n} 次失败",
+    memoryReflectionPausedWhy: "建议：{path}",
+    memoryReflectionPausedProbe: "下次自动探针 {time}",
+    memoryReflectionPausedRetry: "可运行 /reflect 立即重试",
+  },
 } as const;

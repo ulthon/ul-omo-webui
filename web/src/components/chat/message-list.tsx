@@ -5,13 +5,13 @@
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CirclePause, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, shouldShowStickyUser, stickyUserOf, type ChatListItem, type CompactionMarker } from "./message-items";
+import { mergeMemoryItems, shouldShowStickyUser, stickyUserOf, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
 import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
@@ -125,6 +125,34 @@ export const AcceptedTurnsClusterBlock = memo(function AcceptedTurnsClusterBlock
   );
 });
 
+/** 记忆停驻警示卡（docs08 2026-10-25 用户反馈）：CLI 内联同构——amber 警示色、
+ * 图标 + 标题（连续失败次数）+ 建议行（检查路径 / 下次探针时刻 / /reflect 重试）。
+ * 时间缺失仅少一行；retryable=false 时不提 /reflect。 */
+const NoticeCardBlock = memo(function NoticeCardBlock({ notice }: { notice: ReflectionParkedNotice }) {
+  const t = useT();
+  const time = notice.nextProbeAtMs !== null ? new Date(notice.nextProbeAtMs).toLocaleTimeString() : null;
+  return (
+    <div
+      data-testid="notice-card"
+      className="my-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+    >
+      <div className="flex items-center gap-2 font-medium">
+        <CirclePause className="size-4 shrink-0" aria-hidden />
+        <span>{t("chat.notice.memoryReflectionPausedTitle", { n: notice.streak })}</span>
+      </div>
+      <div className="mt-1 space-y-0.5 pl-6 text-xs opacity-90">
+        {notice.recommendation !== "" && (
+          <div className="break-all">{t("chat.notice.memoryReflectionPausedWhy", { path: notice.recommendation })}</div>
+        )}
+        {time !== null && (
+          <div>{t("chat.notice.memoryReflectionPausedProbe", { time })}</div>
+        )}
+        {notice.retryable && <div>{t("chat.notice.memoryReflectionPausedRetry")}</div>}
+      </div>
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
@@ -133,6 +161,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
     return <LoopGuardGroupBubble sessionId={sessionId} loopGuardKind={item.loopGuardKind} entryIds={item.entryIds} />;
   if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;
   if (item.kind === "memoryMarkerCluster") return <AcceptedTurnsClusterBlock markers={item.markers} />;
+  if (item.kind === "noticeCard") return <NoticeCardBlock notice={item.notice} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 

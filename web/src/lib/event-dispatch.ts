@@ -407,8 +407,12 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     } else if (method === "notify") {
       // fire-and-forget 型决策（计划 249）：notify 做轻提示不应答；setStatus/setWidget/setTitle
       // 纯引擎/扩展内部状态，忽略不渲染（决策记录见 learnings todo 18）。
+      // warning 级入列不弹（docs08 2026-10-25 用户反馈，CLI 同构）：warning 级通知的
+      // 承载面是消息列表警示卡（如 senpi-memory.reflection-parked 条目），弹框会重复
+      // 打扰且错过即丢；无 tone 或 info 维持底部轻提示。
       const message = typeof wire.message === "string" ? wire.message : "";
-      if (message) useUiStore.getState().showToast(message, "info");
+      const tone = (wire as { tone?: unknown }).tone;
+      if (message && tone !== "warning") useUiStore.getState().showToast(message, "info");
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点

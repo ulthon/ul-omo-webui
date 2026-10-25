@@ -183,6 +183,41 @@ export function resolveTimelineModels(
  *  compactionMarker=压缩摘要标记块（docs08-r6 任务 18 ③，顶层 type:"compaction" 条目派生）；
  *  memoryMarkerCluster=相邻同簇 acceptedTurns 聚合组（docs08 2026-10-23/24 批次任务 14，
  *  「本轮已计入记忆 ×N」可展开，同 loopGuardGroup 连排语义） */
+/** 记忆自动整理停驻通知（docs08 2026-10-25 用户反馈）：引擎 custom 条目
+ * senpi-memory.reflection-parked（omo-memory 扩展 appendEntry 实测形态，2026-10-24
+ * 真实样本）：type:"custom" + data{schemaVersion,streak,parkedAt,nextProbeAt,retryable,
+ * lastReason,recommendation}。CLI 将其内联渲染为消息列表警示卡；web 侧同构——
+ * 字段严格窄化（task-3 禁猜纪律），任一关键字段不合法印 null 不入列（维持旧口径）。 */
+export interface ReflectionParkedNotice {
+  entryId: string;
+  streak: number;
+  nextProbeAtMs: number | null;
+  retryable: boolean;
+  recommendation: string;
+}
+
+/** parked 条目窄化：仅接受 streak 正整数；nextProbeAt 合法 ISO 才转 ms，否则 null
+ * （时间缺失不阻断卡片，仅少一行）；recommendation 非字符串时回落空串。 */
+export function reflectionParkedOf(entry: WireEntry & { id: string }): ReflectionParkedNotice | null {
+  if (entry.type !== "custom" || entry.customType !== "senpi-memory.reflection-parked") return null;
+  const data = entry.data;
+  if (data === null || typeof data !== "object") return null;
+  const streak = (data as { streak?: unknown }).streak;
+  if (typeof streak !== "number" || !Number.isFinite(streak) || streak < 1) return null;
+  const rawNext = (data as { nextProbeAt?: unknown }).nextProbeAt;
+  const nextProbeAtMs =
+    typeof rawNext === "string" && rawNext !== "" ? Date.parse(rawNext) : NaN;
+  const retryable = (data as { retryable?: unknown }).retryable === true;
+  const recommendation = (data as { recommendation?: unknown }).recommendation;
+  return {
+    entryId: entry.id,
+    streak,
+    nextProbeAtMs: Number.isFinite(nextProbeAtMs) ? nextProbeAtMs : null,
+    retryable,
+    recommendation: typeof recommendation === "string" ? recommendation : "",
+  };
+}
+
 export type ChatListItem =
   | {
       key: string;
@@ -198,7 +233,8 @@ export type ChatListItem =
   | { key: string; kind: "customMessage"; entryId: string }
   | { key: string; kind: "loopGuardGroup"; loopGuardKind: LoopGuardKind; entryIds: string[] }
   | { key: string; kind: "compactionMarker"; marker: CompactionMarker }
-  | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] };
+  | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] }
+  | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice };
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
 function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
@@ -273,6 +309,14 @@ export function buildMessageItems(
       : null;
   const list: ChatListItem[] = [];
   for (const e of entries) {
+    // custom 型条目（非 custom_message）：仅记忆停驻通知有已知结构（docs08 2026-10-25），
+    // 窄化命中入列为警示卡；其余 custom 条目维持不入列旧口径（未来按 customType 逐个注册，
+    // 不猜测未知结构）。
+    if (e.type === "custom") {
+      const parked = reflectionParkedOf(e);
+      if (parked !== null) list.push({ key: `notice-${e.id}`, kind: "noticeCard", notice: parked });
+      continue;
+    }
     // custom_message 分支（docs08-r6 任务 10 ③）：仅 display=true 入列渲染占位行
     // （task-3 枚举：18 种 customType 均无实物结构样本，禁猜字段，组件层只读 customType）；
     // display=false 引擎明示不展示，一律跳过——这类条目（库内 998 条）不得产生零内容
