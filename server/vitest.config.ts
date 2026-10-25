@@ -7,5 +7,8 @@ export default defineConfig({
     environment: "node",
     testTimeout: 20000,
     hookTimeout: 20000,
+    // 就绪试写门禁（docs08 任务 7）：存量套件一律以「门禁关」运行，行为与 main
+    // 完全一致；门禁自身的开/关语义由 process-manager.test.ts 显式驱动
+    setupFiles: ["test/setup.ts"],
   },
 });

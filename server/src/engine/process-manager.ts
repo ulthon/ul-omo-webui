@@ -34,7 +34,7 @@
 
 import { RpcClient } from "@code-yeongyu/senpi"
 import { createRequire } from "node:module"
-import { existsSync, realpathSync } from "node:fs"
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { isCompiledBinary, releaseRoot, selfDir } from "../runtime-paths"
@@ -105,6 +105,12 @@ export interface EngineManagerOptions {
   now?: () => number
   /** 进程探针（测试注入；默认 Linux /proc）。 */
   probe?: ProcProbe
+  /** 就绪试写门禁开关（docs08-2026-10-23-24-batch 任务 7）：on=握手后试写探针
+   * 会话落盘通过才标 ready；off=现行为（t5 健康检查通过即 ready）。缺省按环境
+   * 变量 SENPI_ENGINE_PROBE_GATE 解析（默认开，见 parseProbeGateEnv）。 */
+  probeGate?: boolean
+  /** 试写探针的有界等待上限（默认 5s：open_session 响应 + 探针文件落盘合计）。 */
+  probeWriteTimeoutMs?: number
 }
 
 export interface EngineStatusSnapshot {
@@ -146,6 +152,7 @@ const DEFAULTS = {
   healthPingTimeoutMs: 3000,
   stopGraceMs: 3000,
   crashPollMs: 1000,
+  probeWriteTimeoutMs: 5000,
 } as const
 
 interface ProjectEngine {
@@ -267,12 +274,39 @@ export function isRegistrableProjectPath(projectPath: string): boolean {
   return resolve(projectPath) !== "/"
 }
 
+/** cwd -> 会话库目录编码（与 adapter encodeCwdToSessionDirName 同算法：去前导 /，
+ * / 换 -，包 --...--；engine 层不反向依赖 api/adapter，就地复制）。 */
+function encodeProbeSessionDirName(cwd: string): string {
+  return `--${cwd.replace(/^\//, "").replaceAll("/", "-")}--`
+}
+
+/** 就绪门禁环境变量解析（任务 7）：
+ * - "0"/"false"/"off" → 关（一键逃生口）；
+ * - "1"/"true"/"on" → 开；
+ * - 未设置/空 → 默认开（计划书任务 7：开关默认开启但必须可一键关闭）；
+ * - 其它值 → 按默认开处理并告警（每个不同非法值只告警一次，防日志刷屏）。 */
+const probeGateWarnedValues = new Set<string>()
+export function parseProbeGateEnv(value: string | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase()
+  if (v === "" ) return true
+  if (["0", "false", "off"].includes(v)) return false
+  if (["1", "true", "on"].includes(v)) return true
+  if (!probeGateWarnedValues.has(v)) {
+    probeGateWarnedValues.add(v)
+    console.warn(
+      `[process-manager] SENPI_ENGINE_PROBE_GATE 非法值 ${JSON.stringify(value)}，按默认（开）处理；合法值：1/true/on 开，0/false/off 关`,
+    )
+  }
+  return true
+}
+
 const DEFAULT_FACTORY: EngineClientFactory = (opts) => new RpcClient(opts)
 
 export class EngineProcessManager {
-  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "healthPingTimeoutMs" | "stopGraceMs">> & EngineManagerOptions
+  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "healthPingTimeoutMs" | "stopGraceMs" | "probeWriteTimeoutMs">> & EngineManagerOptions
   private readonly registry: PidRegistry
   private readonly probe: ProcProbe
+  private readonly probeGateEnabled: boolean
   private readonly engines = new Map<string, ProjectEngine>()
   private readonly listeners = new Set<(e: EngineManagerEvent) => void>()
   private warmupHook: WarmupHook | null = null
@@ -287,9 +321,11 @@ export class EngineProcessManager {
       readyProbeMaxAttempts: options.readyProbeMaxAttempts ?? DEFAULTS.readyProbeMaxAttempts,
       healthPingTimeoutMs: options.healthPingTimeoutMs ?? DEFAULTS.healthPingTimeoutMs,
       stopGraceMs: options.stopGraceMs ?? DEFAULTS.stopGraceMs,
+      probeWriteTimeoutMs: options.probeWriteTimeoutMs ?? DEFAULTS.probeWriteTimeoutMs,
       ...options,
     }
     this.probe = options.probe ?? linuxProcProbe
+    this.probeGateEnabled = options.probeGate ?? parseProbeGateEnv(process.env.SENPI_ENGINE_PROBE_GATE)
     // 缺省锚点：源码态 server/data；编译态发行包 data/（组合根恒显式传入，此处兜底）
     const defaultRegistryPath = isCompiledBinary()
       ? join(releaseRoot(), "data", "engine-processes.json")
@@ -494,6 +530,26 @@ export class EngineProcessManager {
           `健康检查失败：get_protocol_info 轮询 ${this.opts.readyProbeMaxAttempts} 次未就绪${engine.pid ? `，stderr: ${client.getStderr().slice(-200)}` : ""}`,
         )
       }
+      // 就绪试写门禁（docs08-2026-10-23-24-batch 任务 7，顺序邁守计划书约定：
+      // 健康检查→落盘回传→cwd 校验→试写门禁最后上）：握手通过后、标 ready/承接
+      // 流量前，用一次性探针会话验证引擎写路径真实落盘（t1 根因：引擎口头认领
+      // 不写盘）。失败/超时/畸形响应不标 ready，按 t5 崩溃语义重拉并回传结构化
+      // 错误（lastError 携带 probe_gate_failed 码，与 t6 session_not_persisted 同族
+      // 机器可读约定）。开关 probeGate 可一键关闭（默认开，env SENPI_ENGINE_PROBE_GATE）。
+      if (this.probeGateEnabled) {
+        const probeOk = await this.runProbeWriteGate(engine, client)
+        if (!probeOk) {
+          this.emit({
+            type: "process_crashed",
+            projectPath: engine.projectPath,
+            pid: engine.pid,
+            consecutiveRestarts: engine.consecutiveRestarts + 1,
+          })
+          throw new Error(
+            `[probe_gate_failed] 就绪门禁：试写探针未通过（open_session 未落盘/响应畸形/超时，projectPath=${JSON.stringify(engine.projectPath)}）`,
+          )
+        }
+      }
       engine.startedAt = this.now()
       engine.lastActivityAt = this.now()
       engine.consecutiveRestarts = 0
@@ -507,6 +563,84 @@ export class EngineProcessManager {
       await this.discardClient(engine)
       this.scheduleRestart(engine)
     }
+  }
+
+  /** 就绪试写门禁（任务 7）：一次性探针会话验证写路径落盘。设计要点：
+   * - 探针 id 前缀 `__probe__`（可识别、用后即焚）：引擎侧 close_session + 本地
+   *   探针文件删除，不污染用户会话列表/别名表/claims（全部在 process-manager
+   *   层内闭环，不经过 EngineRuntimeRegistry）；
+   * - 响应严格校验：success=true 且 data.state.sessionId/sessionFile 为字符串且
+   *   sessionFile 必须就是本探针路径（引擎认领到其它路径视为畸形，不放行）；
+   * - 有界等待：open_session 与文件落盘均受 probeWriteTimeoutMs 上限（时钟
+   *   可注入 now，等待步进走 probe.sleep 可注入）；
+   * - 任何异常/超时/畸形 → false（门禁失败），无挂死风险。 */
+  private async runProbeWriteGate(engine: ProjectEngine, client: EngineClientLike): Promise<boolean> {
+    const probeId = `__probe__${this.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const probeDir = join(this.agentDir, "sessions", encodeProbeSessionDirName(engine.projectPath))
+    const probePath = join(probeDir, `${probeId}.jsonl`)
+    const send = (client as unknown as { send?: (m: unknown) => Promise<unknown> }).send
+    if (typeof send !== "function") return false
+    try {
+      mkdirSync(probeDir, { recursive: true })
+      const res = await this.bounded(
+        send.call(client, {
+          type: "open_session",
+          sessionPath: probePath,
+          ...(this.opts.defaultProvider && this.opts.defaultModel
+            ? { provider: this.opts.defaultProvider, modelId: this.opts.defaultModel }
+            : {}),
+        }),
+      )
+      // 响应严格校验（malformed-input 类：垃圾/HTML/非 JSON 形态在此一律失败）
+      const env = res as { success?: unknown; data?: { sessionId?: unknown; state?: unknown } | null } | null | undefined
+      if (!env || env.success !== true || typeof env.data !== "object" || env.data === null) return false
+      const state = env.data.state
+      if (typeof state !== "object" || state === null) return false
+      const claimedId = (state as { sessionId?: unknown }).sessionId
+      const claimedPath = (state as { sessionFile?: unknown }).sessionFile
+      if (typeof claimedId !== "string" || claimedId === "") return false
+      // 认领路径必须是本探针路径（防误导性成功：引擎拿其它会话文件充数）
+      if (typeof claimedPath !== "string" || resolve(claimedPath) !== resolve(probePath)) return false
+      // 有界等待探针文件落盘（t6 同族判定：磁盘为准，不以口头认领为准）
+      const deadline = this.now() + this.opts.probeWriteTimeoutMs
+      while (!existsSync(probePath) && this.now() < deadline) {
+        await this.probe.sleep(25)
+      }
+      return existsSync(probePath)
+    } catch {
+      return false
+    } finally {
+      // 即焚：引擎侧关会话 + 本地探针文件删除（成功失败两向都清，防残留）
+      try {
+        await this.bounded(send.call(client, { type: "close_session", sessionId: undefined }))
+      } catch {
+        // 关不掉不阻塞门禁结论（进程即将被丢弃/或已 ready 由后续清理兜底）
+      }
+      try {
+        rmSync(probePath, { force: true })
+      } catch {
+        // 尽力清理
+      }
+    }
+  }
+
+  /** 有界等待一个 promise：超时臂走 probe.sleep（测试可注入），超时 reject。 */
+  private bounded<T>(p: Promise<T>): Promise<T> {
+    return new Promise<T>((resolveP, rejectP) => {
+      let settled = false
+      const settle = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        fn()
+      }
+      void this.probe.sleep(this.opts.probeWriteTimeoutMs ?? DEFAULTS.probeWriteTimeoutMs).then(() =>
+        settle(() => rejectP(new Error(`probe 超时（${this.opts.probeWriteTimeoutMs ?? DEFAULTS.probeWriteTimeoutMs}ms）`))),
+      )
+      void p.then(
+        (v: T) => settle(() => resolveP(v)),
+        (e: unknown) => settle(() => rejectP(e instanceof Error ? e : new Error(String(e)))),
+      )
+    })
   }
 
   /** 有界健康 ping：协议层复用 protocolPing（get_protocol_info），超时臂走

@@ -8,7 +8,9 @@ import { describe, expect, test, vi } from "vitest"
 
 // 负载下 fork pool 启动风暴会冻结 worker 数秒：等待上界 12s，用例超时 30s（上界远小于 runner 超时）
 vi.setConfig({ testTimeout: 30_000 })
-import { rmSync } from "node:fs"
+import { rmSync, mkdtempSync, readdirSync, existsSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { EngineProcessManager, resolveEnginePaths, type EngineManagerEvent } from "../src/engine/process-manager"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { FakeRpcClient, MemProbe } from "./mocks"
@@ -768,3 +770,188 @@ describe("注册表 projectPath 校验（docs08-2026-10-23-24-batch 任务 6）"
 function joinCheck(...parts: string[]): string {
   return parts.join("/")
 }
+
+describe("就绪试写门禁（docs08-2026-10-23-24-batch 任务 7）", () => {
+  function makeGateHarness(opts: {
+    probeGate?: boolean
+    fakeSetup?: (fake: FakeRpcClient, n: number) => void
+    maxConsecutiveFailures?: number
+    probeWriteTimeoutMs?: number
+  } = {}): {
+    m: EngineProcessManager
+    fakes: FakeRpcClient[]
+    probe: MemProbe
+    events: EngineManagerEvent[]
+    agentRoot: string
+    registryPath: string
+  } {
+    const fakes: FakeRpcClient[] = []
+    const probe = new MemProbe()
+    const agentRoot = mkdtempSync(join(tmpdir(), "gate-agent-"))
+    const registryPath = `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`
+    const events: EngineManagerEvent[] = []
+    const m = new EngineProcessManager({
+      registryPath,
+      agentDir: agentRoot,
+      probeGate: opts.probeGate,
+      backoffBaseMs: 20,
+      backoffMaxMs: 100,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      maxConsecutiveFailures: opts.maxConsecutiveFailures ?? 99,
+      probeWriteTimeoutMs: opts.probeWriteTimeoutMs ?? 2000,
+      stopGraceMs: 60,
+      crashPollMs: 20,
+      probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        opts.fakeSetup?.(fake, fakes.length)
+        fakes.push(fake)
+        return wireProbe(fake, probe)
+      },
+    })
+    m.onEvent((e) => events.push(e))
+    return { m, fakes, probe, events, agentRoot, registryPath }
+  }
+
+  async function cleanupGate(h: ReturnType<typeof makeGateHarness>) {
+    await h.m.stopAll().catch(() => {})
+    rmSync(h.registryPath, { force: true })
+    rmSync(h.agentRoot, { recursive: true, force: true })
+  }
+
+  test("(a) 门禁开 + 探针成功 → ready，单次 spawn，探针即焚无残留", async () => {
+    const h = makeGateHarness({ probeGate: true })
+    try {
+      const snap = await h.m.ensureRunning(PROJ)
+      expect(snap.state).toBe("ready")
+      expect(h.fakes.length).toBe(1)
+      expect(h.fakes[0].probeOpened.length).toBe(1)
+      expect(h.fakes[0].probeOpened[0]).toContain("__probe__")
+      // 即焚：引擎侧探针会话已关，本地探针文件已删，sessions 目录零残留
+      expect(h.fakes[0].probeSessionsOpen).toEqual([])
+      expect(h.fakes[0].probeCloseCalls).toBe(1)
+      const sessionsDir = join(h.agentRoot, "sessions")
+      const residue = existsSync(sessionsDir) ? readdirSync(sessionsDir).flatMap((d) => readdirSync(join(sessionsDir, d))) : []
+      expect(residue).toEqual([])
+      // 不污染注册表：只登 eid 引擎 pid
+      const { PidRegistry } = await import("../src/engine/pid-registry")
+      const rows = new PidRegistry(h.registryPath).load()
+      expect(rows.map((r) => r.pid)).toEqual([h.fakes[0].pid])
+      expect(rows.every((r) => !r.projectPath.includes("probe"))).toBe(true)
+      expect(h.events.some((e) => e.type === "process_crashed")).toBe(false)
+    } finally {
+      await cleanupGate(h)
+    }
+  })
+
+  test("(b) 门禁开 + 认领不落盘（t1 病态）→ 不 ready，崩溃重拉语义 + 结构化错误 + 无残留", async () => {
+    let spawnCount = 0
+    const h = makeGateHarness({
+      probeGate: true,
+      fakeSetup: (fake, n) => {
+        if (n === 0) fake.probeClaimOnly = true // 首个引擎：口头认领不写盘
+      },
+    })
+    try {
+      const snap = await h.m.ensureRunning(PROJ)
+      expect(snap.state).not.toBe("ready") // 不标 ready
+      expect(snap.state).toBe("backoff") // 崩溃重拉语义：退避已调度
+      expect(snap.lastError).toContain("probe_gate_failed") // 结构化码（t6 同族约定）
+      expect(snap.lastError).toContain("就绪门禁")
+      expect(h.events.some((e) => e.type === "process_crashed" && e.pid === h.fakes[0].pid)).toBe(true)
+      // 调用方拿不到 ready 引擎（ getClient 未开放）
+      expect(h.m.getClient(PROJ)).toBeUndefined()
+      // 重拉：第二个（健康）引擎通过门禁后 ready
+      await waitFor(() => h.fakes.length === 2 && h.m.getStatus(PROJ)?.state === "ready")
+      expect(h.m.getStatus(PROJ)?.pid).toBe(h.fakes[1].pid)
+      // 失败向也无残留：首引擎探针即焚（认领不落盘本无文件，引擎侧会话已关）
+      expect(h.fakes[0].probeSessionsOpen).toEqual([])
+      const sessionsDir = join(h.agentRoot, "sessions")
+      const residue = existsSync(sessionsDir) ? readdirSync(sessionsDir).flatMap((d) => readdirSync(join(sessionsDir, d))) : []
+      expect(residue).toEqual([])
+      void spawnCount
+    } finally {
+      await cleanupGate(h)
+    }
+  })
+
+  test.each([
+    ["垃圾响应", (f: FakeRpcClient): void => { f.probeOpenGarbage = true }],
+    ["open 挂死（超时有界）", (f: FakeRpcClient): void => { f.probeOpenHang = true }],
+    ["认领其它路径（误导性成功）", (f: FakeRpcClient): void => { f.probeClaimOtherPath = true }],
+  ] as const)("(b 变体) 门禁开 + %s → 不 ready + probe_gate_failed", async (label: string, setup: (f: FakeRpcClient) => void) => {
+    const h = makeGateHarness({
+      probeGate: true,
+      probeWriteTimeoutMs: 300, // 挂死臂有界
+      fakeSetup: (fake, n) => {
+        if (n === 0) setup(fake)
+      },
+    })
+    try {
+      const snap = await h.m.ensureRunning(PROJ)
+      expect(snap.state).not.toBe("ready")
+      expect(snap.lastError).toContain("probe_gate_failed")
+      void label
+    } finally {
+      await cleanupGate(h)
+    }
+  })
+
+  test("(c) 门禁关 → 旁路：认领不落盘的引擎照常 ready，探针零发出（与 main 行为一致）", async () => {
+    const h = makeGateHarness({
+      probeGate: false,
+      fakeSetup: (fake) => {
+        fake.probeClaimOnly = true // 若门禁误开，此引擎必被拦
+      },
+    })
+    try {
+      const snap = await h.m.ensureRunning(PROJ)
+      expect(snap.state).toBe("ready")
+      expect(h.fakes.length).toBe(1)
+      expect(h.fakes[0].probeOpened).toEqual([]) // 未发过探针
+      expect(h.events.some((e) => e.type === "process_crashed")).toBe(false)
+    } finally {
+      await cleanupGate(h)
+    }
+  })
+
+  test("(d) 开关环境变量解析：合法值、非法值告警一次、默认开", async () => {
+    const { parseProbeGateEnv } = await import("../src/engine/process-manager")
+    expect(parseProbeGateEnv(undefined)).toBe(true) // 默认开（计划书任务 7）
+    expect(parseProbeGateEnv("")).toBe(true)
+    expect(parseProbeGateEnv("1")).toBe(true)
+    expect(parseProbeGateEnv("true")).toBe(true)
+    expect(parseProbeGateEnv("ON")).toBe(true)
+    expect(parseProbeGateEnv("0")).toBe(false)
+    expect(parseProbeGateEnv("false")).toBe(false)
+    expect(parseProbeGateEnv("Off")).toBe(false)
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      expect(parseProbeGateEnv("banana")).toBe(true) // 非法 → 默认开
+      expect(parseProbeGateEnv("banana")).toBe(true)
+      expect(parseProbeGateEnv("42")).toBe(true)
+      const warns = warnSpy.mock.calls.map((args) => String(args[0]))
+      expect(warns.filter((w) => w.includes("SENPI_ENGINE_PROBE_GATE"))).toHaveLength(2) // 每个不同非法值只告警一次
+      expect(warns[0]).toContain("banana")
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  test("(d 续) 构造缺省走环境变量：SENPI_ENGINE_PROBE_GATE=0 → 门禁关旁路生效", async () => {
+    const h = makeGateHarness({
+      fakeSetup: (fake) => {
+        fake.probeClaimOnly = true
+      },
+    })
+    try {
+      // setup.ts 已把 env 设为 "0"：未显式传 probeGate 的构造走 env 解析
+      const snap = await h.m.ensureRunning(PROJ)
+      expect(snap.state).toBe("ready")
+      expect(h.fakes[0].probeOpened).toEqual([])
+    } finally {
+      await cleanupGate(h)
+    }
+  })
+})
