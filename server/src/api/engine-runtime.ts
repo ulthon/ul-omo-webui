@@ -281,6 +281,7 @@ function readModelsStore(agentDir: string): EngineModelInfo[] {
         if (!info.id) continue;
         if (typeof model.contextWindow === "number") info.contextWindow = model.contextWindow;
         if (typeof model.reasoning === "boolean") info.reasoning = model.reasoning;
+        if ((model as { supportsImages?: unknown }).supportsImages === true) info.supportsImages = true;
         if (model.thinkingLevelMap && typeof model.thinkingLevelMap === "object") {
           info.supportedThinkingLevels = Object.keys(model.thinkingLevelMap);
         }
@@ -317,6 +318,7 @@ function readCustomModels(agentDir: string): EngineModelInfo[] {
         if (!info.id) continue;
         if (typeof m.contextWindow === "number") info.contextWindow = m.contextWindow;
         if (typeof m.reasoning === "boolean") info.reasoning = m.reasoning;
+        if ((m as { supportsImages?: unknown }).supportsImages === true) info.supportsImages = true;
         if (typeof m.upstreamModelId === "string" && m.upstreamModelId !== "") {
           // 变体上游映射（docs08 2026-10-22 批次任务 18）：glm-5.3-4k → glm-5.3。
           // 仅非空字符串收下，非法形态一律视同缺失（非变体）。

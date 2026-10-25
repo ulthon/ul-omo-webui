@@ -26,6 +26,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   fork_cancelled: "errors.forkCancelled",
   fork_failed: "errors.forkFailed",
   git_error: "errors.gitError",
+  image_attachment_failed: "errors.imageAttachmentFailed",
   invalid_archived: "errors.invalidArchived",
   extension_not_found: "errors.extensionNotFound",
   invalid_content: "errors.invalidContent",

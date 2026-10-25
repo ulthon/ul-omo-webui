@@ -52,6 +52,7 @@ export const errors = {
   attachmentExpired: "Attachment expired (48h cleanup); upload it again",
   attachmentNotFound: "Attachment not found (it may have been cleaned up)",
   attachmentTooLarge: "Attachment exceeds the 10MB limit",
+  imageAttachmentFailed: "Failed to save image as attachment; retry or describe it in text",
   memoryEscape: "Memory path escape rejected",
   contentTooLarge: "Content too large",
   notFound: "Path not found",

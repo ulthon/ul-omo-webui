@@ -62,8 +62,18 @@ export function generatedBinaryAttachmentName(): string {
   return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.bin`;
 }
 
+/** 历史引用图片边车/分流文件名前缀（img-<hash>.<ext>）：被会话历史长期引用，
+ *  按龄清扫跳过（仅清 paste-/upload- 等临时上传），保证历史会话图片可持续按需取。 */
+export const HISTORY_IMAGE_PREFIX = "img-";
+
+/** 历史引用图片严格内容寻址形态（img-<16 hex>.<白名单扩展>）：仅此形态豁免清扫。
+ * 防上传通道仿冒（验证审查发现）：validateAttachmentName 只拒路径分隔符与 ..，
+ * 用户可 POST name=img-evil.txt 白拿豁免无限留存；严格正则下仿冒名超龄照清。 */
+export const HISTORY_IMAGE_NAME = /^img-[0-9a-f]{16}\.(png|jpg|jpeg|gif|webp|svg|bmp|bin)$/
+
 /**
  * 启动清理：扫 root 下各项目哈希子目录内 mtime 超龄的文件删除（子目录保留）。
+ * img-* 历史引用图片跳过（任务 19：被历史条目长期引用，不随 48h 清理变死链）。
  * 单文件失败（竞态删除/权限）跳过不阻塞启动；root 不存在 = 从未有附件，返回 0。
  */
 export function purgeStaleAttachments(root: string, maxAgeMs = ATTACHMENT_MAX_AGE_MS, now = Date.now()): number {
@@ -86,6 +96,7 @@ export function purgeStaleAttachments(root: string, maxAgeMs = ATTACHMENT_MAX_AG
       try {
         const stat = statSync(file);
         if (!stat.isFile()) continue;
+        if (HISTORY_IMAGE_NAME.test(name)) continue;
         if (now - stat.mtimeMs > maxAgeMs) {
           unlinkSync(file);
           removed++;

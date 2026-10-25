@@ -21,6 +21,8 @@ import type { SessionMeta, SessionTagRef } from "../db/meta";
 import { resolveTitleLanguage, type TitleGenService } from "../title-gen";
 import { readProjectPreferences } from "./config-migration";
 import type { ApiDeps } from "./deps";
+import { agentDir } from "../config";
+import { convertImagesToAttachments, modelSupportsImages, referenceizeEntries } from "./image-routing";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { sessionBackgroundRunning } from "./background-tasks";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
@@ -378,9 +380,21 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
         }
       }
       if (DEBUG_PERF) logPerfHttp(200, performance.now() - t0, page.entries.length);
+      // 历史引用化（任务 19）：条目下发前把 user image part 的 base64 换成附件引用
+      // （边车 img-* 内容寻址落盘，客户端按需取）。会话项目解析失败/网关无该面 →
+      // 原样下发（legacy base64 兼容，渲染不破）。
+      let deliveryEntries = page.entries;
+      try {
+        const row = await (deps.engines as { resolveSessionRow?: (id: string) => Promise<EngineSessionSummary | null> }).resolveSessionRow?.(id);
+        if (row) {
+          deliveryEntries = referenceizeEntries(page.entries, deps.attachmentsRoot ?? attachmentsRoot(), row.cwd);
+        }
+      } catch {
+        // 引用化是优化非正确性面：任何失败退回 base64 原样下发
+      }
       return c.json({
         sessionId: id,
-        entries: page.entries,
+        entries: deliveryEntries,
         leafId: page.leafId,
         cursor: page.cursor,
         hasMore,
@@ -409,12 +423,24 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       splitModelId(body.model);
       model = body.model;
     }
+    // 图片按模型能力分流（docs08 2026-10-23/24 批次任务 19）：携带图片且当前模型
+    // 不支持读图（能力源不可读/条目缺失/非显式 true 一律保守视为不支持）→ base64
+    // 落附件临时区 + prompt 拼路径行（B10 铁律），images 置空不再内联。逐次发送重新
+    // 判定（能力变更不回改已发条目）；写盘失败 500 image_attachment_failed 绝不静默内联。
+    let text = body.text;
+    let routedImages = images;
+    if (images.length > 0 && !modelSupportsImages(deps.modelsPath ?? join(agentDir(), "models.json"), model)) {
+      const project = await requireSessionProject(deps, id);
+      const lines = convertImagesToAttachments(deps.attachmentsRoot ?? attachmentsRoot(), project, images);
+      text = `${body.text}\n${lines.join("\n")}`;
+      routedImages = [];
+    }
     const degradations: string[] = [];
     if (typeof body.agent === "string" && body.agent) {
       // 引擎无 agent 选择协议面（docs/verification/05 P1-5）；显式降级不静默丢弃
       degradations.push("agent: 引擎无 agent 选择协议面，参数未生效（capabilities.agentsList=false）");
     }
-    const receipt = await deps.engines.prompt(id, { text: body.text, images, model, thinkingLevel, streamingBehavior });
+    const receipt = await deps.engines.prompt(id, { text, images: routedImages, model, thinkingLevel, streamingBehavior });
     return c.json({
       sessionId: id,
       disposition: receipt.disposition,

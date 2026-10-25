@@ -189,7 +189,7 @@ function MessageContent({
       <div className="space-y-2">
         {text ? <CollapsibleUserText text={text} entryId={entryId} /> : null}
         {images.map((p, i) => (
-          <ImagePart key={i} part={p} />
+          <ImagePart key={i} part={p} sessionId={sessionId} />
         ))}
       </div>
     );

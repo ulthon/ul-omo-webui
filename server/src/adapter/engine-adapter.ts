@@ -159,6 +159,9 @@ export interface EngineModelInfo {
    *  upstreamModelId（如 glm-5.3-4k → glm-5.3）。目录行与协议面行不携带，server 侧
    *  按 provider/id 从自定义模型合并补齐；缺席 = 非变体（裸基础模型），消费侧判空。 */
   upstreamId?: string
+  /** 是否支持读图（docs08 2026-10-23/24 批次任务 19）：models.json 自定义条目的
+   *  supportsImages === true 才内联；缺席 = 不确定（消费侧保守回退附件）。 */
+  supportsImages?: boolean
 }
 
 /**

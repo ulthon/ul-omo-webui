@@ -649,6 +649,33 @@ export const api = {
       body: file,
     });
   },
+  /** 按需取引用图片字节（docs08 2026-10-23/24 批次任务 19 历史引用化）：GET 附件服务
+   *  → Blob（objectURL 渲染）。410（清理/缺失）抛 ApiError("attachment_expired"）。 */
+  async fetchAttachmentBlob(sessionId: string, path: string): Promise<Blob> {
+    const url = `/api/sessions/${encodeURIComponent(sessionId)}/attachments?path=${encodeURIComponent(path)}`;
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
+    }
+    if (res.status === 401) {
+      redirectToLogin();
+      throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
+    }
+    if (!res.ok) {
+      let code = "unknown";
+      try {
+        const body = (await res.json()) as { error?: { code?: string; message?: string } };
+        code = body.error?.code ?? code;
+        throw new ApiError(res.status, code, body.error?.message ?? `HTTP ${res.status}`);
+      } catch (err) {
+        if (err instanceof ApiError) throw err;
+        throw new ApiError(res.status, code, `HTTP ${res.status}`);
+      }
+    }
+    return res.blob();
+  },
 
   // ---- models ----
   async listModels(project?: string): Promise<ModelsResponse> {

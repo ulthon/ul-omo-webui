@@ -223,6 +223,7 @@ export const chat = {
     imageAlt: "消息图片",
     viewLarge: "查看大图",
     refUnavailable: "工具产出图片暂不可查看",
+    refExpired: "图片附件已过期或不可用",
   },
   // message-actions.tsx 消息操作菜单
   messageActions: {

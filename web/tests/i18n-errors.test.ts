@@ -23,7 +23,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // models_unreadable/models_write_failed/provider_not_compatible/provider_not_found；docs08-2026-10-22 批次任务 24（扩展资源面）
 // 追加 4 码：extension_not_found/invalid_enabled/invalid_kind/invalid_source，合计 84。
 // docs08-2026-10-23/24 批次 t17（附件双通道）追加 2 码：attachment_expired/
-// attachment_too_large（前端映射由任务 18 补齐），合计 86。
+// attachment_too_large（前端映射由任务 18 补齐），合计 86。docs08-2026-10-23/24 批次
+// 任务 19 追加 1 码：image_attachment_failed，合计 87。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -42,6 +43,7 @@ const SCANNED_CODES = [
   "fork_cancelled",
   "fork_failed",
   "git_error",
+  "image_attachment_failed",
   "invalid_archived",
   "invalid_baseurl",
   "invalid_content",
@@ -156,12 +158,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（86 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（87 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(86);
+    expect(scanned).toHaveLength(87);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(86);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(87);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

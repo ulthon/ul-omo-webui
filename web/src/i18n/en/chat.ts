@@ -222,6 +222,7 @@ export const chat = {
     imageAlt: "Message image",
     viewLarge: "View full size",
     refUnavailable: "Tool-produced images cannot be viewed yet",
+    refExpired: "Image attachment expired or unavailable",
   },
   // message-actions.tsx
   messageActions: {

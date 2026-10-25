@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { WirePart } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { ImageOff, X } from "lucide-react";
 
@@ -47,14 +48,51 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string;
   );
 }
 
-/** 内联图片 part：缩略展示（限制最大高度），点击进灯箱看大图 */
-export function ImagePart({ part }: { part: WirePart }) {
+/** 引用形态按需取（任务 19 历史引用化）：挂载即取一次，objectURL 渲染，卸载回收；
+ * 失败（410 过期/网络）→ failed 占位，不阻塞气泡其余内容 */
+function useReferencedImageSrc(sessionId: string | undefined, path: string | undefined): { src: string | null; failed: boolean } {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!sessionId || !path) return;
+    let url: string | null = null;
+    let alive = true;
+    api.fetchAttachmentBlob(sessionId, path).then(
+      (blob) => {
+        if (!alive) return;
+        url = URL.createObjectURL(blob);
+        setSrc(url);
+      },
+      () => {
+        if (alive) setFailed(true);
+      },
+    );
+    return () => {
+      alive = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [sessionId, path]);
+  return { src, failed };
+}
+
+/** 内联图片 part：缩略展示（限制最大高度），点击进灯箱看大图。双形态（任务 19）：
+ * - data（base64）：legacy 内联原样渲染（旧会话兼容，历史下发不再携带但客户端仍可遇）；
+ * - ref.path：引用形态，经 GET /api/sessions/:id/attachments?path= 按需取字节。 */
+export function ImagePart({ part, sessionId }: { part: WirePart; sessionId?: string }) {
   const [open, setOpen] = useState(false);
   const t = useT();
   const data = typeof part.data === "string" ? part.data : "";
+  const refPath =
+    !data && part.ref && typeof part.ref === "object" && typeof (part.ref as { path?: unknown }).path === "string"
+      ? ((part.ref as { path: string }).path)
+      : undefined;
+  const { src: fetchedSrc, failed } = useReferencedImageSrc(sessionId, refPath);
   const mimeType = typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "image/png";
-  if (!data) return null;
-  const src = `data:${mimeType};base64,${data}`;
+  const src = data ? `data:${mimeType};base64,${data}` : fetchedSrc;
+  if (refPath && failed) {
+    return <ImageExpiredPlaceholder />;
+  }
+  if (!src) return null;
   const alt = t("chat.lightbox.imageAlt");
   return (
     <>
@@ -68,6 +106,17 @@ export function ImagePart({ part }: { part: WirePart }) {
       </button>
       {open && <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** 引用图片取回失败/过期占位（任务 19）：附件已删/过期（410）或网络失败——提示不阻塞渲染 */
+export function ImageExpiredPlaceholder() {
+  const t = useT();
+  return (
+    <div className="my-1.5 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+      <ImageOff className="size-3.5 shrink-0" />
+      {t("chat.lightbox.refExpired")}
+    </div>
   );
 }
 
