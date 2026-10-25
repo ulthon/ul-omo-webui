@@ -152,7 +152,7 @@ const DEFAULTS = {
   healthPingTimeoutMs: 3000,
   stopGraceMs: 3000,
   crashPollMs: 1000,
-  probeWriteTimeoutMs: 5000,
+  probeWriteTimeoutMs: 15000,
 } as const
 
 interface ProjectEngine {
@@ -593,21 +593,38 @@ export class EngineProcessManager {
       )
       // 响应严格校验（malformed-input 类：垃圾/HTML/非 JSON 形态在此一律失败）
       const env = res as { success?: unknown; data?: { sessionId?: unknown; state?: unknown } | null } | null | undefined
-      if (!env || env.success !== true || typeof env.data !== "object" || env.data === null) return false
+      if (!env || env.success !== true || typeof env.data !== "object" || env.data === null) {
+        console.warn(`[probe-gate-debug] 响应非成功帧: ${JSON.stringify(env)?.slice(0, 300)}`)
+        return false
+      }
       const state = env.data.state
-      if (typeof state !== "object" || state === null) return false
+      if (typeof state !== "object" || state === null) {
+        console.warn(`[probe-gate-debug] state 缺失/非对象: ${JSON.stringify(state)?.slice(0, 200)}`)
+        return false
+      }
       const claimedId = (state as { sessionId?: unknown }).sessionId
       const claimedPath = (state as { sessionFile?: unknown }).sessionFile
-      if (typeof claimedId !== "string" || claimedId === "") return false
+      if (typeof claimedId !== "string" || claimedId === "") {
+        console.warn(`[probe-gate-debug] sessionId 非法: ${JSON.stringify(claimedId)?.slice(0, 100)}`)
+        return false
+      }
       // 认领路径必须是本探针路径（防误导性成功：引擎拿其它会话文件充数）
-      if (typeof claimedPath !== "string" || resolve(claimedPath) !== resolve(probePath)) return false
+      if (typeof claimedPath !== "string" || resolve(claimedPath) !== resolve(probePath)) {
+        console.warn(`[probe-gate-debug] sessionFile 不匹配: claimed=${JSON.stringify(claimedPath)} probe=${JSON.stringify(probePath)}`)
+        return false
+      }
       // 有界等待探针文件落盘（t6 同族判定：磁盘为准，不以口头认领为准）
       const deadline = this.now() + this.opts.probeWriteTimeoutMs
       while (!existsSync(probePath) && this.now() < deadline) {
         await this.probe.sleep(25)
       }
-      return existsSync(probePath)
-    } catch {
+      if (!existsSync(probePath)) {
+        console.warn(`[probe-gate-debug] 探针文件未落盘（等待 ${this.opts.probeWriteTimeoutMs}ms）: ${probePath}`)
+        return false
+      }
+      return true
+    } catch (e) {
+      console.warn(`[probe-gate-debug] 异常: ${e instanceof Error ? e.message : String(e)}`)
       return false
     } finally {
       // 即焚：引擎侧关会话 + 本地探针文件删除（成功失败两向都清，防残留）

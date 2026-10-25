@@ -3,6 +3,7 @@
  * （docs/verification/01-05），零 token。
  */
 import { describe, expect, test } from "vitest"
+import { createRequire } from "node:module"
 import { existsSync, readFileSync } from "node:fs"
 import {
   buildPermissionResponse,
@@ -24,17 +25,21 @@ function load(name: string): unknown {
 }
 
 describe("resolveEngineCliPath（spawn 规范：引擎 cli 本体）", () => {
-  test("解析到官配对 senpi 的 bundle/cli.js（omo-ai 嵌套布局优先）", () => {
+  test("解析到官配对 senpi 的 bundle/cli.js（版本＝omo-ai 官配钉版，布局无关）", () => {
     const p = resolveEngineCliPath()
     expect(existsSync(p)).toBe(true)
     expect(p.endsWith("/dist/bundle/cli.js")).toBe(true)
     // 禁止 omo.js 包装器
     expect(p).not.toContain("omo.js")
-    // 官配对语义：senpi 必须经 omo-ai 的嵌套 node_modules 解析（npm 布局），
-    // 或 .bun 旁路（bun isolated 布局）——两者都不该是宿主根级直依赖位
-    const nested = p.includes("omo-ai/node_modules/@code-yeongyu/senpi")
-    const bunBypass = p.includes(".bun/")
-    expect(nested || bunBypass).toBe(true)
+    // 官配对语义（2026-10-25 对齐升级后收紧）：解析到的引擎 senpi 版本必须等于
+    // omo-ai 声明钉住的 @code-yeongyu/senpi 版本——npm 全树同版时提升单副本
+    // （嵌套消失）也是官配对；版本不等价才是错配（t1 根因：新协议客户端 ×
+    // 旧不落盘引擎）。物理路径形态（嵌套/.bun 旁路/根级提升）不作要求。
+    const senpiRoot = p.slice(0, -"/dist/bundle/cli.js".length)
+    const cliPkg = JSON.parse(readFileSync(`${senpiRoot}/package.json`, "utf8"))
+    const omoPkgPath = createRequire(import.meta.url).resolve("omo-ai/package.json")
+    const omoPkg = JSON.parse(readFileSync(omoPkgPath, "utf8"))
+    expect(cliPkg.version).toBe(omoPkg.dependencies["@code-yeongyu/senpi"])
   })
 
   test("omo 插件目录存在", () => {
