@@ -1,0 +1,26 @@
+omo-senpi memory block compiled from incomplete git reads; used for this turn only, not persisted {
+  revision: "3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3",
+  reasons: [ "commit times unavailable: git -c log.showSignature=false -c log.follow=false log --format=%x01%ct --name-only -z --no-renames --diff-merges=first-parent --diff-filter=d 3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3 -- failed: fatal: unknown value for --diff-merges: first-parent" ],
+}
+omo-senpi kibitzer sidecar directory owner lock unavailable {
+  sessionId: "01a170d5-a66b-74d6-864a-991e868e9750",
+  lockPath: "/root/.omo/memory/agents/proj-800c383c/runtime/locks/recall-sidecar.MDFhMTcwZDUtYTY2Yi03NGQ2LTg2NGEtOTkxZTg2OGU5NzUw.lock",
+  error: "Lock is held: /root/.omo/memory/agents/proj-800c383c/runtime/locks/recall-sidecar.MDFhMTcwZDUtYTY2Yi03NGQ2LTg2NGEtOTkxZTg2OGU5NzUw.lock",
+}
+CLI写入
+memory shutdown drain hit its budget {
+  step: "reflection-launch-settle",
+  reason: "quit",
+  sessionId: "01a170d5-a66b-74d6-864a-991e868e9750",
+  remainingMs: 0,
+  completedSteps: [],
+}
+Extension /root/.nvm/versions/node/v24.19.0/lib/node_modules/omo-ai/plugin/extensions/omo.js left handles open after session_shutdown; senpi closed 0 servers, 0 sockets, 1 timer. Stop session-scoped resources in a session_shutdown handler (docs/extensions.md#session_shutdown).
+memory reflection sandbox degraded {
+  identity: "proj-800c383c",
+  runId: "reflection-run-1",
+  warning: "reflection sandbox unavailable on linux: bwrap not found; running unsandboxed because policy is auto",
+}
+memory reflection launch failed {
+  error: "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+}

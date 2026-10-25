@@ -1,0 +1,83 @@
+total 36
+drwxr-xr-x 2 root root 4096 Oct 25 02:13 .
+drwxr-xr-x 6 root root 4096 Oct 25 02:13 ..
+-rw------- 1 root root  114 Oct 25 02:13 auth.json
+-rw------- 1 root root 8728 Oct 25 02:13 models-store.json
+-rw-r--r-- 1 root root 4386 Oct 25 02:13 models.json
+-rw-r--r-- 1 root root  331 Oct 25 02:13 settings.json
+[2026-10-25T02:13:22+00:00] PHASE0 env rebuilt
+[2026-10-25T02:13:22+00:00] PHASE0 watchdog pid=1147539
+[2026-10-25T02:13:22+00:00] PHASE1_BEGIN
+[2026-10-25T02:13:22+00:00] PHASE1 server pid=1147551
+[2026-10-25T02:13:28+00:00] PHASE1 server ready
+[schedule] runner 已托管启动（omo schedule run --watch）
+ul-omo-webui listening on http://0.0.0.0:7791
+[2026-10-25T02:13:28+00:00] PHASE2_BEGIN
+[2026-10-25T02:13:28+00:00] PHASE2 login: {"ok":true}
+[2026-10-25T02:13:28+00:00] PHASE2 register: {"ok":true,"project":{"projectPath":"/tmp/conc-spike/proj","preferredModel":null,"lastOpenedAt":"2026-10-25T02:13:28.899Z","createdAt":"2026-10-25T02:13:28.900Z","hidden":false,"permissionPreset":null
+[2026-10-25T02:13:36+00:00] PHASE2 session webui=01a170d5-a66b-74d6-864a-991e868e9750 engine=e66222c8-8f03-41dd-95d5-baf690b1d3f5 path=/tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl
+[2026-10-25T02:13:36+00:00] PHASE3_BEGIN baseline turn
+[2026-10-25T02:14:06+00:00] PHASE3 prompt receipt: {"error":{"code":"internal","message":"Timeout waiting for response to prompt. Stderr: "}}
+[2026-10-25T02:14:06+00:00] PHASE3 turn completed=1 waited_1x4s
+[2026-10-25T02:14:06+00:00] PHASE3 baseline: 17 /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | 3bad5ac5620be35e4bda0c90fee3b5f7  /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl
+[2026-10-25T02:14:06+00:00] PHASE3 leaf=f90a335e entries=16
+[2026-10-25T02:14:09+00:00] PHASE3 experiment pids: 1147551 1147828 1147851 1147959 
+[2026-10-25T02:14:09+00:00] PHASE4_BEGIN cli turn
+[2026-10-25T02:15:34+00:00] PHASE4 cli exit=0 output_head: omo-senpi memory block compiled from incomplete git reads; used for this turn only, not persisted {
+  revision: "3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3",
+  reasons: [ "commit times unavailable: git -c log.showSignature=false -c log.follow=false log --format=%x01%ct --name-only -z --no-renames --di
+[2026-10-25T02:15:34+00:00] PHASE4 after-cli: 30 /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | 72b7472dbdcd8103960d78140db8e80f  /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl
+[2026-10-25T02:15:35+00:00] PHASE4 tailread entries=29 cursor_entries=0
+[2026-10-25T02:15:35+00:00] PHASE5_BEGIN concurrent double-write
+[2026-10-25T02:16:10+00:00] PHASE5 webui_curl_exit=0 cli_exit=0 webui_receipt: {"error":{"code":"internal","message":"Timeout waiting for response to prompt. Stderr: "}} cli_head: omo-senpi memory block compiled from incomplete git reads; used for this turn only, not persisted {
+  revision: "3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3",
+  reasons: [ "commit times unavailable: git -c log.showSignature=false -c log.follow=false log --format=%x01%ct --name-only -z --no-renames --di
+[2026-10-25T02:16:10+00:00] PHASE5 39 /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | c1c98e9ce7cdef3dfb4a62c46c0b9969  /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | validate: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module '/validate-jsonl.js'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.19.0 | mutex_marker=1 semaphore_marker=2
+[2026-10-25T02:16:10+00:00] PHASE6_BEGIN restart
+[2026-10-25T02:16:12+00:00] PHASE6 server stopped (waited 3s)
+[2026-10-25T02:16:12+00:00] PHASE6 server restarted pid=1157535
+[2026-10-25T02:16:19+00:00] PHASE6 restart ready=1
+[2026-10-25T02:16:19+00:00] PHASE6 after-restart entries=42
+[2026-10-25T02:16:19+00:00] PHASE6 final 43 /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | e8e893d360e2a393dc6ae88fc6cde47d  /tmp/conc-spike/agent/sessions/--tmp-conc-spike-proj--/2026-10-25T02-13-32-373Z_e66222c8-8f03-41dd-95d5-baf690b1d3f5.jsonl | validate: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module '/validate-jsonl.js'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.19.0
+[2026-10-25T02:16:19+00:00] PHASE7_BEGIN cleanup
+[2026-10-25T02:16:22+00:00] PHASE7 killing experiment pids: 1147851
+1157535
+1157632
+1157646
+[2026-10-25T02:16:26+00:00] PHASE7 port freed
+[2026-10-25T02:16:26+00:00] PHASE7 main-checkout status: []
+[2026-10-25T02:16:26+00:00] ALL_DONE

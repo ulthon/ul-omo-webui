@@ -1,0 +1,27 @@
+omo-senpi memory block compiled from incomplete git reads; used for this turn only, not persisted {
+  revision: "3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3",
+  reasons: [ "commit times unavailable: git -c log.showSignature=false -c log.follow=false log --format=%x01%ct --name-only -z --no-renames --diff-merges=first-parent --diff-filter=d 3da4ebbd0304fbf69fd21d263e1c4ed8529a36f3 -- failed: fatal: unknown value for --diff-merges: first-parent" ],
+}
+omo-senpi kibitzer sidecar directory owner lock unavailable {
+  sessionId: "01a170d5-a66b-74d6-864a-991e868e9750",
+  lockPath: "/root/.omo/memory/agents/proj-800c383c/runtime/locks/recall-sidecar.MDFhMTcwZDUtYTY2Yi03NGQ2LTg2NGEtOTkxZTg2OGU5NzUw.lock",
+  error: "Lock is held: /root/.omo/memory/agents/proj-800c383c/runtime/locks/recall-sidecar.MDFhMTcwZDUtYTY2Yi03NGQ2LTg2NGEtOTkxZTg2OGU5NzUw.lock",
+}
+信号量是 Dijkstra 提出的同步原语，本质是一个整数计数器，配两个原子操作：P（wait）将计数减一，若结果为负则线程阻塞等待；V（signal）将计数加一，并唤醒一个等待线程。计数可任意取值的称为计数信号量，用于管理 N 个同类资源，如连接池限流、生产者-消费者协调；只取 0 和 1 的二值信号量可当互斥锁使用。与互斥锁不同，信号量允许释放者不是获取者，适合线程间的事件通知与资源配额控制。
+memory shutdown drain hit its budget {
+  step: "facts-cancel",
+  reason: "quit",
+  sessionId: "01a170d5-a66b-74d6-864a-991e868e9750",
+  remainingMs: 0,
+  completedSteps: [ "maintenance-settle", "status-settle", "recall-store-settle", "memory-block-settle",
+    "kibitzer-shutdown"
+  ],
+}
+memory shutdown drain hit its budget {
+  step: "facts-enqueue",
+  reason: "quit",
+  sessionId: "01a170d5-a66b-74d6-864a-991e868e9750",
+  remainingMs: 0,
+  completedSteps: [ "journal-flush" ],
+}
+Extension /root/.nvm/versions/node/v24.19.0/lib/node_modules/omo-ai/plugin/extensions/omo.js left handles open after session_shutdown; senpi closed 0 servers, 0 sockets, 1 timer. Stop session-scoped resources in a session_shutdown handler (docs/extensions.md#session_shutdown).

@@ -1,0 +1,1 @@
+mutex_marker=1 semaphore_marker=2
