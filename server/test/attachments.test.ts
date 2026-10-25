@@ -9,7 +9,9 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -17,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import {
+  ATTACHMENT_BINARY_MAX_BYTES,
   ATTACHMENT_MAX_AGE_MS,
   ATTACHMENT_MAX_BYTES,
   projectAttachmentsDir,
@@ -390,5 +393,166 @@ describe("purgeStaleAttachments（启动清理挂点）", () => {
     expect(projectAttachmentsHash(PROJECT_A)).toBe(projectAttachmentsHash(PROJECT_A));
     expect(projectAttachmentsHash(PROJECT_A)).not.toBe(projectAttachmentsHash(PROJECT_B));
     expect(projectAttachmentsHash(PROJECT_A)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test("二进制附件同受清理规则：窗口内保留、超龄删除（48h 清扫不删在窗文件）", async () => {
+    const root = mkdtempSync(join(tmpdir(), "att-purge-bin-"));
+    const dir = projectAttachmentsDir(root, PROJECT_A);
+    mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    // 伪 zip 头（PK\x03\x04）字节，模拟通用二进制附件
+    const bin = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x01, 0x02]);
+    const freshBin = join(dir, "fresh.zip");
+    const staleBin = join(dir, "stale.zip");
+    writeFileSync(freshBin, bin);
+    writeFileSync(staleBin, bin);
+    utimesSync(freshBin, new Date(now - 1000), new Date(now - 1000)); // 刚上传，在窗内
+    utimesSync(staleBin, new Date(now - ATTACHMENT_MAX_AGE_MS - 60_000), new Date(now - ATTACHMENT_MAX_AGE_MS - 60_000));
+
+    const removed = purgeStaleAttachments(root, ATTACHMENT_MAX_AGE_MS, now);
+    expect(removed).toBe(1);
+    expect(Buffer.compare(readFileSync(freshBin), bin)).toBe(0); // 在窗二进制不动
+    let staleGone = false;
+    try {
+      statSync(staleBin);
+    } catch {
+      staleGone = true;
+    }
+    expect(staleGone).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------- 二进制通道（docs08-2026-10-23/24 任务 17）
+
+describe("POST /api/sessions/:id/attachments（二进制通道）", () => {
+  const post = (app: Hono, name: string | undefined, body: BodyInit, headers: Record<string, string> = {}) =>
+    req(app, `/api/sessions/s1/attachments${name === undefined ? "" : `?name=${encodeURIComponent(name)}`}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", ...headers },
+      body,
+    });
+
+  function setup() {
+    const root = mkdtempSync(join(tmpdir(), "att-bin-"));
+    const gateway = new FakeGateway();
+    gateway.sessions.set("s1", summary("s1", PROJECT_A));
+    return { app: buildApp(gateway, root), root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  }
+
+  test("happy：zip 字节上传 → 落盘内容一致、返回绝对路径；PDF 字节同路径返回", async () => {
+    const { app, root, cleanup } = setup();
+    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, ...new Array(96).fill(0x41)]);
+    const res = await post(app, "bundle.zip", zip);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { path: string; name: string; bytes: number };
+    expect(body.name).toBe("bundle.zip");
+    expect(body.bytes).toBe(zip.byteLength);
+    expect(body.path.startsWith(projectAttachmentsDir(root, PROJECT_A) + "/")).toBe(true);
+    expect(Buffer.compare(readFileSync(body.path), zip)).toBe(0);
+    cleanup();
+  });
+
+  test("恰好 10MB 通过；10MB+1 字节 → 413 attachment_too_large", async () => {
+    const { app, cleanup } = setup();
+    const ok = await post(app, "big.bin", new Uint8Array(ATTACHMENT_BINARY_MAX_BYTES));
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { bytes: number }).bytes).toBe(ATTACHMENT_BINARY_MAX_BYTES);
+
+    // 无 content-length 头依赖（流式计数路径）：构造流式 body 携带超限字节
+    const over = await post(app, "over.bin", new Uint8Array(ATTACHMENT_BINARY_MAX_BYTES + 1));
+    expect(over.status).toBe(413);
+    expect(((await over.json()) as { error: { code: string } }).error.code).toBe("attachment_too_large");
+    cleanup();
+  });
+
+  test("content-length 预检：头声明超限 → 413（缓冲前拒绝）", async () => {
+    const { app, cleanup } = setup();
+    const res = await post(app, "declared.bin", "x", { "content-length": String(ATTACHMENT_BINARY_MAX_BYTES + 1) });
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("attachment_too_large");
+    cleanup();
+  });
+
+  test("name 经查询参数注入矩阵：含 / 或 .. → 400 invalid_name", async () => {
+    const { app, cleanup } = setup();
+    for (const name of ["../evil.zip", "a/b.zip", "..\\evil", ".."]) {
+      const res = await post(app, name, Buffer.from([1, 2, 3]));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("invalid_name");
+    }
+    cleanup();
+  });
+
+  test("空载荷 / 零字节 → 400 invalid_content；name 缺省自生成 .bin", async () => {
+    const { app, cleanup } = setup();
+    const empty = await post(app, "e.bin", new Uint8Array(0));
+    expect(empty.status).toBe(400);
+    expect(((await empty.json()) as { error: { code: string } }).error.code).toBe("invalid_content");
+
+    const auto = await post(app, undefined, Buffer.from([1, 2]));
+    expect(auto.status).toBe(201);
+    expect(((await auto.json()) as { name: string }).name.endsWith(".bin")).toBe(true);
+    cleanup();
+  });
+});
+
+// ---------------------------------------------------------------- GET 服务（死链语义）
+
+describe("GET /api/sessions/:id/attachments", () => {
+  function setup() {
+    const root = mkdtempSync(join(tmpdir(), "att-get-"));
+    const gateway = new FakeGateway();
+    gateway.sessions.set("s1", summary("s1", PROJECT_A));
+    gateway.sessions.set("s2", summary("s2", PROJECT_B));
+    const dir = projectAttachmentsDir(root, PROJECT_A);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "doc.zip");
+    writeFileSync(file, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    return {
+      app: buildApp(gateway, root),
+      root,
+      file,
+      dir,
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  }
+
+  test("存在 → 200 原始字节 + octet-stream + content-length", async () => {
+    const { app, file, cleanup } = setup();
+    const res = await req(app, `/api/sessions/s1/attachments?path=${encodeURIComponent(file)}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-length")).toBe("4");
+    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe(0);
+    cleanup();
+  });
+
+  test("过期/被清扫（目录在、文件没）→ 410 attachment_expired（死链显式化）", async () => {
+    const { app, file, cleanup } = setup();
+    unlinkSync(file);
+    const res = await req(app, `/api/sessions/s1/attachments?path=${encodeURIComponent(file)}`);
+    expect(res.status).toBe(410);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("attachment_expired");
+    cleanup();
+  });
+
+  test("越界矩阵：其他项目临时文件 / 临时区外 → 403；目录不存在 → 404；path 缺失 → 400", async () => {
+    const { app, root, cleanup } = setup();
+    const dirB = projectAttachmentsDir(root, PROJECT_B);
+    mkdirSync(dirB, { recursive: true });
+    const theirs = join(dirB, "theirs.zip");
+    writeFileSync(theirs, Buffer.from([1]));
+    for (const path of [theirs, "/etc/passwd"]) {
+      const res = await req(app, `/api/sessions/s1/attachments?path=${encodeURIComponent(path)}`);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("attachment_escape");
+    }
+    // 会话所属项目的附件目录从未创建（从未有过附件）→ 404
+    const noDir = await req(app, `/api/sessions/s2/attachments?path=${encodeURIComponent("/anything/x.zip")}`);
+    expect(noDir.status).toBe(404);
+    const noParam = await req(app, "/api/sessions/s1/attachments");
+    expect(noParam.status).toBe(400);
+    cleanup();
   });
 });

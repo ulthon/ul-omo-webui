@@ -1,7 +1,7 @@
 // 会话 REST 路由（todo 9）：建/列表/消息/prompt/abort/权限/草稿/已读/元数据/删除/usage/附件。
 // 错误统一 {error:{code,message}}（http.ts route 包装）；鉴权由入口 /api/* 中间件覆盖。
 import { Hono, type Context } from "hono";
-import { lstatSync, mkdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   EnginePromptInput,
@@ -9,9 +9,11 @@ import type {
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
 import {
+  ATTACHMENT_BINARY_MAX_BYTES,
   ATTACHMENT_MAX_BYTES,
   attachmentsRoot,
   generatedAttachmentName,
+  generatedBinaryAttachmentName,
   projectAttachmentsDir,
   validateAttachmentName,
 } from "./attachments";
@@ -660,26 +662,67 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   // 文件落 DATA_DIR/attachments/<projectHash>/；prompt 只带绝对路径行由引擎按需
   // 读取，故 DELETE 仅挂用户显式移除 chip（发送成功后文件刻意留存，48h 清理兜底）。
 
-  // 上传大文本：content（≤1MB UTF-8 字节）+ 可选 name（纯文件名，含分隔符或 .. 即 400，
-  // 缺省服务端自生成）→ { path 绝对路径, name, bytes }
+  // 上传附件，双通道（content-type 分流）：
+  // - application/json：既有文本通道（content ≤1MB UTF-8 字节，行为不变）
+  // - 其他（建议 application/octet-stream）：通用二进制通道（任意格式，原始 body
+  //   流式计数，≤10MB；文件名经 ?name= 查询参数，同样纯文件名白名单）。
+  // B10 铁律：附件内容只落盘并返回绝对路径，绝不拼进 prompt（引擎按需读取）。
+  // 响应 → { path 绝对路径, name, bytes }；二进制超限 413 attachment_too_large、
+  // 非法 name/空载荷 400、落点越界 403。文件 48h 后被启动清扫，此后 GET 服务
+  // 返回 410 attachment_expired（死链语义显式化）。
   app.post("/api/sessions/:id/attachments", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const project = await requireSessionProject(deps, id);
-    const body = await parseJsonBody(c);
-    if (typeof body.content !== "string" || body.content.length === 0) {
-      throw new ApiError(400, "invalid_content", "content 必填且不能为空");
+    const contentType = (c.req.header("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+    let data: string | Buffer;
+    let name: string | undefined;
+    let bytes: number;
+    if (contentType === "application/json") {
+      const body = await parseJsonBody(c);
+      if (typeof body.content !== "string" || body.content.length === 0) {
+        throw new ApiError(400, "invalid_content", "content 必填且不能为空");
+      }
+      bytes = Buffer.byteLength(body.content, "utf8");
+      if (bytes > ATTACHMENT_MAX_BYTES) {
+        throw new ApiError(400, "content_too_large", `content 超过 1MB 上限（${bytes} 字节）`);
+      }
+      data = body.content;
+      name = validateAttachmentName(body.name);
+    } else {
+      // 二进制通道：先看 content-length 头预检（超限在缓冲前拒绝，不占内存），
+      // 再流式读取计数（头缺失/撒谎时实际字节数仍是唯一真相）
+      const declared = Number(c.req.header("content-length"));
+      if (Number.isFinite(declared) && declared > ATTACHMENT_BINARY_MAX_BYTES) {
+        throw new ApiError(413, "attachment_too_large", `附件超过 10MB 上限（content-length ${declared} 字节）`);
+      }
+      const raw = c.req.raw.body;
+      if (!raw) throw new ApiError(400, "invalid_content", "请求体不能为空");
+      const reader = raw.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          total += value.byteLength;
+          if (total > ATTACHMENT_BINARY_MAX_BYTES) {
+            await reader.cancel().catch(() => {});
+            throw new ApiError(413, "attachment_too_large", `附件超过 10MB 上限（≥${total} 字节）`);
+          }
+          chunks.push(value);
+        }
+      }
+      if (total === 0) throw new ApiError(400, "invalid_content", "附件内容不能为空");
+      data = Buffer.concat(chunks.map((x) => Buffer.from(x)));
+      bytes = total;
+      name = validateAttachmentName(c.req.query("name"));
     }
-    const bytes = Buffer.byteLength(body.content, "utf8");
-    if (bytes > ATTACHMENT_MAX_BYTES) {
-      throw new ApiError(400, "content_too_large", `content 超过 1MB 上限（${bytes} 字节）`);
-    }
-    const name = validateAttachmentName(body.name);
     const root = deps.attachmentsRoot ?? attachmentsRoot();
     const dir = projectAttachmentsDir(root, project);
     mkdirSync(dir, { recursive: true });
     // mkdir 后目录必存在；realpath 规范化防 DATA_DIR 自身经符号链接挂载
     const dirReal = realpathSync(dir);
-    const filename = name ?? generatedAttachmentName();
+    const filename = name ?? (contentType === "application/json" ? generatedAttachmentName() : generatedBinaryAttachmentName());
     // filename 已保证纯文件名（白名单/自生成），join 后落点必然在 dirReal 内
     const target = join(dirReal, filename);
     // 目录内预置同名符号链接会劫持 writeFileSync 跟随写出（外部文件被污染）——
@@ -694,7 +737,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       if (err instanceof ApiError) throw err;
       // ENOENT = 无预置文件，正常继续
     }
-    writeFileSync(target, body.content, "utf8");
+    writeFileSync(target, data);
     const real = realpathSync(target);
     if (real !== target || !real.startsWith(dirReal + "/")) {
       try {
@@ -705,6 +748,52 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       throw new ApiError(403, "attachment_escape", "附件落点越界被拒绝");
     }
     return c.json({ path: target, name: filename, bytes }, 201);
+  }));
+
+  // 服务附件：?path= 必填；realpath 必须严格位于本项目 attachments/<projectHash>/ 内
+  // （越界 403 同 DELETE）；存在 → 200 原始字节（application/octet-stream）；
+  // 路径词法上在本项目附件目录内但解析失败（48h 清扫后/已删）→ 410 attachment_expired
+  // （死链显式化）；其余缺失 404 attachment_not_found；非文件 400。
+  app.get("/api/sessions/:id/attachments", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const project = await requireSessionProject(deps, id);
+    const raw = c.req.query("path");
+    if (typeof raw !== "string" || raw === "") {
+      throw new ApiError(400, "invalid_request", "path 查询参数必填");
+    }
+    const root = deps.attachmentsRoot ?? attachmentsRoot();
+    const dir = projectAttachmentsDir(root, project);
+    let dirReal: string;
+    try {
+      dirReal = realpathSync(dir);
+    } catch {
+      throw new ApiError(404, "attachment_not_found", "附件不存在");
+    }
+    let real: string;
+    try {
+      real = realpathSync(raw);
+    } catch {
+      // 词法上在本项目附件目录内但解析失败 = 文件已被清扫/删除 → 死链 410
+      if (raw === dir || raw === dirReal || raw.startsWith(dir + "/") || raw.startsWith(dirReal + "/")) {
+        throw new ApiError(410, "attachment_expired", "附件已过期（48h 清理）或不存在");
+      }
+      throw new ApiError(404, "attachment_not_found", "附件不存在");
+    }
+    if (real === dirReal || !real.startsWith(dirReal + "/")) {
+      throw new ApiError(403, "attachment_escape", "路径越界被拒绝");
+    }
+    if (!statSync(real).isFile()) {
+      throw new ApiError(400, "invalid_path", "目标不是文件");
+    }
+    const bytes = readFileSync(real);
+    return new Response(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(bytes.byteLength),
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(real.slice(dirReal.length + 1))}`,
+      },
+    });
   }));
 
   // 删除附件：?path= 必填；realpath 必须严格位于本会话所属项目的

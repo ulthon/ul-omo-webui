@@ -14,9 +14,12 @@ import { join } from "node:path";
 import { DATA_DIR } from "../config";
 import { ApiError } from "./http";
 
-/** 单附件大小上限（UTF-8 字节）：1MB */
+/** 单附件大小上限（UTF-8 字节）：1MB —— 仅限 JSON 文本通道，行为不变 */
 export const ATTACHMENT_MAX_BYTES = 1024 * 1024;
-/** 临时附件按龄清理阈值：48h（引擎按需读取窗口，过期文件启动时清扫） */
+/** 二进制通道单附件大小上限：10MB（任意格式，原始 body 流式计数预检） */
+export const ATTACHMENT_BINARY_MAX_BYTES = 10 * 1024 * 1024;
+/** 临时附件按龄清理阈值：48h（引擎按需读取窗口，过期文件启动时清扫；
+ * 清扫后 GET 服务端返回 410 attachment_expired —— 死链语义在 API 面显式化） */
 export const ATTACHMENT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
 /** 附件临时区根：DATA_DIR/attachments（测试经 deps.attachmentsRoot 注入临时目录） */
@@ -52,6 +55,11 @@ export function validateAttachmentName(raw: unknown): string | undefined {
 /** 自生成文件名：时间戳 + 短随机，避免并发粘贴同名覆盖 */
 export function generatedAttachmentName(): string {
   return `paste-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`;
+}
+
+/** 二进制通道自生成文件名（任意格式，缺省 .bin 扩展名） */
+export function generatedBinaryAttachmentName(): string {
+  return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.bin`;
 }
 
 /**
