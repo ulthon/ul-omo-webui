@@ -45,6 +45,10 @@ export const login = {
     openFilesLink: "Open file manager link",
     filesLinkTitle: "File manager link: {url}",
   },
+  // —— 左侧栏宽度拖拽（pages/shell.tsx AppSidebar）——
+  sidebarResize: {
+    resizeHandle: "Drag to resize the sidebar",
+  },
   // —— 上下文水位环（components/layout/context-ring.tsx）——
   contextRing: {
     ringLabel: "Context usage {pct}%, open for details",
