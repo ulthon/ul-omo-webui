@@ -8,7 +8,7 @@
 // 非模态不抢焦点；插入/直发语义同上，「查看全部」仍打开旧弹框兜底（管理留弹框）。
 // todo 13 方向 2 布局：textarea 整行在上，工具条行在下（左：历史/@/图片/常用语；
 // 右：发送钮 outline 风格）；容器 padding-bottom 兜底安全区，键盘弹出时输入区保持在键盘上方。
-// W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+P 快捷打开）与思考档 chip
+// W2 todo 8：工具条右侧增加模型 chip（可搜索选择，Ctrl+L 快捷打开）与思考档 chip
 // （模型未下发 supportedThinkingLevels 时整体隐藏），选择随下一条 prompt 注入。
 // docs08-r3 任务 19：斜杠输入提示（SlashHints）——值以 / 开头且首 token 未闭合时
 // 锚定 textarea 弹三段下拉（引擎命令/技能/用户提示），选择 = 首 token 替换为 /命令

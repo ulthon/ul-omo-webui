@@ -143,7 +143,7 @@ export function ModelChip() {
   const open = useUiStore((s) => s.modelPickerOpen);
   const setOpen = useUiStore((s) => s.setModelPickerOpen);
 
-  // 卸载即复位打开态：切走「对话」页签等场景下 Ctrl+P 置位的残留不在回页时突然弹出
+  // 卸载即复位打开态：切走「对话」页签等场景下 Ctrl+L（或无收藏时 Ctrl+P 兜底）置位的残留不在回页时突然弹出
   useEffect(() => () => useUiStore.getState().setModelPickerOpen(false), []);
 
   const t = useT();
