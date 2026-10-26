@@ -12,7 +12,7 @@
 // mock.module 进程级粘滞污染同进程后跑的测试文件）。
 // oxlint-disable react/only-export-components -- useModelShortcuts 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Check, CircleAlert, Copy, FolderOpen, GitBranch, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
@@ -28,6 +28,14 @@ import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
 import { Button } from "@/components/ui/button";
 import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 import { RightRail } from "@/components/layout/right-rail";
+import {
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
+  clampSidebarWidth,
+  readSidebarWidthPreference,
+  writeSidebarWidthPreference,
+} from "@/components/layout/sidebar-resize";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { isModelCycleBackward, isModelCycleForward, isModelPickerTrigger } from "@/lib/shortcuts";
 import { nextFavoriteModel, selectModel } from "@/lib/model-cycle";
@@ -177,6 +185,88 @@ export function useModelShortcuts(): void {
   }, []);
 }
 
+/** 左侧栏（r9 2026-10-26 批次 w2-t7）：lg+ 常驻宽度可拖拽（右缘手柄，模式镜像
+ * right-rail：pointerdown/move/up + setPointerCapture，拖动中实时钳制，pointerup 才
+ * 写 localStorage ul-omo-webui:sidebar-width）；左右方向键 ±16px 即时记忆，双击重置
+ * 默认 288。宽度经 CSS 变量 --sidebar-width 只在 lg 断点消费，手机抽屉 w-full
+ * 不受影响（手柄也 hidden lg:block 不渲染）。抽出为独立导出组件：单测直接挂载，
+ * 免去拉起整页 AppShell（useModelShortcuts 同款 only-export-components 豁免已声明）。 */
+export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
+  const t = useT();
+  const [width, setWidth] = useState(() => readSidebarWidthPreference());
+  // 拖拽中的实时宽度镜像：pointerup 写记忆需要最终值，state 异步读不到
+  const widthRef = useRef(width);
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+
+  const applyWidth = (next: number) => {
+    widthRef.current = next;
+    setWidth(next);
+  };
+  const onHandlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: widthRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  // 右缘手柄：向右拖变宽（与右栏左缘手柄方向相反）
+  const onHandlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    applyWidth(clampSidebarWidth(drag.startWidth + (e.clientX - drag.startX)));
+  };
+  // pointerup：落记忆；pointercancel：只终止拖拽（宽度已实时钳制，记忆留给下次完整拖拽）
+  const onHandlePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    writeSidebarWidthPreference(widthRef.current);
+  };
+  const onHandlePointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  // 键盘微调（可聚焦分隔条）：左右方向键 ±16px 并即时记忆
+  const onHandleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = clampSidebarWidth(widthRef.current + (e.key === "ArrowLeft" ? -16 : 16));
+    applyWidth(next);
+    writeSidebarWidthPreference(next);
+  };
+  const onHandleDoubleClick = () => {
+    applyWidth(SIDEBAR_WIDTH_DEFAULT);
+    writeSidebarWidthPreference(SIDEBAR_WIDTH_DEFAULT);
+  };
+
+  return (
+    <aside
+      className={`fixed inset-y-0 left-0 z-40 w-full border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:w-[var(--sidebar-width)] lg:translate-x-0 ${
+        drawerOpen ? "translate-x-0" : "-translate-x-full"
+      }`}
+      style={{ ["--sidebar-width" as string]: `${width}px` }}
+    >
+      {/* 桌面（lg+）拖宽手柄：骑跨右缘边框，w-1.5 命中区 + hover/focus 视觉反馈；
+          手机档不渲染（hidden lg:block），抽屉 w-full 不受影响 */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("login.sidebarResize.resizeHandle")}
+        aria-valuenow={width}
+        aria-valuemin={SIDEBAR_WIDTH_MIN}
+        aria-valuemax={SIDEBAR_WIDTH_MAX}
+        tabIndex={0}
+        data-testid="sidebar-resize-handle"
+        onPointerDown={onHandlePointerDown}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={onHandlePointerUp}
+        onPointerCancel={onHandlePointerCancel}
+        onKeyDown={onHandleKeyDown}
+        onDoubleClick={onHandleDoubleClick}
+        className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none lg:block"
+      />
+      <Sidebar />
+    </aside>
+  );}
+
 export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
@@ -281,14 +371,8 @@ export function AppShell() {
           />
         )}
 
-        {/* 侧栏：lg 以上常驻，以下抽屉 */}
-        <aside
-          className={`fixed inset-y-0 left-0 z-40 w-full border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:w-72 lg:translate-x-0 ${
-            drawerOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          <Sidebar />
-        </aside>
+        {/* 侧栏：lg 以上常驻（宽度可拖拽持久化），以下抽屉 */}
+        <AppSidebar drawerOpen={drawerOpen} />
 
         {/* 主区：永久对话（C15）。A6：手机档第二层行退役（右栏触发钮在顶栏、外链在右栏
             抽屉头部）；桌面行保留——git/files 外链入口原位（kv 配置，未配置隐藏） */}

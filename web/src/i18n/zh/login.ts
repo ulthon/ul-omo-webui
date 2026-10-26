@@ -47,6 +47,10 @@ export const login = {
     openFilesLink: "打开文件管理外链",
     filesLinkTitle: "文件管理外链：{url}",
   },
+  // —— 左侧栏宽度拖拽（pages/shell.tsx AppSidebar）——
+  sidebarResize: {
+    resizeHandle: "拖拽调整左侧栏宽度",
+  },
   // —— 上下文水位环（components/layout/context-ring.tsx）——
   contextRing: {
     ringLabel: "上下文水位 {pct}%，点开明细",
