@@ -93,6 +93,28 @@ interface ActiveHistory {
 let imageSeq = 0;
 let attachmentSeq = 0;
 
+// 多行自增高共用函数（r9：两处 textarea 共用）。先量后写：scrollHeight 已增长时
+// 直接写目标值；高度未变且文本未变短则零写入（消除旧实现每次击键写 auto 的
+// 塌缩中间态——历史流抖动根因）；仅文本变短时才同帧量 auto 后立即写回，不产生
+// 中间视觉布局。超过 max-h-48 由 CSS 截断并内部滚动。模块级定义供单测直测
+const lastLenByEl = new WeakMap<HTMLTextAreaElement, number>();
+export function resizeComposerTextarea(el: HTMLTextAreaElement) {
+  const target = `${el.scrollHeight}px`;
+  const cur = el.style.height;
+  if (target !== cur) {
+    el.style.height = target;
+    lastLenByEl.set(el, el.value.length);
+    return;
+  }
+  const prevLen = lastLenByEl.get(el);
+  lastLenByEl.set(el, el.value.length);
+  if (prevLen === undefined || el.value.length >= prevLen) return;
+  el.style.height = "auto";
+  const shrunk = `${el.scrollHeight}px`;
+  if (shrunk !== cur) el.style.height = shrunk;
+  else el.style.height = cur;
+}
+
 export function Composer({
   sessionId,
   queueAvailable,
@@ -284,12 +306,11 @@ export function Composer({
     [applyText, textRef],
   );
 
-  // 多行自增高：每次渲染后按内容校正高度；超过 max-h-48 由 CSS 截断并内部滚动
+  // 每次渲染后按内容校正高度（r9：共用 resizeComposerTextarea，先量后写）
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    resizeComposerTextarea(el);
   });
 
   // ---------- 斜杠提示派生与行为（docs08-r3 任务 19） ----------
