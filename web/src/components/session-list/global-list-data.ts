@@ -6,6 +6,11 @@ import type { SessionListItem } from "@/lib/api";
 /** 最近会话条数（计划决策 7：跨项目按 modified 取最新 8 条） */
 export const RECENT_LIMIT = 8;
 
+/** 项目组默认可见顶层会话条数（r9 wave1：分组默认只渲染前 10 条，超出出「加载更多」） */
+export const GROUP_VISIBLE_LIMIT = 10;
+/** 「加载更多」每次追加的可见条数 */
+export const GROUP_VISIBLE_STEP = 20;
+
 /** 折叠记忆 localStorage key 前缀（完整 key = 前缀 + 项目绝对路径） */
 export const COLLAPSE_PREFIX = "ul-omo-webui:collapse:";
 

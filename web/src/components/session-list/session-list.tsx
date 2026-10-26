@@ -39,6 +39,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  GROUP_VISIBLE_LIMIT,
+  GROUP_VISIBLE_STEP,
   LOCATE_EVENT,
   PROJECT_ORDER_KV,
   crossProjectDecision,
@@ -109,6 +111,10 @@ export function SessionList() {
   // 都缺省时当前项目组展开、其余折叠。不做 currentProject 同步 effect——默认展开随
   // currentProject 变化由派生规则自然生效，显式覆盖按记忆语义保留。
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
+  // 每组可见条数（r9 wave1）：按项目键控，缺省 = GROUP_VISIBLE_LIMIT（10）。值 Infinity =
+  // topbar「定位」触发的临时全展——仅本次会话内有效，刷新重挂载回落默认；切项目不重置，
+  // 与 groupOverrides 同为会话内覆盖语义。搜索/批量模式渲染全量，不读此值。
+  const [groupVisible, setGroupVisible] = useState<Record<string, number>>({});
   const [recentOpen, setRecentOpen] = useState(true);
   const [dialog, setDialog] = useState<SessionDialogState | null>(null);
   const [creating, setCreating] = useState(false);
@@ -147,6 +153,8 @@ export function SessionList() {
       if (typeof project !== "string") return;
       setGroupOverrides((s) => ({ ...s, [project]: true }));
       writeCollapsed(project, false);
+      // 定位同时临时全展该组（r9 wave1）：Infinity 语义见 groupVisible 声明处
+      setGroupVisible((s) => ({ ...s, [project]: Number.POSITIVE_INFINITY }));
       // 展开渲染在下一帧，rAF 后再定位
       requestAnimationFrame(() => {
         listBodyRef.current
@@ -876,6 +884,15 @@ export function SessionList() {
                   else childMap.set(s.parentSessionPath, [s]);
                 }
               }
+              // 分组截断（r9 wave1）：默认只渲染前 GROUP_VISIBLE_LIMIT 条顶层行（子会话行内
+              // 展开不计入——列表流渲染的是 tops）；搜索/批量模式全量不截断（搜索模式分组
+              // 本就不渲染，此处对批量模式豁免）；locate 全展走 Infinity。
+              const visibleLimit =
+                searchResults !== null || batchMode
+                  ? Number.POSITIVE_INFINITY
+                  : (groupVisible[projectPath] ?? GROUP_VISIBLE_LIMIT);
+              const shownTops = tops.slice(0, visibleLimit);
+              const remainingTops = tops.length - shownTops.length;
               return (
                 <div key={projectPath} data-project-group={projectPath}>
                   {/* 分组头（C16 todo 9）：manual 档下整行作为桌面 HTML5 拖拽源/目标。
@@ -1012,21 +1029,39 @@ export function SessionList() {
                           <p className="text-xs text-muted-foreground">{t("sessionList.list.empty")}</p>
                         </div>
                       ) : (
-                        tops.map((s) => (
-                          <SessionItem
-                            key={s.id}
-                            session={s}
-                            forkIndexes={forkIndexes}
-                            knownChildren={childMap.get(s.path)}
-                            expandable={isTop(s)}
-                            onSelect={selectSession}
-                            onDialog={handleItemDialog}
-                            definedKeys={definedKeys}
-                            defs={tagDefs}
-                            onChanged={onChanged}
-                            {...itemBatchProps(s)}
-                          />
-                        ))
+                        <>
+                          {shownTops.map((s) => (
+                            <SessionItem
+                              key={s.id}
+                              session={s}
+                              forkIndexes={forkIndexes}
+                              knownChildren={childMap.get(s.path)}
+                              expandable={isTop(s)}
+                              onSelect={selectSession}
+                              onDialog={handleItemDialog}
+                              definedKeys={definedKeys}
+                              defs={tagDefs}
+                              onChanged={onChanged}
+                              {...itemBatchProps(s)}
+                            />
+                          ))}
+                          {remainingTops > 0 && (
+                            <button
+                              type="button"
+                              data-testid="group-load-more"
+                              className="flex min-h-11 w-full items-center justify-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:min-h-7 lg:px-1.5"
+                              onClick={() =>
+                                setGroupVisible((s) => ({
+                                  ...s,
+                                  [projectPath]: (s[projectPath] ?? GROUP_VISIBLE_LIMIT) + GROUP_VISIBLE_STEP,
+                                }))
+                              }
+                            >
+                              {t("sessionList.list.loadMore")}
+                              {t("sessionList.list.loadMoreRemaining", { n: remainingTops })}
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   )}
