@@ -70,7 +70,7 @@ interface UiState {
    * 引擎 thinking_level_changed 同会话回显同步（显示层，不落偏好）。null = 未选
    * （chip 显示"默认"，prompt 不注入 thinkingLevel）。 */
   selectedThinkingLevel: string | null;
-  /** 输入区模型选择弹层开关（W2 todo 8）：chip 点击与 shell 的 Ctrl+P 快捷键共用——
+  /** 输入区模型选择弹层开关（W2 todo 8）：chip 点击与 shell 的 Ctrl+L 快捷键共用——
    * 键盘监听在 shell、弹层在 composer，跨组件状态落 store。 */
   modelPickerOpen: boolean;
   /** 快捷键帮助对话框开关（docs08-r7 任务 12）：顶栏帮助钮与 shell 的 ?/Ctrl+K

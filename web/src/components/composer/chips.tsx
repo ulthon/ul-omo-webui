@@ -1,7 +1,7 @@
 // 输入区模型 / 思考 chip（W2 todo 8）：工具条上的第二个模型选择面（顶栏下拉保留不动，
 // 两处 provider 分组语义一致——此处镜像 topbar 的分组写法，不搬移其实现）。
 // 模型 chip：点击弹可搜索列表（键入即过滤 provider/model），radix Popover 自带外部点击
-// / Escape 关闭；打开态落 ui store modelPickerOpen，shell 的 Ctrl+P 远程置 true。
+// / Escape 关闭；打开态落 ui store modelPickerOpen，shell 的 Ctrl+L 远程置 true。
 // 思考 chip：可选档 = 所选模型 supportedThinkingLevels ∩ 服务端可持久化档位
 // （lib/thinking-level）；模型未下发该字段时整个 chip 不渲染（非禁用）。选择即写
 // selectedThinkingLevel + 防抖 PATCH preferredThinkingLevel（latest-wins）。
@@ -10,7 +10,8 @@ import { Brain, Check, ChevronDown, Cpu, Star } from "lucide-react";
 import type { ModelInfo } from "@/lib/api";
 import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
-import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
+import { scheduleThinkingPreferencePersist } from "@/lib/preferences";
+import { selectModel } from "@/lib/model-cycle";
 import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { Input } from "@/components/ui/input";
@@ -54,11 +55,8 @@ function ModelPickerBody({ close }: { close: () => void }) {
   }, [favoriteModels, query]);
 
   const t = useT();
-  const selectModel = (value: string) => {
-    if (useUiStore.getState().selectedModel === value) return;
-    useUiStore.getState().setSelectedModel(value);
-    scheduleModelPreferencePersist();
-  };
+  // 选中逻辑油出 lib/model-cycle.selectModel（r9 2026-10-26 批次）：chip 点击与
+  // shell Ctrl+P 循环走同一条「写选中 + 防抖持久化」路径
 
   return (
     <>

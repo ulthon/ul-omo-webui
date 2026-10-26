@@ -1,5 +1,5 @@
 // 快捷键帮助全局触发（docs08-r7 任务 12）：shell 挂载，"?" 或 Ctrl/Cmd+K 打开帮助。
-// 与 useCtrlPModelPicker 同款探针可测形态（键位判定收拢 lib/shortcuts 注册表）；
+// 与 useModelShortcuts 同款探针可测形态（键位判定收拢 lib/shortcuts 注册表）；
 // 开关状态落 ui store（顶栏帮助钮与全局键共用，modelPickerOpen 先例）。
 // 独立成文件：oxlint react(only-export-components) 要求 hook 与组件分文件（基线 7 警告只减不增）。
 import { useEffect } from "react";

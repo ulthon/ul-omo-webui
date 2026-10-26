@@ -11,6 +11,7 @@ export const shortcuts = {
     overlay: "弹层与面板",
   },
   desc: {
+    modelCycle: "循环切换收藏模型",
     modelPicker: "打开模型选择",
     shortcutsHelp: "打开本帮助",
     send: "发送消息",
@@ -25,4 +26,6 @@ export const shortcuts = {
     slashClose: "关闭菜单并回退输入",
     overlayClose: "关闭下拉/面板/对话框/灯箱/抽屉",
   },
+  /** Ctrl+P 循环但无收藏时的兜底提示（shell useModelShortcuts toast） */
+  noFavoritesToast: "暂无收藏模型，已打开模型选择",
 } as const;

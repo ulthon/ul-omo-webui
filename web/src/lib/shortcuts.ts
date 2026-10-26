@@ -1,7 +1,8 @@
 // 快捷键注册表（docs08-r7 任务 12）：键位显示串与描述词条键的唯一事实来源。
-// 帮助对话框（shortcuts-dialog.tsx）按此渲染；主要 handler（shell 的 Ctrl+P/帮助
-// 触发、composer 的 Enter 发送）经下方谓词共用同一判定——组件内不得复制键串，
-// 只允许引用注册表。触发键显示串不本地化（descKey 词条在 i18n zh/en 双语齐键）。
+// 帮助对话框（shortcuts-dialog.tsx）按此渲染；主要 handler（shell 的模型快捷键：
+// Ctrl+P 收藏循环 / Ctrl+L 选择弹层，及帮助触发、composer 的 Enter 发送）经下方谓词
+// 共用同一判定——组件内不得复制键串，只允许引用注册表。触发键显示串不本地化
+// （descKey 词条在 i18n zh/en 双语齐键）。
 import type { MessageKey } from "@/i18n/i18n";
 
 /** 谓词入参最小结构：原生与 React 合成键盘事件都满足（结构化，不做类型耦合） */
@@ -13,9 +14,23 @@ export interface ShortcutTriggerLike {
   shiftKey: boolean;
 }
 
-/** Ctrl/Cmd+P 打开模型选择（shell useCtrlPModelPicker）：与既有判定逐字等价，行为不变 */
+/** Ctrl/Cmd+P 正向循环切换收藏模型（shell useModelShortcuts，r9 2026-10-26 批次
+ * 对齐 native 键位；原 Ctrl+P 开弹层改由 Ctrl+L 承担）。Shift 变体归反向谓词，
+ * 两谓词经 !shiftKey / shiftKey 互斥，一次按键不双触发。 */
+export function isModelCycleForward(e: ShortcutTriggerLike): boolean {
+  return (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "p";
+}
+
+/** Shift+Ctrl/Cmd+P 反向循环切换收藏模型（shell useModelShortcuts）。带 Shift 时
+ * key 为大写 "P"，判定统一走 toLowerCase。 */
+export function isModelCycleBackward(e: ShortcutTriggerLike): boolean {
+  return e.shiftKey && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p";
+}
+
+/** Ctrl/Cmd+L 打开模型选择（shell useModelShortcuts）：与浏览器默认（地址栏聚焦）
+ * 冲突，调用方负责 preventDefault。 */
 export function isModelPickerTrigger(e: ShortcutTriggerLike): boolean {
-  return (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p";
+  return (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l";
 }
 
 /** ? 或 Ctrl/Cmd+K 打开快捷键帮助（shell useShortcutsHelp）。
@@ -45,7 +60,7 @@ export interface ShortcutGroup {
 }
 
 /** 全部现有快捷键，按来源 handler 分组（grep keydown 全量枚举核对，双向一致）：
- * - global：shell.tsx（Ctrl+P 模型选择）+ 本任务新增的帮助触发（?/Ctrl+K）
+ * - global：shell.tsx（Ctrl+P/Shift+Ctrl+P 收藏循环、Ctrl+L 模型选择）+ 帮助触发（?/Ctrl+K）
  * - composer：composer.tsx onKeyDown（Enter 发送、Shift+Enter 换行、@ 文件引用）
  * - history：composer.tsx 历史翻阅分支（↑ 调出/翻旧、↓ 翻新、Esc 退出）
  * - slash：composer.tsx 斜杠下拉域（/ 打开、↑/↓ 高亮、Enter 选择、Esc 关闭回退）
@@ -55,7 +70,12 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
     id: "global",
     titleKey: "shortcuts.group.global",
     entries: [
-      { id: "model-picker", keys: ["Ctrl+P", "⌘P"], descKey: "shortcuts.desc.modelPicker" },
+      {
+        id: "model-cycle",
+        keys: ["Ctrl+P", "Shift+Ctrl+P", "⌘P", "Shift+⌘P"],
+        descKey: "shortcuts.desc.modelCycle",
+      },
+      { id: "model-picker", keys: ["Ctrl+L", "⌘L"], descKey: "shortcuts.desc.modelPicker" },
       { id: "shortcuts-help", keys: ["?", "Ctrl+K", "⌘K"], descKey: "shortcuts.desc.shortcutsHelp" },
     ],
   },

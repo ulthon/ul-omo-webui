@@ -12,6 +12,7 @@ export const shortcuts = {
     overlay: "Panels & overlays",
   },
   desc: {
+    modelCycle: "Cycle favorite models",
     modelPicker: "Open model picker",
     shortcutsHelp: "Open this help",
     send: "Send message",
@@ -26,4 +27,6 @@ export const shortcuts = {
     slashClose: "Close menu and revert input",
     overlayClose: "Close dropdown/panel/dialog/lightbox/drawer",
   },
+  /** Toast when Ctrl+P cycling finds no favorites (shell useModelShortcuts) */
+  noFavoritesToast: "No favorite models yet, opening the model picker",
 } as const;

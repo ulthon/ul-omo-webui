@@ -8,16 +8,16 @@
 // W5-15 右栏开合：lg 常驻（展开 / 折叠窄条），<lg 镜像左栏 fixed 抽屉（inset-y-0，勿套
 // --app-height，否则软键盘收缩截断抽屉底）；双抽屉互斥（开其一时自动关另一，经 ui store
 // subscribe 实现左→右方向）；z 序与折叠记忆（ul-omo-webui:todo-panel-open）机制不变。
-// W2 todo 8：useCtrlPModelPicker 导出供单测挂最小探针验证（避免 mock.module 进程级
-// 粘滞污染同进程后跑的测试文件）。
-// oxlint-disable react/only-export-components -- useCtrlPModelPicker 是与 shell 布局强耦合的
+// W2 todo 8 / r9 2026-10-26 批次：useModelShortcuts 导出供单测挂最小探针验证（避免
+// mock.module 进程级粘滞污染同进程后跑的测试文件）。
+// oxlint-disable react/only-export-components -- useModelShortcuts 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleAlert, Copy, FolderOpen, GitBranch, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
-import { useT } from "@/i18n/i18n";
+import { useT, t } from "@/i18n/i18n";
 import { readSessionUrl } from "@/lib/session-url";
 import { useUiStore } from "@/stores/ui";
 import type { Toast } from "@/stores/ui";
@@ -29,7 +29,8 @@ import { Button } from "@/components/ui/button";
 import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 import { RightRail } from "@/components/layout/right-rail";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { isModelPickerTrigger } from "@/lib/shortcuts";
+import { isModelCycleBackward, isModelCycleForward, isModelPickerTrigger } from "@/lib/shortcuts";
+import { nextFavoriteModel, selectModel } from "@/lib/model-cycle";
 import { useShortcutsHelp } from "@/lib/use-shortcuts-help";
 
 /** 复制到剪贴板（toast 复制钮）：优先 navigator.clipboard（https/localhost），
@@ -138,20 +139,37 @@ function useAppHeight(): void {
   }, []);
 }
 
-/** Ctrl/Cmd+P 快捷键挂载（W2 todo 8）：打开输入区模型选择弹层（打开态在 ui store，chip 消费）。
- * 对话框内不接管——radix 弹层经 Portal 盖住输入区 chip，快捷键在遮罩下打开等于失效
- * （Oracle 低-7）；无可用模型时同样不开。preventDefault 压掉浏览器默认打印面板。
+/** 模型快捷键挂载（W2 todo 8 起，r9 2026-10-26 批次对齐 native）：Ctrl/Cmd+P 与
+ * Shift+Ctrl/Cmd+P 在 CLI 收藏内循环切换模型，Ctrl/Cmd+L 打开输入区模型选择弹层
+ * （打开态在 ui store，chip 消费）。对话框内不接管——radix 弹层经 Portal 盖住输入区
+ * chip，快捷键在遮罩下触发等于失效；无可用模型（确认为空）时同样不动。
+ * preventDefault 压掉浏览器默认（打印面板 / 地址栏聚焦，含焦点在 textarea 时压字符）。
+ * 循环每次按键即时重读 getState——收藏列表两次按键间变化（SSE/刷新）不会用到旧快照；
+ * 无收藏时 toast 提示并打开弹层兜底；选中与持久化走 lib/model-cycle.selectModel
+ * （与 chip 点击同一条「写 selectedModel + 防抖持久化」路径）。
  * 独立导出成 hook：shell 挂载用，单测可挂最小探针组件验证（不牵起整个 shell 的引导链）。
- * docs08-r7 任务 12：键位判定收拢 lib/shortcuts.isModelPickerTrigger（注册表唯一来源），逐字等价。 */
-export function useCtrlPModelPicker(): void {
+ * docs08-r7 任务 12：键位判定收拢 lib/shortcuts 注册表（唯一来源）。 */
+export function useModelShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!isModelPickerTrigger(e)) return;
+      const backward = isModelCycleBackward(e);
+      const forward = isModelCycleForward(e);
+      if (!forward && !backward && !isModelPickerTrigger(e)) return;
       const target = e.target;
       if (target instanceof Element && target.closest('[role="dialog"]')) return;
       e.preventDefault();
       const ui = useUiStore.getState();
       if (ui.modelsLoaded && ui.models.length === 0) return;
+      if (forward || backward) {
+        const next = nextFavoriteModel(ui.favoriteModels, ui.selectedModel, backward ? -1 : 1);
+        if (next === null) {
+          ui.showToast(t("shortcuts.noFavoritesToast"));
+          ui.setModelPickerOpen(true);
+          return;
+        }
+        selectModel(next);
+        return;
+      }
       ui.setModelPickerOpen(true);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -232,7 +250,7 @@ export function AppShell() {
     return () => disconnectEvents();
   }, []);
 
-  useCtrlPModelPicker();
+  useModelShortcuts();
   // 快捷键帮助触发（docs08-r7 任务 12）：? / Ctrl+K 打开帮助对话框（开关在 ui store，
   // 对话框挂 topbar）；登录页不挂 AppShell，本 hook 不存在即登录页零影响。
   useShortcutsHelp();
