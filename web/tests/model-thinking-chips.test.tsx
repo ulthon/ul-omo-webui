@@ -187,7 +187,7 @@ describe("模型 chip", () => {
     await unmount();
   });
 
-  test("Ctrl+P 置位打开态 → 弹层渲染 provider 分组列表（与顶栏同款镜像）", async () => {
+  test("Ctrl+L 置位打开态 → 弹层渲染 provider 分组列表（与顶栏同款镜像）", async () => {
     useUiStore.setState({
       models: [model(), model({ provider: "openrouter", id: "claude-x" })],
       modelsLoaded: true,
