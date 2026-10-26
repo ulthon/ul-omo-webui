@@ -16,7 +16,8 @@ const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { ProjectManagementSection, Topbar } = await import("@/components/layout/topbar");
+const { ProjectManagementSection } = await import("@/pages/settings");
+const { Topbar } = await import("@/components/layout/topbar");
 const { useUiStore } = await import("@/stores/ui");
 
 const TOPBAR_MOBILE_QUERY = "(max-width: 1023.98px)";

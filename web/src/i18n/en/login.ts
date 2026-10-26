@@ -191,4 +191,11 @@ export const login = {
     switcherSheetTitle: "Sessions",
     switcherSheetClose: "Close session switcher",
   },
+  // —— Settings full-screen page (r9 2026-10-26 batch task 9, panel retired) ——
+  settingsPage: {
+    back: "Back",
+    saved: "Settings saved",
+    projectGroup: "Project",
+    globalGroup: "Global",
+  },
 } as const;

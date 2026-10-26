@@ -36,7 +36,7 @@ vi.mock("@/components/ui/dialog", () => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
-const { ProjectManagementSection } = await import("@/components/layout/topbar");
+const { ProjectManagementSection } = await import("@/pages/settings");
 const { useUiStore } = await import("@/stores/ui");
 const { useSessionsStore } = await import("@/stores/sessions");
 

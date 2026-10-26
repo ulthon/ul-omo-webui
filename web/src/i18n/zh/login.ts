@@ -193,4 +193,11 @@ export const login = {
     switcherSheetTitle: "会话",
     switcherSheetClose: "关闭会话切换",
   },
+  // —— 设置独立全屏页（r9 2026-10-26 批次任务 9，弹层退役）——
+  settingsPage: {
+    back: "返回",
+    saved: "设置已保存",
+    projectGroup: "项目区",
+    globalGroup: "全局区",
+  },
 } as const;
