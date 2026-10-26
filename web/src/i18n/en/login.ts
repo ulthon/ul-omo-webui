@@ -25,6 +25,7 @@ export const login = {
   },
   // —— 右栏（components/layout/right-rail.tsx）——
   rightRail: {
+    tabOverview: "Overview",
     tabTodo: "Tasks",
     tabChanges: "Changes",
     tabNotes: "Notes",
@@ -44,6 +45,25 @@ export const login = {
     gitLinkTitle: "Git link: {url}",
     openFilesLink: "Open file manager link",
     filesLinkTitle: "File manager link: {url}",
+    overview: {
+      tasksTitle: "Tasks",
+      notesTitle: "Notes",
+      statsTitle: "Stats",
+      agentsTitle: "Agents",
+      tasksNoSession: "No session selected",
+      tasksEmpty: "No tasks yet",
+      notesNoProject: "Add a project first",
+      notesEmpty: "No notes yet",
+      notesCount: "{n} in total",
+      statsNoSession: "No session selected",
+      statsUnavailable: "Stats unavailable",
+      statsEmpty: "No stats yet",
+      statsTokens: "Total tokens",
+      statsContext: "Context usage",
+      statsCost: "Total cost",
+      agentsNoSession: "No session selected",
+      agentsEmpty: "No agent calls yet",
+    },
   },
   // —— 上下文水位环（components/layout/context-ring.tsx）——
   contextRing: {

@@ -21,6 +21,7 @@ import { MemoryPanel } from "@/components/chat/memory-panel";
 import { StatPanel } from "@/components/chat/stat-panel";
 import { SubagentPanel } from "@/components/chat/subagent-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
+import { OverviewPanel } from "@/components/layout/overview-panel";
 import { useUiStore } from "@/stores/ui";
 import { useT, type MessageKey } from "@/i18n/i18n";
 
@@ -31,10 +32,11 @@ const NotesView = lazy(() =>
   import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
 );
 
-export type RightRailTab = "todo" | "changes" | "notes" | "stats" | "memory" | "agents";
+export type RightRailTab = "overview" | "todo" | "changes" | "notes" | "stats" | "memory" | "agents";
 
 // 页签标签键：完整点分路径字面量映射（i18n 死键检测要求键以字面量被引用）
 const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
+  overview: "login.rightRail.tabOverview",
   todo: "login.rightRail.tabTodo",
   changes: "login.rightRail.tabChanges",
   notes: "login.rightRail.tabNotes",
@@ -43,7 +45,30 @@ const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
   agents: "login.rightRail.tabAgents",
 };
 
-const TAB_IDS: RightRailTab[] = ["todo", "changes", "notes", "stats", "memory", "agents"];
+const TAB_IDS: RightRailTab[] = ["overview", "todo", "changes", "notes", "stats", "memory", "agents"];
+
+/** 页签记忆 localStorage 键（r9 w2-t8）：值为合法 RightRailTab 字符串；
+ *  无记录 / 非法值回退默认总览（仅首次进入生效，存量偏好不覆盖）。 */
+const RAIL_TAB_KEY = "ul-omo-webui:right-rail-tab";
+
+/** 页签记忆读取：无记录或非法值返回 null（调用方落默认总览） */
+function readRailTabPreference(): RightRailTab | null {
+  try {
+    const raw = window.localStorage.getItem(RAIL_TAB_KEY);
+    return TAB_IDS.includes(raw as RightRailTab) ? (raw as RightRailTab) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 页签记忆写入：仅 switchTab 用户路径调用；storage 不可用静默降级 */
+function writeRailTabPreference(tab: RightRailTab): void {
+  try {
+    window.localStorage.setItem(RAIL_TAB_KEY, tab);
+  } catch {
+    // storage 不可用：忽略（页面生命周期内 state 仍生效）
+  }
+}
 
 /** 宽度记忆 localStorage 键与拖宽边界（px） */
 const RAIL_WIDTH_KEY = "ul-omo-webui:right-rail-width";
@@ -169,6 +194,7 @@ function RailBody({
 }) {
   const t = useT();
   if (tab === "todo") return <TodoPanel sessionId={sessionId} onClose={onClose} />;
+  if (tab === "overview") return <OverviewPanel sessionId={sessionId} />;
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
   if (tab === "agents") return <SubagentPanel sessionId={sessionId} />;
@@ -191,7 +217,9 @@ export function RightRail({
   onToggle: () => void;
   sessionId: string | null;
 }) {
-  const [tab, setTab] = useState<RightRailTab>("todo");
+  // 页签记忆（r9 w2-t8）：无存量偏好默认总览（首位），有则尊重存量；
+  // 切页签时写回（读写同键一致，stale state 对抗口径）
+  const [tab, setTab] = useState<RightRailTab>(() => readRailTabPreference() ?? "overview");
   // 笔记编辑未保存标记：NotesView 编辑态写入，切页签时读取做确认（契约自 shell 迁入）
   const notesDirtyRef = useRef(false);
   const [width, setWidth] = useState(() => readRailWidthPreference());
@@ -218,6 +246,7 @@ export function RightRail({
       if (!window.confirm(t("login.rightRail.confirmLeaveNotes"))) return;
     }
     setTab(next);
+    writeRailTabPreference(next);
   };
 
   const onHandlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
