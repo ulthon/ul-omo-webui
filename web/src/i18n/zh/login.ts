@@ -27,6 +27,7 @@ export const login = {
   },
   // —— 右栏（components/layout/right-rail.tsx）——
   rightRail: {
+    tabOverview: "总览",
     tabTodo: "任务",
     tabChanges: "变更",
     tabNotes: "笔记",
@@ -46,6 +47,25 @@ export const login = {
     gitLinkTitle: "Git 外链：{url}",
     openFilesLink: "打开文件管理外链",
     filesLinkTitle: "文件管理外链：{url}",
+    overview: {
+      tasksTitle: "任务",
+      notesTitle: "笔记",
+      statsTitle: "统计",
+      agentsTitle: "子代理",
+      tasksNoSession: "未选择会话",
+      tasksEmpty: "暂无任务",
+      notesNoProject: "请先添加项目",
+      notesEmpty: "暂无笔记",
+      notesCount: "共 {n} 条",
+      statsNoSession: "未选择会话",
+      statsUnavailable: "统计暂不可用",
+      statsEmpty: "暂无统计数据",
+      statsTokens: "累计 Tokens",
+      statsContext: "上下文水位",
+      statsCost: "累计成本",
+      agentsNoSession: "未选择会话",
+      agentsEmpty: "暂无子代理调用",
+    },
   },
   // —— 左侧栏宽度拖拽（pages/shell.tsx AppSidebar）——
   sidebarResize: {
