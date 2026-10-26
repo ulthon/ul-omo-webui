@@ -838,10 +838,18 @@ export const api = {
 
   // ---- 常用语（todo 14）----
   /** 两源常用语：global 恒返回；project 仅传项目路径时返回（读不要求已注册）。
-   * revision：两源条目内容拼接的 sha1 hex（r9 F1-B1 乐观锁，整替提交时回传 baseRevision） */
+   * revision：两源聚合 sha1（兼容保留，不作锁基线）；globalRevision/projectRevision
+   * （r9 BLOCKER-1 修复）：各组条目内容独立 sha1——整替提交回传对应组的 revision 作
+   * baseRevision（读写面同口径，活跃项目下 global 组不再恒 409） */
   async listSnippets(
     project?: string,
-  ): Promise<{ global: SnippetEntry[]; project: SnippetEntry[]; revision: string }> {
+  ): Promise<{
+    global: SnippetEntry[];
+    project: SnippetEntry[];
+    revision: string;
+    globalRevision: string;
+    projectRevision: string;
+  }> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/snippets${qs}`);
   },

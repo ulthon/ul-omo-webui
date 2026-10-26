@@ -47,12 +47,19 @@ function parseSnippetEntries(raw: unknown): SnippetEntry[] {
   });
 }
 
-/** 两源条目内容 revision（r9 F1-B1 乐观锁）：global+project 条目拼接后取 sha1 hex。
- * 与 tagsRevision 同型取内容不取 mtime（mtime 时钟/写序噪声大）；两源均经 config-store
- * 归一化读取，JSON 序列化键序稳定。project 源仅在给定项目时参与——与 GET /api/snippets
- *（?project 缺省 = 空数组）同口径，PUT 侧按 scope 同口径计算。 */
+/** 两源聚合 revision：global+project 条目拼接后取 sha1 hex（兼容保留：任一源变更即
+ * 变化）；乐观锁比对不用它——读写面同口径用下方组独立 revision（r9 BLOCKER-1 修复）。
+ * 与 tagsRevision 同型取内容不取 mtime（mtime 时钟/写序噪声大）。 */
 function snippetsRevision(globalSnippets: SnippetEntry[], projectSnippets: SnippetEntry[]): string {
   return createHash("sha1").update(JSON.stringify([globalSnippets, projectSnippets])).digest("hex");
+}
+
+/** 组独立 revision（r9 BLOCKER-1 修复）：该组条目内容单独取 sha1 hex。读写面统一口径——
+ * GET 按组下发 globalRevision/projectRevision，PUT 按目标组比对同组 revision；不再用两源
+ * 聚合做锁基线（活跃项目下 GET?project 下发 sha1([global, project]) 而 PUT global 比对
+ * sha1([global, []])，两口径错位曾致 global 组保存恒 409 死锁）。 */
+function groupRevision(entries: SnippetEntry[]): string {
+  return createHash("sha1").update(JSON.stringify(entries)).digest("hex");
 }
 
 export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
@@ -81,8 +88,11 @@ export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
     return c.json({
       global: globalSnippets,
       project: projectSnippets,
-      // r9 F1-B1 乐观锁：前端整替提交时回传 baseRevision 比对
+      // 两源聚合 revision：兼容保留（任一源变更即变化），不作锁基线
       revision: snippetsRevision(globalSnippets, projectSnippets),
+      // r9 BLOCKER-1 乐观锁：按组独立 revision，PUT 按目标组比对同组 revision（读写面同口径）
+      globalRevision: groupRevision(globalSnippets),
+      projectRevision: groupRevision(projectSnippets),
     });
   }));
 
@@ -103,21 +113,21 @@ export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
       }
       const entries = parseSnippetEntries(body.snippets);
       const store = storeFor(project);
-      // r9 F1-B1 乐观锁：条目校验在后、写前比对当前 revision（两源拼接口径，与 GET 带
-      // project 同口径），不一致 409 不写入（部分写即覆盖丢失，绝不允许）
+      // r9 BLOCKER-1 乐观锁：条目校验在后、写前仅比对 project 组自身 revision（组独立
+      // 口径，与 GET projectRevision 同口径），不一致 409 不写入（部分写即覆盖丢失，
+      // 绝不允许）；global 组变更不影响本组锁基线
       const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
-      if (
-        baseRevision !== "" &&
-        snippetsRevision(deps.configs.readSnippets().snippets, store.readProjectConfig().snippets) !== baseRevision
-      ) {
+      if (baseRevision !== "" && groupRevision(store.readProjectConfig().snippets) !== baseRevision) {
         throw new ApiError(409, "snippet_conflict", "常用语已被其他端修改，请刷新后重试");
       }
       await store.updateProjectConfig({ snippets: entries });
       return c.json({ snippets: store.readProjectConfig().snippets });
     }
     const entries = parseSnippetEntries(body.snippets);
+    // r9 BLOCKER-1 乐观锁：仅比对 global 组自身 revision（组独立口径，与 GET
+    // globalRevision 同口径——写面不再受 project 源影响）；409 先于写盘
     const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
-    if (baseRevision !== "" && snippetsRevision(deps.configs.readSnippets().snippets, []) !== baseRevision) {
+    if (baseRevision !== "" && groupRevision(deps.configs.readSnippets().snippets) !== baseRevision) {
       throw new ApiError(409, "snippet_conflict", "常用语已被其他端修改，请刷新后重试");
     }
     await deps.configs.writeSnippets(entries);

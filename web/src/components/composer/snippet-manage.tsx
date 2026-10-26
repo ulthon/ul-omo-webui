@@ -66,7 +66,10 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
         scope,
         ...(scope === "project" && project ? { project } : {}),
         snippets: renumberSnippets(next),
-        baseRevision: fresh.revision,
+        // 读写面同口径（r9 BLOCKER-1 修复）：携目标组独立 revision 作基线——global 组用
+        // globalRevision、project 组用 projectRevision（GET 按组下发同口径）；两源聚合
+        // revision 错位曾致活跃项目下 global 组保存恒 409，不再作锁基线
+        baseRevision: scope === "global" ? fresh.globalRevision : fresh.projectRevision,
       });
       setEntries((prev) => ({ global: prev?.global ?? [], project: prev?.project ?? [], [scope]: res.snippets }));
       return true;

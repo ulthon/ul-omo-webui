@@ -3,6 +3,7 @@
 // config-store.test.ts 锁定，此处不重复。
 // 全部用 mkdtemp 隔离目录，绝不触碰真实 ~/.config 与仓库 .ul-omo-webui.json。
 import { afterAll, describe, expect, test } from "vitest";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,8 +108,10 @@ describe("GET /api/snippets", () => {
     const body = await res.json();
     expect(body.global).toEqual([]);
     expect(body.project).toEqual([]);
-    // r9 F1-B1 乐观锁：两源条目内容的 sha1 hex
+    // r9 F1-B1 乐观锁：两源聚合 revision + r9 BLOCKER-1 按组独立 revision 同步下发
     expect(body.revision).toMatch(/^[0-9a-f]{40}$/);
+    expect(body.globalRevision).toMatch(/^[0-9a-f]{40}$/);
+    expect(body.projectRevision).toMatch(/^[0-9a-f]{40}$/);
   });
 
   test("两源聚合：global 与 project 各自返回互不污染", async () => {
@@ -331,13 +334,154 @@ describe("GET /api/snippets revision（r9 乐观锁）", () => {
     const rev2 = (await (await app.request(`/api/snippets${qs}`)).json()).revision;
     expect(rev2).not.toBe(rev1);
   });
+
+  test("按组口径（r9 BLOCKER-1 修复）：globalRevision/projectRevision 各为该组内容独立 sha1，互不联动", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const qs = `?project=${encodeURIComponent(projectDir)}`;
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "g1", sort: 0 }] });
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p1", sort: 0 }],
+    });
+    const get1 = await (await app.request(`/api/snippets${qs}`)).json();
+    // 组独立口径：各组 = 该组条目内容 JSON 的 sha1（读写面统一基线，与另一组内容无关）
+    const sha1 = (v: unknown) => createHash("sha1").update(JSON.stringify(v)).digest("hex");
+    expect(get1.globalRevision).toBe(sha1(get1.global));
+    expect(get1.projectRevision).toBe(sha1(get1.project));
+    // 互不联动：改 global 只前移 globalRevision；改 project 只前移 projectRevision
+    const gr0 = get1.globalRevision as string;
+    const pr0 = get1.projectRevision as string;
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "g2", sort: 0 }] });
+    const get2 = await (await app.request(`/api/snippets${qs}`)).json();
+    expect(get2.globalRevision).not.toBe(gr0);
+    expect(get2.projectRevision).toBe(pr0);
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p2", sort: 0 }],
+    });
+    const get3 = await (await app.request(`/api/snippets${qs}`)).json();
+    expect(get3.globalRevision).toBe(get2.globalRevision);
+    expect(get3.projectRevision).not.toBe(pr0);
+  });
+
+  test("活跃项目（project 有条目）下修改 global：携 GET?project 的 globalRevision 直接保存成功（BLOCKER-1 死锁回归）", async () => {
+    // round-1 漏网路径：project 非空且有条目时前端 GET 带 ?project；旧实现聚合口径
+    // 下该路径的锁基线含 project 源，global 组保存恒 409。修复后携同口径
+    // globalRevision 直接成功
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const qs = `?project=${encodeURIComponent(projectDir)}`;
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p1", sort: 0 }],
+    });
+    // 前端主导读取路径：带 ?project 的 GET
+    const fresh = await (await app.request(`/api/snippets${qs}`)).json();
+    const ok = await putJson(app, "/api/snippets", {
+      scope: "global",
+      snippets: [{ content: "g1", sort: 0 }],
+      baseRevision: fresh.globalRevision,
+    });
+    expect(ok.status).toBe(200);
+    const after = await (await app.request(`/api/snippets${qs}`)).json();
+    expect(after.global).toEqual([{ content: "g1", sort: 0 }]);
+    // project 组不被本次 global 写入波及
+    expect(after.project).toEqual([{ content: "p1", sort: 0 }]);
+  });
+
+  test("活跃项目下两客户端串行改 global：后打携旧 globalRevision 409 不落盘，重拉携新 revision 重试成功", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const qs = `?project=${encodeURIComponent(projectDir)}`;
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p1", sort: 0 }],
+    });
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "v1", sort: 0 }] });
+    // 客户端 A 读取基线（带 ?project，前端主导路径），取 global 组口径
+    const revA = (await (await app.request(`/api/snippets${qs}`)).json()).globalRevision;
+    // 客户端 B 先写一版，globalRevision 前移
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "v2", sort: 0 }] });
+    // A 携旧 globalRevision 第二打 → 409，不落盘
+    const stale = await putJson(app, "/api/snippets", {
+      scope: "global",
+      snippets: [{ content: "v3", sort: 0 }],
+      baseRevision: revA,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("snippet_conflict");
+    const mid = await (await app.request(`/api/snippets${qs}`)).json();
+    expect(mid.global).toEqual([{ content: "v2", sort: 0 }]);
+    // 重拉后携新 globalRevision 重试成功
+    const retry = await putJson(app, "/api/snippets", {
+      scope: "global",
+      snippets: [{ content: "v3", sort: 0 }],
+      baseRevision: mid.globalRevision,
+    });
+    expect(retry.status).toBe(200);
+    expect((await (await app.request(`/api/snippets${qs}`)).json()).global).toEqual([{ content: "v3", sort: 0 }]);
+  });
+
+  test("project 组同理：global 有条目时仅比对 projectRevision，global 变更不使 project 提交失效", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const qs = `?project=${encodeURIComponent(projectDir)}`;
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "g1", sort: 0 }] });
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p1", sort: 0 }],
+    });
+    const rev0 = (await (await app.request(`/api/snippets${qs}`)).json()).projectRevision;
+    // 对端改 global：projectRevision 不动，携旧基线仍成功（两源聚合口径下此处会误 409）
+    await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "g2", sort: 0 }] });
+    const ok = await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p2", sort: 0 }],
+      baseRevision: rev0,
+    });
+    expect(ok.status).toBe(200);
+    // 对端改 project 后携旧 projectRevision → 409 不落盘；重拉携新 revision 重试 200
+    const rev1 = (await (await app.request(`/api/snippets${qs}`)).json()).projectRevision;
+    await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p3", sort: 0 }],
+    });
+    const stale = await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p4", sort: 0 }],
+      baseRevision: rev1,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("snippet_conflict");
+    expect((await (await app.request(`/api/snippets${qs}`)).json()).project).toEqual([
+      { content: "p3", sort: 0 },
+    ]);
+    const rev2 = (await (await app.request(`/api/snippets${qs}`)).json()).projectRevision;
+    const retry = await putJson(app, "/api/snippets", {
+      scope: "project",
+      project: projectDir,
+      snippets: [{ content: "p4", sort: 0 }],
+      baseRevision: rev2,
+    });
+    expect(retry.status).toBe(200);
+  });
 });
 
 describe("PUT /api/snippets baseRevision 乐观锁（真 PUT 双打）", () => {
   test("global：对端先写一版，本端携旧 revision 第二打 → 409 snippet_conflict 不落盘，携新 revision 重试成功", async () => {
     const { app } = setup();
     await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "v1", sort: 0 }] });
-    const rev0 = (await (await app.request("/api/snippets")).json()).revision;
+    // r9 BLOCKER-1：锁基线为 global 组独立口径（GET globalRevision 同口径）
+    const rev0 = (await (await app.request("/api/snippets")).json()).globalRevision;
     // 对端写入新集，revision 前移
     await putJson(app, "/api/snippets", { scope: "global", snippets: [{ content: "v2", sort: 0 }] });
     // 第二打携旧 revision（Manual-QA 核心：真 PUT ×2，第二个携旧 revision）
@@ -351,7 +495,7 @@ describe("PUT /api/snippets baseRevision 乐观锁（真 PUT 双打）", () => {
     // 409 不落盘：对端写入原样保留（部分写即覆盖丢失，绝不允许）
     expect((await (await app.request("/api/snippets")).json()).global).toEqual([{ content: "v2", sort: 0 }]);
     // 携最新 revision 重试成功落盘
-    const rev1 = (await (await app.request("/api/snippets")).json()).revision;
+    const rev1 = (await (await app.request("/api/snippets")).json()).globalRevision;
     const retry = await putJson(app, "/api/snippets", {
       scope: "global",
       snippets: [{ content: "v3", sort: 0 }],
@@ -381,7 +525,8 @@ describe("PUT /api/snippets baseRevision 乐观锁（真 PUT 双打）", () => {
       project: projectDir,
       snippets: [{ content: "p1", sort: 1 }],
     });
-    const rev0 = (await (await app.request(`/api/snippets${qs}`)).json()).revision;
+    // r9 BLOCKER-1：锁基线为 project 组独立口径（GET projectRevision 同口径）
+    const rev0 = (await (await app.request(`/api/snippets${qs}`)).json()).projectRevision;
     await putJson(app, "/api/snippets", {
       scope: "project",
       project: projectDir,
@@ -396,7 +541,7 @@ describe("PUT /api/snippets baseRevision 乐观锁（真 PUT 双打）", () => {
     expect(stale.status).toBe(409);
     expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("snippet_conflict");
     expect((await (await app.request(`/api/snippets${qs}`)).json()).project).toEqual([{ content: "p2", sort: 1 }]);
-    const rev1 = (await (await app.request(`/api/snippets${qs}`)).json()).revision;
+    const rev1 = (await (await app.request(`/api/snippets${qs}`)).json()).projectRevision;
     const ok = await putJson(app, "/api/snippets", {
       scope: "project",
       project: projectDir,
