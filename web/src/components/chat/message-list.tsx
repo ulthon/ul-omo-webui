@@ -11,7 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, shouldShowStickyUser, stickyUserOf, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice } from "./message-items";
+import { mergeMemoryItems, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
 import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
@@ -195,11 +195,11 @@ export function MessageList({
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
   const compacting = useMessagesStore((s) => s.bySession[sessionId]?.compacting ?? false);
 
-  // 粘性用户条（docs08-r7 任务 11）：虚拟化行绝对定位，纯 CSS sticky 不可行；判定复用
-  // 既有 scroll 通道（不新增监听），几何用 TanStack 测量缓存（窗外行可判，同 NavRail）。
-  // 回底消失：atBottom 恒隐藏，回底钮滚底后随之消失。值只在翻转时写入（cand 引用稳定）。
+  // 粘性用户条（docs08-r7 任务 11 建；r9 wave1 改视口锚定）：虚拟化行绝对定位，纯 CSS
+  // sticky 不可行；判定复用既有 scroll 通道（不新增监听），几何用 TanStack 测量缓存
+  // （窗外行可判，同 NavRail；未测行落估算值）。候选随滚动实时反查（见 handleScroll）；
+  // 回底消失：atBottom 恒隐藏，回底钮滚底后随之消失。
   const [stickyUser, setStickyUser] = useState<{ key: string; text: string } | null>(null);
-  const stickyCandidate = useMemo(() => stickyUserOf(mergedItems, entries ?? []), [mergedItems, entries]);
 
   const virtualizer = useVirtualizer({
     count: mergedItems.length,
@@ -247,9 +247,16 @@ export function MessageList({
     const atBottom = distance < BOTTOM_THRESHOLD;
     followRef.current = atBottom;
     setShowJump(!atBottom);
-    // 粘性用户条：回底消失；最近 user 气泡完整滚出视口（任一侧）时钉摘要于消息区顶
-    const cand = stickyCandidate;
-    const m = cand ? virtualizer.measurementsCache[cand.index] : undefined;
+    // 粘性用户条（r9 wave1 视口锚定）：候选=视口上缘上方最近含文本 user 气泡，随滚动
+    // 实时反查（不再恒取尾部）；回底消失判据不变。测量缺失（未挂载/计数未同步）不钉。
+    const measurements = virtualizer.measurementsCache;
+    const cand = stickyCandidateAboveViewport(
+      mergedItems,
+      entries ?? [],
+      measurements,
+      el.scrollTop - STICKY_TOP_PAD,
+    );
+    const m = cand ? measurements[cand.index] : undefined;
     if (cand && m) {
       const rowTop = STICKY_TOP_PAD + m.start - el.scrollTop;
       const rowBottom = rowTop + m.size;
@@ -258,7 +265,7 @@ export function MessageList({
       setStickyUser(null);
     }
     if (el.scrollTop < BOTTOM_THRESHOLD) onReachTop();
-  }, [onReachTop, stickyCandidate, virtualizer]);
+  }, [onReachTop, mergedItems, entries, virtualizer]);
 
   // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚底，不经 React 渲染路径
   useEffect(() => {

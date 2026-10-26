@@ -243,20 +243,43 @@ function messageOf(entry: WireEntry & { id: string }): WireMessage | null {
   return typeof (msg as WireMessage).role === "string" ? (msg as WireMessage) : null;
 }
 
-/** 最近一条含文本 user 条目的粘性摘要（docs08-r7 任务 11）：从尾部扫描 kind==="entry"
- *  且条目 role==="user" 的项（与 NavRail 刻度同判），取首个 text part 原文
- *  （展示层 truncate 截断）。纯图/空文本条目跳过；无候选返回 null（无 user 消息不渲染）。 */
-export function stickyUserOf(
+/** 粘性用户候选（r9 wave1 改视口锚定，替代旧 docs08-r7 恒取尾部的 stickyUserOf）：
+ *  视口上缘对应首个未完整滚出条目（end > scrollTop）起向上反查最近 kind==="entry"
+ *  且 role==="user" 且含非空 text 的条目。scrollTop 为视口上缘在 measurements 坐标系
+ *  （内容区，调用方扣除容器顶垫）的位置；上滚早期历史时候选随视口走，不再恒取尾部
+ *  最新提问——下滚读长回答时上缘落在长答内，向上最近 user 条即最新提问，新语义自然
+ *  覆盖旧行为。纯图/空文本/非 entry 项跳过；无候选（上方无 user 文本条目）返回 null。
+ *  measurements 为 TanStack measurementsCache：virtual-core 3.14 单车道 dense 覆盖全量
+ *  下标，未测条目落 estimateSize 估算值（源码实证），窗上历史同样可判；测量缺失或与
+ *  items 未同步（未挂载/count 变更瞬间）返回 null（渲染层不钉，同旧 m 判空口径）；
+ *  上缘落在首行 start 之前（容器顶垫空区）返回 null——顶部空区无行压边、无锚可反查
+ *  （任务断言 2：顶部空区候选 = null）。
+ *  纯函数：无时序、不改入参。 */
+export function stickyCandidateAboveViewport(
   items: ChatListItem[],
   entries: readonly WireEntry[],
+  measurements: ReadonlyArray<{ start: number; size: number } | undefined> | undefined,
+  scrollTop: number,
 ): { index: number; key: string; text: string } | null {
+  if (items.length === 0 || !measurements) return null;
+  const head = measurements[0];
+  if (head === undefined || head.start > scrollTop) return null; // 顶部空区：上缘在首行之前
   const byId = new Map<string, WireMessage>();
   for (const e of entries) {
     if (typeof e.id !== "string") continue;
     const msg = messageOf(e as WireEntry & { id: string });
     if (msg) byId.set(e.id, msg);
   }
-  for (let i = items.length - 1; i >= 0; i--) {
+  let first = -1;
+  for (let i = 0; i < items.length; i++) {
+    const m = measurements[i];
+    if (m && m.start + m.size > scrollTop) {
+      first = i;
+      break;
+    }
+  }
+  if (first < 0) return null;
+  for (let i = first; i >= 0; i--) {
     const item = items[i];
     if (item.kind !== "entry") continue;
     const msg = byId.get(item.entryId);
