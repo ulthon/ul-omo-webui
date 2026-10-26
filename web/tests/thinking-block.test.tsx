@@ -20,7 +20,7 @@ const { createElement } = await import("react");
 import { THINKING_EXPANDED_KV, parseThinkingExpanded, useUiStore } from "@/stores/ui";
 import { bootstrap } from "@/lib/bootstrap";
 import { ThinkingBlock } from "@/components/chat/thinking-block";
-import { ConversationSection } from "@/components/layout/topbar";
+import { ConversationSection } from "@/pages/settings";
 
 function okJson(payload: unknown): Response {
   return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });

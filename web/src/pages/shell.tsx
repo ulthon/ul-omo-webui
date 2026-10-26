@@ -28,6 +28,7 @@ import { ChatPlaceholder } from "@/components/layout/chat-placeholder";
 import { Button } from "@/components/ui/button";
 import { readPanelOpenPreference, writePanelOpenPreference } from "@/components/chat/todo-panel";
 import { RightRail } from "@/components/layout/right-rail";
+import { SettingsPage } from "@/pages/settings";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { isModelCycleBackward, isModelCycleForward, isModelPickerTrigger } from "@/lib/shortcuts";
 import { nextFavoriteModel, selectModel } from "@/lib/model-cycle";
@@ -179,6 +180,7 @@ export function useModelShortcuts(): void {
 
 export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
+  const settingsPageOpen = useUiStore((s) => s.settingsPageOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const toasts = useUiStore((s) => s.toasts);
   const dismissToast = useUiStore((s) => s.dismissToast);
@@ -345,6 +347,10 @@ export function AppShell() {
             统一由 RightRail 渲染；开合状态与记忆机制沿用 W5-15（todoPanelOpen） */}
         <RightRail open={todoPanelOpen} onToggle={toggleTodoPanel} sessionId={todoSessionId} />
       </div>
+
+      {/* 设置独立全屏页（r9 2026-10-26 批次任务 9）：fixed 覆盖层，shell 本体保持挂载
+          （SSE 与引导状态不中断），返回钮经 ui store settingsPageOpen 回原视图 */}
+      {settingsPageOpen && <SettingsPage />}
 
       {/* 轻提示栈：info 3.2s 自动消失；error 常驻直到显式关闭。至多 3 条同列堆叠
           （超出丢最旧并 console.warn），文字可选中可复制，点文字本体不触发任何动作 */}
