@@ -13,6 +13,8 @@ export const errors = {
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
   tagConflict: "Tag definitions were changed elsewhere; please refresh and retry",
+  tagMountConflict: "Session tags were changed elsewhere; please refresh and retry",
+  snippetConflict: "Snippets were changed elsewhere; please refresh and retry",
   forkCancelled: "Fork cancelled by the extension",
   forkFailed: "Fork failed",
   titleGenFailed: "Title generation failed",

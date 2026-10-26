@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, ApiError, type SnippetEntry } from "@/lib/api";
+import { apiErrorMessage } from "@/i18n/errors";
 // tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
 import { t as tSnap, useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,11 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
     };
   }, [project]);
 
-  /** 提交该 scope 整替并更新本地副本（失败保持原状并展示错误） */
+  /** 提交该 scope 整替并更新本地副本（失败保持原状并展示错误）。
+   * r9 F1-B1 防覆盖（对齐 tag-manage-dialog）：提交前重拉最新两源——本次载荷的基线
+   *（entries[scope]，上次与服务端同步的副本）若已被对端改写则放弃提交并同步最新，
+   * 再携 baseRevision 提交（重拉到提交瞬间的窗口由服务端 409 兑底）；冲突时同步
+   * 服务端最新、不回写旧值、不自动重试。 */
   const t = useT();
   const putScope = async (scope: Scope, next: SnippetEntry[]): Promise<boolean> => {
     if (busy) return false;
@@ -49,14 +54,33 @@ export function SnippetManage({ project, onBack }: { project: string | null; onB
     setBusy(true);
     setError(null);
     try {
+      const fresh = await api.listSnippets(project ?? undefined);
+      const basis = entries?.[scope] ?? [];
+      if (JSON.stringify(fresh[scope]) !== JSON.stringify(basis)) {
+        // 基线已被对端改写：放弃本次载荷（绝不基于旧副本整替覆盖），同步最新由用户重做
+        setEntries(fresh);
+        setError(t("errors.snippetConflict"));
+        return false;
+      }
       const res = await api.putSnippets({
         scope,
         ...(scope === "project" && project ? { project } : {}),
         snippets: renumberSnippets(next),
+        baseRevision: fresh.revision,
       });
       setEntries((prev) => ({ global: prev?.global ?? [], project: prev?.project ?? [], [scope]: res.snippets }));
       return true;
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        // 冲突放弃：同步服务端最新（不回写旧值、不自动重试）
+        try {
+          setEntries(await api.listSnippets(project ?? undefined));
+        } catch {
+          // 重拉失败保留旧副本：下次提交仍被基线比对/服务端 409 兑底拦截
+        }
+        setError(apiErrorMessage(err, "composer.snippet.saveFailed"));
+        return false;
+      }
       setError(err instanceof ApiError ? err.message : t("composer.snippet.saveFailed"));
       return false;
     } finally {

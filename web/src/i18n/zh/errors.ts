@@ -15,6 +15,8 @@ export const errors = {
   sessionNotFound: "会话不存在",
   sessionNotPersisted: "会话尚未落盘（空会话）",
   tagConflict: "标签定义已被其他端修改，请刷新后重试",
+  tagMountConflict: "标签挂载已被其他端修改，请刷新后重试",
+  snippetConflict: "常用语已被其他端修改，请刷新后重试",
   forkCancelled: "fork 被扩展取消",
   forkFailed: "fork 失败",
   titleGenFailed: "标题生成失败",

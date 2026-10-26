@@ -51,6 +51,8 @@ export interface SessionListItem {
   runState?: "running" | "waiting" | "idle" | "background_running" | null;
   /** 会话标签（server todo 3 落地前为 undefined，消费侧用 tags?.length 防御） */
   tags?: Array<{ scope: string; name: string }>;
+  /** 挂载整替乐观锁（r9 F1-B1）：tags 内容 sha1 hex，setSessionTags 时回传 baseRevision */
+  tagsRevision?: string;
 }
 
 /** wire 原样条目（jsonl entry：{type:"message",id,parentId,timestamp,message} 等），渲染层自行甄别 */
@@ -815,22 +817,41 @@ export const api = {
     return request("/api/tags", jsonInit("PUT", body));
   },
   /** 会话标签挂载整替（挂载与定义解耦：不校验定义存在；重复项服务端按 (scope,name) 去重）。
-   * source：触发本次整替的 UI 动作标识（服务端对被移除挂载写审计行用，缺省 "api"） */
-  async setSessionTags(sessionId: string, tags: TagRef[], source?: string): Promise<{ tags: TagRef[] }> {
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", source ? { tags, source } : { tags }));
+   * source：触发本次整替的 UI 动作标识（服务端对被移除挂载写审计行用，缺省 "api"）。
+   * baseRevision（r9 F1-B1 乐观锁）：传最近一次读取的挂载 revision，不一致服务端 409 tag_mount_conflict */
+  async setSessionTags(
+    sessionId: string,
+    tags: TagRef[],
+    source?: string,
+    baseRevision?: string,
+  ): Promise<{ tags: TagRef[]; revision: string }> {
+    const payload: Record<string, unknown> = { tags };
+    if (source) payload.source = source;
+    if (baseRevision) payload.baseRevision = baseRevision;
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`, jsonInit("PUT", payload));
+  },
+
+  /** 单会话挂载读取（r9 F1-B1 乐观锁读取面）：tags + revision，操作前重拉与冲突后恢复快照用 */
+  async getSessionTags(sessionId: string): Promise<{ tags: TagRef[]; revision: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tags`);
   },
 
   // ---- 常用语（todo 14）----
-  /** 两源常用语：global 恒返回；project 仅传项目路径时返回（读不要求已注册） */
-  async listSnippets(project?: string): Promise<{ global: SnippetEntry[]; project: SnippetEntry[] }> {
+  /** 两源常用语：global 恒返回；project 仅传项目路径时返回（读不要求已注册）。
+   * revision：两源条目内容拼接的 sha1 hex（r9 F1-B1 乐观锁，整替提交时回传 baseRevision） */
+  async listSnippets(
+    project?: string,
+  ): Promise<{ global: SnippetEntry[]; project: SnippetEntry[]; revision: string }> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/snippets${qs}`);
   },
-  /** 按 scope 整替条目列表（增删改/排序/导入共用；返回整替后该 scope 列表，免二次 GET） */
+  /** 按 scope 整替条目列表（增删改/排序/导入共用；返回整替后该 scope 列表，免二次 GET）。
+   * baseRevision（r9 F1-B1 乐观锁）：传最近一次 GET 的 revision，服务端不一致返回 409 snippet_conflict */
   async putSnippets(body: {
     scope: "global" | "project";
     project?: string;
     snippets: SnippetEntry[];
+    baseRevision?: string;
   }): Promise<{ snippets: SnippetEntry[] }> {
     return request("/api/snippets", jsonInit("PUT", body));
   },

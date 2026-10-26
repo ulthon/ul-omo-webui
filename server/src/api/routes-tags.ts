@@ -85,6 +85,15 @@ function tagsRevision(globalTags: TagEntry[], projectTags: TagEntry[]): string {
   return createHash("sha1").update(JSON.stringify([globalTags, projectTags])).digest("hex");
 }
 
+/** 会话挂载内容 revision（r9 F1-B1 同型整替乐观锁）：该会话挂载 [{scope,name}] 稳定序
+ * 数组取 sha1 hex，取内容不取 mtime；出参一律裁剪 createdAt 后参与哈希，GET /api/sessions
+ * 列表行（routes-session）与挂载 GET/PUT 共用本函数保证同口径。 */
+export function sessionTagsRevision(tags: SessionTagRef[]): string {
+  return createHash("sha1")
+    .update(JSON.stringify(tags.map(({ scope, name }) => ({ scope, name }))))
+    .digest("hex");
+}
+
 export function createTagsRoutes(deps: TagsDeps): Hono {
   const app = new Hono();
   // 项目 scope 的派生存储按 realpath 缓存：同一项目的写共用一条进程内
@@ -155,10 +164,17 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
     return c.json({ tags: deps.configs.readTags().tags });
   }));
 
-  // 会话标签挂载整替（与 tags 同型整替，r9 盘点记录）：挂载 revision 无低成本同型
-  // 修复——读取面在 GET /api/sessions 行内嵌 tags（routes-session，本次范围外），
-  // 同一套 revision 模式需跨文件暴露逐会话 revision，成本不同型 → 仅注释不改语义。
-  // 对任意 id 直接写入，不做会话存在性校验——
+  // 会话标签挂载读取面（r9 F1-B1 同型整替乐观锁）：单会话挂载 + revision，供前端
+  // 操作前重拉与 409 冲突后恢复快照。
+  app.get("/api/sessions/:id/tags", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const tags = deps.meta.listSessionTags(id).map(({ scope, name }) => ({ scope, name }));
+    return c.json({ tags, revision: sessionTagsRevision(tags) });
+  }));
+
+  // 会话标签挂载整替（与 tags 同型整替；r9 F1-B1 补 baseRevision 乐观锁：baseRevision
+  // 非空时先比当前挂载 revision，不一致 409 不写入不写审计；未传/空串保持旧语义直写，
+  // 老客户端兼容）。对任意 id 直接写入，不做会话存在性校验——
   // meta_session_tag 无外键，挂载事实独立于会话与定义（挂载-定义解耦的
   // 同款取舍：计划只要求"自由挂载不要求定义已存在"，未要求会话校验）。
   // 新建会话在用户打开前没有 meta_session 行（行只在 markRead/
@@ -195,7 +211,12 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
       seen.add(key);
       refs.push({ scope, name });
     }
+    // r9 F1-B1 乐观锁：校验在后、写前比对当前挂载 revision，不一致 409 不写入不写审计
     const before = deps.meta.listSessionTags(id);
+    const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
+    if (baseRevision !== "" && sessionTagsRevision(before) !== baseRevision) {
+      throw new ApiError(409, "tag_mount_conflict", "标签挂载已被其他端修改，请刷新后重试");
+    }
     deps.meta.setSessionTags(id, refs);
     const removed = before.filter(
       (tag) => !refs.some((ref) => ref.scope === tag.scope && ref.name === tag.name),
@@ -203,7 +224,8 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
     deps.meta.appendTagMountAudit(
       removed.map((tag) => ({ sessionId: id, scope: tag.scope, name: tag.name, source })),
     );
-    return c.json({ tags: deps.meta.listSessionTags(id).map(({ scope, name }) => ({ scope, name })) });
+    const tags = deps.meta.listSessionTags(id).map(({ scope, name }) => ({ scope, name }));
+    return c.json({ tags, revision: sessionTagsRevision(tags) });
   }));
 
   return app;

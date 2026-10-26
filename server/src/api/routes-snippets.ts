@@ -4,6 +4,7 @@
 // 输入校验（空串/超限/形状）、已注册项目校验、整替后回显免前端二次 GET。
 // 配置文件损坏按 Scope 决策 10a：显式写与管理端点严格 500（route 包装
 // 默认行为，错误 message 含文件路径），不做静默降级。
+import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { openConfigStore, type ConfigStore, type SnippetEntry } from "../conf/config-store";
 import { ApiError, parseJsonBody, route } from "./http";
@@ -46,6 +47,14 @@ function parseSnippetEntries(raw: unknown): SnippetEntry[] {
   });
 }
 
+/** 两源条目内容 revision（r9 F1-B1 乐观锁）：global+project 条目拼接后取 sha1 hex。
+ * 与 tagsRevision 同型取内容不取 mtime（mtime 时钟/写序噪声大）；两源均经 config-store
+ * 归一化读取，JSON 序列化键序稳定。project 源仅在给定项目时参与——与 GET /api/snippets
+ *（?project 缺省 = 空数组）同口径，PUT 侧按 scope 同口径计算。 */
+function snippetsRevision(globalSnippets: SnippetEntry[], projectSnippets: SnippetEntry[]): string {
+  return createHash("sha1").update(JSON.stringify([globalSnippets, projectSnippets])).digest("hex");
+}
+
 export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
   const app = new Hono();
   // 项目 scope 的派生存储按 realpath 缓存：同一项目的写共用一条进程内
@@ -67,15 +76,20 @@ export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
   app.get("/api/snippets", route(async (c: Context) => {
     const raw = c.req.query("project");
     const project = raw ? normalizeProjectKey(raw) : null;
+    const globalSnippets = deps.configs.readSnippets().snippets;
+    const projectSnippets = project ? storeFor(project).readProjectConfig().snippets : [];
     return c.json({
-      global: deps.configs.readSnippets().snippets,
-      project: project ? storeFor(project).readProjectConfig().snippets : [],
+      global: globalSnippets,
+      project: projectSnippets,
+      // r9 F1-B1 乐观锁：前端整替提交时回传 baseRevision 比对
+      revision: snippetsRevision(globalSnippets, projectSnippets),
     });
   }));
 
-  // 按 scope 整替（与 tags 同型整替，r9 盘点记录：无 revision 乐观锁，多端并发
-  // 整替后写覆盖前写，风险同 tags 但本次范围仅注释）：scope 合法性 → project scope
-  // 必带且已注册 → 条目校验 → 写。回显整替后该 scope 列表（store 读为同步、写 await 后缓存已更新）。
+  // 按 scope 整替（与 tags 同型整替；r9 F1-B1 补 revision 乐观锁：baseRevision 非空时
+  // 先比当前 revision，不一致 409 不写入；未传/空串保持旧语义直写，老客户端兼容）：
+  // scope 合法性 → project scope 必带且已注册 → 条目校验 → 锁比对 → 写。回显整替后
+  // 该 scope 列表（store 读为同步、写 await 后缓存已更新）。
   app.put("/api/snippets", route(async (c: Context) => {
     const body = await parseJsonBody(c);
     const scope = body.scope;
@@ -89,10 +103,23 @@ export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
       }
       const entries = parseSnippetEntries(body.snippets);
       const store = storeFor(project);
+      // r9 F1-B1 乐观锁：条目校验在后、写前比对当前 revision（两源拼接口径，与 GET 带
+      // project 同口径），不一致 409 不写入（部分写即覆盖丢失，绝不允许）
+      const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
+      if (
+        baseRevision !== "" &&
+        snippetsRevision(deps.configs.readSnippets().snippets, store.readProjectConfig().snippets) !== baseRevision
+      ) {
+        throw new ApiError(409, "snippet_conflict", "常用语已被其他端修改，请刷新后重试");
+      }
       await store.updateProjectConfig({ snippets: entries });
       return c.json({ snippets: store.readProjectConfig().snippets });
     }
     const entries = parseSnippetEntries(body.snippets);
+    const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
+    if (baseRevision !== "" && snippetsRevision(deps.configs.readSnippets().snippets, []) !== baseRevision) {
+      throw new ApiError(409, "snippet_conflict", "常用语已被其他端修改，请刷新后重试");
+    }
     await deps.configs.writeSnippets(entries);
     return c.json({ snippets: deps.configs.readSnippets().snippets });
   }));

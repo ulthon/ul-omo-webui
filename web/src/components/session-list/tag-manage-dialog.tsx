@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/i18n/errors";
 import type { TagDefinition } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
@@ -25,6 +26,7 @@ import {
   setTagColor,
   setTagDisplay,
   tagColor,
+  tagKey,
   type TagDefs,
   type TagDisplayMode,
   type TagRef,
@@ -197,18 +199,28 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
     void putScope({ kind: "move", name, dir });
   };
 
-  /** 孤儿清理执行（仅在两段式确认后可达）：整替去孤儿 + 审计 source + 行内数据同步 */
+  /** 孤儿清理执行（仅在两段式确认后可达）：先重拉该会话最新挂载，保留集按最新状态
+   * 重算（只剔除仍在场的孤儿，对端新增的已定义挂载不误删），携 baseRevision 提交
+   * 整替 + 审计 source + 行内数据同步；409 冲突提示后放弃（不自动重试覆盖） */
   const cleanOrphanMounts = async (entry: TagOrphanCleanup) => {
     if (cleanBusyId) return;
     setCleanBusyId(entry.sessionId);
     setError(null);
     try {
-      const res = await api.setSessionTags(entry.sessionId, entry.keep, "tag-manage-dialog:orphan-clean");
+      const fresh = await api.getSessionTags(entry.sessionId);
+      const orphanKeys = new Set(entry.orphans.map(tagKey));
+      const keep = fresh.tags.filter((ref) => !orphanKeys.has(tagKey(ref)));
+      const res = await api.setSessionTags(
+        entry.sessionId,
+        keep,
+        "tag-manage-dialog:orphan-clean",
+        fresh.revision,
+      );
       useSessionsStore.getState().patchSession(entry.sessionId, { tags: res.tags });
       setConfirmId(null);
       showToast(t("sessionList.tagBadge.cleaned"));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("sessionList.tagBadge.cleanFailed"));
+      setError(apiErrorMessage(err, "sessionList.tagBadge.cleanFailed"));
     } finally {
       setCleanBusyId(null);
     }

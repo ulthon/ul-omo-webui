@@ -417,6 +417,11 @@ describe("PUT /api/sessions/:id/tags", () => {
       { scope: "global", name: "work" },
       { scope: "project", name: "life" },
     ]);
+    // 行级 revision（r9 F1-B1）：40 位 sha1，与单会话挂载读取面同口径
+    const row = body.sessions.find((s: { id: string }) => s.id === "s1");
+    expect(row.tagsRevision).toMatch(/^[0-9a-f]{40}$/);
+    const single = (await (await app.request("/api/sessions/s1/tags")).json()) as { revision: string };
+    expect(row.tagsRevision).toBe(single.revision);
   });
 
   test("整替：删一增一后旧关联消失；同输入幂等", async () => {
@@ -436,7 +441,7 @@ describe("PUT /api/sessions/:id/tags", () => {
     });
     expect(replaced.status).toBe(200);
     const replacedBody = (await replaced.json()) as { tags: { scope: string; name: string }[] };
-    expect(replacedBody).toEqual({ tags: [{ scope: "global", name: "b" }, { scope: "global", name: "c" }] });
+    expect(replacedBody.tags).toEqual([{ scope: "global", name: "b" }, { scope: "global", name: "c" }]);
     // 幂等：同输入重复 PUT 回显一致
     const again = await putJson(app, "/api/sessions/s1/tags", {
       tags: [
@@ -753,5 +758,82 @@ describe("PUT /api/tags baseRevision 乐观锁（Manual-QA：app.request 真 PUT
       baseRevision: rev1,
     });
     expect(ok.status).toBe(200);
+  });
+});
+
+// ----------------------- 挂载整替乐观锁（r9 F1-B1，与 tags 同型）
+
+describe("GET /api/sessions/:id/tags（挂载乐观锁读取面）", () => {
+  test("回显 tags 与 40 位 revision；PUT 后 revision 前移", async () => {
+    const { app, seedMetaRow } = setup();
+    seedMetaRow("s1");
+    const empty = (await (await app.request("/api/sessions/s1/tags")).json()) as {
+      tags: unknown[];
+      revision: string;
+    };
+    expect(empty.tags).toEqual([]);
+    expect(empty.revision).toMatch(/^[0-9a-f]{40}$/);
+    await putJson(app, "/api/sessions/s1/tags", { tags: [{ scope: "global", name: "work" }] });
+    const after = (await (await app.request("/api/sessions/s1/tags")).json()) as {
+      tags: { scope: string; name: string }[];
+      revision: string;
+    };
+    expect(after.tags).toEqual([{ scope: "global", name: "work" }]);
+    expect(after.revision).not.toBe(empty.revision);
+  });
+});
+
+describe("PUT /api/sessions/:id/tags baseRevision 乐观锁（真 PUT 双打）", () => {
+  test("携旧 revision 第二打 → 409 tag_mount_conflict 不落盘不写审计；携新 revision 重试成功", async () => {
+    const { app, seedMetaRow, meta } = setup();
+    seedMetaRow("s1");
+    const first = await putJson(app, "/api/sessions/s1/tags", { tags: [{ scope: "global", name: "a" }] });
+    expect(first.status).toBe(200);
+    const rev0 = (await (await app.request("/api/sessions/s1/tags")).json()).revision;
+    // 对端整替新集（a → b，产生一条移除审计）
+    const other = await putJson(app, "/api/sessions/s1/tags", {
+      tags: [{ scope: "global", name: "b" }],
+      source: "other-client",
+    });
+    expect(other.status).toBe(200);
+    const rev1 = (await (await app.request("/api/sessions/s1/tags")).json()).revision;
+    expect(rev1).not.toBe(rev0);
+    expect(meta.listTagMountAudit("s1")).toHaveLength(1);
+    // 本端携旧 revision 第二打 → 409，挂载保持对端版本、不新增审计行
+    const stale = await putJson(app, "/api/sessions/s1/tags", {
+      tags: [{ scope: "global", name: "c" }],
+      baseRevision: rev0,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("tag_mount_conflict");
+    expect((await (await app.request("/api/sessions/s1/tags")).json()).tags).toEqual([
+      { scope: "global", name: "b" },
+    ]);
+    expect(meta.listTagMountAudit("s1")).toHaveLength(1);
+    // 携最新 revision 重试成功：回显整替结果 + 新 revision
+    const retry = await putJson(app, "/api/sessions/s1/tags", {
+      tags: [{ scope: "global", name: "c" }],
+      baseRevision: rev1,
+    });
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as { tags: { scope: string; name: string }[]; revision: string };
+    expect(retryBody.tags).toEqual([{ scope: "global", name: "c" }]);
+    expect(retryBody.revision).toMatch(/^[0-9a-f]{40}$/);
+    // 重试移除对端的 b → 第二条审计行（source = 本次触发删除的动作标识）
+    const audit = meta.listTagMountAudit("s1");
+    expect(audit).toHaveLength(2);
+    expect(audit[1]).toMatchObject({ sessionId: "s1", scope: "global", name: "b", source: "api" });
+  });
+
+  test("未传 baseRevision 保持旧语义直写（老客户端兼容）；空串同义", async () => {
+    const { app, seedMetaRow } = setup();
+    seedMetaRow("s1");
+    expect(
+      (await putJson(app, "/api/sessions/s1/tags", { tags: [{ scope: "global", name: "a" }] })).status,
+    ).toBe(200);
+    expect(
+      (await putJson(app, "/api/sessions/s1/tags", { tags: [{ scope: "global", name: "b" }], baseRevision: "" }))
+        .status,
+    ).toBe(200);
   });
 });

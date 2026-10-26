@@ -7,7 +7,7 @@
 // （同 AnchoredPanel 同间距规范：w-80 面板 + p-2 滚动区 + border-t 底栏 min-h-9 钮）。
 import { useState } from "react";
 import { Check, Settings2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagRef } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -41,10 +41,14 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
   const showToast = useUiStore((s) => s.showToast);
   const t = useT();
   const batch = sessions.length > 1;
-  // 打开时刻的挂载快照：id → 当前挂载。连续勾选基于快照计算（不依赖行数据回流，
-  // 规避竞态），下拉开着期间外部改动不掺和——整替以保存时刻的快照为准（stale 即语义）；
-  // 每次成功 PUT 后以服务端返回整替进快照，保证同一下拉内连续勾不同标签不互相覆盖
-  const [mounts, setMounts] = useState(() => new Map(sessions.map((s) => [s.id, s.tags ?? []])));
+  // 打开时刻的挂载快照：id → 当前挂载 + revision（r9 F1-B1 挂载乐观锁）。连续勾选基于
+  // 快照计算（不依赖行数据回流，规避竞态）；每次成功 PUT 后以服务端返回的整替与新
+  // revision 进快照，保证同一下拉内连续勾不同标签不互相覆盖、且每次都携最新 baseRevision；
+  // 409 = 打开期间被其他端整替：toast 提示并重拉该会话最新挂载进快照（下次点击按新
+  // 快照重算可成功），勾选态不变由用户重试
+  const [mounts, setMounts] = useState(
+    () => new Map(sessions.map((s) => [s.id, { tags: s.tags ?? [], revision: s.tagsRevision }])),
+  );
   const [selected, setSelected] = useState(() => initialSelected(sessions));
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -56,7 +60,7 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
     const key = tagKey(ref);
     // 目标会话：on = 不含该标签的；off = 含该标签的（未受影响会话不发请求）
     const targets = sessions.filter((s) => {
-      const cur = mounts.get(s.id) ?? [];
+      const cur = mounts.get(s.id)?.tags ?? [];
       const has = cur.some((t) => t.scope === ref.scope && t.name === ref.name);
       return on ? !has : has;
     });
@@ -64,14 +68,24 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
     const failedIds: string[] = [];
     for (const s of targets) {
       if (targets.length > 1) setProgress({ done, total: targets.length });
-      const payload = nextSessionTags(mounts.get(s.id), ref, on);
+      const payload = nextSessionTags(mounts.get(s.id)?.tags ?? [], ref, on);
       try {
-        const res = await api.setSessionTags(s.id, payload, "tag-dropdown");
-        setMounts((prev) => new Map(prev).set(s.id, res.tags));
+        const res = await api.setSessionTags(s.id, payload, "tag-dropdown", mounts.get(s.id)?.revision);
+        setMounts((prev) => new Map(prev).set(s.id, { tags: res.tags, revision: res.revision }));
         useSessionsStore.getState().patchSession(s.id, { tags: res.tags });
       } catch (err) {
         failedIds.push(s.title || s.id);
         showToast(apiErrorMessage(err, "sessionList.tagDropdown.saveFailed"), "error");
+        if (err instanceof ApiError && err.status === 409) {
+          // 冲突会话重拉最新挂载进快照（对端改动不丢），下次点击按新快照重算可成功
+          try {
+            const fresh = await api.getSessionTags(s.id);
+            setMounts((prev) => new Map(prev).set(s.id, { tags: fresh.tags, revision: fresh.revision }));
+            useSessionsStore.getState().patchSession(s.id, { tags: fresh.tags });
+          } catch {
+            // 重拉失败保留旧快照：下次点击仍携旧 revision，服务端 409 继续拦截
+          }
+        }
       }
       done++;
       if (targets.length > 1) setProgress({ done, total: targets.length });

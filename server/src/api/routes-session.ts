@@ -27,6 +27,7 @@ import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { sessionBackgroundRunning } from "./background-tasks";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
+import { sessionTagsRevision } from "./routes-tags";
 import { CursorInvalidError, readEntriesBefore, readTailEntries } from "../adapter/session-file";
 import { DEBUG_PERF, logPerfHttp } from "./perf";
 
@@ -150,6 +151,8 @@ export function mergeSessionRow(
     unreadCount: meta?.unreadCount ?? 0,
     lastRead: meta?.lastRead ?? null,
     tags,
+    // 挂载整替乐观锁（r9 F1-B1）：行级 revision，与 GET /api/sessions/:id/tags 同口径
+    tagsRevision: sessionTagsRevision(tags),
   };
 }
 

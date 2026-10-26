@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { TagDefinition } from "@/lib/api";
+import type { TagOrphanCleanup } from "@/components/session-list/tag-manage-dialog";
 
 // bun/单进程跑多文件：其他测试文件可能已注册，双注册会抛错
 if (!(globalThis as { window?: unknown }).window) {
@@ -87,14 +88,15 @@ function typeValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** 挂弹框：global scope，本地初始 defs 由 props 给入（父级视角） */
-async function mountDialog(initialNames: string[]) {
+/** 挂弹框：global scope，本地初始 defs 由 props 给入（父级视角）；orphanCleanups 可选传入 */
+async function mountDialog(initialNames: string[], orphanCleanups?: TagOrphanCleanup[]) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   const props = {
     scope: "global" as const,
     defs: { global: defsOf(initialNames), project: [] as TagDefinition[] },
+    ...(orphanCleanups ? { orphanCleanups } : {}),
     onChanged: () => {},
     onClose: () => {},
   };
@@ -210,6 +212,63 @@ describe("TagManageDialog 整替冲突防护（r9）", () => {
     expect(body.baseRevision).toBe("rev1");
     // 载荷 = 最新列表 + 本次变更（对端新增也保留；本端编辑叠加其后）
     expect(body.tags.map((t) => t.name)).toEqual(["a2", "b"]);
+    await unmount();
+  });
+
+  test("孤儿清理：提交前重拉最新挂载，保留集按最新重算携 baseRevision（对端新增不误删）", async () => {
+    const calls: FetchCall[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? (JSON.parse(String(init.body)) as unknown) : undefined;
+      calls.push({ method, path, body });
+      if (method === "GET" && path === "/api/sessions/s1/tags") {
+        // 服务端最新：孤儿 ghost 仍在场，保留 work 还在，对端新增的已定义挂载 peer 也已到达
+        return okJson({
+          tags: [
+            { scope: "global", name: "ghost" },
+            { scope: "global", name: "work" },
+            { scope: "global", name: "peer" },
+          ],
+          revision: "mount-rev1",
+        });
+      }
+      if (method === "PUT" && path === "/api/sessions/s1/tags") {
+        return okJson({ tags: (body as { tags: unknown }).tags, revision: "mount-rev2" });
+      }
+      return okJson({});
+    }) as typeof fetch;
+    const { container, unmount } = await mountDialog([], [
+      {
+        sessionId: "s1",
+        sessionTitle: "S1",
+        orphans: [{ scope: "global", name: "ghost" }],
+        keep: [{ scope: "global", name: "work" }],
+      },
+    ]);
+
+    // 两段式确认：点「清理」变确认钮，再点确认才发整替
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[data-testid="tag-orphan-clean"]')?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[data-testid="tag-orphan-clean-confirm"]')?.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const put = calls.find((c) => c.method === "PUT" && c.path === "/api/sessions/s1/tags");
+    expect(put).toBeDefined();
+    const body = put!.body as {
+      tags: { scope: string; name: string }[];
+      source: string;
+      baseRevision?: string;
+    };
+    expect(body.source).toBe("tag-manage-dialog:orphan-clean");
+    // 携重拉所得挂载 revision 提交
+    expect(body.baseRevision).toBe("mount-rev1");
+    // 保留集按最新挂载重算：ghost 剔除、work 保留、对端新增 peer 不被打开时刻的旧 keep 误删
+    expect(body.tags.map((t) => t.name).sort()).toEqual(["peer", "work"]);
     await unmount();
   });
 });

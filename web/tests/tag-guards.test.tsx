@@ -4,7 +4,8 @@
  *   孤儿判定整体跳过（不渲染徽标、无 data-orphan），对照：定义加载成功时孤儿灰显在。
  *   （旧缺陷：失败写空定义集 → 全部挂载误判孤儿，为静默删库铺路）
  * - QA2 管理弹框孤儿清理：两段式确认（点「清理」仅出现确认钮、不发请求；点确认才
- *   整替删除，source 标识随请求下发），成功后行内挂载同步清空。
+ *   先重拉最新挂载再整替删除，携 baseRevision 乐观锁，source 标识随请求下发），
+ *   成功后行内挂载同步清空。
  * 场景走真实组件（happy-dom + react-dom/client，sidebar-single-list / tags-badge-grid 同款基建）。
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -16,9 +17,17 @@ if (!(globalThis as { window?: unknown }).window) {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const setSessionTagsMock = vi.fn();
+const getSessionTagsMock = vi.fn();
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, api: { ...actual.api, setSessionTags: (...args: unknown[]) => setSessionTagsMock(...args) } };
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      setSessionTags: (...args: unknown[]) => setSessionTagsMock(...args),
+      getSessionTags: (...args: unknown[]) => getSessionTagsMock(...args),
+    },
+  };
 });
 
 const { act } = await import("react");
@@ -80,6 +89,7 @@ async function mount(ui: React.ReactElement): Promise<HTMLElement> {
 
 beforeEach(() => {
   setSessionTagsMock.mockReset();
+  getSessionTagsMock.mockReset();
   useLocaleStore.setState({ locale: "zh-CN" });
   useUiStore.setState({
     currentProject: "/p1",
@@ -181,7 +191,15 @@ describe("TagManageDialog 孤儿清理两段式确认", () => {
       runStates: {},
       tagFilter: [],
     });
-    setSessionTagsMock.mockResolvedValue({ tags: [{ scope: "global", name: "甲" }] });
+    setSessionTagsMock.mockResolvedValue({ tags: [{ scope: "global", name: "甲" }], revision: "mount-rev2" });
+    // 提交前重拉所得最新挂载：孤儿仍在场、保留集重算后仍为 [甲]（r9 F1-B1 乐观锁）
+    getSessionTagsMock.mockResolvedValue({
+      tags: [
+        { scope: "global", name: "甲" },
+        { scope: "global", name: "孤儿标签" },
+      ],
+      revision: "mount-rev1",
+    });
 
     await mount(
       createElement(TagManageDialog, {
@@ -216,15 +234,17 @@ describe("TagManageDialog 孤儿清理两段式确认", () => {
     const confirmBtn = root.querySelector<HTMLButtonElement>('[data-testid="tag-orphan-clean-confirm"]');
     expect(confirmBtn).not.toBeNull();
 
-    // 第二段：确认 → 整替去孤儿，source 标识随请求（服务端写审计行用）
+    // 第二段：确认 → 先重拉最新挂载，再整替去孤儿，携 baseRevision + source（服务端写审计行用）
     await act(async () => {
       confirmBtn?.click();
     });
+    expect(getSessionTagsMock).toHaveBeenCalledWith("s1");
     expect(setSessionTagsMock).toHaveBeenCalledTimes(1);
     expect(setSessionTagsMock).toHaveBeenCalledWith(
       "s1",
       [{ scope: "global", name: "甲" }],
       "tag-manage-dialog:orphan-clean",
+      "mount-rev1",
     );
 
     // 行内挂载同步清空孤儿
