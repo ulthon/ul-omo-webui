@@ -47,6 +47,8 @@ export const sessionList = {
     newInProject: "在 {name} 新建会话",
     loading: "加载中…",
     empty: "暂无会话",
+    loadMore: "加载更多",
+    loadMoreRemaining: "（还有 {n} 个）",
     hideProjectTitle: "隐藏项目",
     hideProjectDesc1: "将隐藏「{name}」：侧栏分组不再显示。",
     hideProjectDesc2:
@@ -158,6 +160,9 @@ export const sessionList = {
     orphanSection: "失效标签挂载（孤儿）",
     orphanClean: "清理 {title} 的失效标签",
     orphanCleanConfirm: "确认清理",
+    // r9 防覆盖：操作前重拉发现目标已不在场 / 整替 409 冲突的放弃提示
+    targetGoneToast: "标签「{name}」已在其他端被修改或删除，本次变更未提交，列表已刷新",
+    conflictToast: "标签定义已被其他端修改（冲突），本次变更未提交、列表已刷新，请重试",
   },
   // tag-dropdown.tsx 打标签锚定下拉（批量打标 toast 为整句单键插值）
   tagDropdown: {

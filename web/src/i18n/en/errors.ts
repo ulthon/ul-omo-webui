@@ -12,6 +12,7 @@ export const errors = {
   cursorInvalid: "Page cursor is no longer valid; return to the latest messages and retry",
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
+  tagConflict: "Tag definitions were changed elsewhere; please refresh and retry",
   forkCancelled: "Fork cancelled by the extension",
   forkFailed: "Fork failed",
   titleGenFailed: "Title generation failed",

@@ -798,13 +798,20 @@ export const api = {
   },
 
   // ---- 标签（todo 11）----
-  /** 两源标签定义：global 恒返回；project 仅传项目路径时返回（读不要求已注册） */
-  async listTags(project?: string): Promise<{ global: TagDefinition[]; project: TagDefinition[] }> {
+  /** 两源标签定义：global 恒返回；project 仅传项目路径时返回（读不要求已注册）。
+   * revision：两源定义内容拼接的 sha1 hex（r9 乐观锁，整替提交时回传 baseRevision） */
+  async listTags(project?: string): Promise<{ global: TagDefinition[]; project: TagDefinition[]; revision: string }> {
     const qs = project ? `?project=${encodeURIComponent(project)}` : "";
     return request(`/api/tags${qs}`);
   },
-  /** 按 scope 整替定义列表（新增/重命名/删除/排序共用；重名 400 invalid_tags） */
-  async putTags(body: { scope: "global" | "project"; project?: string; tags: TagDefinition[] }): Promise<{ tags: TagDefinition[] }> {
+  /** 按 scope 整替定义列表（新增/重命名/删除/排序共用；重名 400 invalid_tags）。
+   * baseRevision（r9 乐观锁）：传最近一次 GET 的 revision，服务端不一致返回 409 tag_conflict */
+  async putTags(body: {
+    scope: "global" | "project";
+    project?: string;
+    tags: TagDefinition[];
+    baseRevision?: string;
+  }): Promise<{ tags: TagDefinition[] }> {
     return request("/api/tags", jsonInit("PUT", body));
   },
   /** 会话标签挂载整替（挂载与定义解耦：不校验定义存在；重复项服务端按 (scope,name) 去重）。

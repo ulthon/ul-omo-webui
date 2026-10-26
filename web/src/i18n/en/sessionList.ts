@@ -46,6 +46,8 @@ export const sessionList = {
     newInProject: "New session in {name}",
     loading: "Loading…",
     empty: "No sessions",
+    loadMore: "Load more",
+    loadMoreRemaining: "({n} more)",
     hideProjectTitle: "Hide project",
     hideProjectDesc1: "This will hide \"{name}\": its group will no longer appear in the sidebar.",
     hideProjectDesc2:
@@ -162,6 +164,9 @@ export const sessionList = {
     orphanSection: "Stale tag mounts (orphans)",
     orphanClean: "Clean stale tags of {title}",
     orphanCleanConfirm: "Confirm cleanup",
+    // r9 conflict guard: refetch found the target gone / PUT returned 409
+    targetGoneToast: "Tag \"{name}\" was changed or removed elsewhere; this change was not submitted and the list has been refreshed",
+    conflictToast: "Tag definitions were changed elsewhere (conflict); this change was not submitted — the list has been refreshed, please retry",
   },
   // tag-dropdown.tsx 打标签锚定下拉
   tagDropdown: {

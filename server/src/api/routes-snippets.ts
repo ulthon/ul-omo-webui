@@ -73,8 +73,9 @@ export function createSnippetsRoutes(deps: SnippetsDeps): Hono {
     });
   }));
 
-  // 按 scope 整替：scope 合法性 → project scope 必带且已注册 → 条目校验 → 写。
-  // 回显整替后该 scope 列表（store 读为同步、写 await 后缓存已更新）。
+  // 按 scope 整替（与 tags 同型整替，r9 盘点记录：无 revision 乐观锁，多端并发
+  // 整替后写覆盖前写，风险同 tags 但本次范围仅注释）：scope 合法性 → project scope
+  // 必带且已注册 → 条目校验 → 写。回显整替后该 scope 列表（store 读为同步、写 await 后缓存已更新）。
   app.put("/api/snippets", route(async (c: Context) => {
     const body = await parseJsonBody(c);
     const scope = body.scope;

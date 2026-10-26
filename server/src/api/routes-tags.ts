@@ -4,6 +4,7 @@
 // （定义已删）在 GET 时如实返回，前端灰样式展示。
 // 配置文件损坏按 Scope 决策 10a：显式写与管理端点严格 500（route 包装
 // 默认行为，错误 message 含文件路径），不做静默降级。
+import { createHash } from "node:crypto";
 import { Hono, type Context } from "hono";
 import {
   openConfigStore,
@@ -76,6 +77,14 @@ function requireUniqueNames(entries: TagEntry[]): void {
   }
 }
 
+/** 两源定义内容 revision（r9 乐观锁）：global+project 定义内容拼接后取 sha1 hex。
+ * 取内容不取 mtime（mtime 时钟/写序噪声大）；两源均经 config-store 归一化读取，
+ * JSON 序列化键序稳定。project 源仅在给定项目时参与——与 GET /api/tags
+ * （?project 缺省 = 空数组）同口径，PUT 侧按 scope 同口径计算。 */
+function tagsRevision(globalTags: TagEntry[], projectTags: TagEntry[]): string {
+  return createHash("sha1").update(JSON.stringify([globalTags, projectTags])).digest("hex");
+}
+
 export function createTagsRoutes(deps: TagsDeps): Hono {
   const app = new Hono();
   // 项目 scope 的派生存储按 realpath 缓存：同一项目的写共用一条进程内
@@ -97,9 +106,13 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
   app.get("/api/tags", route(async (c: Context) => {
     const raw = c.req.query("project");
     const project = raw ? normalizeProjectKey(raw) : null;
+    const globalTags = deps.configs.readTags().tags;
+    const projectTags = project ? storeFor(project).readProjectConfig().tags : [];
     return c.json({
-      global: deps.configs.readTags().tags,
-      project: project ? storeFor(project).readProjectConfig().tags : [],
+      global: globalTags,
+      project: projectTags,
+      // r9 乐观锁：前端整替提交时回传 baseRevision 比对
+      revision: tagsRevision(globalTags, projectTags),
     });
   }));
 
@@ -120,16 +133,32 @@ export function createTagsRoutes(deps: TagsDeps): Hono {
       const entries = parseTagEntries(body.tags);
       requireUniqueNames(entries);
       const store = storeFor(project);
+      // r9 乐观锁：baseRevision 非空时先比当前 revision（条目校验在后写前比对，
+      // 不一致 409 不写入）；未传/空串保持旧语义直写（老客户端兼容）
+      const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
+      if (
+        baseRevision !== "" &&
+        tagsRevision(deps.configs.readTags().tags, store.readProjectConfig().tags) !== baseRevision
+      ) {
+        throw new ApiError(409, "tag_conflict", "标签定义已被其他端修改，请刷新后重试");
+      }
       await store.updateProjectConfig({ tags: entries });
       return c.json({ tags: store.readProjectConfig().tags });
     }
     const entries = parseTagEntries(body.tags);
     requireUniqueNames(entries);
+    const baseRevision = typeof body.baseRevision === "string" ? body.baseRevision : "";
+    if (baseRevision !== "" && tagsRevision(deps.configs.readTags().tags, []) !== baseRevision) {
+      throw new ApiError(409, "tag_conflict", "标签定义已被其他端修改，请刷新后重试");
+    }
     await deps.configs.writeTags(entries);
     return c.json({ tags: deps.configs.readTags().tags });
   }));
 
-  // 会话标签挂载整替：对任意 id 直接写入，不做会话存在性校验——
+  // 会话标签挂载整替（与 tags 同型整替，r9 盘点记录）：挂载 revision 无低成本同型
+  // 修复——读取面在 GET /api/sessions 行内嵌 tags（routes-session，本次范围外），
+  // 同一套 revision 模式需跨文件暴露逐会话 revision，成本不同型 → 仅注释不改语义。
+  // 对任意 id 直接写入，不做会话存在性校验——
   // meta_session_tag 无外键，挂载事实独立于会话与定义（挂载-定义解耦的
   // 同款取舍：计划只要求"自由挂载不要求定义已存在"，未要求会话校验）。
   // 新建会话在用户打开前没有 meta_session 行（行只在 markRead/

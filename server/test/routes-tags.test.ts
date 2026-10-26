@@ -144,7 +144,10 @@ describe("GET /api/tags", () => {
     const { app } = setup();
     const res = await app.request("/api/tags");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ global: [], project: [] });
+    const empty = await res.json();
+    expect(empty.global).toEqual([]);
+    expect(empty.project).toEqual([]);
+    expect(empty.revision).toMatch(/^[0-9a-f]{40}$/);
   });
 
   test("两源合并：global 与 project 各自返回互不污染", async () => {
@@ -640,5 +643,115 @@ describe("PUT /api/sessions/:id/tags 挂载删除审计", () => {
     const rows = meta.listTagMountAudit("s2");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ scope: "global", name: "b", source: "api" });
+  });
+});
+
+// --------------------------------------------- r9 乐观锁：revision 与 baseRevision
+
+describe("GET /api/tags revision（r9 乐观锁）", () => {
+  test("revision 为 40 位 sha1 hex：跨调用稳定，任一源写入后变化", async () => {
+    const { app } = setup();
+    const rev1 = (await (await app.request("/api/tags")).json()).revision;
+    expect(rev1).toMatch(/^[0-9a-f]{40}$/);
+    const rev2 = (await (await app.request("/api/tags")).json()).revision;
+    expect(rev2).toBe(rev1);
+    await putJson(app, "/api/tags", { scope: "global", tags: [{ name: "g", sort: 1 }] });
+    const rev3 = (await (await app.request("/api/tags")).json()).revision;
+    expect(rev3).toMatch(/^[0-9a-f]{40}$/);
+    expect(rev3).not.toBe(rev1);
+  });
+
+  test("两源拼接口径：global 与 project 任一源变更都改变带 project 的 revision", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const revWithProject = async () =>
+      (await (await app.request(`/api/tags?project=${encodeURIComponent(projectDir)}`)).json()).revision;
+    const empty = await revWithProject();
+    await putJson(app, "/api/tags", { scope: "global", tags: [{ name: "g", sort: 1 }] });
+    const afterGlobal = await revWithProject();
+    expect(afterGlobal).not.toBe(empty);
+    await putJson(app, "/api/tags", {
+      scope: "project",
+      project: projectDir,
+      tags: [{ name: "p", sort: 1 }],
+    });
+    expect(await revWithProject()).not.toBe(afterGlobal);
+  });
+});
+
+describe("PUT /api/tags baseRevision 乐观锁（Manual-QA：app.request 真 PUT 双打）", () => {
+  test("global：对端先写一版，本端携旧 revision 第二打 → 409 tag_conflict 不落盘，携新 revision 重试成功", async () => {
+    const { app } = setup();
+    // 第一打：写入初始集（无 baseRevision，老客户端语义），回读 rev0
+    const first = await putJson(app, "/api/tags", { scope: "global", tags: [{ name: "a", sort: 1 }] });
+    expect(first.status).toBe(200);
+    const rev0 = (await (await app.request("/api/tags")).json()).revision;
+    // 对端写入新集，revision 前移
+    const peer = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [
+        { name: "a", sort: 1 },
+        { name: "b", sort: 2 },
+      ],
+    });
+    expect(peer.status).toBe(200);
+    // 第二打携旧 revision（Manual-QA 核心：真 PUT ×2，第二个携旧 revision）
+    const stale = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [{ name: "c", sort: 1 }],
+      baseRevision: rev0,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("tag_conflict");
+    // 409 不落盘：对端写入原样保留（部分写即覆盖丢失，绝不允许）
+    expect((await (await app.request("/api/tags")).json()).global.map((e: { name: string }) => e.name)).toEqual([
+      "a",
+      "b",
+    ]);
+    // 携最新 revision 重试成功落盘
+    const rev1 = (await (await app.request("/api/tags")).json()).revision;
+    const retry = await putJson(app, "/api/tags", {
+      scope: "global",
+      tags: [{ name: "c", sort: 1 }],
+      baseRevision: rev1,
+    });
+    expect(retry.status).toBe(200);
+    expect((await (await app.request("/api/tags")).json()).global.map((e: { name: string }) => e.name)).toEqual(["c"]);
+  });
+
+  test("未传 baseRevision 保持旧语义直写（老客户端兼容）；空串同义", async () => {
+    const { app } = setup();
+    expect((await putJson(app, "/api/tags", { scope: "global", tags: [{ name: "x", sort: 1 }] })).status).toBe(200);
+    expect(
+      (await putJson(app, "/api/tags", { scope: "global", tags: [{ name: "y", sort: 2 }], baseRevision: "" })).status,
+    ).toBe(200);
+  });
+
+  test("project：携旧 revision 409 不写；携最新 revision 200", async () => {
+    const { app, projectDir, register } = setup();
+    register(projectDir);
+    const qs = `?project=${encodeURIComponent(projectDir)}`;
+    await putJson(app, "/api/tags", { scope: "project", project: projectDir, tags: [{ name: "p1", sort: 1 }] });
+    const rev0 = (await (await app.request(`/api/tags${qs}`)).json()).revision;
+    await putJson(app, "/api/tags", { scope: "project", project: projectDir, tags: [{ name: "p2", sort: 1 }] });
+    const stale = await putJson(app, "/api/tags", {
+      scope: "project",
+      project: projectDir,
+      tags: [{ name: "p3", sort: 1 }],
+      baseRevision: rev0,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe("tag_conflict");
+    expect(
+      (await (await app.request(`/api/tags${qs}`)).json()).project.map((e: { name: string }) => e.name),
+    ).toEqual(["p2"]);
+    const rev1 = (await (await app.request(`/api/tags${qs}`)).json()).revision;
+    const ok = await putJson(app, "/api/tags", {
+      scope: "project",
+      project: projectDir,
+      tags: [{ name: "p3", sort: 1 }],
+      baseRevision: rev1,
+    });
+    expect(ok.status).toBe(200);
   });
 });

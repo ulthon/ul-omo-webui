@@ -33,6 +33,45 @@ import {
 /** 管理弹框的域：全局标签集，或指定项目的项目标签集（projectPath 必由入口显式给出） */
 export type TagManageScope = "global" | { projectPath: string };
 
+/** 本次整替变更描述（r9 防覆盖）：putScope 提交前先重拉最新两源定义，
+ * 再把变更叠加到最新列表——载荷不再由本地旧副本一次算死 */
+type TagChange =
+  | { kind: "append"; name: string }
+  | { kind: "rename"; from: string; to: string }
+  | { kind: "remove"; name: string }
+  | { kind: "move"; name: string; dir: -1 | 1 }
+  | { kind: "color"; name: string; color: string }
+  | { kind: "resetColor"; name: string }
+  | { kind: "display"; name: string; display: TagDisplayMode | undefined };
+
+/** 变更的目标名（toast 提示用；重命名的目标是 from） */
+function tagChangeTarget(change: TagChange): string {
+  return change.kind === "rename" ? change.from : change.name;
+}
+
+/** 变更叠加到最新列表；目标不在场（对端已改名/删除/同名已存在）返回 null，
+ * 由调用方放弃本次编辑并提示（绝不把基于旧副本的载荷发出去） */
+function applyTagChange(latest: TagDefinition[], change: TagChange): TagDefinition[] | null {
+  const has = (name: string) => latest.some((e) => e.name === name);
+  switch (change.kind) {
+    case "append":
+      // 同名已在最新列表（对端已新增）：叠加会产生重名 400，按放弃处理
+      return has(change.name) ? null : appendTagEntry(latest, change.name);
+    case "rename":
+      return has(change.from) ? renameTagEntries(latest, change.from, change.to) : null;
+    case "remove":
+      return has(change.name) ? removeTagEntry(latest, change.name) : null;
+    case "move":
+      return has(change.name) ? reorderTagEntries(latest, change.name, change.dir) : null;
+    case "color":
+      return has(change.name) ? setTagColor(latest, change.name, change.color) : null;
+    case "resetColor":
+      return has(change.name) ? resetTagColor(latest, change.name) : null;
+    case "display":
+      return has(change.name) ? setTagDisplay(latest, change.name, change.display) : null;
+  }
+}
+
 /** 本弹框可清理的一条孤儿挂载记录：父级按 definedKeys 算好孤儿与保留集 */
 export interface TagOrphanCleanup {
   sessionId: string;
@@ -74,20 +113,44 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
 
   const entriesOf = (): TagDefinition[] => localDefs[groupScope];
 
-  /** 提交本 scope 整替并更新本地副本（失败保持原状并展示错误） */
-  const putScope = async (next: TagDefinition[]) => {
-    if (busy) return;
+  /** 提交本 scope 整替（r9 防覆盖）：先重拉最新 defs 与 revision，把变更叠加到
+   * 最新列表后带 baseRevision 提交；目标已不在场或 409 冲突则放弃本次编辑、
+   * toast 提示并把本地副本同步为服务端最新（绝不回写旧值、不自动重试覆盖） */
+  const putScope = async (change: TagChange) => {
+    if (busy) return false;
     setBusy(true);
     setError(null);
     try {
-      const res = await api.putTags({
-        scope: groupScope,
-        ...(isProject ? { project } : {}),
-        tags: next,
-      });
-      setLocalDefs((prev) => ({ ...prev, [groupScope]: res.tags }));
-      onChanged();
-      return true;
+      const fresh = await api.listTags(isProject ? project : undefined);
+      const latest = fresh[groupScope];
+      const next = applyTagChange(latest, change);
+      if (next === null) {
+        // 放弃本次编辑：本地副本同步为服务端最新 + 关闭行内编辑（用户看到刷新后的列表）
+        setLocalDefs((prev) => ({ ...prev, [groupScope]: latest }));
+        setEditing(null);
+        showToast(t("sessionList.tagManage.targetGoneToast", { name: tagChangeTarget(change) }));
+        return false;
+      }
+      try {
+        const res = await api.putTags({
+          scope: groupScope,
+          ...(isProject ? { project } : {}),
+          tags: next,
+          baseRevision: fresh.revision,
+        });
+        setLocalDefs((prev) => ({ ...prev, [groupScope]: res.tags }));
+        onChanged();
+        return true;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          // 冲突放弃：同步服务端最新（不回写旧值、不自动重试）+ 关闭行内编辑
+          setLocalDefs((prev) => ({ ...prev, [groupScope]: latest }));
+          setEditing(null);
+          showToast(t("sessionList.tagManage.conflictToast", { name: tagChangeTarget(change) }));
+          return false;
+        }
+        throw err;
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("sessionList.tagManage.saveFailed"));
       return false;
@@ -102,7 +165,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
       setError(t("sessionList.tagManage.nameRequired"));
       return;
     }
-    if (await putScope(appendTagEntry(entriesOf(), name))) {
+    if (await putScope({ kind: "append", name })) {
       setNewName("");
     }
   };
@@ -118,20 +181,20 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
       setEditing(null);
       return;
     }
-    if (await putScope(renameTagEntries(entriesOf(), editing.from, to))) {
+    if (await putScope({ kind: "rename", from: editing.from, to })) {
       showToast(t("sessionList.tagManage.renamedToast", { from: editing.from, to }));
       setEditing(null);
     }
   };
 
   const removeTag = async (name: string) => {
-    if (await putScope(removeTagEntry(entriesOf(), name))) {
+    if (await putScope({ kind: "remove", name })) {
       showToast(t("sessionList.tagManage.deletedToast", { name }));
     }
   };
 
   const moveTag = (name: string, dir: -1 | 1) => {
-    void putScope(reorderTagEntries(entriesOf(), name, dir));
+    void putScope({ kind: "move", name, dir });
   };
 
   /** 孤儿清理执行（仅在两段式确认后可达）：整替去孤儿 + 审计 source + 行内数据同步 */
@@ -218,7 +281,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
                         type="color"
                         value={tagColor(d)}
                         disabled={busy}
-                        onChange={(e) => void putScope(setTagColor(entriesOf(), d.name, e.target.value))}
+                        onChange={(e) => void putScope({ kind: "color", name: d.name, color: e.target.value })}
                         className="absolute inset-0 size-full cursor-pointer opacity-0"
                         aria-label={t("sessionList.tagManage.takeColor", { name: d.name })}
                       />
@@ -230,7 +293,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
                       size="sm"
                       className="size-11 shrink-0 lg:size-7"
                       disabled={busy || d.color === undefined}
-                      onClick={() => void putScope(resetTagColor(entriesOf(), d.name))}
+                      onClick={() => void putScope({ kind: "resetColor", name: d.name })}
                       aria-label={t("sessionList.tagManage.autoColor", { name: d.name })}
                       title={t("sessionList.tagManage.autoColor", { name: d.name })}
                       data-testid={`tag-color-auto-${d.name}`}
@@ -243,9 +306,11 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
                       value={d.display ?? ""}
                       disabled={busy}
                       onChange={(e) =>
-                        void putScope(
-                          setTagDisplay(entriesOf(), d.name, e.target.value === "" ? undefined : (e.target.value as TagDisplayMode)),
-                        )
+                        void putScope({
+                          kind: "display",
+                          name: d.name,
+                          display: e.target.value === "" ? undefined : (e.target.value as TagDisplayMode),
+                        })
                       }
                       aria-label={t("sessionList.tagManage.displayLabel", { name: d.name })}
                       title={t("sessionList.tagManage.displayLabel", { name: d.name })}

@@ -85,6 +85,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   schedule_runner_unavailable: "errors.scheduleRunnerUnavailable",
   session_not_found: "errors.sessionNotFound",
   session_not_persisted: "errors.sessionNotPersisted",
+  tag_conflict: "errors.tagConflict",
   title_gen_failed: "errors.titleGenFailed",
   title_gen_unavailable: "errors.titleGenUnavailable",
   unauthorized: "errors.unauthorized",
