@@ -1,7 +1,7 @@
 /**
  * 粘性用户消息与回底判据（docs08-r7 任务 11 建；r9 wave1 改视口锚定）单测与挂载链路：
  * - stickyCandidateAboveViewport：视口上缘上方最近含文本 user 条目（上滚早期历史候选
- *   随视口走，非尾部最新；顶部全量在视口下方时候选=首个可见条目按新函数定义；纯图
+ *   随视口走，非尾部最新；顶部空区（上缘在首行之前）候选=null；纯图
  *   user 跳过回退；无 user 文本返回 null＝不渲染；测量缺失返回 null）
  * - shouldShowStickyUser：二值判据矩阵（回底恒隐；上缘/下缘完整滚出显示；跨越不显示）
  * - 挂载链路：真实 MessageList + store 直写 entries，scroll 事件驱动（虚拟化测量缓存
@@ -85,17 +85,15 @@ describe("stickyCandidateAboveViewport：视口上缘上方最近 user 条目", 
     expect(cand2!.key).toBe("u3");
   });
 
-  test("断言2 顶部位置全量在视口下方：候选=首个可见条目按新函数定义（u1）", () => {
+  test("断言2 顶部空区（上缘落在首行 start 之前）：候选=null", () => {
     const entries = sixEntries();
     const items = buildMessageItems(entries as never, { hasStreamingMessage: false, interrupted: false });
-    // scrollTop 0 / -50（上缘未进内容区）：首个可见条目即 index 0，为含文本 user 时返回它
-    // （任务规格允许"null 或最新按新函数定义"；本函数定义取首个可见 user 条；
-    // 该候选整行可见，渲染层 shouldShowStickyUser 判不钉，观测与 null 等价）
+    // 上缘在容器顶垫空区（内容坐标 < 首行 start=0）：无行压边，无锚可反查
+    expect(stickyCandidateAboveViewport(items, entries as never, estimateMeasurements(items.length), -50)).toBeNull();
+    expect(stickyCandidateAboveViewport(items, entries as never, estimateMeasurements(items.length), -1)).toBeNull();
+    // 边界：上缘恰压首行（0）→ 候选=该行 u1（整行可见渲染层不钉，观测无条）
     const cand = stickyCandidateAboveViewport(items, entries as never, estimateMeasurements(items.length), 0);
-    expect(cand).not.toBeNull();
-    expect(cand!.index).toBe(0);
     expect(cand!.key).toBe("u1");
-    expect(stickyCandidateAboveViewport(items, entries as never, estimateMeasurements(items.length), -50)!.key).toBe("u1");
   });
 
   test("断言3 回底门控：候选在场时 atBottom 恒不显示（shouldShowStickyUser）", () => {
