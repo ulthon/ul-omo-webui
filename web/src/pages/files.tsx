@@ -6,10 +6,15 @@
 // 页头：项目下拉（ui store projects，bootstrap 已从 GET /api/projects 填充；
 // 空时兜底自拉一次）+ 当前路径面包屑。默认项目 = ui store currentProject
 // （bootstrap openProject 写入，即最近活跃会话项目），无会话时取列表首个。
-// 手机档（≤768px 显式断点）单栏层叠 + 段内切换钮；无写操作、无右键菜单（后续任务）。
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, X } from "lucide-react";
-import { api } from "@/lib/api";
+// 操作面（任务 6）：列表上方工具栏（新建文件/新建目录/上传/刷新）+ 列表与树右键
+// 菜单（下载/重命名/移动/删除，目录加“在此上传”）；上传 = 文件选择器多选 +
+// 逐个排队（进度条 + 结果态）；重命名/移动 = 对话框输入目标相对路径（移动支持
+// 跨目录路径）；操作成功后重取当前目录与树（不做乐观更新）；失败 toast
+// （apiErrorMessage 错误码词典文案）。无拖拽、无批量勾选（后续任务也不做，计划 Must NOT）。
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
+import { ChevronRight, RefreshCw, Upload, X } from "lucide-react";
+import { api, FsUploadConflictError } from "@/lib/api";
 import type { FsTreeEntry } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useT } from "@/i18n/i18n";
@@ -18,10 +23,44 @@ import { useUiStore } from "@/stores/ui";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type SortKey = "name" | "size" | "mtime" | "type";
 type SortDir = "asc" | "desc";
 type MobilePane = "tree" | "list" | "preview";
+type OpDialogKind = "newFile" | "newDir" | "rename" | "move";
+
+/** 右键菜单目标（列表行/树行统一形状；scope 供菜单项差异：目录才有“在此上传”） */
+interface ContextMenuTarget {
+  x: number;
+  y: number;
+  path: string;
+  isDir: boolean;
+}
+
+/** 打开中的操作对话框（value 为目标相对路径输入框当前值） */
+interface OpDialog {
+  kind: OpDialogKind;
+  /** rename/move 的源路径；新建类为 null */
+  from: string | null;
+  value: string;
+}
+
+/** 上传队列单项（逐个排队，progress 为字节） */
+interface UploadItem {
+  id: number;
+  name: string;
+  loaded: number;
+  total: number;
+  status: "uploading" | "done" | "failed";
+}
 
 /** fs/tree 条目 + 服务端增补的 size/mtime（类型在 lib/api 未同步前本地扩展） */
 interface ListEntry extends FsTreeEntry {
@@ -212,6 +251,258 @@ export function FilesPage() {
 
   const [mobilePane, setMobilePane] = useState<MobilePane>("list");
 
+  // ---- 操作面（任务 6）：工具栏 + 右键菜单 + 对话框 + 上传队列 ----
+  // 树刷新版本：任意写操作成功后 +1，FileTree 以 key 重挂载自取（无命令式刷新口，简单一致）
+  const [treeVersion, setTreeVersion] = useState(0);
+  const [menu, setMenu] = useState<ContextMenuTarget | null>(null);
+  const [dialog, setDialog] = useState<OpDialog | null>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 待上传目标目录：工具栏上传 = 当前目录；目录“在此上传”= 该目录
+  const uploadDirRef = useRef<string>("");
+  const uploadSeqRef = useRef(0);
+
+  /** 写操作成功后统一收口：重取当前目录 + 树（不做乐观更新，计划口径） */
+  const refetchAfterOp = useCallback(() => {
+    if (project) loadDir(project, dir);
+    setTreeVersion((v) => v + 1);
+  }, [project, dir, loadDir]);
+
+  const openMenu = (e: ReactMouseEvent, path: string, isDir: boolean) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, path, isDir });
+  };
+
+  /** 树行右键：目标从行 DOM 解析（data-testid 路径 + aria-expanded 判目录），FileTree 零波及 */
+  const onTreeContextMenu = (e: ReactMouseEvent) => {
+    const target = e.target as HTMLElement;
+    const row = typeof target.closest === "function" ? target.closest("[data-testid^='tree-row-']") : null;
+    if (!(row instanceof HTMLElement)) return;
+    const testid = row.getAttribute("data-testid");
+    if (!testid) return;
+    openMenu(e, testid.slice("tree-row-".length), row.getAttribute("aria-expanded") !== null);
+  };
+
+  const downloadEntry = (path: string) => {
+    if (!project) return;
+    const a = document.createElement("a");
+    a.href = api.fsDownloadUrl(project, path);
+    a.download = baseName(path);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const removeEntry = async (path: string) => {
+    if (!project) return;
+    try {
+      await api.fsDelete(project, path);
+      if (selected === path) setSelected(null);
+      refetchAfterOp();
+    } catch (err) {
+      showToast(apiErrorMessage(err, "files.op.deleteFailed"), "error");
+    }
+  };
+
+  const openUploadPicker = (targetDir: string) => {
+    uploadDirRef.current = targetDir;
+    fileInputRef.current?.click();
+  };
+
+  /** 多选逐个排队上传：每文件进度回写队列态；409 冲突（FsUploadConflictError 携带
+   * existing）本任务仅 toast（确认弹窗/三选属任务 7）；全部结束后重取列表与树 */
+  const onFilesPicked = async (fileList: FileList | null) => {
+    // 先快照 FileList 再清空 input.value：e.target.files 与 input 是同一活对象，
+    // 先清空会让快照变空（真实浏览器实测）
+    const proj = project;
+    const files = Array.from(fileList ?? []);
+    if (!proj || files.length === 0) return;
+    const targetDir = uploadDirRef.current;
+    const input = fileInputRef.current;
+    if (input) input.value = "";
+    for (const file of files) {
+      const id = ++uploadSeqRef.current;
+      setUploadQueue((q) => [...q, { id, name: file.name, loaded: 0, total: file.size, status: "uploading" }]);
+      try {
+        await api.fsUpload(proj, targetDir, file, {
+          onProgress: (loaded, total) =>
+            setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, loaded, total } : it))),
+        });
+        setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "done" } : it)));
+      } catch (err) {
+        setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
+        if (err instanceof FsUploadConflictError) {
+          showToast(t("files.upload.conflict"), "error");
+        } else {
+          showToast(apiErrorMessage(err, "files.op.uploadFailed"), "error");
+        }
+      }
+    }
+    refetchAfterOp();
+  };
+
+  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 为目标相对路径，跨目录合法） */
+  const runDialog = async () => {
+    if (!project || !dialog || dialogBusy) return;
+    const target = dialog.value.trim();
+    if (!target || target === ".") return;
+    setDialogBusy(true);
+    const kind = dialog.kind;
+    try {
+      if (kind === "newFile") {
+        await api.fsCreateFile(project, joinRel(dir, target));
+      } else if (kind === "newDir") {
+        await api.fsMkdir(project, joinRel(dir, target));
+      } else if (dialog.from !== null) {
+        await api.fsMove(project, dialog.from, target);
+      }
+      setDialog(null);
+      refetchAfterOp();
+    } catch (err) {
+      const fallbackKey =
+        kind === "newFile"
+          ? "files.op.createFileFailed"
+          : kind === "newDir"
+            ? "files.op.createDirFailed"
+            : kind === "rename"
+              ? "files.op.renameFailed"
+              : "files.op.moveFailed";
+      showToast(apiErrorMessage(err, fallbackKey), "error");
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const DIALOG_TITLE_KEY: Record<OpDialogKind, "files.dialog.newFileTitle" | "files.dialog.newDirTitle" | "files.dialog.renameTitle" | "files.dialog.moveTitle"> = {
+    newFile: "files.dialog.newFileTitle",
+    newDir: "files.dialog.newDirTitle",
+    rename: "files.dialog.renameTitle",
+    move: "files.dialog.moveTitle",
+  };
+
+  const dialogNode = dialog ? (
+    <Dialog open onOpenChange={(open) => { if (!open) setDialog(null); }}>
+      <DialogContent data-testid="files-dialog">
+        <DialogHeader>
+          <DialogTitle>{t(DIALOG_TITLE_KEY[dialog.kind])}</DialogTitle>
+          <DialogDescription>
+            {dialog.kind === "newFile" || dialog.kind === "newDir" ? t("files.dialog.nameLabel") : t("files.dialog.targetLabel")}
+          </DialogDescription>
+        </DialogHeader>
+        <input
+          data-testid="files-dialog-input"
+          aria-label={dialog.kind === "newFile" || dialog.kind === "newDir" ? t("files.dialog.nameLabel") : t("files.dialog.targetLabel")}
+          value={dialog.value}
+          autoFocus
+          onChange={(e) => setDialog((d) => (d ? { ...d, value: e.target.value } : d))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void runDialog();
+          }}
+          className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+        <DialogFooter>
+          <Button variant="outline" data-testid="files-dialog-cancel" onClick={() => setDialog(null)}>
+            {t("files.dialog.cancel")}
+          </Button>
+          <Button data-testid="files-dialog-confirm" disabled={dialogBusy} onClick={() => void runDialog()}>
+            {t("files.dialog.confirm")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  ) : null;
+
+  const menuNode = menu ? (
+    <>
+      {/* 全屏透明层：点外关闭（右键再次打开由下层行处理） */}
+      <div
+        data-testid="files-menu-overlay"
+        className="fixed inset-0 z-50"
+        onClick={() => setMenu(null)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu(null);
+        }}
+      />
+      <div
+        role="menu"
+        data-testid="files-context-menu"
+        style={{ left: menu.x, top: menu.y }}
+        className="fixed z-50 min-w-36 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+      >
+        {menu.isDir ? (
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="files-menu-upload-here"
+            onClick={() => {
+              const path = menu.path;
+              setMenu(null);
+              openUploadPicker(path);
+            }}
+            className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
+          >
+            {t("files.menu.uploadHere")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="files-menu-download"
+            onClick={() => {
+              const path = menu.path;
+              setMenu(null);
+              downloadEntry(path);
+            }}
+            className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
+          >
+            {t("files.menu.download")}
+          </button>
+        )}
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="files-menu-rename"
+          onClick={() => {
+            const path = menu.path;
+            setMenu(null);
+            setDialog({ kind: "rename", from: path, value: baseName(path) });
+          }}
+          className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
+        >
+          {t("files.menu.rename")}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="files-menu-move"
+          onClick={() => {
+            const path = menu.path;
+            setMenu(null);
+            setDialog({ kind: "move", from: path, value: path });
+          }}
+          className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
+        >
+          {t("files.menu.move")}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="files-menu-delete"
+          onClick={() => {
+            const path = menu.path;
+            setMenu(null);
+            void removeEntry(path);
+          }}
+          className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
+        >
+          {t("files.menu.remove")}
+        </button>
+      </div>
+    </>
+  ) : null;
+
   const onTreeDirectoryOpen = (path: string) => {
     setDir(path);
     if (isMobile) setMobilePane("list");
@@ -246,15 +537,73 @@ export function FilesPage() {
   );
 
   const treePane = (
-    <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto">
+    <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto" onContextMenu={onTreeContextMenu}>
       {project ? (
-        <FileTree project={project} selectedPath={selected} onSelect={setSelected} onDirectoryOpen={onTreeDirectoryOpen} />
+        <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={setSelected} onDirectoryOpen={onTreeDirectoryOpen} />
       ) : null}
     </div>
   );
 
+  const toolbar = (
+    <div data-testid="files-toolbar" className="mb-2 flex shrink-0 items-center gap-1.5">
+      <Button variant="outline" size="sm" data-testid="files-toolbar-new-file" onClick={() => setDialog({ kind: "newFile", from: null, value: "" })}>
+        {t("files.toolbar.newFile")}
+      </Button>
+      <Button variant="outline" size="sm" data-testid="files-toolbar-new-dir" onClick={() => setDialog({ kind: "newDir", from: null, value: "" })}>
+        {t("files.toolbar.newDir")}
+      </Button>
+      <Button variant="outline" size="sm" data-testid="files-toolbar-upload" onClick={() => openUploadPicker(dir)}>
+        <Upload className="size-4" aria-hidden />
+        {t("files.toolbar.upload")}
+      </Button>
+      <Button variant="ghost" size="sm" data-testid="files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={refetchAfterOp}>
+        <RefreshCw className="size-4" aria-hidden />
+      </Button>
+    </div>
+  );
+
+  const uploadPanel =
+    uploadQueue.length > 0 ? (
+      <div data-testid="files-upload-queue" className="mb-2 rounded-lg border p-2 text-xs">
+        <div className="mb-1 font-medium text-muted-foreground">{t("files.upload.queueTitle")}</div>
+        {uploadQueue.map((it) => {
+          const percent = it.total > 0 ? Math.min(100, Math.round((it.loaded / it.total) * 100)) : 0;
+          return (
+            <div key={it.id} data-testid={`files-upload-item-${it.name}`} data-status={it.status} className="py-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate" title={it.name}>
+                  {it.name}
+                </span>
+                <span className={it.status === "failed" ? "text-destructive" : "text-muted-foreground"}>
+                  {it.status === "uploading"
+                    ? t("files.upload.uploading")
+                    : it.status === "done"
+                      ? t("files.upload.done")
+                      : t("files.upload.failed")}
+                </span>
+              </div>
+              {it.status === "uploading" ? (
+                <div
+                  className="mt-0.5 h-1 w-full overflow-hidden rounded bg-muted"
+                  role="progressbar"
+                  aria-valuenow={percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+
+
   const listPane = (
     <div data-testid="files-list-pane" className="flex min-h-0 flex-col">
+      {toolbar}
+      {uploadPanel}
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b text-left text-xs text-muted-foreground">
@@ -304,6 +653,7 @@ export function FilesPage() {
                     type="button"
                     data-testid={`files-row-${entry.name}`}
                     onClick={() => onListRowClick(entry)}
+                    onContextMenu={(e) => openMenu(e, joinRel(dir, entry.name), entry.type === "directory")}
                     className="w-full truncate rounded text-left transition-colors hover:text-primary"
                     title={entry.name}
                   >
@@ -414,6 +764,17 @@ export function FilesPage() {
           <div className="min-h-0 border-l p-3">{previewPane}</div>
         </div>
       )}
+      {/* 隐藏文件选择器（多选；目标目录由 openUploadPicker 预置） */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        data-testid="files-upload-input"
+        className="hidden"
+        onChange={(e) => void onFilesPicked(e.target.files)}
+      />
+      {menuNode}
+      {dialogNode}
     </div>
   );
 }

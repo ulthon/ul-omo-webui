@@ -58,4 +58,47 @@ export const files = {
     preview: "预览",
     switcherAria: "切换面板",
   },
+  // 操作面工具栏（任务 6）
+  toolbar: {
+    newFile: "新建文件",
+    newDir: "新建目录",
+    upload: "上传",
+    refresh: "刷新",
+  },
+  // 右键菜单（列表与树共用；目录多“在此上传”）
+  menu: {
+    download: "下载",
+    rename: "重命名",
+    move: "移动",
+    remove: "删除",
+    uploadHere: "在此上传",
+  },
+  // 新建/重命名/移动对话框（目标相对路径输入）
+  dialog: {
+    newFileTitle: "新建文件",
+    newDirTitle: "新建目录",
+    renameTitle: "重命名",
+    moveTitle: "移动",
+    nameLabel: "名称（当前目录内相对路径）",
+    targetLabel: "目标相对路径（支持跨目录）",
+    confirm: "确定",
+    cancel: "取消",
+  },
+  // 上传队列（逐个排队 + 进度 + 结果态）
+  upload: {
+    queueTitle: "上传队列",
+    uploading: "上传中",
+    done: "完成",
+    failed: "失败",
+    conflict: "目标已存在",
+  },
+  // 操作结果 toast 兜底文案（成功/失败）
+  op: {
+    createFileFailed: "新建文件失败",
+    createDirFailed: "新建目录失败",
+    renameFailed: "重命名失败",
+    moveFailed: "移动失败",
+    deleteFailed: "删除失败",
+    uploadFailed: "上传失败",
+  },
 } as const;

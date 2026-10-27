@@ -351,6 +351,28 @@ export interface FsFileResponse {
   content: string | null;
 }
 
+/** fs 写操作回执（routes-fs-write：201 载荷；mtimeNs 为 bigint 纳秒字符串化） */
+export interface FsWriteReceipt {
+  path: string;
+  size?: number;
+  bytes?: number;
+  mtimeNs?: string;
+}
+
+/** fs/upload 409 target_exists 携带的既有条目信息（前端确认弹窗数据源） */
+export interface FsUploadExisting {
+  path: string;
+  kind: string;
+  size: number;
+  mtimeNs: string;
+}
+
+/** fs/upload 非 2xx 响应体（统一 {error} + 兄弟字段 existing） */
+interface FsUploadErrorBody {
+  error?: { code?: string; message?: string };
+  existing?: FsUploadExisting;
+}
+
 // ---------- 错误与请求基底 ----------
 
 export class ApiError extends Error {
@@ -367,6 +389,17 @@ export class ApiError extends Error {
 
 export function redirectToLogin(): void {
   window.location.assign("/login");
+}
+
+/** fsUpload 409 冲突：携带既有条目信息（overwrite 重试由调用方确认后发起） */
+export class FsUploadConflictError extends ApiError {
+  readonly existing: FsUploadExisting | null;
+
+  constructor(message: string, existing: FsUploadExisting | null) {
+    super(409, "target_exists", message);
+    this.name = "FsUploadConflictError";
+    this.existing = existing;
+  }
 }
 
 interface RequestOptions {
@@ -797,6 +830,84 @@ export const api = {
   async fsBrowse(path?: string): Promise<FsBrowseResponse> {
     const qs = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/fs/browse${qs}`);
+  },
+
+  // ---- fs 写操作（builtin-file-management 任务 6；端点契约 server/src/api/routes-fs-write.ts）----
+  /** 新建文件：POST /api/fs/file；目标已存在 409 exists，父目录缺失 404。 */
+  async fsCreateFile(project: string, path: string, content?: string): Promise<FsWriteReceipt> {
+    return request(`/api/fs/file?project=${encodeURIComponent(project)}`, jsonInit("POST", { path, ...(content ? { content } : {}) }));
+  },
+  /** 建目录：POST /api/fs/dir；最终层已存在 409 exists；parents:true 逐层补建。 */
+  async fsMkdir(project: string, path: string, parents?: boolean): Promise<FsWriteReceipt> {
+    return request(`/api/fs/dir?project=${encodeURIComponent(project)}`, jsonInit("POST", { path, ...(parents ? { parents: true } : {}) }));
+  },
+  /** 重命名/移动：PATCH /api/fs/entry；目标存在默认 409 target_exists（overwrite 覆盖 /
+   * conflict:"rename" 保留两者由调用方确认后重试）；引擎回合占用 from 路径 409 engine_busy。 */
+  async fsMove(
+    project: string,
+    from: string,
+    to: string,
+    opts?: { overwrite?: boolean; conflict?: "rename" },
+  ): Promise<{ ok: boolean; path: string }> {
+    return request(`/api/fs/entry?project=${encodeURIComponent(project)}`, jsonInit("PATCH", { from, to, ...opts }));
+  },
+  /** 删除：DELETE /api/fs/entry；纯硬删；引擎回合进行中 409 engine_busy。 */
+  async fsDelete(project: string, path: string): Promise<{ ok: boolean }> {
+    return request(`/api/fs/entry?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`, { method: "DELETE" });
+  },
+  /** 流式上传：POST /api/fs/upload raw body（fetch 无上传进度，XHR 包装）。onProgress
+   * 为 upload 事件进度（loaded/total 字节）；目标已存在 409 target_exists → 抛
+   * FsUploadConflictError（携带 existing 既有条目信息），调用方确认后 overwrite:true 重试；
+   * 超限 413 upload_too_large 等服务端错误按统一形状抛 ApiError。 */
+  async fsUpload(
+    project: string,
+    dirPath: string,
+    file: Blob,
+    opts?: { overwrite?: boolean; onProgress?: (loaded: number, total: number) => void },
+  ): Promise<FsWriteReceipt> {
+    if (!(file instanceof File)) throw new ApiError(400, "invalid_request", "file must be a File (plain filename required)");
+    const qs = new URLSearchParams({ project, path: dirPath, name: file.name });
+    if (opts?.overwrite) qs.set("overwrite", "true");
+    return new Promise<FsWriteReceipt>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/fs/upload?${qs.toString()}`);
+      if (opts?.onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+        };
+      }
+      xhr.onload = () => {
+        let body: FsUploadErrorBody | null = null;
+        try {
+          body = JSON.parse(xhr.responseText) as FsUploadErrorBody;
+        } catch {
+          // 非 JSON 响应体，走状态码默认文案
+        }
+        if (xhr.status === 401) {
+          redirectToLogin();
+          reject(new ApiError(401, "unauthorized", t("common.lib.unauthorized")));
+          return;
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const code = body?.error?.code ?? "unknown";
+          const message = body?.error?.message ?? `HTTP ${xhr.status}`;
+          reject(
+            xhr.status === 409 && code === "target_exists"
+              ? new FsUploadConflictError(message, body?.existing ?? null)
+              : new ApiError(xhr.status, code, message),
+          );
+          return;
+        }
+        resolve((body ?? {}) as FsWriteReceipt);
+      };
+      xhr.onerror = () => reject(new ApiError(0, "network", "upload network error"));
+      xhr.setRequestHeader("content-type", "application/octet-stream");
+      xhr.send(file);
+    });
+  },
+  /** 下载 URL 纯拼接（GET /api/fs/download；调用方自行 anchor/location 触发浏览器下载） */
+  fsDownloadUrl(project: string, path: string): string {
+    return `/api/fs/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
   },
 
   // ---- 标签（todo 11）----
