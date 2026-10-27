@@ -47,9 +47,12 @@ interface TreeRowProps {
   selectedPath: string | null;
   onSelect: (path: string) => void;
   toggle: (dirPath: string, entry: FsTreeEntry) => void;
+  /** 可选（builtin-file-management 任务 2）：目录行被点击时上抛路径（文件管理页左栏
+   * 同步中栏列表用）；既有消费方（composer @引用、添加项目弹窗）不传，行为不变 */
+  onDirectoryOpen?: (path: string) => void;
 }
 
-function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle }: TreeRowProps) {
+function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle, onDirectoryOpen }: TreeRowProps) {
   const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
   const isDir = entry.type === "directory";
   const expanded = data.expanded.has(path);
@@ -64,7 +67,14 @@ function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle }
         data-testid={`tree-row-${path}`}
         aria-expanded={isDir ? expanded : undefined}
         aria-selected={selected || undefined}
-        onClick={() => (isDir ? toggle(dirPath, entry) : onSelect(path))}
+        onClick={() => {
+          if (isDir) {
+            toggle(dirPath, entry);
+            onDirectoryOpen?.(path);
+          } else {
+            onSelect(path);
+          }
+        }}
         className={`flex h-11 w-full items-center gap-1 rounded-lg px-1.5 text-left text-sm transition-colors hover:bg-muted ${
           selected ? "bg-muted text-foreground" : ""
         }`}
@@ -95,6 +105,7 @@ function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle }
             selectedPath={selectedPath}
             onSelect={onSelect}
             toggle={toggle}
+            onDirectoryOpen={onDirectoryOpen}
           />
         ))}
     </div>
@@ -105,10 +116,13 @@ export function FileTree({
   project,
   selectedPath,
   onSelect,
+  onDirectoryOpen,
 }: {
   project: string;
   selectedPath: string | null;
   onSelect: (path: string) => void;
+  /** 可选（builtin-file-management 任务 2）：目录行点击时上抛路径，见 TreeRowProps 注释 */
+  onDirectoryOpen?: (path: string) => void;
 }) {
   const showToast = useUiStore((s) => s.showToast);
   const t = useT();
@@ -197,6 +211,7 @@ export function FileTree({
             selectedPath={selectedPath}
             onSelect={onSelect}
             toggle={toggle}
+            onDirectoryOpen={onDirectoryOpen}
           />
         ))
       )}

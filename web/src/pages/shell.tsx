@@ -37,6 +37,7 @@ import {
   writeSidebarWidthPreference,
 } from "@/components/layout/sidebar-resize";
 import { SettingsPage } from "@/pages/settings";
+import { FilesPage } from "@/pages/files";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { isModelCycleBackward, isModelCycleForward, isModelPickerTrigger } from "@/lib/shortcuts";
 import { nextFavoriteModel, selectModel } from "@/lib/model-cycle";
@@ -465,9 +466,9 @@ export function AppShell() {
           （SSE 与引导状态不中断），返回钮经 ui store settingsPageOpen 回原视图 */}
       {settingsPageOpen && <SettingsPage />}
 
-      {/* 文件管理独立全屏页（builtin-file-management 任务 1）：fixed 覆盖层占位空壳，
-          shell 本体保持挂载（SSE 不中断）；任务 2 填三栏内容 */}
-      {filesPageOpen && <FilesPagePlaceholder />}
+      {/* 文件管理独立全屏页（builtin-file-management 任务 2 三栏实现）：fixed 覆盖层，
+          shell 本体保持挂载（SSE 不中断）；返回钮经 ui store filesPageOpen 回原视图 */}
+      {filesPageOpen && <FilesPage />}
 
       {/* 轻提示栈：info 3.2s 自动消失；error 常驻直到显式关闭。至多 3 条同列堆叠
           （超出丢最旧并 console.warn），文字可选中可复制，点文字本体不触发任何动作 */}
