@@ -21,6 +21,7 @@ export function FilePreview({
   path,
   onInsert,
   renderActions,
+  enableImageInline,
 }: {
   project: string;
   path: string;
@@ -28,6 +29,9 @@ export function FilePreview({
   onInsert?: (path: string) => void;
   /** 文件就绪后渲染额外面板动作（文件管理页「编辑」钮，任务 8）；缺省不渲染零波及 */
   renderActions?: (data: FsFileResponse) => ReactNode;
+  /** 位图真内联（任务 7）：启用后 binary 位图（png/jpg/gif/webp）改走 fsDownloadUrl
+   * 真图渲染（不再占位）；缺省关闭——composer @引用场景默认行为零波及 */
+  enableImageInline?: boolean;
 }) {
   const showToast = useUiStore((s) => s.showToast);
   // 初始即 loading；调用方以 key={path} 重挂载派生重置，effect 只发请求不同步 setState
@@ -99,7 +103,20 @@ export function FilePreview({
         (() => {
           const { data } = state;
           if (data.binary) {
-            // 位图：契约限制（binary → content=null）拿不到字节，展示类型识别占位（只读降级）
+            // 位图：契约 binary → content=null 拿不到字节；enableImageInline 启用时
+            // 走下载端点真内联（任务 7，下载端点二进制安全），否则类型识别占位（只读降级）
+            if (enableImageInline && mime && mime !== "image/svg+xml") {
+              return (
+                <div className="flex justify-center p-3">
+                  <img
+                    data-testid="preview-image"
+                    src={api.fsDownloadUrl(project, path)}
+                    alt={baseName(path)}
+                    className="max-h-64 max-w-full rounded-lg border"
+                  />
+                </div>
+              );
+            }
             if (mime && mime !== "image/svg+xml") {
               return (
                 <div data-testid="preview-image-placeholder" className="flex flex-col items-center gap-2 p-6 text-center">

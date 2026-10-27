@@ -106,7 +106,29 @@ export const files = {
     uploading: "上传中",
     done: "完成",
     failed: "失败",
-    conflict: "目标已存在",
+    canceled: "已取消",
+  },
+  // 删除确认弹窗（任务 7：目录递归警告 + 直接子条目数；引擎忙专用文案）
+  confirm: {
+    title: "确认删除",
+    fileBody: "将永久删除文件“{path}”，此操作不可撤销。",
+    dirBody: "将永久删除目录“{path}”及其全部内容，此操作不可撤销。",
+    childCount: "该目录包含 {count} 个直接子条目。",
+    childCountUnknown: "正在统计直接子条目…",
+    confirm: "删除",
+    cancel: "取消",
+    engineBusy: "引擎正在此项目工作，稍后再试",
+  },
+  // 冲突三选弹窗（move 409 target_exists / upload 409 target_exists）
+  conflict: {
+    title: "目标已存在",
+    moveDesc: "目标路径已存在：{path}",
+    uploadDesc: "“{name}”已存在于目录 {dir}",
+    existingInfo: "已有条目：{kind}，{size}",
+    overwrite: "覆盖",
+    keepBoth: "保留两者",
+    cancel: "取消",
+    keepBothDisabled: "上传暂不支持自动改名，无法保留两者",
   },
   // 操作结果 toast 兜底文案（成功/失败）
   op: {

@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { ChevronRight, Pencil, RefreshCw, Upload, X } from "lucide-react";
-import { api, FsUploadConflictError } from "@/lib/api";
+import { api, ApiError, FsUploadConflictError } from "@/lib/api";
 import type { FsFileResponse, FsTreeEntry } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useT } from "@/i18n/i18n";
@@ -23,6 +23,7 @@ import { useUiStore } from "@/stores/ui";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor, editBlockReasonKey, isEditableFile } from "@/components/files/file-editor";
+import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,7 +61,27 @@ interface UploadItem {
   name: string;
   loaded: number;
   total: number;
-  status: "uploading" | "done" | "failed";
+  status: "uploading" | "done" | "failed" | "canceled";
+}
+
+/** 删除确认目标（目录时弹窗内拉直接子条目数） */
+interface DeleteConfirmState {
+  path: string;
+  isDir: boolean;
+}
+
+/** 冲突三选状态：move 409（from/to 重试参数）与 upload 409（待重传文件与队列项） */
+interface ConflictState {
+  kind: "move" | "upload";
+  /** move：源路径 */
+  from: string | null;
+  /** move：目标相对路径；upload：目标目录 */
+  target: string;
+  /** upload：待重传文件（File 对象含文件名）与队列项 id */
+  file: File | null;
+  uploadId: number | null;
+  /** 409 载荷携带的既有条目信息（upload 有，move 无） */
+  existing: { path?: string; kind?: string; size?: number } | null;
 }
 
 /** fs/tree 条目 + 服务端增补的 size/mtime（类型在 lib/api 未同步前本地扩展） */
@@ -282,6 +303,81 @@ export function FilesPage() {
   // 待上传目标目录：工具栏上传 = 当前目录；目录“在此上传”= 该目录
   const uploadDirRef = useRef<string>("");
   const uploadSeqRef = useRef(0);
+  // 删除确认（任务 7）：目标 + 目录直接子条目数（弹窗打开时拉一次目录列表）
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
+  const [deleteChildCount, setDeleteChildCount] = useState<number | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // 冲突三选（任务 7）：move 覆盖/保留两者直接重试；upload 覆盖重传 / 取消（保留两者
+  // 置灰——服务端上传暂不支持 conflict:"rename"）。upload 决策经 resolver 阻塞上传队列
+  const [conflict, setConflict] = useState<ConflictState | null>(null);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const uploadConflictChoiceRef = useRef<((decision: "overwrite" | "cancel") => void) | null>(null);
+
+  // 删除确认弹窗打开且目标为目录时拉一次直接子条目数（失败保持 null，弹窗显示统计中）
+  useEffect(() => {
+    if (!deleteConfirm || !deleteConfirm.isDir || !project) return;
+    let cancelled = false;
+    api
+      .fsTree(project, deleteConfirm.path)
+      .then((res) => {
+        if (!cancelled) setDeleteChildCount(res.entries.length);
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteChildCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteConfirm, project]);
+
+  const openDeleteConfirm = (path: string, isDir: boolean) => {
+    setDeleteChildCount(null);
+    setDeleteConfirm({ path, isDir });
+  };
+
+  const confirmDelete = async () => {
+    if (!project || !deleteConfirm || deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      await api.fsDelete(project, deleteConfirm.path);
+      if (selected === deleteConfirm.path) setSelected(null);
+      setDeleteConfirm(null);
+      refetchAfterOp();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "engine_busy") {
+        showToast(t("files.confirm.engineBusy"), "error");
+      } else {
+        showToast(apiErrorMessage(err, "files.op.deleteFailed"), "error");
+      }
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  /** move 三选重试：覆盖 overwrite:true / 保留两者 conflict:"rename"（exact 契约参数） */
+  const resolveMoveConflict = async (choice: "overwrite" | "rename") => {
+    if (!project || !conflict || conflict.kind !== "move" || conflict.from === null || conflictBusy) return;
+    setConflictBusy(true);
+    try {
+      await api.fsMove(
+        project,
+        conflict.from,
+        conflict.target,
+        choice === "overwrite" ? { overwrite: true } : { conflict: "rename" },
+      );
+      setConflict(null);
+      refetchAfterOp();
+    } catch (err) {
+      showToast(apiErrorMessage(err, "files.op.moveFailed"), "error");
+    } finally {
+      setConflictBusy(false);
+    }
+  };
+
+  /** upload 三选：覆盖以 overwrite:true 重传同一 File；取消置队列项 canceled */
+  const resolveUploadConflict = (choice: "overwrite" | "cancel") => {
+    uploadConflictChoiceRef.current?.(choice);
+  };
 
   /** 写操作成功后统一收口：重取当前目录 + 树（不做乐观更新，计划口径） */
   const refetchAfterOp = useCallback(() => {
@@ -314,17 +410,6 @@ export function FilesPage() {
     a.remove();
   };
 
-  const removeEntry = async (path: string) => {
-    if (!project) return;
-    try {
-      await api.fsDelete(project, path);
-      if (selected === path) setSelected(null);
-      refetchAfterOp();
-    } catch (err) {
-      showToast(apiErrorMessage(err, "files.op.deleteFailed"), "error");
-    }
-  };
-
   const openUploadPicker = (targetDir: string) => {
     uploadDirRef.current = targetDir;
     fileInputRef.current?.click();
@@ -351,10 +436,39 @@ export function FilesPage() {
         });
         setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "done" } : it)));
       } catch (err) {
-        setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
         if (err instanceof FsUploadConflictError) {
-          showToast(t("files.upload.conflict"), "error");
+          // 409 target_exists：三选弹窗（任务 7）。保留两者置灰（服务端上传不支持
+          // conflict:"rename"，discretionary 记录）；决策经 resolver 阻塞逐个排队，
+          // 覆盖=overwrite:true 重传同一 File，取消=队列项置 canceled
+          const decision = await new Promise<"overwrite" | "cancel">((resolve) => {
+            uploadConflictChoiceRef.current = resolve;
+            setConflict({
+              kind: "upload",
+              from: null,
+              target: targetDir,
+              file,
+              uploadId: id,
+              existing: err.existing,
+            });
+          });
+          uploadConflictChoiceRef.current = null;
+          if (decision === "cancel") {
+            setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "canceled" } : it)));
+          } else {
+            try {
+              await api.fsUpload(proj, targetDir, file, {
+                overwrite: true,
+                onProgress: (loaded, total) =>
+                  setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, loaded, total } : it))),
+              });
+              setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "done" } : it)));
+            } catch (retryErr) {
+              setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
+              showToast(apiErrorMessage(retryErr, "files.op.uploadFailed"), "error");
+            }
+          }
         } else {
+          setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
           showToast(apiErrorMessage(err, "files.op.uploadFailed"), "error");
         }
       }
@@ -380,6 +494,18 @@ export function FilesPage() {
       setDialog(null);
       refetchAfterOp();
     } catch (err) {
+      // move 409 target_exists → 三选弹窗（任务 7）；其余照旧 toast
+      if (
+        kind === "move" &&
+        dialog.from !== null &&
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.code === "target_exists"
+      ) {
+        setDialog(null);
+        setConflict({ kind: "move", from: dialog.from, target, file: null, uploadId: null, existing: null });
+        return;
+      }
       const fallbackKey =
         kind === "newFile"
           ? "files.op.createFileFailed"
@@ -512,8 +638,9 @@ export function FilesPage() {
           data-testid="files-menu-delete"
           onClick={() => {
             const path = menu.path;
+            const isDir = menu.isDir;
             setMenu(null);
-            void removeEntry(path);
+            openDeleteConfirm(path, isDir);
           }}
           className="w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted"
         >
@@ -610,7 +737,9 @@ export function FilesPage() {
                     ? t("files.upload.uploading")
                     : it.status === "done"
                       ? t("files.upload.done")
-                      : t("files.upload.failed")}
+                      : it.status === "canceled"
+                        ? t("files.upload.canceled")
+                        : t("files.upload.failed")}
                 </span>
               </div>
               {it.status === "uploading" ? (
@@ -750,7 +879,7 @@ export function FilesPage() {
           /* 任务 9 保存端点落地前 onSave 传 null：编辑器状态条显示「保存不可用」 */
           <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={null} />
         ) : (
-          <FilePreview key={selected} project={project} path={selected} renderActions={editAction} />
+          <FilePreview key={selected} project={project} path={selected} renderActions={editAction} enableImageInline />
         )
       ) : (
         <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
@@ -850,6 +979,46 @@ export function FilesPage() {
       />
       {menuNode}
       {dialogNode}
+      {deleteConfirm ? (
+        <DeleteConfirmDialog
+          path={deleteConfirm.path}
+          isDir={deleteConfirm.isDir}
+          childCount={deleteChildCount}
+          busy={deleteBusy}
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      ) : null}
+      {conflict ? (
+        <FsConflictDialog
+          desc={
+            conflict.kind === "move"
+              ? t("files.conflict.moveDesc", { path: conflict.target })
+              : t("files.conflict.uploadDesc", { name: conflict.file?.name ?? "", dir: conflict.target })
+          }
+          existing={
+            conflict.existing
+              ? t("files.conflict.existingInfo", {
+                  kind: conflict.existing.kind ?? "",
+                  size: conflict.existing.size != null ? formatSize(conflict.existing.size) : "",
+                })
+              : undefined
+          }
+          busy={conflictBusy}
+          keepBothReason={conflict.kind === "upload" ? t("files.conflict.keepBothDisabled") : undefined}
+          onOverwrite={() =>
+            conflict.kind === "move" ? void resolveMoveConflict("overwrite") : resolveUploadConflict("overwrite")
+          }
+          onKeepBoth={() => {
+            if (conflict.kind === "move") void resolveMoveConflict("rename");
+            else resolveUploadConflict("cancel");
+          }}
+          onCancel={() => {
+            if (conflict.kind === "move") setConflict(null);
+            else resolveUploadConflict("cancel");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

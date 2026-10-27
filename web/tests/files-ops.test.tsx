@@ -157,13 +157,10 @@ function q(container: HTMLElement | Document, sel: string): HTMLElement {
   return el as HTMLElement;
 }
 
-function contextmenu(el: Element): MouseEvent {
+function contextmenu(): MouseEvent {
   return new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 20 });
 }
 
-function toastTexts(): string[] {
-  return useUiStore.getState().toasts.map((t) => t.text);
-}
 
 /** 受控 input 赋值：React value tracker 会吞同值 input 事件，需走原型 setter */
 function typeValue(input: HTMLInputElement, value: string): void {
@@ -191,7 +188,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
     const { container, root } = await mountPage(calls);
     await act(async () => {
-      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu(null));
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
     });
     const menu = q(document, '[data-testid="files-context-menu"]');
     for (const id of ["files-menu-download", "files-menu-rename", "files-menu-move", "files-menu-delete"]) {
@@ -203,7 +200,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
       q(document, '[data-testid="files-menu-overlay"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await act(async () => {
-      q(container, '[data-testid="files-row-docs"]').dispatchEvent(contextmenu(null));
+      q(container, '[data-testid="files-row-docs"]').dispatchEvent(contextmenu());
     });
     const menu2 = q(document, '[data-testid="files-context-menu"]');
     expect(menu2.querySelector('[data-testid="files-menu-upload-here"]')).not.toBeNull();
@@ -217,7 +214,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
     const { container, root } = await mountPage(calls);
     await act(async () => {
-      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(contextmenu(null));
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(contextmenu());
     });
     const menu = q(document, '[data-testid="files-context-menu"]');
     expect(menu.querySelector('[data-testid="files-menu-upload-here"]')).not.toBeNull();
@@ -232,7 +229,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     const { container, root } = await mountPage(calls);
     const treeCallsBefore = calls.tree.length;
     await act(async () => {
-      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu(null));
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
     });
     await act(async () => {
       q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -303,7 +300,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     });
   });
 
-  test("上传 409 冲突：队列项置 failed，existing 信息随 FsUploadConflictError 上抛（toast 提示目标已存在）", async () => {
+  test("上传 409 冲突（任务 7 升级为三选弹窗）：弹窗出现携 existing，取消置 canceled；覆盖 overwrite:true 重传成功置 done", async () => {
     stubXHR();
     uploadConflictNext = true;
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
@@ -313,8 +310,32 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     await act(async () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(q(container, '[data-testid="files-upload-item-c.txt"]').getAttribute("data-status")).toBe("failed");
-    expect(toastTexts()).toContain("目标已存在");
+    // 409 → 三选弹窗：携 existing 信息（kind=file）；保留两者置灰（上传不支持自动改名）
+    const dialog = q(document, '[data-testid="files-conflict-dialog"]');
+    expect(dialog.textContent).toContain("c.txt");
+    expect(dialog.textContent).toContain("file");
+    expect((q(document, '[data-testid="files-conflict-keep-both"]') as HTMLButtonElement).disabled).toBe(true);
+    // 取消：队列项 canceled 且无重传
+    await act(async () => {
+      q(document, '[data-testid="files-conflict-cancel"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-upload-item-c.txt"]').getAttribute("data-status")).toBe("canceled");
+    expect(fakeXhrLog.length).toBe(1);
+    // 再走一遍：这次选覆盖 → overwrite:true 重传成功置 done
+    uploadConflictNext = true;
+    Object.defineProperty(input, "files", { value: [new File(["y"], "d.txt")], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="files-conflict-dialog"]')).not.toBeNull();
+    uploadConflictNext = false;
+    await act(async () => {
+      q(document, '[data-testid="files-conflict-overwrite"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(fakeXhrLog.length).toBe(3);
+    expect(fakeXhrLog[2].url).toContain("overwrite=true");
+    expect(fakeXhrLog[2].url).toContain("name=d.txt");
+    expect(q(container, '[data-testid="files-upload-item-d.txt"]').getAttribute("data-status")).toBe("done");
     await act(async () => {
       root.unmount();
     });
@@ -324,10 +345,14 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: { deleteCode: "engine_busy", createFileStatus: 403, createFileCode: "path_escape" } };
     const { container, root } = await mountPage(calls);
     await act(async () => {
-      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu(null));
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
     });
     await act(async () => {
       q(document, '[data-testid="files-menu-delete"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 任务 7：删除先过确认弹窗
+    await act(async () => {
+      q(document, '[data-testid="files-delete-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const toasts = useUiStore.getState().toasts;
     expect(toasts.at(-1)?.kind).toBe("error");
