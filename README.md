@@ -6,7 +6,7 @@ senpi/omo 引擎的 web 工作台：功能集对标 opencode v1 TUI，兼容手�
 
 1. **同一引擎的第二前端**。web 版不是独立产品，而是 senpi 引擎的第二个 UI。会话数据、agent 配置、凭证、工作产出与命令行版完全同一份（关键保证：宿主 spawn 引擎子进程时继承相同的 HOME 与项目 cwd）。终端 TUI 聊到一半，手机浏览器打开同一个会话接着聊，零迁移。
 2. **薄壳**。引擎不动，web 只做宿主：事件桥 + UI。不做 Electron、不做多服务器聚合、不做账号系统。单 Node/Bun 进程 + 一个 sqlite 元数据库。
-3. **phpMyAdmin 模式**。核心只做"对话 + 会话 + 与对话直接联动的东西"。Git 历史浏览、文件管理等专门能力外链独立自托管工具（cgit / filebrowser），反代按路径挂载，不自己实现。
+3. **薄核 + 外挂可选**。核心只做“对话 + 会话 + 与对话直接联动的东西”。文件管理已内置（跟随项目，开箱即用）；Git 历史浏览等专门能力外链独立自托管工具（cgit 等），反代按路径挂载；外挂 filebrowser 可选并存，内置功能不依赖它。
 
 ## 功能一览
 
@@ -95,7 +95,7 @@ node server/dist/index.js
 
 ## 部署参考件
 
-`deploy/` 目录提供参考配置（均为参考件，不承担编排验收）：`Caddyfile.example`（反代 + /git /files 路径分发，含 SSE 长连接防缓冲配置）、`docker-compose.example.yml`（cgit + filebrowser 外链编排示例）、`备份.md`（备份对象与恢复步骤）。
+`deploy/` 目录提供参考配置（均为参考件，不承担编排验收）：`Caddyfile.example`（反代 + /git /files 路径分发，含 SSE 长连接防缓冲配置）、`docker-compose.example.yml`（cgit + filebrowser 外链编排示例）、`备份.md`（备份对象与恢复步骤）。注意：文件管理为内置功能（跟随项目），不依赖 filebrowser 外挂链路，不部署外挂工具不影响任何内置能力。
 
 ## 部署安全说明
 

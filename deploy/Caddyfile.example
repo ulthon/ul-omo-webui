@@ -30,6 +30,7 @@
 	}
 
 	# 外链：文件管理（filebrowser，按需部署，compose 里注释掉了）。
+	# 外挂可选：内置文件管理不依赖此链路，/files 路由零冲突；不部署 filebrowser 可整段移除。
 	reverse_proxy /files/* filebrowser:80 {
 		flush_interval -1
 		uri strip_prefix /files
