@@ -54,7 +54,8 @@ vi.mock("@/components/files/code-mirror-loader", () => ({
   },
 }));
 
-const { FileEditor, editBlockReasonKey, isEditableFile, FILE_EDIT_MAX_BYTES } = await import("@/components/files/file-editor");
+const { FileEditor } = await import("@/components/files/file-editor");
+const { editBlockReasonKey, isEditableFile, FILE_EDIT_MAX_BYTES } = await import("@/components/files/edit-eligibility");
 const { FilesPage } = await import("@/pages/files");
 const { useUiStore } = await import("@/stores/ui");
 

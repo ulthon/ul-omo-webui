@@ -22,7 +22,8 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { FilePreview } from "@/components/file-tree/file-preview";
-import { FileEditor, editBlockReasonKey, isEditableFile } from "@/components/files/file-editor";
+import { FileEditor } from "@/components/files/file-editor";
+import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import { Button } from "@/components/ui/button";
 import {
