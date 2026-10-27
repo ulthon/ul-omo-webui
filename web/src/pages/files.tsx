@@ -13,15 +13,16 @@
 // （apiErrorMessage 错误码词典文案）。无拖拽、无批量勾选（后续任务也不做，计划 Must NOT）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { ChevronRight, RefreshCw, Upload, X } from "lucide-react";
+import { ChevronRight, Pencil, RefreshCw, Upload, X } from "lucide-react";
 import { api, FsUploadConflictError } from "@/lib/api";
-import type { FsTreeEntry } from "@/lib/api";
+import type { FsFileResponse, FsTreeEntry } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { FilePreview } from "@/components/file-tree/file-preview";
+import { FileEditor, editBlockReasonKey, isEditableFile } from "@/components/files/file-editor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -207,8 +208,27 @@ export function FilesPage() {
 
   const [dir, setDir] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  // 切项目清路径与选中（事件处理器内做，不走 effect）
+  // 在线编辑态（任务 8）：editingPath = 正在编辑的文件；editDirtyRef 为编辑器脏态
+  // 上报（FileEditor 契约，NotesView dirtyRef 先例）。所有切走路径先过 guardDirty。
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const editDirtyRef = useRef(false);
+  /** 脏态守卫：未脏直接放行；脏时 confirm，确认后放行 */
+  const guardDirty = () => {
+    if (!editDirtyRef.current) return true;
+    if (window.confirm(t("files.edit.confirmLeave"))) {
+      editDirtyRef.current = false;
+      return true;
+    }
+    return false;
+  };
+  const leaveEdit = () => {
+    if (!guardDirty()) return;
+    setEditingPath(null);
+  };
+  // 切项目清路径与选中（事件处理器内做，不走 effect）；编辑中先过脏态守卫
   const changeProject = (next: string) => {
+    if (editingPath && !guardDirty()) return;
+    setEditingPath(null);
     setPickedProject(next);
     setDir("");
     setSelected(null);
@@ -504,15 +524,26 @@ export function FilesPage() {
   ) : null;
 
   const onTreeDirectoryOpen = (path: string) => {
+    if (editingPath && !guardDirty()) return;
+    setEditingPath(null);
     setDir(path);
     if (isMobile) setMobilePane("list");
+  };
+  const onSelectTreePath = (path: string | null) => {
+    if (path !== null && editingPath && !guardDirty()) return;
+    setEditingPath(null);
+    setSelected(path);
   };
   const onListRowClick = (entry: FsTreeEntry) => {
     const path = joinRel(dir, entry.name);
     if (entry.type === "directory") {
+      if (editingPath && !guardDirty()) return;
+      setEditingPath(null);
       setDir(path);
       return;
     }
+    if (editingPath && !guardDirty()) return;
+    setEditingPath(null);
     setSelected(path);
     if (isMobile) setMobilePane("preview");
   };
@@ -539,7 +570,7 @@ export function FilesPage() {
   const treePane = (
     <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto" onContextMenu={onTreeContextMenu}>
       {project ? (
-        <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={setSelected} onDirectoryOpen={onTreeDirectoryOpen} />
+        <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} />
       ) : null}
     </div>
   );
@@ -676,10 +707,51 @@ export function FilesPage() {
     </div>
   );
 
+  /** 预览面板「编辑」钮（任务 8）：资格三条件不满足时置灰带原因提示 */
+  const editAction = (data: FsFileResponse) => {
+    const label = t("files.edit.button");
+    if (!isEditableFile(data)) {
+      const reason = t(editBlockReasonKey(data));
+      return (
+        <button
+          type="button"
+          data-testid="files-edit-button"
+          data-ineligible="true"
+          disabled
+          title={reason}
+          aria-label={`${label}：${reason}`}
+          className="flex h-11 shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg border border-input px-3 text-xs text-muted-foreground"
+        >
+          <Pencil className="size-4" aria-hidden />
+          {label}
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        data-testid="files-edit-button"
+        onClick={() => {
+          editDirtyRef.current = false;
+          setEditingPath(selected);
+        }}
+        className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg border border-input px-3 text-xs transition-colors hover:bg-muted/50"
+      >
+        <Pencil className="size-4" aria-hidden />
+        {label}
+      </button>
+    );
+  };
+
   const previewPane = (
     <div data-testid="files-preview-pane" className="flex min-h-0 flex-col overflow-y-auto">
       {selected && project ? (
-        <FilePreview key={selected} project={project} path={selected} />
+        editingPath === selected ? (
+          /* 任务 9 保存端点落地前 onSave 传 null：编辑器状态条显示「保存不可用」 */
+          <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={null} />
+        ) : (
+          <FilePreview key={selected} project={project} path={selected} renderActions={editAction} />
+        )
       ) : (
         <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
           {t("files.preview.empty")}
@@ -697,7 +769,10 @@ export function FilesPage() {
           className="size-11"
           aria-label={t("files.page.closeAria")}
           data-testid="files-page-close"
-          onClick={() => setFilesPageOpen(false)}
+          onClick={() => {
+            if (editingPath && !guardDirty()) return;
+            setFilesPageOpen(false);
+          }}
         >
           <X className="size-5" />
         </Button>

@@ -39,6 +39,21 @@ export const files = {
   preview: {
     empty: "Select a file to preview",
   },
+  edit: {
+    button: "Edit",
+    backAria: "Back to preview",
+    saveButton: "Save",
+    dirtyMarker: "Unsaved changes",
+    reasonTooLarge: "File exceeds 2 MB and cannot be edited online",
+    reasonTruncated: "File was truncated and cannot be edited online",
+    reasonBinary: "Binary files cannot be edited online",
+    confirmLeave: "You have unsaved changes. Leave anyway?",
+    statusSaving: "Saving",
+    statusSaved: "Saved",
+    statusFailed: "Save failed",
+    statusUnavailable: "Saving is unavailable",
+    loadFailed: "Failed to load file content",
+  },
   error: {
     projectsLoadFailed: "Failed to load project list",
   },

@@ -47,6 +47,22 @@ export const files = {
   preview: {
     empty: "选择文件以预览",
   },
+  // 在线编辑（任务 8）：资格三条件、脏态守卫、保存状态条
+  edit: {
+    button: "编辑",
+    backAria: "返回预览",
+    saveButton: "保存",
+    dirtyMarker: "有未保存的修改",
+    reasonTooLarge: "文件超过 2MB，无法在线编辑",
+    reasonTruncated: "文件过大被截断，无法在线编辑",
+    reasonBinary: "二进制文件无法在线编辑",
+    confirmLeave: "有未保存的修改，确定离开吗？",
+    statusSaving: "保存中",
+    statusSaved: "已保存",
+    statusFailed: "保存失败",
+    statusUnavailable: "保存不可用",
+    loadFailed: "文件内容加载失败",
+  },
   // 页面级错误
   error: {
     projectsLoadFailed: "项目列表加载失败",

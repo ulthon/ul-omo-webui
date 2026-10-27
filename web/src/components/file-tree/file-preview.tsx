@@ -3,7 +3,7 @@
 // 服务端契约（todo 9）：fs/file 对二进制（NUL 探测）返回 binary=true 且 content=null——
 // 位图（png/jpg 等真二进制图片）拿不到字节，前端识别类型后展示占位说明（降级记录）；
 // 文本型图片（svg）content 可用，转 data URL 真内联。
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Ban, FileText, FileWarning, ImageIcon, LoaderCircle } from "lucide-react";
 import { api, type FsFileResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
@@ -20,11 +20,14 @@ export function FilePreview({
   project,
   path,
   onInsert,
+  renderActions,
 }: {
   project: string;
   path: string;
   /** 传入时渲染「插入引用」按钮（@ 选择器场景）；独立预览可不传 */
   onInsert?: (path: string) => void;
+  /** 文件就绪后渲染额外面板动作（文件管理页「编辑」钮，任务 8）；缺省不渲染零波及 */
+  renderActions?: (data: FsFileResponse) => ReactNode;
 }) {
   const showToast = useUiStore((s) => s.showToast);
   // 初始即 loading；调用方以 key={path} 重挂载派生重置，effect 只发请求不同步 setState
@@ -75,6 +78,7 @@ export function FilePreview({
             {t("fileTree.preview.insertRef")}
           </button>
         )}
+        {renderActions && state.kind === "file" && renderActions(state.data)}
       </div>
 
       {state.kind === "loading" && (
