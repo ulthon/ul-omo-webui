@@ -1,5 +1,7 @@
 // 写操作确认/冲突弹窗（builtin-file-management 任务 7）：复用 ui/dialog 原语，
 // 纯展示组件（重试调用与队列推进由 FilesPage 持有）。无“跳过确认”记忆项（计划 Must NOT）。
+// 任务 9 追加：SaveConflictDialog 保存 409 file_changed「重载/取消」弹窗
+// （重载/取消失败面由 FileEditor 持有，仍为纯展示）。
 import type { ReactNode } from "react";
 import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
@@ -113,6 +115,38 @@ export function FsConflictDialog({
           )}
           <Button data-testid="files-conflict-overwrite" disabled={busy} onClick={onOverwrite}>
             {t("files.conflict.overwrite")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 保存 409 file_changed 冲突（任务 9）：文件已被修改（引擎或其他来源）→
+ * 重载（重拉内容与期望值，本地脏态作废）/ 取消（保留本地修改继续编辑）两选。 */
+export function SaveConflictDialog({
+  busy,
+  onReload,
+  onCancel,
+}: {
+  busy: boolean;
+  onReload: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent data-testid="files-save-conflict-dialog">
+        <DialogHeader>
+          <DialogTitle>{t("files.saveConflict.title")}</DialogTitle>
+          <DialogDescription>{t("files.saveConflict.desc")}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" data-testid="files-save-conflict-cancel" disabled={busy} onClick={onCancel}>
+            {t("files.saveConflict.cancel")}
+          </Button>
+          <Button data-testid="files-save-conflict-reload" disabled={busy} onClick={onReload}>
+            {t("files.saveConflict.reload")}
           </Button>
         </DialogFooter>
       </DialogContent>

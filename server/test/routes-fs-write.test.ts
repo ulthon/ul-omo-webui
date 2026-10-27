@@ -1,7 +1,9 @@
 // 文件写操作端点单测（builtin-file-management 任务 4）：
 // POST /api/fs/file、POST /api/fs/dir、PATCH /api/fs/entry、DELETE /api/fs/entry。
-// 任务 5 追加：POST /api/fs/upload（流式上传 temp 原子发布）、GET /api/fs/download
+// 任务 5 追加：POST /api/fs/upload（流式上传 temp .part 原子发布）、GET /api/fs/download
 // （二进制下载 + RFC 5987 文件名）与 fsUploadMaxBytes env 解析。
+// 任务 9 追加：PUT /api/fs/file 文本保存（mtimeNs+size 乐观锁前置、409 file_changed
+// 回当前值、temp 原子换入零残留、超限双道 400/413、并发二存冲突）。
 // 覆盖错误码矩阵：path_escape / target_exists / kind_mismatch / exists / engine_busy /
 // root_not_deletable / not_a_directory / invalid_name / copy_failed / not_found /
 // invalid_path / invalid_json / invalid_request / insufficient_storage /
@@ -21,6 +23,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1172,6 +1175,219 @@ describe("GET /api/fs/download（二进制下载，任务 5）", () => {
       const escape = await download(buildApp(), root, "../x");
       expect(escape.status).toBe(403);
       expect(await errCode(escape)).toBe("path_escape");
+    } finally {
+      cleanup(root);
+    }
+  });
+});
+
+describe("PUT /api/fs/file（任务 9 文本保存）", () => {
+  function putFile(app: Hono, project: string, path: string, body: unknown): Promise<Response> | Response {
+    return app.request(`/api/fs/file?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** 当前文件期望值（bigint 纳秒字符串 + 字节数）——GET /api/fs/file 回传的期望值形态 */
+  function expectationsOf(file: string): { expectedMtimeNs: string; expectedSize: number } {
+    const st = statSync(file, { bigint: true });
+    return { expectedMtimeNs: st.mtimeNs.toString(), expectedSize: Number(st.size) };
+  }
+
+  /** 回退 mtime 到 past 毫秒前（制造与后续写入必然可分的纳秒值，免抖动） */
+  function backdate(file: string, pastMs: number): void {
+    const d = new Date(Date.now() - pastMs);
+    utimesSync(file, d, d);
+  }
+
+  test("正常保存：200 {mtimeNs,size}（内容变更后新 mtimeNs ≠ 期望值），落盘内容一致，零 temp 残留", async () => {
+    const root = makeProject("fswrite-save-");
+    try {
+      const file = join(root, "note.md");
+      writeFileSync(file, "old");
+      backdate(file, 60_000);
+      const expected = expectationsOf(file);
+      const res = await putFile(buildApp(), root, "note.md", { content: "new content 中文", ...expected });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { mtimeNs: string; size: number };
+      expect(/^\d+$/.test(body.mtimeNs)).toBe(true);
+      expect(body.size).toBe(Buffer.byteLength("new content 中文", "utf8"));
+      // 内容变更 → 新 mtime 必然后移（backdate 制造确定性差）；回执即终态文件现值
+      expect(body.mtimeNs).not.toBe(expected.expectedMtimeNs);
+      expect(body.mtimeNs).toBe(statSync(file, { bigint: true }).mtimeNs.toString());
+      expect(body.size).toBe(statSync(file).size);
+      expect(readFileSync(file, "utf8")).toBe("new content 中文");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("前置失配 → 409 file_changed，回当前 {mtimeNs,size}，磁盘内容不变", async () => {
+    const root = makeProject("fswrite-conflict-");
+    try {
+      const file = join(root, "shared.txt");
+      writeFileSync(file, "v1");
+      const stale = expectationsOf(file);
+      // 引擎/其他来源并发修改：改内容并回退 mtime 制造确定性差异
+      writeFileSync(file, "engine edited");
+      backdate(file, 120_000);
+      const cur = expectationsOf(file);
+      const res = await putFile(buildApp(), root, "shared.txt", { content: "user local", ...stale });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string; message: string }; mtimeNs: string; size: number };
+      expect(body.error.code).toBe("file_changed");
+      expect(body.error.message).toContain("文件已被修改");
+      expect(body.mtimeNs).toBe(cur.expectedMtimeNs);
+      expect(body.size).toBe(cur.expectedSize);
+      // 拒存：磁盘仍是引擎写入的内容，用户本地内容未覆盖
+      expect(readFileSync(file, "utf8")).toBe("engine edited");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("并发模拟：同期望值二存，第二次 409 且回第一次保存后的当前值", async () => {
+    const root = makeProject("fswrite-race-");
+    try {
+      const file = join(root, "race.txt");
+      writeFileSync(file, "base");
+      backdate(file, 90_000);
+      const expected = expectationsOf(file);
+      const app = buildApp();
+      const first = await putFile(app, root, "race.txt", { content: "first writer", ...expected });
+      expect(first.status).toBe(200);
+      const receipt = (await first.json()) as { mtimeNs: string; size: number };
+      // 第二写者携同一份旧期望值 → mtimeNs 已被第一写者排进 → 409 回第一写者终态值
+      const second = await putFile(app, root, "race.txt", { content: "second writer", ...expected });
+      expect(second.status).toBe(409);
+      const body = (await second.json()) as { error: { code: string }; mtimeNs: string; size: number };
+      expect(body.error.code).toBe("file_changed");
+      expect(body.mtimeNs).toBe(receipt.mtimeNs);
+      expect(body.size).toBe(receipt.size);
+      expect(readFileSync(file, "utf8")).toBe("first writer");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("超限双道：源文件 >2MB → 400；content >2MB → 413（均 content_too_large）", async () => {
+    const root = makeProject("fswrite-limit-");
+    try {
+      const huge = join(root, "huge.log");
+      writeFileSync(huge, "x".repeat(2 * 1024 * 1024 + 1));
+      const hugeExp = expectationsOf(huge);
+      const src = await putFile(buildApp(), root, "huge.log", { content: "tiny", ...hugeExp });
+      expect(src.status).toBe(400);
+      expect(await errCode(src)).toBe("content_too_large");
+
+      const small = join(root, "small.txt");
+      writeFileSync(small, "s");
+      const smallExp = expectationsOf(small);
+      const body = await putFile(buildApp(), root, "small.txt", {
+        content: "x".repeat(2 * 1024 * 1024 + 1),
+        ...smallExp,
+      });
+      expect(body.status).toBe(413);
+      expect(await errCode(body)).toBe("content_too_large");
+      expect(readFileSync(small, "utf8")).toBe("s");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("缺失 → 404；目录/符号链接非常规文件 → 400 not_a_file", async () => {
+    const root = makeProject("fswrite-kind-");
+    try {
+      seedBasic(root);
+      writeFileSync(join(root, "real.txt"), "r");
+      symlinkSync("real.txt", join(root, "alias.txt"));
+      const app = buildApp();
+      const missing = await putFile(app, root, "ghost.txt", { content: "x", expectedMtimeNs: "1", expectedSize: 1 });
+      expect(missing.status).toBe(404);
+      expect(await errCode(missing)).toBe("not_found");
+      const dir = await putFile(app, root, "docs", { content: "x", expectedMtimeNs: "1", expectedSize: 1 });
+      expect(dir.status).toBe(400);
+      expect(await errCode(dir)).toBe("not_a_file");
+      // 写面 lstat 不跟随符号链接：链接本体非常规文件即拒（不写穿链接）
+      const link = await putFile(app, root, "alias.txt", { content: "x", expectedMtimeNs: "1", expectedSize: 1 });
+      expect(link.status).toBe(400);
+      expect(await errCode(link)).toBe("not_a_file");
+      expect(readFileSync(join(root, "real.txt"), "utf8")).toBe("r");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("请求体形状：content 非字符串 / expectedMtimeNs 非数字串 / expectedSize 负数 / path 缺失 → 400", async () => {
+    const root = makeProject("fswrite-shape-");
+    try {
+      writeFileSync(join(root, "a.txt"), "a");
+      const app = buildApp();
+      const badContent = await putFile(app, root, "a.txt", { content: 123, expectedMtimeNs: "1", expectedSize: 1 });
+      expect(badContent.status).toBe(400);
+      expect(await errCode(badContent)).toBe("invalid_request");
+      const badMtime = await putFile(app, root, "a.txt", { content: "a", expectedMtimeNs: "12.5", expectedSize: 1 });
+      expect(badMtime.status).toBe(400);
+      expect(await errCode(badMtime)).toBe("invalid_request");
+      const badSize = await putFile(app, root, "a.txt", { content: "a", expectedMtimeNs: "1", expectedSize: -1 });
+      expect(badSize.status).toBe(400);
+      expect(await errCode(badSize)).toBe("invalid_request");
+      const noPath = await app.request(`/api/fs/file?project=${encodeURIComponent(root)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "a", expectedMtimeNs: "1", expectedSize: 1 }),
+      });
+      expect(noPath.status).toBe(400);
+      expect(await errCode(noPath)).toBe("invalid_path");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("temp 清理（注入失败）：open ENOSPC → 507；rename 中途失败 → 500；均零残留且原内容不变", async () => {
+    const root = makeProject("fswrite-clean-");
+    try {
+      // A：open 注入 ENOSPC——temp 未创建即失败，映射 507，无残留
+      const fileA = join(root, "a.txt");
+      writeFileSync(fileA, "old-a");
+      const expA = expectationsOf(fileA);
+      rejectOnceWith(open, "ENOSPC");
+      const resA = await putFile(buildApp(), root, "a.txt", { content: "new-a", ...expA });
+      expect(resA.status).toBe(507);
+      expect(await errCode(resA)).toBe("insufficient_storage");
+      expect(readFileSync(fileA, "utf8")).toBe("old-a");
+      expect(partResidue(root)).toEqual([]);
+
+      // B：rename 注入 EACCES——temp 已写满 sync 完，rename 失败 → finally 清 temp
+      const fileB = join(root, "b.txt");
+      writeFileSync(fileB, "old-b");
+      const expB = expectationsOf(fileB);
+      rejectOnceWith(rename, "EACCES");
+      const resB = await putFile(buildApp(), root, "b.txt", { content: "new-b", ...expB });
+      expect(resB.status).toBe(500);
+      expect(readFileSync(fileB, "utf8")).toBe("old-b");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("../ 逃逸 → 403 path_escape（写守卫覆盖保存面）", async () => {
+    const root = makeProject("fswrite-esc-");
+    try {
+      seedBasic(root);
+      const res = await putFile(buildApp(), root, "../plain.txt", {
+        content: "x",
+        expectedMtimeNs: "1",
+        expectedSize: 1,
+      });
+      expect(res.status).toBe(403);
+      expect(await errCode(res)).toBe("path_escape");
     } finally {
       cleanup(root);
     }

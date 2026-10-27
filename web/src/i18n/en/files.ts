@@ -54,6 +54,13 @@ export const files = {
     statusUnavailable: "Saving is unavailable",
     loadFailed: "Failed to load file content",
   },
+  // Save conflict dialog (task 9: PUT /api/fs/file 409 file_changed → reload/cancel)
+  saveConflict: {
+    title: "File changed on disk",
+    desc: "The file was modified (by the engine or another source). Your local edits are unsaved; reload the latest content or keep editing locally.",
+    reload: "Reload",
+    cancel: "Cancel",
+  },
   error: {
     projectsLoadFailed: "Failed to load project list",
   },

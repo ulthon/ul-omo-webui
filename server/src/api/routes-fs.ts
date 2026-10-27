@@ -92,23 +92,26 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
     return c.json({ project, path, entries });
   }));
 
-  // 读文件（文本；2MB 截断；NUL 字节探测二进制不回传内容）
+  // 读文件（文本；2MB 截断；NUL 字节探测二进制不回传内容）。
+  // 任务 9：响应新增 mtimeNs（bigint statSync 纳秒十进制字符串——Number 会丢结
+  // 1.7e18 量级纳秒值的低 11 位，必须 bigint 取值；作为保存前置校验期望值源），
+  // 纯增量字段，既有字段与行为不变。
   app.get("/api/fs/file", route(async (c: Context) => {
     const project = validateProjectInput(c.req.query("project"));
     const { path, real } = resolveInsideProject(project, c.req.query("path"));
     if (!real) throw new ApiError(404, "not_found", `路径不存在：${path}`);
     let stat;
     try {
-      stat = statSync(real);
+      stat = statSync(real, { bigint: true });
     } catch {
       throw new ApiError(404, "not_found", `路径不存在：${path}`);
     }
     if (!stat.isFile()) {
       throw new ApiError(400, "not_a_file", `路径不是常规文件：${path}`);
     }
-    const truncated = stat.size > FILE_MAX_BYTES;
+    const truncated = Number(stat.size) > FILE_MAX_BYTES;
     // 按需读（截断时只读前 FILE_MAX_BYTES 字节，不整载大文件）
-    const readLen = truncated ? FILE_MAX_BYTES : stat.size;
+    const readLen = truncated ? FILE_MAX_BYTES : Number(stat.size);
     const bytes = new Uint8Array(readLen);
     if (readLen > 0) {
       const fh = await open(real, "r");
@@ -128,7 +131,8 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
     return c.json({
       project,
       path,
-      size: stat.size,
+      size: Number(stat.size),
+      mtimeNs: stat.mtimeNs.toString(),
       truncated,
       binary,
       content: binary ? null : new TextDecoder().decode(bytes),

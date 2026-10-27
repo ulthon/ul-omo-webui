@@ -5,7 +5,7 @@
 // - 单驱动约束：回合中再次 prompt 409（真实 EngineProcessManager + fake 引擎连接）
 import { describe, expect, test, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -270,7 +270,14 @@ describe("fs 路径逃逸校验", () => {
     const { app } = buildApp(new FakeGateway());
     const file = await req(app, `/api/fs/file?project=${encodeURIComponent(proj)}&path=subdir/inner.txt`);
     expect(file.status).toBe(200);
-    expect((await file.json()).content).toBe("inner");
+    const fileBody = (await file.json()) as { content: string; mtimeNs: string };
+    expect(fileBody.content).toBe("inner");
+    // 任务 9 增量：mtimeNs 为 bigint 纳秒十进制字符串（保存前置校验期望值源，
+    // Number 会丢 1.7e18 量级纳秒值低 11 位，必须与 statSync bigint 严格一致）
+    expect(/^\d+$/.test(fileBody.mtimeNs)).toBe(true);
+    expect(fileBody.mtimeNs).toBe(
+      statSync(join(proj, "subdir", "inner.txt"), { bigint: true }).mtimeNs.toString(),
+    );
     const tree = await req(app, `/api/fs/tree?project=${encodeURIComponent(proj)}`);
     expect(tree.status).toBe(200);
     const body = await tree.json();

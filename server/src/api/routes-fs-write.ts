@@ -1,5 +1,6 @@
 // 文件写操作路由（builtin-file-management 任务 4）：新建文件、建目录、重命名/移动、删除。
 // 任务 5 追加：流式上传（temp .part 原子发布）与二进制下载端点。
+// 任务 9 追加：PUT /api/fs/file 文本保存（mtimeNs+size 乐观锁前置 + temp 原子换入）。
 // 写域 = query project（validateProjectInput 归一后的项目根）：全部 path/from/to 经
 // resolveInsideProjectForWrite 四层守卫（词法包含 / 逐组件 lstat 走查 / 最终段名白名单，
 // 任务 3），成功路径事后 assertRealpathInside 回查，出界即回滚（TOCTOU 检测-回滚，
@@ -12,6 +13,7 @@
 // win32 都会静默替换已存在目标）；EXDEV 降级 fs.cp（dereference:false，符号链接按链接
 // 复制，绝不用 copyFile——它跟随链接）+ 文件数/总字节对账，对账通过才删源，任一不符
 // rm 目标 + 500 copy_failed。
+import { Buffer } from "node:buffer";
 import { cp, lstat, mkdir, open, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -158,6 +160,11 @@ async function copyAcrossDevices(src: string, dst: string): Promise<void> {
   }
   await rm(src, { recursive: true, force: true });
 }
+
+/** 在线保存大小上限（任务 9）：镜像 routes-fs.ts FILE_MAX_BYTES=2MB 契约
+ * （读端截断 / 编辑资格 / 保存上限三者同界；本地镜像避免动读面文件，同
+ * assertUploadName 对 paths.assertFinalSegmentName 的镜像先例）。 */
+const FILE_SAVE_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 下载 Content-Type 扩展名表（任务 5）：常用小表，未命中回退
  * application/octet-stream（二进制安全优先，绝不猜测）。.ts 按 text/plain 下载
@@ -534,6 +541,92 @@ export function createFsWriteRoutes(deps: ApiDeps): Hono {
       "Content-Length": String(st.size),
       "Content-Disposition": `attachment; filename="${asciiSafe}"; filename*=UTF-8''${encodeURIComponent(name)}`,
     });
+  }));
+
+  // 文本保存（任务 9）：PUT /api/fs/file。乐观锁前置校验：expectedMtimeNs（服务端
+  // bigint mtimeNs 的十进制字符串——JSON 无 bigint，字符串是唯一无损通道，任务 4/5
+  // 回执同口径）+ expectedSize 与 lstat({bigint:true}) 现值比对；失配 → 409
+  // file_changed：等效 throw new ApiError(409, "file_changed", …)，但需携带服务端
+  // 当前值兄弟字段 mtimeNs/size 供前端「重载」，故走 c.json 直构（upload 409
+  // target_exists 携带 existing 的同款模式）。无 engine_busy 护栏（计划将该护栏
+  // 绑定 delete/move；保存并发由本前置校验承担——引擎改动必然变更 mtimeNs）。
+  // 写入：同目录 temp `.<name>.save-<pid>-<rand>.part` open(wx)→write→fh.sync()→
+  // stat temp 取新 mtimeNs → rename 原子换入（终态文件永不出现半成品；engine/
+  // pid-registry.ts tmp+rename 原子覆写先例）→ realpath 回查 → 200 {mtimeNs,size}
+  // （作下轮期望值）。资格：常规文件（lstat 不跟随——符号链接/目录 400 not_a_file）
+  // + 源文件 size≤2MB（400）；content 字节数≤2MB（413）；均用已有词典码
+  // content_too_large。任何异常 finally 清理 temp（零残留）。
+  app.put("/api/fs/file", route(async (c: Context) => {
+    const project = validateProjectInput(c.req.query("project"));
+    const raw = c.req.query("path");
+    if (raw === undefined) throw new ApiError(400, "invalid_path", "path 必填");
+    const body = await parseJsonBody(c);
+    const content = body.content;
+    if (typeof content !== "string") {
+      throw new ApiError(400, "invalid_request", "content 必须是字符串");
+    }
+    const expectedMtimeNs = body.expectedMtimeNs;
+    if (typeof expectedMtimeNs !== "string" || !/^\d+$/.test(expectedMtimeNs)) {
+      throw new ApiError(400, "invalid_request", "expectedMtimeNs 必须是非负整数字符串（bigint 纳秒字符串化）");
+    }
+    const expectedSize = body.expectedSize;
+    if (typeof expectedSize !== "number" || !Number.isSafeInteger(expectedSize) || expectedSize < 0) {
+      throw new ApiError(400, "invalid_request", "expectedSize 必须是非负整数");
+    }
+
+    const { path: target } = resolveInsideProjectForWrite(project, raw);
+    // 资格 + 前置值一次 lstat 拿齐（lstat 不跟随符号链接：链接本体非常规文件即拒）
+    let cur;
+    try {
+      cur = await lstat(target, { bigint: true });
+    } catch (err) {
+      if (errnoOf(err) === "ENOENT") throw new ApiError(404, "not_found", `路径不存在：${target}`);
+      throw toWriteError(err);
+    }
+    if (!cur.isFile()) {
+      throw new ApiError(400, "not_a_file", `路径不是常规文件：${raw}`);
+    }
+    if (Number(cur.size) > FILE_SAVE_MAX_BYTES) {
+      throw new ApiError(400, "content_too_large", `文件超过 2MB 在线保存上限（${Number(cur.size)} 字节）：${raw}`);
+    }
+    const contentBytes = Buffer.byteLength(content, "utf8");
+    if (contentBytes > FILE_SAVE_MAX_BYTES) {
+      throw new ApiError(413, "content_too_large", `保存内容超过 2MB 上限（${contentBytes} 字节）`);
+    }
+    if (cur.mtimeNs.toString() !== expectedMtimeNs || Number(cur.size) !== expectedSize) {
+      return c.json(
+        {
+          error: { code: "file_changed", message: "文件已被修改（引擎或其他来源），请重载后再保存" },
+          mtimeNs: cur.mtimeNs.toString(),
+          size: Number(cur.size),
+        },
+        409,
+      );
+    }
+
+    const temp = join(
+      dirname(target),
+      `.${basename(target)}.save-${process.pid}-${randomBytes(6).toString("hex")}.part`,
+    );
+    let fh: FileHandle | null = null;
+    try {
+      fh = await open(temp, "wx");
+      await fh.writeFile(content, { encoding: "utf8" });
+      await fh.sync();
+      await fh.close();
+      fh = null;
+      // stat temp 取新 mtimeNs 后再 rename：rename 不改文件自身 mtime，回执值即终态值
+      const st = await stat(temp, { bigint: true });
+      await rename(temp, target);
+      await postCheckOrRollback(project, target);
+      return c.json({ mtimeNs: st.mtimeNs.toString(), size: Number(st.size) }, 200);
+    } catch (err) {
+      throw toWriteError(err);
+    } finally {
+      if (fh) await fh.close().catch(() => {});
+      // 成功路径 temp 已被 rename 移走，force 清理为无操作；失败路径保证零残留
+      await rm(temp, { force: true }).catch(() => {});
+    }
   }));
 
   return app;

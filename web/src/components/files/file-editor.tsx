@@ -5,13 +5,16 @@
 // CodeMirror 经 code-mirror-loader 动态加载（本体与语言包均不进首屏分包）。
 // 脏态守卫沿 right-rail NotesView 先例：组件写宿主传入的 dirtyRef，切走前由
 // 宿主/本组件 confirm（窗口级离开由宿主守护，编辑器内返回钮自带确认）。
-// Ctrl+S / 保存钮触发 onSave 回调；任务 9 保存端点落地前宿主传 null，
-// 状态条显示「保存不可用」。
+// 任务 9 保存接线：打开时捕获 GET 回传的 mtimeNs/size 作期望值（乐观锁前置，
+// 随保存回执滚动更新）；Ctrl+S/保存钮经 onSave 透传（files.tsx 调 fsSaveFile），
+// 409 file_changed（FileConflictError）→ 「重载/取消」弹窗：重载重拉内容与期望值
+// 并作废本地脏态，取消保留本地修改继续编辑（不静默覆盖，不做自动合并）。
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, FileWarning, LoaderCircle, Save } from "lucide-react";
-import { api, type FsFileResponse } from "@/lib/api";
+import { api, FileConflictError, type FsFileResponse } from "@/lib/api";
 import { t as tSnap, useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
+import { SaveConflictDialog } from "./fs-dialogs";
 import type { EditorHandle } from "./code-mirror-loader";
 
 /** 编辑资格大小上限（对齐 server/src/api/routes-fs.ts FILE_MAX_BYTES） */
@@ -30,6 +33,9 @@ export function editBlockReasonKey(
   if (data.truncated) return "files.edit.reasonTruncated";
   return "files.edit.reasonTooLarge";
 }
+
+/** 保存期望值（乐观锁前置）：mtimeNs 为服务端 bigint 纳秒十进制字符串 */
+export type SaveExpectations = { mtimeNs: string; size: number };
 
 type SaveStatus = "idle" | "saving" | "saved" | "failed" | "unavailable";
 
@@ -58,13 +64,21 @@ export function FileEditor({
   dirtyRef: { current: boolean };
   /** 返回预览（宿主先过脏态守卫；本组件返回钮亦自带确认） */
   onBack: () => void;
-  /** 保存回调；null = 保存端点未接入，Ctrl+S/保存钮显示「保存不可用」 */
-  onSave: ((content: string) => Promise<void>) | null;
+  /** 保存回调（任务 9 接入后由 files.tsx 提供 fsSaveFile 透传）：携带编辑器持有的
+   * 期望值，成功回 {mtimeNs,size} 作下轮期望值；409 file_changed 由本组件捕获
+   * （调用方透传 FileConflictError 即可）；null = 保存不可用（端点未接入形态） */
+  onSave: ((content: string, expectations: SaveExpectations) => Promise<{ mtimeNs: string; size: number }>) | null;
 }) {
   const showToast = useUiStore((s) => s.showToast);
   const [state, setState] = useState<EditorState>({ kind: "loading" });
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [dirty, setDirty] = useState(false);
+  // 保存冲突态（409 file_changed）：服务端当前值仅作弹窗信息，重载走全量重拉
+  const [conflict, setConflict] = useState<{ mtimeNs: string | null; size: number | null } | null>(null);
+  // 重载令牌：+1 触发装载 effect 重拉内容与期望值（同 project/path 复用同一 effect）
+  const [reloadToken, setReloadToken] = useState(0);
+  // 乐观锁期望值：打开时由 GET 回传捕获，保存成功后随回执滚动（跨渲染用 ref）
+  const expectedRef = useRef<SaveExpectations | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<EditorHandle | null>(null);
 
@@ -73,7 +87,16 @@ export function FileEditor({
     api
       .fsFile(project, path)
       .then((data) => {
-        if (!cancelled) setState({ kind: "ready", data });
+        if (cancelled) return;
+        // mtimeNs 缺失（旧服务端）时回退空串：保存将由服务端 400 拦下，不静默错存
+        expectedRef.current = {
+          mtimeNs: typeof data.mtimeNs === "string" ? data.mtimeNs : "",
+          size: data.size,
+        };
+        setState({ kind: "ready", data });
+        // 重载路径：内容以服务端为准，本地脏态作废（首次装载无脏态，同置无副作用）
+        dirtyRef.current = false;
+        setDirty(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -84,7 +107,7 @@ export function FileEditor({
     return () => {
       cancelled = true;
     };
-  }, [project, path, showToast]);
+  }, [project, path, reloadToken, showToast, dirtyRef]);
 
   // 编辑器挂载：内容就绪后动态加载 CodeMirror；卸载/重挂载销毁实例
   useEffect(() => {
@@ -119,15 +142,21 @@ export function FileEditor({
 
   const runSave = async () => {
     const handle = handleRef.current;
-    if (!onSave || !handle) return;
+    if (!onSave || !handle || !expectedRef.current) return;
     setStatus("saving");
     try {
-      await onSave(handle.getText());
+      const receipt = await onSave(handle.getText(), expectedRef.current);
+      // 回执滚动期望值：下一轮保存以新 mtimeNs/size 为前置（连续保存不自冲突）
+      expectedRef.current = { mtimeNs: receipt.mtimeNs, size: receipt.size };
       setStatus("saved");
       dirtyRef.current = false;
       setDirty(false);
-    } catch {
+    } catch (err) {
       setStatus("failed");
+      // 409 file_changed：弹「重载/取消」（不静默覆盖；重载后以服务端内容为基准）
+      if (err instanceof FileConflictError) {
+        setConflict({ mtimeNs: err.current.mtimeNs, size: err.current.size });
+      }
     }
   };
 
@@ -154,6 +183,15 @@ export function FileEditor({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+
+  // 冲突弹窗两选：重载 = 重拉内容与期望值（编辑器随 ready 态重建，本地脏态作废）；
+  // 取消 = 保留本地修改继续编辑（脏态保留，可再次保存后重试）
+  const reloadFromServer = () => {
+    setConflict(null);
+    setStatus("idle");
+    setReloadToken((n) => n + 1);
+  };
+  const keepLocalEdits = () => setConflict(null);
 
   const back = () => {
     if (dirtyRef.current) {
@@ -243,6 +281,9 @@ export function FileEditor({
             />
           )}
         </>
+      )}
+      {conflict && (
+        <SaveConflictDialog busy={status === "saving"} onReload={reloadFromServer} onCancel={keepLocalEdits} />
       )}
     </div>
   );

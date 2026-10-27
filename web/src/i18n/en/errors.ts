@@ -107,4 +107,6 @@ export const errors = {
   insufficientStorage: "Insufficient storage",
   // Built-in file management (task 5 upload endpoint)
   uploadTooLarge: "Upload exceeds the size limit",
+  // Built-in file management (task 9 save endpoint)
+  fileChanged: "The file was modified (by the engine or another source)",
 } as const;

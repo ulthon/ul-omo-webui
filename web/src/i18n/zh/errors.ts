@@ -110,4 +110,6 @@ export const errors = {
   insufficientStorage: "存储空间不足",
   // 内置文件管理（routes-fs-write 任务 5 新增码）
   uploadTooLarge: "上传超过大小上限",
+  // 内置文件管理（routes-fs-write 任务 9 新增码）
+  fileChanged: "文件已被修改（引擎或其他来源）",
 } as const;

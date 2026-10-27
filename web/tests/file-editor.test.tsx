@@ -170,13 +170,14 @@ describe("builtin-file-management 任务 8：FileEditor 组件", () => {
 
   test("Ctrl+S 触发保存回调并显示已保存；无保存回调显示「保存不可用」", async () => {
     installFetch({});
-    const onSave = vi.fn(async () => {});
+    const onSave = vi.fn(async () => ({ mtimeNs: "1", size: 1 }));
     const { container, root } = await mountEditor({ onSave });
     await waitFor(() => latestHandle !== null, "editor created");
     await act(async () => {
       document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
     });
-    expect(onSave).toHaveBeenCalledWith("hello");
+    // 任务 9：期望值（GET 回传 mtimeNs/size，旧夹具无 mtimeNs 时回退空串）随保存传出
+    expect(onSave).toHaveBeenCalledWith("hello", { mtimeNs: "", size: 10 });
     await waitFor(() => container.querySelector('[data-testid="file-editor-status"]')?.getAttribute("data-status") === "saved", "saved status");
     // 保存成功后脏态清零
     expect(container.querySelector('[data-testid="file-editor-dirty"]')).toBeNull();

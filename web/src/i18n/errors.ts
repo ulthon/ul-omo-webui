@@ -102,6 +102,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   insufficient_storage: "errors.insufficientStorage",
   // 内置文件管理（routes-fs-write 任务 5 新增 1 码）
   upload_too_large: "errors.uploadTooLarge",
+  // 内置文件管理（routes-fs-write 任务 9 新增 1 码）
+  file_changed: "errors.fileChanged",
   // 模型发现（docs08-2026-10-22 批次任务 23 后端新增 10 码）
   discover_bad_listing: "errors.discoverBadListing",
   discover_upstream_failed: "errors.discoverUpstreamFailed",

@@ -346,6 +346,9 @@ export interface FsFileResponse {
   project: string;
   path: string;
   size: number;
+  /** 服务端 bigint mtimeNs 的十进制字符串（任务 9）：保存前置校验期望值源
+   * （Number 会丢 1.7e18 量级纳秒值低 11 位，字符串为唯一无损通道） */
+  mtimeNs: string;
   truncated: boolean;
   binary: boolean;
   content: string | null;
@@ -399,6 +402,18 @@ export class FsUploadConflictError extends ApiError {
     super(409, "target_exists", message);
     this.name = "FsUploadConflictError";
     this.existing = existing;
+  }
+}
+
+/** fs 保存 409 file_changed（任务 9）：文件已被修改（引擎或其他来源）；current 为
+ * 服务端当前 {mtimeNs, size}（冲突弹窗重载依据；重载走重取，不直接覆盖） */
+export class FileConflictError extends ApiError {
+  readonly current: { mtimeNs: string | null; size: number | null };
+
+  constructor(message: string, current: { mtimeNs: string | null; size: number | null }) {
+    super(409, "file_changed", message);
+    this.name = "FileConflictError";
+    this.current = current;
   }
 }
 
@@ -908,6 +923,46 @@ export const api = {
   /** 下载 URL 纯拼接（GET /api/fs/download；调用方自行 anchor/location 触发浏览器下载） */
   fsDownloadUrl(project: string, path: string): string {
     return `/api/fs/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
+  },
+  /** 保存文本文件（任务 9）：PUT /api/fs/file。expectations 为打开时 GET 回传的
+   * 期望值（乐观锁前置，编辑器持有并随保存回执滚动）；前置失配 409 → 抛
+   * FileConflictError（携带服务端当前 {mtimeNs,size}，调用方弹「重载/取消」）；
+   * 成功回 {mtimeNs,size} 作下轮期望值。其余错误统一 ApiError 形状。 */
+  async fsSaveFile(
+    project: string,
+    path: string,
+    content: string,
+    expectations: { expectedMtimeNs: string; expectedSize: number },
+  ): Promise<{ mtimeNs: string; size: number }> {
+    let res: Response;
+    try {
+      res = await fetch(
+        `/api/fs/file?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`,
+        jsonInit("PUT", { content, ...expectations }),
+      );
+    } catch (err) {
+      throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
+    }
+    if (res.status === 401) {
+      redirectToLogin();
+      throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
+    }
+    // 错误体 {error} + 兄弟字段 mtimeNs/size（同 upload 409 existing 模式）
+    const body = (await res.json().catch(() => null)) as
+      | { error?: { code?: string; message?: string }; mtimeNs?: string; size?: number }
+      | null;
+    if (!res.ok) {
+      const code = body?.error?.code ?? "unknown";
+      const message = body?.error?.message ?? `HTTP ${res.status}`;
+      if (res.status === 409 && code === "file_changed") {
+        throw new FileConflictError(message, {
+          mtimeNs: typeof body?.mtimeNs === "string" ? body.mtimeNs : null,
+          size: typeof body?.size === "number" ? body.size : null,
+        });
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return { mtimeNs: body?.mtimeNs ?? "", size: body?.size ?? 0 };
   },
 
   // ---- 标签（todo 11）----

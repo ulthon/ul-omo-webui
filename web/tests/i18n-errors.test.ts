@@ -30,7 +30,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // tag_mount_conflict，合计 90。内置文件管理（routes-fs-write）追加 7 码：
 // copy_failed/engine_busy/exists/target_exists/kind_mismatch/root_not_deletable/
 // insufficient_storage，合计 97。内置文件管理任务 5（上传下载端点）追加 1 码：
-// upload_too_large，合计 98。
+// upload_too_large，合计 98。内置文件管理任务 9（保存端点）追加 1 码：file_changed
+// （409 携带 mtimeNs/size 兄弟字段，c.json 直构非 ApiError 构造，路由注释内以
+// ApiError(409, "file_changed", …) 形式留痕供扫描），合计 99。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -49,6 +51,7 @@ const SCANNED_CODES = [
   "engine_not_ready",
   "exists",
   "extension_not_found",
+  "file_changed",
   "fork_cancelled",
   "fork_failed",
   "git_error",
@@ -175,12 +178,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（98 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（99 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(98);
+    expect(scanned).toHaveLength(99);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(98);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(99);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

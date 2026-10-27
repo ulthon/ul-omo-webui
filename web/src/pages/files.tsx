@@ -246,6 +246,18 @@ export function FilesPage() {
     if (!guardDirty()) return;
     setEditingPath(null);
   };
+  // 任务 9 保存接线：期望值（mtimeNs/size）由编辑器持有（打开时 GET 捕获、保存回执
+  // 滚动），本层仅透传 fsSaveFile；409 file_changed 由编辑器捕获弹「重载/取消」
+  const saveEditingFile = useCallback(
+    async (content: string, expectations: { mtimeNs: string; size: number }) => {
+      if (!project || !editingPath) throw new Error("save target missing");
+      return api.fsSaveFile(project, editingPath, content, {
+        expectedMtimeNs: expectations.mtimeNs,
+        expectedSize: expectations.size,
+      });
+    },
+    [project, editingPath],
+  );
   // 切项目清路径与选中（事件处理器内做，不走 effect）；编辑中先过脏态守卫
   const changeProject = (next: string) => {
     if (editingPath && !guardDirty()) return;
@@ -876,8 +888,7 @@ export function FilesPage() {
     <div data-testid="files-preview-pane" className="flex min-h-0 flex-col overflow-y-auto">
       {selected && project ? (
         editingPath === selected ? (
-          /* 任务 9 保存端点落地前 onSave 传 null：编辑器状态条显示「保存不可用」 */
-          <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={null} />
+          <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={saveEditingFile} />
         ) : (
           <FilePreview key={selected} project={project} path={selected} renderActions={editAction} enableImageInline />
         )
