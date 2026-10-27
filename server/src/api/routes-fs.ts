@@ -70,10 +70,21 @@ export function createFsRoutes(deps: ApiDeps, browseHome?: string): Hono {
     }
     const dirents = readdirSync(real, { withFileTypes: true }) as unknown as DirentLike[];
     const entries = dirents
-      .map((d) => ({
-        name: (d as unknown as { name: string }).name,
-        type: d.isDirectory() ? "directory" : d.isFile() ? "file" : d.isSymbolicLink() ? "symlink" : "other",
-      }))
+      .map((d) => {
+        const name = (d as unknown as { name: string }).name;
+        // 逐项 stat 补 size/mtime（epoch 毫秒）；目录 size 为 null，stat 失败（如断链）两字段均 null
+        let size: number | null = null;
+        let mtime: number | null = null;
+        try {
+          const st = statSync(join(real, name));
+          size = st.isFile() ? st.size : null;
+          mtime = st.mtimeMs;
+        } catch {
+          // 保留 null
+        }
+        const type = d.isDirectory() ? "directory" : d.isFile() ? "file" : d.isSymbolicLink() ? "symlink" : "other";
+        return { name, type, size, mtime };
+      })
       .sort((a, b) => {
         const dirDelta = Number(b.type === "directory") - Number(a.type === "directory");
         return dirDelta !== 0 ? dirDelta : a.name.localeCompare(b.name);

@@ -31,15 +31,15 @@ const PROJECTS = [
   project("/data/proj-b", "2026-01-03T00:00:00.000Z"),
 ];
 
-/** 项目内单层目录（契约字段齐全） */
-const TREE_FIXTURE: Record<string, Array<{ name: string; type: string }>> = {
+/** 项目内单层目录（契约字段齐全；size/mtime 为服务端增补字段） */
+const TREE_FIXTURE: Record<string, Array<{ name: string; type: string; size: number | null; mtime: number | null }>> = {
   "": [
-    { name: "docs", type: "directory" },
-    { name: "beta.txt", type: "file" },
-    { name: "alpha.md", type: "file" },
-    { name: "lnk", type: "symlink" },
+    { name: "docs", type: "directory", size: null, mtime: 1700000000000 },
+    { name: "beta.txt", type: "file", size: 2048, mtime: 1700000100000 },
+    { name: "alpha.md", type: "file", size: 10, mtime: 1700000000000 },
+    { name: "lnk", type: "symlink", size: 30, mtime: 1700000050000 },
   ],
-  docs: [{ name: "readme.md", type: "file" }],
+  docs: [{ name: "readme.md", type: "file", size: 7, mtime: 1700000000000 }],
 };
 
 function okJson(payload: unknown): Response {
@@ -132,6 +132,12 @@ function rowNames(container: HTMLElement): string[] {
   );
 }
 
+function rowText(container: HTMLElement, name: string): string {
+  const row = container.querySelector(`[data-testid='files-row-${name}']`)?.closest("tr");
+  if (!row) throw new Error(`missing row ${name}`);
+  return row.textContent ?? "";
+}
+
 describe("builtin-file-management 任务 2：文件管理页三栏布局", () => {
   test("项目下拉渲染已注册项，默认选中最近活跃会话项目并加载其目录", async () => {
     const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
@@ -209,6 +215,42 @@ describe("builtin-file-management 任务 2：文件管理页三栏布局", () =>
     });
     expect(q(container, '[data-testid="files-preview-pane"]').textContent).toContain("alpha.md");
     expect(calls.file.some((c) => c.project === "/data/proj-a" && c.path === "alpha.md")).toBe(true);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("size/mtime 真实值渲染：文件大小与格式化 mtime，无值回退占位符", async () => {
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    // mtime 以 YYYY-MM-DD HH:mm 格式展示
+    expect(rowText(container, "beta.txt")).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    expect(rowText(container, "beta.txt")).toContain("2.0 KB");
+    expect(rowText(container, "alpha.md")).toContain("10 B");
+    // 目录 size 为 null → 占位符
+    expect(rowText(container, "docs")).toContain("—");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("列头点击排序：size 数值序（null 恒在后）；mtime 时间序", async () => {
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-sort-size"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // size 升序：目录恒优先，其余 10 < 30 < 2048
+    expect(rowNames(container)).toEqual(["docs", "alpha.md", "lnk", "beta.txt"]);
+    await act(async () => {
+      q(container, '[data-testid="files-sort-size"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(rowNames(container)).toEqual(["docs", "beta.txt", "lnk", "alpha.md"]);
+    await act(async () => {
+      q(container, '[data-testid="files-sort-mtime"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // mtime 升序：alpha(…000) < lnk(…500) < beta(…100)
+    expect(rowNames(container)).toEqual(["docs", "alpha.md", "lnk", "beta.txt"]);
     await act(async () => {
       root.unmount();
     });

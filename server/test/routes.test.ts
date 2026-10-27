@@ -278,6 +278,20 @@ describe("fs 路径逃逸校验", () => {
     expect(names).toContain("subdir");
     expect(names).toContain("readme.txt");
     expect(names).toContain("out-link");
+    // size/mtime 增补：文件为正整数 + epoch 毫秒，目录 size 为 null，mtime 均为数值
+    type TreeEntry = { name: string; type: string; size: number | null; mtime: number | null };
+    const byName = new Map<string, TreeEntry>(body.entries.map((e: TreeEntry) => [e.name, e]));
+    const readme = byName.get("readme.txt");
+    expect(readme).toBeDefined();
+    expect(typeof readme!.size).toBe("number");
+    expect(readme!.size).toBeGreaterThan(0);
+    expect(readme!.size).toBe(Buffer.byteLength("inside"));
+    expect(Number.isFinite(readme!.mtime)).toBe(true);
+    expect(readme!.mtime).toBeGreaterThan(0);
+    const subdirEntry = byName.get("subdir");
+    expect(subdirEntry).toBeDefined();
+    expect(subdirEntry!.size).toBeNull();
+    expect(Number.isFinite(subdirEntry!.mtime)).toBe(true);
   });
 
   test("tree 的 ../ 逃逸同样被拒绝", async () => {

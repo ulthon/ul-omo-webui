@@ -6,9 +6,6 @@
 // 页头：项目下拉（ui store projects，bootstrap 已从 GET /api/projects 填充；
 // 空时兜底自拉一次）+ 当前路径面包屑。默认项目 = ui store currentProject
 // （bootstrap openProject 写入，即最近活跃会话项目），无会话时取列表首个。
-// 契约缺口（如实记录）：GET /api/fs/tree 仅回 name+type，无 size/mtime 字段——
-// 服务端读面不在本任务允许改动范围，两列以 "—" 占位，size/mtime 排序退化为
-// 名称序；服务端补字段后仅需删本文件 statGap 注释并接入真实值。
 // 手机档（≤768px 显式断点）单栏层叠 + 段内切换钮；无写操作、无右键菜单（后续任务）。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
@@ -25,6 +22,12 @@ import { Button } from "@/components/ui/button";
 type SortKey = "name" | "size" | "mtime" | "type";
 type SortDir = "asc" | "desc";
 type MobilePane = "tree" | "list" | "preview";
+
+/** fs/tree 条目 + 服务端增补的 size/mtime（类型在 lib/api 未同步前本地扩展） */
+interface ListEntry extends FsTreeEntry {
+  size: number | null;
+  mtime: number | null;
+}
 
 const MOBILE_FILES_QUERY = "(max-width: 768px)";
 
@@ -77,17 +80,51 @@ interface SortState {
   dir: SortDir;
 }
 
-/** 目录恒优先，再按排序键；size/mtime 无真实值（契约缺口见文件头），退化为名称序 */
-function compareEntries(a: FsTreeEntry, b: FsTreeEntry, sort: SortState): number {
+/** 字节人性化展示（B/KB/MB/GB，一位小数；超大档位直接 GB） */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes;
+  let i = -1;
+  do {
+    value /= 1024;
+    i += 1;
+  } while (value >= 1024 && i < units.length - 1);
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
+
+/** 本地时区 YYYY-MM-DD HH:mm */
+function formatMtime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 目录恒优先；size/mtime 按真实值排序（null 恒排在有值之后），同值回退名称序 */
+function compareEntries(a: ListEntry, b: ListEntry, sort: SortState): number {
   const dirDelta = Number(b.type === "directory") - Number(a.type === "directory");
   if (dirDelta !== 0) return dirDelta;
   const sign = sort.dir === "asc" ? 1 : -1;
   const nameDelta = a.name.localeCompare(b.name);
+  const fallback = () => (nameDelta !== 0 ? sign * nameDelta : 0);
   if (sort.key === "type") {
     const typeDelta = a.type.localeCompare(b.type);
     return typeDelta !== 0 ? sign * typeDelta : nameDelta;
   }
-  // name / size / mtime：后两者暂无数据，统一名称序（升序翻转时仍反序展示，行为可预期）
+  if (sort.key === "size") {
+    if (a.size == null || b.size == null) {
+      if (a.size == null && b.size == null) return fallback();
+      return a.size == null ? 1 : -1;
+    }
+    return a.size !== b.size ? sign * (a.size - b.size) : fallback();
+  }
+  if (sort.key === "mtime") {
+    if (a.mtime == null || b.mtime == null) {
+      if (a.mtime == null && b.mtime == null) return fallback();
+      return a.mtime == null ? 1 : -1;
+    }
+    return a.mtime !== b.mtime ? sign * (a.mtime - b.mtime) : fallback();
+  }
   return sign * nameDelta;
 }
 
@@ -166,7 +203,7 @@ export function FilesPage() {
 
   const [sort, setSort] = useState<SortState>({ key: "name", dir: "asc" });
   const sorted = useMemo(
-    () => (loaded ? [...loaded].sort((a, b) => compareEntries(a, b, sort)) : null),
+    () => (loaded ? ([...loaded] as ListEntry[]).sort((a, b) => compareEntries(a, b, sort)) : null),
     [loaded, sort],
   );
   const toggleSort = (key: SortKey) => {
@@ -274,8 +311,12 @@ export function FilesPage() {
                     {entry.name}
                   </button>
                 </td>
-                <td className="py-1.5 pr-2 text-muted-foreground">{t("files.list.notAvailable")}</td>
-                <td className="py-1.5 pr-2 text-muted-foreground">{t("files.list.notAvailable")}</td>
+                <td className="py-1.5 pr-2 text-muted-foreground">
+                  {entry.size == null ? t("files.list.notAvailable") : formatSize(entry.size)}
+                </td>
+                <td className="py-1.5 pr-2 text-muted-foreground">
+                  {entry.mtime == null ? t("files.list.notAvailable") : formatMtime(entry.mtime)}
+                </td>
                 <td className="py-1.5 pr-2 text-muted-foreground">{t(TYPE_KEY[entry.type])}</td>
               </tr>
             );
