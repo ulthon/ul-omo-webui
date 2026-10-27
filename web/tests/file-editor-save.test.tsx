@@ -3,10 +3,10 @@
 // 惯例同 file-editor.test.tsx：@happy-dom 全局注册 + createRoot/act 真实点击，
 // api 层走 recording fetch；code-mirror-loader 整体 mock（fakeCalls 记录每次
 // createEditor 的 doc——重载路径内容替换以「第二次 createEditor 调用」为断言面）。
-// 覆盖计划验收：期望值从 GET 捕获并随保存回执滚动；409 冲突弹窗两选
-// （重载=重拉内容+期望值+脏态作废；取消=保留本地修改继续编辑）；
-// FilesPage 集成：PUT 请求体形状（content/expectedMtimeNs/expectedSize）与
-// 冲突弹窗→重载全链。
+// 修正轮（计划契约）：冲突弹窗「重载/覆盖」两选——覆盖以 409 载荷当前值直接重存
+// （不重拉），覆盖再撞 409 以新载荷重开弹窗；无显式取消钮。
+// 覆盖计划验收：期望值从 GET 捕获并随保存回执滚动；冲突弹窗两选各自路径；
+// FilesPage 集成：PUT 请求体形状与冲突弹窗全链。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -81,6 +81,7 @@ describe("builtin-file-management 任务 9：FileEditor 保存期望值流", () 
   beforeEach(() => {
     fakeCalls.length = 0;
     latestHandle = null;
+    fileGets.count = 0;
     vi.stubGlobal("confirm", () => true);
   });
 
@@ -90,12 +91,15 @@ describe("builtin-file-management 任务 9：FileEditor 保存期望值流", () 
     document.body.innerHTML = "";
   });
 
-  /** GET /api/fs/file 回可变夹具（重载路径改 fileFixture 后重取即回新值） */
+  /** GET /api/fs/file 回可变夹具（重载路径改 fileFixture 后重取即回新值）；
+   * fileGets 计数供「覆盖不重拉」断言 */
   const fileFixture = { box: null as Record<string, unknown> | null };
+  const fileGets = { count: 0 };
   function installFileFetch(): void {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/fs/file")) {
+        fileGets.count += 1;
         return okJson(
           fileFixture.box ?? {
             project: "/data/proj-a",
@@ -184,11 +188,14 @@ describe("builtin-file-management 任务 9：FileEditor 保存期望值流", () 
     await act(async () => {
       ctrlS();
     });
-    // 冲突弹窗出现（Radix Portal 挂 document.body，故查 document）：标题/描述含
-    // 任务口径文案，状态条失败，脏态保留
+    // 冲突弹窗出现（Radix Portal 挂 document.body，故查 document）：计划两选
+    // 重载+覆盖，无显式取消钮；文案含任务口径
     const dialog = document.querySelector('[data-testid="files-save-conflict-dialog"]');
     if (!dialog) throw new Error("missing files-save-conflict-dialog");
     expect(dialog.textContent).toContain("文件已被修改（引擎或其他来源）");
+    expect(document.querySelector('[data-testid="files-save-conflict-reload"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="files-save-conflict-overwrite"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="files-save-conflict-cancel"]')).toBeNull();
     expect(q(container, '[data-testid="file-editor-status"]').getAttribute("data-status")).toBe("failed");
     expect(container.querySelector('[data-testid="file-editor-dirty"]')).not.toBeNull();
     // 服务端侧并发修改已发生：重载应取回新内容与新期望值
@@ -213,31 +220,76 @@ describe("builtin-file-management 任务 9：FileEditor 保存期望值流", () 
     });
   });
 
-  test("409 冲突弹窗：取消保留本地内容与脏态（不重拉）", async () => {
+  test("覆盖路径：以 409 载荷当前 {mtimeNs,size} 直接重存（不重拉），成功后回执滚动期望值", async () => {
     installFileFetch();
     fileFixture.box = { project: "/data/proj-a", path: "src/a.ts", size: 2, mtimeNs: "111", truncated: false, binary: false, content: "v1" };
-    const onSave = vi.fn(() =>
-      Promise.reject(new FileConflictError("文件已被修改（引擎或其他来源），请重载后再保存", { mtimeNs: "333", size: 9 })),
-    );
-    const { container, root, dirtyRef } = await mountEditor({ onSave });
+    const onSave = vi.fn()
+      .mockRejectedValueOnce(new FileConflictError("文件已被修改（引擎或其他来源），请重载后再保存", { mtimeNs: "333", size: 9 }))
+      .mockResolvedValueOnce({ mtimeNs: "444", size: 12 });
+    const { container, root } = await mountEditor({ onSave });
     await waitFor(() => fakeCalls.length > 0, "editor created");
     await act(async () => {
-      latestHandle!.type("kept locally");
+      latestHandle!.type("local edit");
     });
     await act(async () => {
       ctrlS();
     });
-    if (!document.querySelector('[data-testid="files-save-conflict-dialog"]')) throw new Error("missing conflict dialog");
+    await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') !== null, "conflict dialog");
+    const getsBeforeOverwrite = fileGets.count;
     await act(async () => {
-      (document.querySelector('[data-testid="files-save-conflict-cancel"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      (document.querySelector('[data-testid="files-save-conflict-overwrite"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    // 覆盖重存：期望值 = 409 载荷当前值（非原 GET 值），且不重拉内容
+    expect(onSave).toHaveBeenLastCalledWith("local edit", { mtimeNs: "333", size: 9 });
+    await waitFor(() => q(container, '[data-testid="file-editor-status"]').getAttribute("data-status") === "saved", "saved after overwrite");
     await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') === null, "dialog closed");
-    // 取消：不重拉（仍一次 createEditor）、本地内容与脏态原样保留、状态条失败
+    expect(fileGets.count).toBe(getsBeforeOverwrite);
     expect(fakeCalls.length).toBe(1);
-    expect(latestHandle!.text).toBe("kept locally");
+    expect(container.querySelector('[data-testid="file-editor-dirty"]')).toBeNull();
+    // 回执滚动：下一轮保存以覆盖回执为期望值
+    await act(async () => {
+      latestHandle!.type("local edit+");
+    });
+    await act(async () => {
+      ctrlS();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("local edit+", { mtimeNs: "444", size: 12 });
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("覆盖再撞 409：弹窗以新载荷重开（当前值滚动），再次覆盖后成功", async () => {
+    installFileFetch();
+    fileFixture.box = { project: "/data/proj-a", path: "src/a.ts", size: 2, mtimeNs: "111", truncated: false, binary: false, content: "v1" };
+    const onSave = vi.fn()
+      .mockRejectedValueOnce(new FileConflictError("冲突一", { mtimeNs: "333", size: 9 }))
+      .mockRejectedValueOnce(new FileConflictError("冲突二", { mtimeNs: "555", size: 20 }))
+      .mockResolvedValueOnce({ mtimeNs: "666", size: 21 });
+    const { container, root } = await mountEditor({ onSave });
+    await waitFor(() => fakeCalls.length > 0, "editor created");
+    await act(async () => {
+      latestHandle!.type("local edit");
+    });
+    await act(async () => {
+      ctrlS();
+    });
+    await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') !== null, "conflict dialog 1");
+    await act(async () => {
+      (document.querySelector('[data-testid="files-save-conflict-overwrite"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 覆盖重存又撞并发：弹窗停留（新载荷重开），状态条失败，脏态保留
+    await waitFor(() => q(container, '[data-testid="file-editor-status"]').getAttribute("data-status") === "failed", "failed on second 409");
+    expect(document.querySelector('[data-testid="files-save-conflict-dialog"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="file-editor-dirty"]')).not.toBeNull();
-    expect(dirtyRef.current).toBe(true);
-    expect(q(container, '[data-testid="file-editor-status"]').getAttribute("data-status")).toBe("failed");
+    await act(async () => {
+      (document.querySelector('[data-testid="files-save-conflict-overwrite"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 第二次覆盖：期望值 = 第二个 409 载荷当前值（555/20，非首次载荷 333/9）
+    expect(onSave).toHaveBeenLastCalledWith("local edit", { mtimeNs: "555", size: 20 });
+    await waitFor(() => q(container, '[data-testid="file-editor-status"]').getAttribute("data-status") === "saved", "saved after second overwrite");
+    await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') === null, "dialog closed");
+    expect(onSave).toHaveBeenCalledTimes(3);
     await act(async () => {
       root.unmount();
     });
@@ -410,6 +462,57 @@ describe("builtin-file-management 任务 9：FilesPage 保存接线", () => {
     expect(fakeCalls[1].doc).toBe("engine-v2");
     await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') === null, "dialog closed");
     expect(container.querySelector('[data-testid="file-editor-dirty"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("服务端 409 file_changed → 冲突弹窗覆盖路径：re-PUT 携 409 载荷期望值完成已保存（无重拉）", async () => {
+    let putCount = 0;
+    const calls: PageCalls = {
+      fileGets: [],
+      puts: [],
+      putRespond: () => {
+        putCount += 1;
+        if (putCount === 1) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "file_changed", message: "文件已被修改（引擎或其他来源），请重载后再保存" },
+              mtimeNs: "333",
+              size: 8,
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
+        return okJson({ mtimeNs: "444", size: 12 });
+      },
+      fileByPath: { "b.txt": { project: "/data/proj-a", path: "b.txt", size: 4, mtimeNs: "111", truncated: false, binary: false, content: "base" } },
+    };
+    const { container, root } = await mountPage(calls);
+    await openEditor(container, "b.txt");
+    await act(async () => {
+      latestHandle!.type("local");
+    });
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
+    });
+    await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') !== null, "conflict dialog");
+    // 计划两选：重载+覆盖，无显式取消钮
+    expect(document.querySelector('[data-testid="files-save-conflict-reload"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="files-save-conflict-overwrite"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="files-save-conflict-cancel"]')).toBeNull();
+    const getsBeforeOverwrite = calls.fileGets.length;
+    await act(async () => {
+      (document.querySelector('[data-testid="files-save-conflict-overwrite"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() => q(container, '[data-testid="file-editor-status"]').getAttribute("data-status") === "saved", "saved after overwrite");
+    expect(calls.puts.length).toBe(2);
+    // 覆盖 re-PUT：期望值 = 409 载荷当前值（非原 GET 值），不重拉
+    expect(calls.puts[1]).toEqual({ content: "local", expectedMtimeNs: "333", expectedSize: 8 });
+    expect(calls.fileGets.length).toBe(getsBeforeOverwrite);
+    expect(fakeCalls.length).toBe(1);
+    expect(container.querySelector('[data-testid="file-editor-dirty"]')).toBeNull();
+    await waitFor(() => document.querySelector('[data-testid="files-save-conflict-dialog"]') === null, "dialog closed");
     await act(async () => {
       root.unmount();
     });

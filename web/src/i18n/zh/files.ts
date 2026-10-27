@@ -63,12 +63,12 @@ export const files = {
     statusUnavailable: "保存不可用",
     loadFailed: "文件内容加载失败",
   },
-  // 保存冲突弹窗（任务 9：PUT /api/fs/file 409 file_changed → 重载/取消两选）
+  // 保存冲突弹窗（任务 9：PUT /api/fs/file 409 file_changed → 重载/覆盖两选，计划契约）
   saveConflict: {
     title: "文件已被修改",
-    desc: "文件已被修改（引擎或其他来源）。你的本地修改未保存，可重载最新内容或保留本地修改继续编辑。",
+    desc: "文件已被修改（引擎或其他来源）。可重载最新内容，或以本地修改覆盖保存。",
     reload: "重载",
-    cancel: "取消",
+    overwrite: "覆盖",
   },
   // 页面级错误
   error: {

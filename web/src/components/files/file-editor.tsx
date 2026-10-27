@@ -7,8 +7,10 @@
 // 宿主/本组件 confirm（窗口级离开由宿主守护，编辑器内返回钮自带确认）。
 // 任务 9 保存接线：打开时捕获 GET 回传的 mtimeNs/size 作期望值（乐观锁前置，
 // 随保存回执滚动更新）；Ctrl+S/保存钮经 onSave 透传（files.tsx 调 fsSaveFile），
-// 409 file_changed（FileConflictError）→ 「重载/取消」弹窗：重载重拉内容与期望值
-// 并作废本地脏态，取消保留本地修改继续编辑（不静默覆盖，不做自动合并）。
+// 409 file_changed（FileConflictError）→ 按计划契约「重载/覆盖」两选弹窗：
+// 重载=重拉内容与期望值并作废本地脏态；覆盖=以 409 载荷当前 mtimeNs/size 直接
+// 重存本地修改（丢弃磁盘上另一来源的改动，回执滚动期望值；覆盖再撞 409 则弹窗
+// 以新载荷重开）。X 关闭钮维持本地内容继续编辑（不静默覆盖，不做自动合并）。
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, FileWarning, LoaderCircle, Save } from "lucide-react";
 import { api, FileConflictError, type FsFileResponse } from "@/lib/api";
@@ -184,14 +186,41 @@ export function FileEditor({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // 冲突弹窗两选：重载 = 重拉内容与期望值（编辑器随 ready 态重建，本地脏态作废）；
-  // 取消 = 保留本地修改继续编辑（脏态保留，可再次保存后重试）
+  // 冲突弹窗两选（计划契约）：重载 = 重拉内容与期望值（编辑器随 ready 态重建，
+  // 本地脏态作废）；覆盖 = 以 409 载荷当前 mtimeNs/size 直接重存本地修改（回执滚动
+  // 期望值；覆盖再撞 409 弹窗以新载荷重开）；X 关闭 = 维持本地内容继续编辑
   const reloadFromServer = () => {
     setConflict(null);
     setStatus("idle");
     setReloadToken((n) => n + 1);
   };
-  const keepLocalEdits = () => setConflict(null);
+  const dismissConflict = () => setConflict(null);
+  const overwriteServerFile = async () => {
+    const handle = handleRef.current;
+    if (!onSave || !handle || !conflict) return;
+    if (conflict.mtimeNs === null || conflict.size === null) {
+      // 载荷缺当前值（畸形 409）：无法构造覆盖前置，退回重载全量重建期望值
+      reloadFromServer();
+      return;
+    }
+    setStatus("saving");
+    try {
+      const receipt = await onSave(handle.getText(), { mtimeNs: conflict.mtimeNs, size: conflict.size });
+      expectedRef.current = { mtimeNs: receipt.mtimeNs, size: receipt.size };
+      setStatus("saved");
+      dirtyRef.current = false;
+      setDirty(false);
+      setConflict(null);
+    } catch (err) {
+      setStatus("failed");
+      if (err instanceof FileConflictError) {
+        // 覆盖本身再撞并发：弹窗停留在新载荷上（当前值滚动，可再选）
+        setConflict({ mtimeNs: err.current.mtimeNs, size: err.current.size });
+        return;
+      }
+      setConflict(null);
+    }
+  };
 
   const back = () => {
     if (dirtyRef.current) {
@@ -283,7 +312,12 @@ export function FileEditor({
         </>
       )}
       {conflict && (
-        <SaveConflictDialog busy={status === "saving"} onReload={reloadFromServer} onCancel={keepLocalEdits} />
+        <SaveConflictDialog
+          busy={status === "saving"}
+          onReload={reloadFromServer}
+          onOverwrite={overwriteServerFile}
+          onDismiss={dismissConflict}
+        />
       )}
     </div>
   );
