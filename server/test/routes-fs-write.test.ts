@@ -1,8 +1,11 @@
 // 文件写操作端点单测（builtin-file-management 任务 4）：
 // POST /api/fs/file、POST /api/fs/dir、PATCH /api/fs/entry、DELETE /api/fs/entry。
+// 任务 5 追加：POST /api/fs/upload（流式上传 temp 原子发布）、GET /api/fs/download
+// （二进制下载 + RFC 5987 文件名）与 fsUploadMaxBytes env 解析。
 // 覆盖错误码矩阵：path_escape / target_exists / kind_mismatch / exists / engine_busy /
 // root_not_deletable / not_a_directory / invalid_name / copy_failed / not_found /
-// invalid_path / invalid_json / invalid_request / insufficient_storage。
+// invalid_path / invalid_json / invalid_request / insufficient_storage /
+// upload_too_large / not_a_file。
 // EXDEV 跨设备用「注入 rename 抛 EXDEV」模拟；对账失败用「真 cp 完成后删目标内
 // 一个文件」制造缺口；ENOSPC 用「注入 open 一次拒绝」模拟。全部断言走真实
 // Hono app + 临时目录真实文件系统（即真实 API 面）。
@@ -12,6 +15,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -24,6 +28,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { cp, open, rename } from "node:fs/promises";
 import { createFsWriteRoutes } from "../src/api/routes-fs-write";
+import { fsUploadMaxBytes } from "../src/config";
 import type { ApiDeps } from "../src/api/deps";
 
 // 仅包装三个写原语（默认行为 = 真实现），供单测按需注入 EXDEV/ENOSPC/半成品复制；
@@ -89,6 +94,34 @@ function del(app: Hono, project: string, path: string): Promise<Response> | Resp
 async function errCode(res: Response): Promise<string> {
   const body = (await res.json()) as { error: { code: string } };
   return body.error.code;
+}
+
+/** 上传请求（raw body，不带 content-type；string/Uint8Array 体由 fetch 自动需 content-length） */
+function upload(
+  app: Hono,
+  project: string,
+  opts: { path?: string; name: string; body: string | Uint8Array | ReadableStream<Uint8Array>; overwrite?: string },
+): Promise<Response> | Response {
+  const q = new URLSearchParams({ project, name: opts.name });
+  if (opts.path !== undefined) q.set("path", opts.path);
+  if (opts.overwrite !== undefined) q.set("overwrite", opts.overwrite);
+  return app.request(`/api/fs/upload?${q.toString()}`, {
+    method: "POST",
+    body: opts.body as BodyInit,
+    // ReadableStream 体需 duplex:"half"（undici 要求）；其他体形态不受影响
+    ...(opts.body instanceof ReadableStream ? { duplex: "half" as const } : {}),
+  } as RequestInit);
+}
+
+function download(app: Hono, project: string, path: string): Promise<Response> | Response {
+  return app.request(
+    `/api/fs/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`,
+  );
+}
+
+/** 目录内 .part 残留探测（上传清理断言） */
+function partResidue(dir: string): string[] {
+  return readdirSync(dir).filter((n) => n.endsWith(".part"));
 }
 
 /** 常用夹具：docs/ 目录 + plain.txt 文件 */
@@ -833,6 +866,312 @@ describe("DELETE /api/fs/entry（删除）", () => {
       const second = await del(app, root, "a.txt");
       expect(second.status).toBe(200);
       expect(existsSync(join(root, "a.txt"))).toBe(false);
+    } finally {
+      cleanup(root);
+    }
+  });
+});
+
+describe("POST /api/fs/upload（流式上传，任务 5）", () => {
+  test("成功：201 {path,bytes,mtimeNs}，字节级一致（含 NUL），目录无 .part 残留", async () => {
+    const root = makeProject();
+    try {
+      const payload = Uint8Array.from([0x00, 0x01, 0xff, 0xfe, 0x41, 0x00, 0x7f, 0x80]);
+      const res = await upload(buildApp(), root, { name: "data.bin", body: payload });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { path: string; bytes: number; mtimeNs: string };
+      expect(body.path).toBe(join(root, "data.bin"));
+      expect(body.bytes).toBe(8);
+      expect(/^\d+$/.test(body.mtimeNs)).toBe(true);
+      expect(Buffer.from(readFileSync(join(root, "data.bin"))).equals(Buffer.from(payload))).toBe(true);
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("path 子目录上传成功；空载荷建空文件（bytes 0）", async () => {
+    const root = makeProject();
+    try {
+      mkdirSync(join(root, "docs"));
+      const res = await upload(buildApp(), root, { path: "docs", name: "note.txt", body: "hi" });
+      expect(res.status).toBe(201);
+      expect(readFileSync(join(root, "docs", "note.txt"), "utf8")).toBe("hi");
+      const empty = await upload(buildApp(), root, { name: "empty.bin", body: "" });
+      expect(empty.status).toBe(201);
+      const body = (await empty.json()) as { bytes: number };
+      expect(body.bytes).toBe(0);
+      expect(statSync(join(root, "empty.bin")).size).toBe(0);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("目标已存在 → 409 target_exists 携带 existing 信息，原文件不动，无残留", async () => {
+    const root = makeProject();
+    try {
+      writeFileSync(join(root, "data.bin"), "OLD");
+      const res = await upload(buildApp(), root, { name: "data.bin", body: "NEW-CONTENT" });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as {
+        error: { code: string };
+        existing: { path: string; kind: string; size: number; mtimeNs: string };
+      };
+      expect(body.error.code).toBe("target_exists");
+      expect(body.existing.kind).toBe("file");
+      expect(body.existing.size).toBe(3);
+      expect(/^\d+$/.test(body.existing.mtimeNs)).toBe(true);
+      expect(readFileSync(join(root, "data.bin"), "utf8")).toBe("OLD");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("overwrite=true → 201 原子替换，内容为新一轮；目标是目录 → 400 kind_mismatch", async () => {
+    const root = makeProject();
+    try {
+      writeFileSync(join(root, "data.bin"), "OLD");
+      const res = await upload(buildApp(), root, { name: "data.bin", body: "NEW", overwrite: "true" });
+      expect(res.status).toBe(201);
+      expect(readFileSync(join(root, "data.bin"), "utf8")).toBe("NEW");
+      expect(partResidue(root)).toEqual([]);
+
+      mkdirSync(join(root, "adir"));
+      const dirTarget = await upload(buildApp(), root, { name: "adir", body: "x", overwrite: "true" });
+      expect(dirTarget.status).toBe(400);
+      expect(await errCode(dirTarget)).toBe("kind_mismatch");
+      expect(statSync(join(root, "adir")).isDirectory()).toBe(true);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("content-length 头预检超限 → 413，目标不存在，无 temp 残留", async () => {
+    const root = makeProject();
+    const prev = process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+    process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = "8";
+    try {
+      // string 体由 fetch 自动带 content-length（20 > 8，预检路径）
+      const res = await upload(buildApp(), root, { name: "big.bin", body: "x".repeat(20) });
+      expect(res.status).toBe(413);
+      expect(await errCode(res)).toBe("upload_too_large");
+      expect(existsSync(join(root, "big.bin"))).toBe(false);
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+      else process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = prev;
+      cleanup(root);
+    }
+  });
+
+  test("流式计数超限（无 content-length 头，分块累积）→ 413 + .part 清理", async () => {
+    const root = makeProject();
+    const prev = process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+    process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = "8";
+    try {
+      // ReadableStream 体无 content-length，逐块累积 16 > 8 触发流式上限
+      const stream = new ReadableStream<Uint8Array>({
+        start(ctrl) {
+          ctrl.enqueue(new Uint8Array(8).fill(1));
+          ctrl.enqueue(new Uint8Array(8).fill(2));
+          ctrl.close();
+        },
+      });
+      const res = await upload(buildApp(), root, { name: "stream.bin", body: stream });
+      expect(res.status).toBe(413);
+      expect(await errCode(res)).toBe("upload_too_large");
+      expect(existsSync(join(root, "stream.bin"))).toBe(false);
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+      else process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = prev;
+      cleanup(root);
+    }
+  });
+
+  test("ENOSPC（注入 open 一次拒绝）→ 507 insufficient_storage，无残留", async () => {
+    const root = makeProject();
+    try {
+      rejectOnceWith(open, "ENOSPC");
+      const res = await upload(buildApp(), root, { name: "big.bin", body: "x".repeat(4096) });
+      expect(res.status).toBe(507);
+      expect(await errCode(res)).toBe("insufficient_storage");
+      expect(existsSync(join(root, "big.bin"))).toBe(false);
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("写盘中途故障（真 temp 落盘 + write 注入 EIO）→ 500，temp 被清理", async () => {
+    const root = makeProject();
+    try {
+      // 真 open 建 temp 后首个 write 拒绝：验证中途故障路径的 finally 清理
+      (
+        open as unknown as {
+          mockImplementationOnce: (f: (...a: unknown[]) => Promise<unknown>) => unknown;
+        }
+      ).mockImplementationOnce(async (...args: unknown[]) => {
+        const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+        const real = await actual.open(args[0] as string, args[1] as string);
+        return {
+          write: () => Promise.reject(Object.assign(new Error("injected EIO"), { code: "EIO" })),
+          sync: real.sync.bind(real),
+          close: real.close.bind(real),
+        };
+      });
+      const res = await upload(buildApp(), root, { name: "broken.bin", body: "x".repeat(64) });
+      expect(res.status).toBe(500);
+      expect(await errCode(res)).toBe("internal");
+      expect(existsSync(join(root, "broken.bin"))).toBe(false);
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("非法 name（分隔符/../保留字符/NUL）→ 400 invalid_name；overwrite 非法值 → 400 invalid_request", async () => {
+    const root = makeProject();
+    try {
+      for (const name of ["a/b.txt", "a\\b.txt", "..", "a<b", "a\0b"]) {
+        const res = await upload(buildApp(), root, { name, body: "x" });
+        expect(res.status).toBe(400);
+        expect(await errCode(res)).toBe("invalid_name");
+      }
+      const badFlag = await upload(buildApp(), root, { name: "ok.txt", body: "x", overwrite: "yes" });
+      expect(badFlag.status).toBe(400);
+      expect(await errCode(badFlag)).toBe("invalid_request");
+      expect(partResidue(root)).toEqual([]);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("path ../ 逃逸 → 403 path_escape；目标目录缺失 → 404 not_found；目录段是文件 → 400 not_a_directory", async () => {
+    const root = makeProject();
+    try {
+      seedBasic(root);
+      const escape = await upload(buildApp(), root, { path: "../x", name: "a.bin", body: "x" });
+      expect(escape.status).toBe(403);
+      expect(await errCode(escape)).toBe("path_escape");
+      const noDir = await upload(buildApp(), root, { path: "missing", name: "a.bin", body: "x" });
+      expect(noDir.status).toBe(404);
+      expect(await errCode(noDir)).toBe("not_found");
+      const notDir = await upload(buildApp(), root, { path: "plain.txt", name: "a.bin", body: "x" });
+      expect(notDir.status).toBe(400);
+      expect(await errCode(notDir)).toBe("not_a_directory");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("目标位置预置悬空符号链接 → 409 target_exists（kind symlink），链接未被跟随", async () => {
+    const root = makeProject();
+    try {
+      symlinkSync(join(root, "elsewhere.bin"), join(root, "trap.bin"));
+      const res = await upload(buildApp(), root, { name: "trap.bin", body: "evil" });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string }; existing: { kind: string } };
+      expect(body.error.code).toBe("target_exists");
+      expect(body.existing.kind).toBe("symlink");
+      // 链接仍悬空，目标处未写任何内容
+      expect(existsSync(join(root, "elsewhere.bin"))).toBe(false);
+      expect(lstatSync(join(root, "trap.bin")).isSymbolicLink()).toBe(true);
+    } finally {
+      cleanup(root);
+    }
+  });
+});
+
+describe("fsUploadMaxBytes（上传上限 env 解析，任务 5）", () => {
+  test("非法 env 回退缺省并每进程仅告警一次；合法整数生效", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const prev = process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+    try {
+      const def = 1024 * 1024 * 1024;
+      process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = "abc";
+      expect(fsUploadMaxBytes()).toBe(def);
+      expect(fsUploadMaxBytes()).toBe(def);
+      expect(warn).toHaveBeenCalledTimes(1); // 告警一次后不再刷屏
+      process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = "0";
+      expect(fsUploadMaxBytes()).toBe(def);
+      expect(warn).toHaveBeenCalledTimes(1); // 同进程内已告警过，不再重复
+      process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = "4096";
+      expect(fsUploadMaxBytes()).toBe(4096);
+    } finally {
+      if (prev === undefined) delete process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+      else process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES = prev;
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("GET /api/fs/download（二进制下载，任务 5）", () => {
+  test("成功：字节一致 + Content-Type/Content-Length/Content-Disposition", async () => {
+    const root = makeProject();
+    try {
+      const payload = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x0d, 0x0a]);
+      writeFileSync(join(root, "logo.png"), payload);
+      const res = await download(buildApp(), root, "logo.png");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      expect(res.headers.get("content-length")).toBe(String(payload.byteLength));
+      expect(res.headers.get("content-disposition")).toBe(
+        `attachment; filename="logo.png"; filename*=UTF-8''logo.png`,
+      );
+      expect(Buffer.from(await res.arrayBuffer()).equals(Buffer.from(payload))).toBe(true);
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("非 ASCII 文件名 → RFC 5987 filename* 权威 + ASCII 兜底", async () => {
+    const root = makeProject();
+    try {
+      writeFileSync(join(root, "文档 说明.png"), "png-bytes");
+      const res = await download(buildApp(), root, "文档 说明.png");
+      expect(res.status).toBe(200);
+      const disp = res.headers.get("content-disposition") ?? "";
+      expect(disp).toContain(`filename*=UTF-8''${encodeURIComponent("文档 说明.png")}`);
+      expect(disp).toContain('filename="'); // ASCII 兜底段存在
+      expect(await res.text()).toBe("png-bytes");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("未知扩展名 → application/octet-stream；项目内符号链接放行（读面语义）", async () => {
+    const root = makeProject();
+    try {
+      writeFileSync(join(root, "blob.xyz"), "opaque");
+      const unknown = await download(buildApp(), root, "blob.xyz");
+      expect(unknown.headers.get("content-type")).toBe("application/octet-stream");
+
+      writeFileSync(join(root, "real.md"), "via-link");
+      symlinkSync("real.md", join(root, "alias.md"));
+      const viaLink = await download(buildApp(), root, "alias.md");
+      expect(viaLink.status).toBe(200);
+      expect(viaLink.headers.get("content-type")).toBe("text/markdown");
+      expect(await viaLink.text()).toBe("via-link");
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test("缺失 → 404 not_found；目录 → 400 not_a_file；../ 逃逸 → 403 path_escape", async () => {
+    const root = makeProject();
+    try {
+      seedBasic(root);
+      const missing = await download(buildApp(), root, "ghost.bin");
+      expect(missing.status).toBe(404);
+      expect(await errCode(missing)).toBe("not_found");
+      const dir = await download(buildApp(), root, "docs");
+      expect(dir.status).toBe(400);
+      expect(await errCode(dir)).toBe("not_a_file");
+      const escape = await download(buildApp(), root, "../x");
+      expect(escape.status).toBe(403);
+      expect(await errCode(escape)).toBe("path_escape");
     } finally {
       cleanup(root);
     }

@@ -105,4 +105,6 @@ export const errors = {
   kindMismatch: "Destination type differs from source, cannot overwrite",
   rootNotDeletable: "The project root cannot be deleted",
   insufficientStorage: "Insufficient storage",
+  // Built-in file management (task 5 upload endpoint)
+  uploadTooLarge: "Upload exceeds the size limit",
 } as const;

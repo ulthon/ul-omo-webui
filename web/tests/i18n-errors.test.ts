@@ -29,7 +29,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // F1-B1（常用语整替 + 会话标签挂载整替冲突防护）追加 2 码：snippet_conflict/
 // tag_mount_conflict，合计 90。内置文件管理（routes-fs-write）追加 7 码：
 // copy_failed/engine_busy/exists/target_exists/kind_mismatch/root_not_deletable/
-// insufficient_storage，合计 97。
+// insufficient_storage，合计 97。内置文件管理任务 5（上传下载端点）追加 1 码：
+// upload_too_large，合计 98。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -127,6 +128,7 @@ const SCANNED_CODES = [
   "title_gen_failed",
   "title_gen_unavailable",
   "unauthorized",
+  "upload_too_large",
   "version_not_found",
 ];
 
@@ -173,12 +175,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（90 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（98 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(97);
+    expect(scanned).toHaveLength(98);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(97);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(98);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

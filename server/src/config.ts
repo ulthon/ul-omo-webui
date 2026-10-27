@@ -71,3 +71,32 @@ export function agentDir(): string {
 /** SSE 链路诊断日志开关（D18 排查）：UL_OMO_WEBUI_DEBUG_SSE truthy 时服务端 stdout 输出
  * 连接建立/状态迁移/帧写出/durableLookup miss 日志；关闭时零输出零行为差异。 */
 export const DEBUG_SSE = /^(1|true|yes|on)$/i.test(process.env.UL_OMO_WEBUI_DEBUG_SSE ?? "");
+
+/** 内置文件管理上传上限缺省（builtin-file-management 任务 5）：1GiB。 */
+export const FS_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+
+let uploadBytesWarned = false;
+
+/** 上传字节数上限：UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES 覆盖（≥1 的整数字节数）；
+ * 非法值回退缺省并告警一次——上限非启动刚需，绝不像 PORT 那样 exit(1)（配置错误
+ * 不击垮服务）。函数形态逐调用读取 env，测试可注入小上限（对齐 metaDbPath 模式）。 */
+export function fsUploadMaxBytes(): number {
+  const raw = process.env.UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES;
+  if (raw === undefined || raw === "") return FS_UPLOAD_MAX_BYTES;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    if (!uploadBytesWarned) {
+      console.warn(
+        `UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES 无效："${raw}"（需要 ≥1 的整数字节数），` +
+          `已回退缺省 ${FS_UPLOAD_MAX_BYTES}`,
+      );
+      uploadBytesWarned = true;
+    }
+    return FS_UPLOAD_MAX_BYTES;
+  }
+  return n;
+}
+
+// 启动即校验一次：非法 env 在服务启动日志立即可见（不崩溃，仅告警）；
+// 后续调用沿同一去重标志，不重复刷屏。缺省/合法 env 下零输出零副作用。
+fsUploadMaxBytes();

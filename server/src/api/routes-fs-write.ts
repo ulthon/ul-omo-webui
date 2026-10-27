@@ -1,8 +1,10 @@
 // 文件写操作路由（builtin-file-management 任务 4）：新建文件、建目录、重命名/移动、删除。
+// 任务 5 追加：流式上传（temp .part 原子发布）与二进制下载端点。
 // 写域 = query project（validateProjectInput 归一后的项目根）：全部 path/from/to 经
 // resolveInsideProjectForWrite 四层守卫（词法包含 / 逐组件 lstat 走查 / 最终段名白名单，
 // 任务 3），成功路径事后 assertRealpathInside 回查，出界即回滚（TOCTOU 检测-回滚，
-// 非物理归零）。
+// 非物理归零）。下载为读面：守卫与 /api/fs/file 同源（resolveInsideProject），
+// 树里可见即可下载，项目内符号链接放行。
 // 引擎并发护栏：peekActiveSessionPaths（null=引擎未就绪、[]=空闲、非空=回合进行中会话
 // 路径，见 engine-runtime）——DELETE 为项目级粗护栏（非空即拒），PATCH 为 from 路径
 // 命中护栏（精确或祖先目录，防回合中会话路径漂移）；每次请求重新 peek，不缓存。
@@ -12,11 +14,21 @@
 // rm 目标 + 500 copy_failed。
 import { cp, lstat, mkdir, open, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { Hono, type Context } from "hono";
 import { ApiError, parseJsonBody, route } from "./http";
 import type { ApiDeps } from "./deps";
-import { assertRealpathInside, resolveInsideProjectForWrite, validateProjectInput } from "./paths";
+import { fsUploadMaxBytes } from "../config";
+import {
+  assertRealpathInside,
+  resolveInsideProject,
+  resolveInsideProjectForWrite,
+  validateProjectInput,
+  WIN32_RESERVED_NAME_CHARS,
+} from "./paths";
 
 /** Node 错误码提取（非系统错误返回 undefined） */
 function errnoOf(err: unknown): string | undefined {
@@ -27,10 +39,11 @@ function errnoOf(err: unknown): string | undefined {
   return undefined;
 }
 
-/** 写操作错误映射：ApiError 原样放行；ENOSPC → 507；其余交 route() 兜底 */
+/** 写操作错误映射：ApiError 原样放行；ENOSPC/EDQUOT → 507；其余交 route() 兜底 */
 function toWriteError(err: unknown): unknown {
   if (err instanceof ApiError) return err;
-  if (errnoOf(err) === "ENOSPC") {
+  const errno = errnoOf(err);
+  if (errno === "ENOSPC" || errno === "EDQUOT") {
     return new ApiError(507, "insufficient_storage", "存储空间不足");
   }
   return err;
@@ -144,6 +157,46 @@ async function copyAcrossDevices(src: string, dst: string): Promise<void> {
     );
   }
   await rm(src, { recursive: true, force: true });
+}
+
+/** 下载 Content-Type 扩展名表（任务 5）：常用小表，未命中回退
+ * application/octet-stream（二进制安全优先，绝不猜测）。.ts 按 text/plain 下载
+ * （MPEG-TS 无关语义，仅为文本可读）；ETag/Range 不在本计划范围。 */
+const DOWNLOAD_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".js": "text/javascript",
+  ".ts": "text/plain",
+  ".css": "text/css",
+  ".html": "text/html",
+  ".xml": "application/xml",
+  ".zip": "application/zip",
+  ".gz": "application/gzip",
+  ".tar": "application/x-tar",
+  ".woff2": "font/woff2",
+};
+
+/** 上传 name 纯文件名校验：口径镜像 paths.assertFinalSegmentName（该函数未导出，
+ * 本地镜像避免动 paths.ts）——拒分隔符、..、win32 保留字符、NUL、空名。 */
+function assertUploadName(name: string): void {
+  if (name === "" || name.includes("\0")) {
+    throw new ApiError(400, "invalid_name", "name 必填且不含 NUL 字节（纯文件名）");
+  }
+  if (name.includes("/") || name.includes("\\") || name.includes("..")) {
+    throw new ApiError(400, "invalid_name", "name 只能是纯文件名（不得含路径分隔符或 ..）");
+  }
+  for (const ch of WIN32_RESERVED_NAME_CHARS) {
+    if (name.includes(ch)) {
+      throw new ApiError(400, "invalid_name", `name 含 win32 保留字符 ${ch}：${name}`);
+    }
+  }
 }
 
 export function createFsWriteRoutes(deps: ApiDeps): Hono {
@@ -347,6 +400,140 @@ export function createFsWriteRoutes(deps: ApiDeps): Hono {
       await unlink(target);
     }
     return c.json({ ok: true });
+  }));
+
+  // 流式上传（任务 5）：raw body（计划 Must NOT：不引入 multipart 解析），query
+  // project + path（目标目录，缺省项目根）+ name（纯文件名白名单）+ overwrite。
+  // 守卫同四端点（目录段逐组件走查，最终段名白名单）；目标存在默认 409 target_exists
+  // （响应携带 existing 既有条目信息供前端确认弹窗），overwrite=true 重传覆盖（仅
+  // file→file，目录/符号链接 400 kind_mismatch）；content-length 头预检 + 流式计数
+  // 双道超限 413；同目录 temp `.<name>.upload-<pid>-<rand>.part` open(wx) 边读边写，
+  // 收齐 fh.sync() → stat 取 mtimeNs → rename 原子发布（终态文件永不出现半成品）→
+  // realpath 回查；任何异常（ENOSPC/EDQUOT→507）finally 清理 temp。rename 对已存在
+  // 常规文件的替换在 POSIX 为原子语义（win32 走 MOVEFILE_REPLACE_EXISTING），
+  // 与 PATCH 的先删后挪（非原子）不同：此处终态原子性优先。
+  app.post("/api/fs/upload", route(async (c: Context) => {
+    const project = validateProjectInput(c.req.query("project"));
+    const dirRaw = c.req.query("path") ?? "";
+    const name = c.req.query("name");
+    if (name === undefined) throw new ApiError(400, "invalid_name", "name 必填（纯文件名）");
+    assertUploadName(name);
+    const overwrite = c.req.query("overwrite");
+    if (overwrite !== undefined && overwrite !== "true" && overwrite !== "false") {
+      throw new ApiError(400, "invalid_request", "overwrite 仅接受 true/false");
+    }
+
+    // 目录段交写守卫逐组件走查（.. 逃逸/中间符号链接拦截同前四端点）；join 后
+    // “./”前缀中和绝对路径注入，path 为空即项目根本身为上传目录
+    const { path: target, existingAncestor } = resolveInsideProjectForWrite(
+      project,
+      dirRaw === "" ? name : join(dirRaw, name),
+    );
+    const parent = dirname(target);
+    if (existingAncestor !== parent) {
+      throw new ApiError(404, "not_found", `目标目录不存在：${parent}`);
+    }
+
+    let existing: { kind: EntryKind; size: number; mtimeNs: string } | null = null;
+    try {
+      const st = await lstat(target, { bigint: true });
+      existing = { kind: kindOf(st), size: Number(st.size), mtimeNs: st.mtimeNs.toString() };
+    } catch (err) {
+      if (errnoOf(err) !== "ENOENT") throw toWriteError(err);
+    }
+    if (existing) {
+      if (overwrite !== "true") {
+        // 409 携带 existing 既有条目信息（kind/size/mtimeNs）供前端确认弹窗；
+        // 形状 = 统一 {error} + 兄弟字段 existing，不影响既有错误解析
+        return c.json(
+          {
+            error: { code: "target_exists", message: `目标已存在：${target}（overwrite=true 覆盖重传）` },
+            existing: { path: target, kind: existing.kind, size: existing.size, mtimeNs: existing.mtimeNs },
+          },
+          409,
+        );
+      }
+      if (existing.kind !== "file") {
+        throw new ApiError(
+          400,
+          "kind_mismatch",
+          `overwrite 仅支持覆盖常规文件，目标是 ${existing.kind}：${target}`,
+        );
+      }
+    }
+
+    const maxBytes = fsUploadMaxBytes();
+    // content-length 头预检（超限在缓冲前拒绝）；头缺失/撒谎时流式计数是唯一真相
+    const declared = Number(c.req.header("content-length"));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new ApiError(413, "upload_too_large", `上传超过上限（content-length ${declared} > ${maxBytes} 字节）`);
+    }
+    const raw = c.req.raw.body;
+    if (!raw) throw new ApiError(400, "invalid_request", "请求体不能为空");
+
+    const temp = join(parent, `.${name}.upload-${process.pid}-${randomBytes(6).toString("hex")}.part`);
+    const reader = raw.getReader();
+    let fh: FileHandle | null = null;
+    let bytes = 0;
+    try {
+      fh = await open(temp, "wx");
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          bytes += value.byteLength;
+          if (bytes > maxBytes) {
+            await reader.cancel().catch(() => {});
+            throw new ApiError(413, "upload_too_large", `上传超过上限（≥${bytes} > ${maxBytes} 字节）`);
+          }
+          await fh.write(value);
+        }
+      }
+      await fh.sync();
+      await fh.close();
+      fh = null;
+      const st = await stat(temp, { bigint: true });
+      await rename(temp, target);
+      await postCheckOrRollback(project, target);
+      return c.json({ path: target, bytes, mtimeNs: st.mtimeNs.toString() }, 201);
+    } catch (err) {
+      throw toWriteError(err);
+    } finally {
+      if (fh) await fh.close().catch(() => {});
+      await reader.cancel().catch(() => {});
+      // 成功路径 temp 已被 rename 移走，force 清理为无操作；失败路径保证零残留
+      await rm(temp, { force: true }).catch(() => {});
+    }
+  }));
+
+  // 二进制下载（任务 5）：读面守卫与 /api/fs/file 同源（resolveInsideProject——树里
+  // 可见即可下载，项目内符号链接放行，词法/realpath 双查出界 403）；常规文件 lstat/
+  // stat 定型，非文件 400 not_a_file；createReadStream 流式响应（不整载大文件，
+  // content-length 取 stat 快照）；Content-Type 按扩展名本地小表；
+  // Content-Disposition attachment + RFC 5987 filename*（非 ASCII 权威，ASCII 兜底
+  // 引号清洗）；无 ETag/Last-Modified/Range（计划口径）。
+  app.get("/api/fs/download", route(async (c: Context) => {
+    const project = validateProjectInput(c.req.query("project"));
+    const { path, real } = resolveInsideProject(project, c.req.query("path"));
+    if (!real) throw new ApiError(404, "not_found", `路径不存在：${path}`);
+    let st;
+    try {
+      st = await stat(real);
+    } catch {
+      throw new ApiError(404, "not_found", `路径不可访问：${path}`);
+    }
+    if (!st.isFile()) {
+      throw new ApiError(400, "not_a_file", `路径不是常规文件：${path}`);
+    }
+    const name = basename(real);
+    const mime = DOWNLOAD_MIME_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
+    const asciiSafe = name.replace(/[^\x20-\x7e]/g, "").replace(/"/g, "") || "download";
+    const stream = Readable.toWeb(createReadStream(real)) as unknown as ReadableStream<Uint8Array>;
+    return c.body(stream, 200, {
+      "Content-Type": mime,
+      "Content-Length": String(st.size),
+      "Content-Disposition": `attachment; filename="${asciiSafe}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    });
   }));
 
   return app;

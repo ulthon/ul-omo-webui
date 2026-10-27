@@ -108,4 +108,6 @@ export const errors = {
   kindMismatch: "目标类型与源不一致，无法覆盖",
   rootNotDeletable: "项目根本身不可删除",
   insufficientStorage: "存储空间不足",
+  // 内置文件管理（routes-fs-write 任务 5 新增码）
+  uploadTooLarge: "上传超过大小上限",
 } as const;
