@@ -27,7 +27,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // 任务 19 追加 1 码：image_attachment_failed，合计 87。r9 2026-10-26 批次任务 1
 // （标签定义整替冲突防护）追加 1 码：tag_conflict，合计 88。r9 2026-10-26 批次
 // F1-B1（常用语整替 + 会话标签挂载整替冲突防护）追加 2 码：snippet_conflict/
-// tag_mount_conflict，合计 90。
+// tag_mount_conflict，合计 90。内置文件管理（routes-fs-write）追加 7 码：
+// copy_failed/engine_busy/exists/target_exists/kind_mismatch/root_not_deletable/
+// insufficient_storage，合计 97。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -38,15 +40,19 @@ const SCANNED_CODES = [
   "compact_timeout",
   "compact_unsupported",
   "content_too_large",
+  "copy_failed",
   "cursor_invalid",
   "discover_bad_listing",
   "discover_upstream_failed",
+  "engine_busy",
   "engine_not_ready",
+  "exists",
   "extension_not_found",
   "fork_cancelled",
   "fork_failed",
   "git_error",
   "image_attachment_failed",
+  "insufficient_storage",
   "invalid_archived",
   "invalid_baseurl",
   "invalid_content",
@@ -87,6 +93,7 @@ const SCANNED_CODES = [
   "invalid_text",
   "invalid_thinking_level",
   "invalid_title",
+  "kind_mismatch",
   "memory_escape",
   "mkdir_failed",
   "mkdir_forbidden",
@@ -108,6 +115,7 @@ const SCANNED_CODES = [
   "provider_not_compatible",
   "provider_not_found",
   "purge_requires_deleted",
+  "root_not_deletable",
   "schedule_limit",
   "schedule_runner_unavailable",
   "session_not_found",
@@ -115,6 +123,7 @@ const SCANNED_CODES = [
   "snippet_conflict",
   "tag_conflict",
   "tag_mount_conflict",
+  "target_exists",
   "title_gen_failed",
   "title_gen_unavailable",
   "unauthorized",
@@ -167,9 +176,9 @@ describe("任务11 ApiError code → 词典键映射", () => {
   test("映射恰好覆盖 server 扫描集（90 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(90);
+    expect(scanned).toHaveLength(97);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(90);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(97);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

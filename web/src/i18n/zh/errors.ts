@@ -100,4 +100,12 @@ export const errors = {
   invalidEnabled: "enabled 必须是布尔值",
   invalidKind: "资源类型无效",
   invalidSource: "安装源必填（如 npm:<package>）",
+  // 内置文件管理（routes-fs-write 新增码）
+  copyFailed: "复制或移动失败，已回滚删除目标",
+  engineBusy: "引擎回合进行中，该路径受保护，稍后再试",
+  exists: "目标已存在",
+  targetExists: "目标已存在，无法覆盖（可尝试重命名）",
+  kindMismatch: "目标类型与源不一致，无法覆盖",
+  rootNotDeletable: "项目根本身不可删除",
+  insufficientStorage: "存储空间不足",
 } as const;

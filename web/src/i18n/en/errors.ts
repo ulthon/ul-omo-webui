@@ -97,4 +97,12 @@ export const errors = {
   invalidEnabled: "enabled must be a boolean",
   invalidKind: "Invalid resource kind",
   invalidSource: "Source is required (e.g. npm:<package>)",
+  // Built-in file management (new codes in routes-fs-write)
+  copyFailed: "Copy or move failed, destination rolled back",
+  engineBusy: "Engine turn in progress, this path is protected; try again later",
+  exists: "Destination already exists",
+  targetExists: "Destination exists and cannot be overwritten (try renaming)",
+  kindMismatch: "Destination type differs from source, cannot overwrite",
+  rootNotDeletable: "The project root cannot be deleted",
+  insufficientStorage: "Insufficient storage",
 } as const;

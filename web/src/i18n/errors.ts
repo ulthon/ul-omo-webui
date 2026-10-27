@@ -92,6 +92,14 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   title_gen_unavailable: "errors.titleGenUnavailable",
   unauthorized: "errors.unauthorized",
   version_not_found: "errors.versionNotFound",
+  // 内置文件管理（routes-fs-write 新增 7 码）
+  copy_failed: "errors.copyFailed",
+  engine_busy: "errors.engineBusy",
+  exists: "errors.exists",
+  target_exists: "errors.targetExists",
+  kind_mismatch: "errors.kindMismatch",
+  root_not_deletable: "errors.rootNotDeletable",
+  insufficient_storage: "errors.insufficientStorage",
   // 模型发现（docs08-2026-10-22 批次任务 23 后端新增 10 码）
   discover_bad_listing: "errors.discoverBadListing",
   discover_upstream_failed: "errors.discoverUpstreamFailed",
