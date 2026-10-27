@@ -112,6 +112,10 @@ interface UiState {
   setModelPickerOpen(open: boolean): void;
   setShortcutsHelpOpen(open: boolean): void;
   setSettingsPageOpen(open: boolean): void;
+  /** 文件管理全屏页开关（builtin-file-management 任务 1）：同 settingsPageOpen 款，
+   *  顶栏入口钮与页面返回钮共用，跨组件状态落 store；全屏页由 shell 条件渲染。 */
+  filesPageOpen: boolean;
+  setFilesPageOpen(open: boolean): void;
   setExternalLinks(links: ExternalLinks): void;
   setProjectSort(sort: ProjectSortMode): void;
   setProjectOrder(order: string[]): void;
@@ -151,6 +155,7 @@ export const useUiStore = create<UiState>()((set) => ({
   modelPickerOpen: false,
   shortcutsHelpOpen: false,
   settingsPageOpen: false,
+  filesPageOpen: false,
   externalLinks: { gitUrl: null, filesUrl: null },
   projectSort: "activity",
   projectOrder: [],
@@ -172,6 +177,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),
   setSettingsPageOpen: (open) => set({ settingsPageOpen: open }),
+  setFilesPageOpen: (open) => set({ filesPageOpen: open }),
   setExternalLinks: (links) => set({ externalLinks: links }),
   setProjectSort: (sort) => set({ projectSort: sort }),
   setProjectOrder: (order) => set({ projectOrder: order }),

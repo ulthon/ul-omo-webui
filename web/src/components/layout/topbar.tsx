@@ -7,7 +7,7 @@
 // "更多"ModelChip 到达）；桌面（lg+）布局不动（项目/模型下拉原位）。手机档按 useIsMobile
 // 条件渲染（DOM 不存在，非 CSS 隐藏）。
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels, openProject } from "@/lib/bootstrap";
@@ -231,6 +231,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   const selectedModel = useUiStore((s) => s.selectedModel);
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
   const setSettingsPageOpen = useUiStore((s) => s.setSettingsPageOpen);
+  const setFilesPageOpen = useUiStore((s) => s.setFilesPageOpen);
   const isMobile = useIsMobile();
   const [addOpen, setAddOpen] = useState(false);
   // 会话切换全屏 sheet 开合（任务 19）：手机档身份区触发钮点按置位，选完/关钮/Esc 关
@@ -358,6 +359,17 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             <ListTodo className="size-5" />
           </Button>
           {/* 快捷键帮助（docs08-2026-10-23-24 任务 16）：手机档无键盘入口，帮助钮仅桌面档保留 */}
+          {/* 文件管理入口（builtin-file-management 任务 1）：打开独立全屏文件管理页 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label={t("files.entry.openAria")}
+            data-testid="files-button"
+            onClick={() => setFilesPageOpen(true)}
+          >
+            <FolderOpen className="size-5" />
+          </Button>
           {/* 设置入口（r9 2026-10-26 批次任务 9）：打开独立全屏设置页。size-11=44px 触控达标 */}
           <Button
             variant="ghost"
@@ -422,6 +434,17 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             onClick={() => setShortcutsHelpOpen(true)}
           >
             <Keyboard className="size-5" />
+          </Button>
+          {/* 文件管理入口（builtin-file-management 任务 1）：打开独立全屏文件管理页 */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label={t("files.entry.openAria")}
+            data-testid="files-button"
+            onClick={() => setFilesPageOpen(true)}
+          >
+            <FolderOpen className="size-5" />
           </Button>
           {/* 设置入口（r9 2026-10-26 批次任务 9）：打开独立全屏设置页。size-11=44px 触控达标 */}
           <Button

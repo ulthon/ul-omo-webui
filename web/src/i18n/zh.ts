@@ -14,6 +14,7 @@ import { extensions } from "./zh/extensions";
 import { models } from "./zh/models";
 import { stats } from "./zh/stats";
 import { errors } from "./zh/errors";
+import { files } from "./zh/files";
 
 export const zh = {
   common,
@@ -30,4 +31,5 @@ export const zh = {
   models,
   stats,
   errors,
+  files,
 } as const;

@@ -268,9 +268,38 @@ export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
     </aside>
   );}
 
+/** 文件管理全屏页占位空壳（builtin-file-management 任务 1）：仅页头（标题+返回钮），
+ *  三栏内容由任务 2 填充；fixed 覆盖层形态同 SettingsPage，交互同款（返回钮经
+ *  ui store filesPageOpen 回原视图，SSE 不中断）。 */
+export function FilesPagePlaceholder() {
+  const t = useT();
+  const setFilesPageOpen = useUiStore((s) => s.setFilesPageOpen);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-11"
+          aria-label={t("files.page.closeAria")}
+          data-testid="files-page-close"
+          onClick={() => setFilesPageOpen(false)}
+        >
+          <X className="size-5" />
+        </Button>
+        <h1 className="text-base font-medium">{t("files.page.title")}</h1>
+      </header>
+      <div data-testid="files-page" className="min-h-0 flex-1 overflow-y-auto p-4">
+        <p className="text-sm text-muted-foreground">{t("files.page.placeholder")}</p>
+      </div>
+    </div>
+  );
+}
+
 export function AppShell() {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
   const settingsPageOpen = useUiStore((s) => s.settingsPageOpen);
+  const filesPageOpen = useUiStore((s) => s.filesPageOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const toasts = useUiStore((s) => s.toasts);
   const dismissToast = useUiStore((s) => s.dismissToast);
@@ -435,6 +464,10 @@ export function AppShell() {
       {/* 设置独立全屏页（r9 2026-10-26 批次任务 9）：fixed 覆盖层，shell 本体保持挂载
           （SSE 与引导状态不中断），返回钮经 ui store settingsPageOpen 回原视图 */}
       {settingsPageOpen && <SettingsPage />}
+
+      {/* 文件管理独立全屏页（builtin-file-management 任务 1）：fixed 覆盖层占位空壳，
+          shell 本体保持挂载（SSE 不中断）；任务 2 填三栏内容 */}
+      {filesPageOpen && <FilesPagePlaceholder />}
 
       {/* 轻提示栈：info 3.2s 自动消失；error 常驻直到显式关闭。至多 3 条同列堆叠
           （超出丢最旧并 console.warn），文字可选中可复制，点文字本体不触发任何动作 */}
