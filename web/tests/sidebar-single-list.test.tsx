@@ -4,7 +4,7 @@
  *   输入顺序打乱 / 重复调用结果稳定（列表加载时一次算好缓存的契约）
  * - SessionItem：fork 行徽标 GitFork + "fork"、标题后缀「(fork #N)」；人工行不显来源徽标
  *   （docs08-r3 C14 删「人工」分支）
- * - 子会话行内展开/收起（knownChildren 免请求；缺省走懒加载 archived=all 按血缘过滤），
+ * - 子会话行内展开/收起已删除（r10 todo 1，零 fork 血缘实证按钮纯噪音），
  *   展开/收起均为瞬态（无持久化副作用）
  * - SessionList：human/all 分段控件删除（唯一列表口径），工具条 批量/归档/标签
  *   whitespace-nowrap + shrink-0（390px 单行锚点的类级断言）
@@ -182,75 +182,9 @@ describe("SessionItem 来源徽标与 fork 后缀", () => {
   });
 });
 
-describe("SessionItem 行内展开/收起（瞬态）", () => {
-  test("knownChildren：初始不渲染子行，点 chevron 展开、再点收起，全程零请求", async () => {
-    let fetchCalls = 0;
-    mockFetch(async () => {
-      fetchCalls += 1;
-      return okJson({ project: "/p1", archived: "all", sessions: [] });
-    });
-    const child1 = makeSession("c1", { parentSessionPath: "/store/parent.jsonl", title: "子会话一" });
-    const child2 = makeSession("c2", { path: "/store/a-c2.jsonl", parentSessionPath: "/store/parent.jsonl", title: "子会话二" });
-    const parent = makeSession("parent", { path: "/store/parent.jsonl", title: "父会话" });
-    const forkIndexes = new Map([
-      [child1.path, 2],
-      [child2.path, 1],
-    ]);
-    const container = await mount(
-      createElement(SessionItem, {
-        session: parent,
-        forkIndexes,
-        knownChildren: [child1, child2],
-        expandable: true,
-        onDialog: () => {},
-        onChanged: () => {},
-      }),
-    );
-    expect(container.textContent).not.toContain("子会话一");
-    const chevron = container.querySelector<HTMLButtonElement>('button[aria-label="展开子会话"]');
-    expect(chevron).toBeDefined();
-    await act(async () => {
-      chevron?.click();
-      await flush();
-    });
-    expect(container.textContent).toContain("子会话二 (fork #1)");
-    expect(container.textContent).toContain("子会话一 (fork #2)");
-    expect(fetchCalls).toBe(0);
-    const collapse = container.querySelector<HTMLButtonElement>('button[aria-label="收起子会话"]');
-    await act(async () => {
-      collapse?.click();
-      await flush();
-    });
-    expect(container.textContent).not.toContain("子会话一");
-  });
-
-  test("无 knownChildren：首次展开走懒加载（archived=all），按 parentSessionPath 过滤渲染", async () => {
-    const parent = makeSession("lazy-parent", { path: "/store/lazy-parent.jsonl", title: "懒加载父会话" });
-    const requested: string[] = [];
-    mockFetch(async (input) => {
-      const url = String(input);
-      requested.push(url);
-      const mine = [
-        makeSession("lc1", { path: "/store/lc1.jsonl", parentSessionPath: parent.path, title: "懒子会话" }),
-        makeSession("lc2", { path: "/store/lc2.jsonl", parentSessionPath: "/store/别的父.jsonl", title: "别家子会话" }),
-      ];
-      return okJson({ project: "/p1", archived: "all", sessions: mine });
-    });
-    const container = await mount(
-      createElement(SessionItem, { session: parent, expandable: true, onDialog: () => {}, onChanged: () => {} }),
-    );
-    const chevron = container.querySelector<HTMLButtonElement>('button[aria-label="展开子会话"]');
-    await act(async () => {
-      chevron?.click();
-      await flush();
-    });
-    expect(requested).toHaveLength(1);
-    expect(requested[0]).toContain("project=%2Fp1");
-    expect(requested[0]).toContain("archived=all");
-    expect(container.textContent).toContain("懒子会话");
-    expect(container.textContent).not.toContain("别家子会话");
-  });
-});
+// r10 todo 1：行内展开/收起（瞬态）整体删除——旧 describe「SessionItem 行内展开/收起」
+// 两用例（chevron 展开、懒加载）随被移除的 UI 入口一并删除；
+// 无展开控件的回归断言在 src/components/session-list/__tests__/session-item-expand-removed.test.tsx。
 
 describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () => {
   function seedAggregateResponse(): SessionListItem[] {

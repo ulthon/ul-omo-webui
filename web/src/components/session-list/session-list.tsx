@@ -3,8 +3,8 @@
 // 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）：同项目仅 select；
 // 跨项目轻量切换 currentProject + 应用该项目偏好模型（跳过 lastOpenedAt PATCH）。
 // 数据来自 store.refreshSessions 的聚合分支（todo 9）；旧 human/all 分段控件已删——
-// 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork，
-// 子会话一律点 chevron 行内展开（瞬态，不持久化）。归档三态/搜索/批量模式照常工作，
+// 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork。
+// 归档三态/搜索/批量模式照常工作，
 // 搜索走聚合端点并固定 archived=all（归档会话与 fork 子会话仍可被搜到）。
 // 纯逻辑（分组排序/最近选取/折叠记忆/跨项目判定）在 global-list-data.ts；fork 编号在
 // session-item.tsx 的 buildForkIndexes（列表加载时整表一次算好缓存），单测锁定。
@@ -819,7 +819,6 @@ export function SessionList() {
                 session={s}
                 forkIndexes={forkIndexes}
                 projectLabel={basename(s.project)}
-                expandable={s.parentSessionPath === null}
                 onSelect={selectSession}
                 onDialog={handleItemDialog}
                 definedKeys={definedKeys}
@@ -852,7 +851,6 @@ export function SessionList() {
                       session={s}
                       forkIndexes={forkIndexes}
                       projectLabel={basename(s.project)}
-                      expandable={s.parentSessionPath === null}
                       onSelect={selectSession}
                       onDialog={handleItemDialog}
                       definedKeys={definedKeys}
@@ -875,18 +873,8 @@ export function SessionList() {
               const tops = (sessions ?? []).filter(
                 (s) => s.parentSessionPath === null || !pathSet.has(s.parentSessionPath),
               );
-              const isTop = (s: SessionListItem) => s.parentSessionPath === null;
-              const childMap = new Map<string, SessionListItem[]>();
-              for (const s of sessions ?? []) {
-                if (s.parentSessionPath) {
-                  const list = childMap.get(s.parentSessionPath);
-                  if (list) list.push(s);
-                  else childMap.set(s.parentSessionPath, [s]);
-                }
-              }
-              // 分组截断（r9 wave1）：默认只渲染前 GROUP_VISIBLE_LIMIT 条顶层行（子会话行内
-              // 展开不计入——列表流渲染的是 tops）；搜索/批量模式全量不截断（搜索模式分组
-              // 本就不渲染，此处对批量模式豁免）；locate 全展走 Infinity。
+              // 分组截断（r9 wave1）：默认只渲染前 GROUP_VISIBLE_LIMIT 条顶层行；搜索/批量模式全量不截断
+              // （搜索模式分组本就不渲染，此处对批量模式豁免）；locate 全展走 Infinity。
               const visibleLimit =
                 searchResults !== null || batchMode
                   ? Number.POSITIVE_INFINITY
@@ -1035,8 +1023,6 @@ export function SessionList() {
                               key={s.id}
                               session={s}
                               forkIndexes={forkIndexes}
-                              knownChildren={childMap.get(s.path)}
-                              expandable={isTop(s)}
                               onSelect={selectSession}
                               onDialog={handleItemDialog}
                               definedKeys={definedKeys}

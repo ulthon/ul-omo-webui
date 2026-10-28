@@ -4,13 +4,11 @@
 // 列表加载时由 session-list 经 buildForkIndexes 一次算好传入）+ 来源标识（fork 子会话 GitFork
 // 徽标；人工创建不显标，docs08-r3 C14 紧凑化）+ 标签徽标（todo 11，最多 1 + N、孤儿灰显可清理）
 // + 未读徽标 + 相对时间（docs08-r5 任务 11 紧凑格式：Ns/Nm/Nh/Nd/M/D，跨年 YY/M/D，对标 OC 不汉化）
-// + 子会话行内展开（唯一视图：点 chevron 展开/收起；knownChildren 已带则免请求，
-// 否则懒加载后按血缘过滤——旧「人工视图钻取」入口语义由行内展开吸收）
 // + 元数据操作菜单（置顶/重命名/生成标题/归档/复制会话 ID/复制标题/导出 HTML/标签/删除——
 // 重命名与删除弹窗由父级单例托管，标签走锚定下拉（docs08-r3 任务 13，锚点=行菜单钮））。
 import { useRef, useState } from "react";
-import { ChevronRight, CalendarClock, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
-import { api, ApiError } from "@/lib/api";
+import { CalendarClock, Copy, Download, GitFork, Hash, Loader2, MoreVertical, Pin, Sparkles, SquarePen, SquareCheckBig, Square, Tag, Trash2, Archive, ArchiveRestore, PinOff } from "lucide-react";
+import { api } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useSessionsStore, type SessionRunState } from "@/stores/sessions";
@@ -130,10 +128,6 @@ export interface SessionItemProps {
   forkIndexes?: Map<string, number>;
   /** 搜索模式下显示来源项目名（basename） */
   projectLabel?: string;
-  /** 列表已随响应带出的子会话（省一次懒加载请求）；缺省走懒加载 */
-  knownChildren?: SessionListItem[];
-  /** 是否可展开子会话（顶层会话 true，子会话行 false） */
-  expandable: boolean;
   /** 打开重命名/删除弹窗（父级单例托管）；"标签" 打开锚定下拉（父级接线，任务 13；
    *  anchor = 行菜单钮元素，供父级把 TagDropdown 锚定到本行） */
   onDialog: (kind: "rename" | "delete" | "tags" | "schedule", session: SessionListItem, anchor?: HTMLElement) => void;
@@ -152,45 +146,18 @@ export interface SessionItemProps {
   onToggleCheck?: (session: SessionListItem) => void;
 }
 
-export function SessionItem({ session, forkIndexes, projectLabel, knownChildren, expandable, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys, defs }: SessionItemProps) {
+export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys, defs }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
   const showToast = useUiStore((s) => s.showToast);
 
-  const [expanded, setExpanded] = useState(false);
-  const [children, setChildren] = useState<SessionListItem[] | null>(null);
-  const [loadingChildren, setLoadingChildren] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [generatingTitle, setGeneratingTitle] = useState(false);
   // 行菜单钮（"标签"锚定下拉的锚点元素；菜单项 onSelect 时菜单已关、按钮仍挂载，矩形稳定）
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
-  // 展示用子会话：懒加载结果优先，否则用列表已带出的 knownChildren（props 会变，
-  // 不能在 useState 初始值里固化——那会拿不到首屏之后才出现的数据）
   const t = useT();
-  const childRows = children ?? knownChildren ?? [];
-  const hasKnownChildren = knownChildren !== undefined && knownChildren.length > 0;
-
-  /** 行内展开/收起（W3 todo 10：唯一视图的子会话展开入口，展开态为本次会话内的瞬态）。
-   * 首次展开且子会话未随列表带出时才走懒加载（archived=all，按血缘过滤）；
-   * knownChildren 已带则免请求——旧 childrenOpen 平铺路径删除后由此保证契约。 */
-  const toggle = async () => {
-    if (!expanded && children === null && !hasKnownChildren) {
-      setLoadingChildren(true);
-      try {
-        const res = await api.listSessions({ project: session.project, archived: "all" });
-        setChildren(res.sessions.filter((s) => s.parentSessionPath === session.path));
-      } catch (err) {
-        if (!(err instanceof ApiError && err.status === 401)) {
-          showToast("子会话加载失败", "error");
-        }
-      } finally {
-        setLoadingChildren(false);
-      }
-    }
-    setExpanded((v) => !v);
-  };
 
   const patch = async (p: { pinned?: boolean; archived?: boolean }) => {
     if (busy) return;
@@ -297,27 +264,6 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
           >
             {checked ? <SquareCheckBig className="size-3.5 text-primary" /> : <Square className="size-3.5" />}
           </button>
-        )}
-        {expandable ? (
-          <button
-            type="button"
-            aria-label={expanded ? t("sessionList.item.collapseChildren") : t("sessionList.item.expandChildren")}
-            className={`flex size-7 shrink-0 items-center justify-center rounded hover:bg-muted lg:size-4 ${
-              hasKnownChildren ? "text-muted-foreground" : "text-muted-foreground/40"
-            }`}
-            onClick={(e) => {
-              e.stopPropagation();
-              void toggle();
-            }}
-          >
-            {loadingChildren ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <ChevronRight className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
-            )}
-          </button>
-        ) : (
-          <span className="size-7 shrink-0 lg:size-4" />
         )}
         <StatusDot runState={runState} server={session.runState ?? null} active={session.active} />
 
@@ -432,32 +378,6 @@ export function SessionItem({ session, forkIndexes, projectLabel, knownChildren,
         </DropdownMenu>
       </div>
 
-      {/* 子会话行内展开（W3 todo 10：仅展开时渲染，缩进一层；血缘 = parentSessionPath 关联，
-          omo task 子会话不落盘天然不出现）。fork 编号表透传子行保持后缀连续。 */}
-      {expandable && expanded && (
-        <div className="ml-4 border-l pl-1.5">
-          {childRows.length === 0 && !loadingChildren ? (
-            <div className="px-2 py-1 text-xs text-muted-foreground/60">{t("sessionList.item.noChildren")}</div>
-          ) : (
-            childRows.map((child) => (
-              <SessionItem
-                key={child.id}
-                session={child}
-                forkIndexes={forkIndexes}
-                expandable={false}
-                onDialog={onDialog}
-                onSelect={onSelect}
-                onChanged={onChanged}
-                selectable={selectable}
-                checked={checked}
-                onToggleCheck={onToggleCheck}
-                definedKeys={definedKeys}
-                defs={defs}
-              />
-            ))
-          )}
-        </div>
-      )}
     </div>
   );
 }
