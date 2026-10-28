@@ -19,7 +19,7 @@
 // {projectPath, event, durableSessionId?}；id 行 = 全局自增游标；游标越界先发 event: gap
 // 再从最旧可用续发。分发层据 gap 帧与游标回退做活动会话全量重取兜底；停摆/半死触发的
 // 重连额外强制 refetchLoadedSessions 全量对账（防御纵深，见 dispatch 侧游标回退路径）。
-import { dispatchSseEvent, getDispatchCursor, refetchLoadedSessions } from "@/lib/event-dispatch";
+import { dispatchSseEvent, getDispatchCursor, reconcileRunStateOnVisible, refetchLoadedSessions } from "@/lib/event-dispatch";
 import { useMessagesStore } from "@/stores/messages";
 import { useUiStore } from "@/stores/ui";
 
@@ -461,7 +461,12 @@ export class EventsClient {
   }
 
   private onVisibilityChange = (): void => {
-    if (document.visibilityState === "visible") this.wake();
+    if (document.visibilityState === "visible") {
+      this.wake();
+      // r10 todo 9：回前台对账当前会话运行态——独立于连接健康（SSE 存活但后台期间丢帧
+      // 的场景同样需要对账）；仅 visible 转换触发，零轮询定时器。
+      reconcileRunStateOnVisible();
+    }
   };
 
   private onPageShow = (): void => {

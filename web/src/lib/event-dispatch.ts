@@ -35,6 +35,9 @@ const refetching = new Set<string>();
  * 增量在途不阻断全量层（纪元回退仍可立即升级全量），仅对增量连击去重 */
 const reconciling = new Set<string>();
 
+/** 进行中的回前台运行态对账（r10 todo 9，单飞去重；resetDispatchState 复位） */
+let visibleReconcileInFlight = false;
+
 /** 任务 9：gap 对账分级小缺口阈值——与 r7 TAIL_WINDOW / t8 REPLAY_TAIL_WINDOW
  *（=200）对齐：gap 宽度不超过该值时帧只是被环形缓冲淘汰的近期事件，REST
  * ?before= 后向翻页一窗即可覆盖；超过则走既有 full=1 全量对账（承重不动） */
@@ -67,10 +70,12 @@ export function isRunStateSweepArmed(): boolean {
   return sweepTimer !== null;
 }
 
-/** 四型对话框 UI method（verification/02）；extension_ui_request 其余 method
- *  （omo 扩展的 setStatus/notify 等噪音）不计入"等待权限"。
- *  question（q1 提问卡片）单独分支处理——结构化载荷（questions 数组）与四型的
- *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。 */
+/** 四型对话框 UI method（verification/02）；extension_ui_request 其余非 notify 的
+ *  method 现同样落 waiting 状态点（r10 todo 9，docs/08:61 候选①：未知 method 可能是
+ *  前端未渲染的阻塞请求，状态点不得静默灰），但四型之外的载荷不入权限队列（不渲染
+ *  对话框）。question（q1 提问卡片）单独分支处理——结构化载荷（questions 数组）与四型的
+ *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。
+ *  notify 是已记录的 fire-and-forget（计划 249），做轻提示不应答不阻塞回合，不落 waiting。 */
 const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
 
 /** 排队事件行文本片段（r10 todo 7）：取首行非空文本，超长截断加省略号；
@@ -137,6 +142,7 @@ export function resetDispatchState(): void {
   lastCursor = null;
   refetching.clear();
   reconciling.clear();
+  visibleReconcileInFlight = false;
   disarmRunStateSweep();
 }
 
@@ -291,6 +297,47 @@ function resyncRunStatesFromServer(): void {
     });
 }
 
+/** 回前台运行态对账（r10 todo 9，events.ts visibilitychange→visible 钩子调用）：对当前
+ *  选中会话拉一次服务端权威快照校正本地推断——移动端后台丢 agent_start / 断线 gap
+ * （docs/08:62 候选②）后状态点停留灰/旧值的高发窗口；仅回前台触发，零轮询定时器。
+ *  权威链与 resyncRunStatesFromServer 同源（GET /api/sessions 行 runState），差异：
+ *  目标只取当前选中会话，且本地无推断（未见任何帧）时同样写入（未知灰 → 权威态）。
+ *  顺序护栏：发起前快照该会话 runStateSeq，回包后序号未变才应用——对账在途/之后到达
+ *  的 turn 级新帧（agent_start 等，经 setRunState 自增序号）不被旧对账结果覆盖（新帧
+ *  胜出，docs/08:62 候选②乱序面）。已切走（selectedId 变化）对账作废。
+ *  server runState null / 行缺席 / 旧服务端无字段（引擎未就绪）→ 不动：保持未知灰不误绿
+ * （docs/08:62 候选③）。单飞去重：在途不重复发射。失败静默：下次回前台/断线重连
+ *  resync 兜底。周期清扫（sweepStaleRunStates）不增序号：清扫是本地启发式兜底，对账
+ *  回包是权威链上层（服务端行 > 本地推断），覆盖它正是权威链语义。 */
+export function reconcileRunStateOnVisible(): void {
+  const sessionId = useSessionsStore.getState().selectedId;
+  if (sessionId === null || visibleReconcileInFlight) return;
+  const seqBefore = useSessionsStore.getState().runStateSeq[sessionId] ?? 0;
+  visibleReconcileInFlight = true;
+  api
+    .listSessions({ archived: "all" })
+    .then(({ sessions }) => {
+      const store = useSessionsStore.getState();
+      if (store.selectedId !== sessionId) return; // 已切走：对账目标作废
+      if ((store.runStateSeq[sessionId] ?? 0) !== seqBefore) return; // 新帧胜出，旧对账弃用
+      const server = sessions.find((item) => item.id === sessionId)?.runState;
+      if (
+        server !== "running" &&
+        server !== "waiting" &&
+        server !== "idle" &&
+        server !== "background_running"
+      )
+        return; // null / 缺席（引擎未就绪）：不动，保持未知灰
+      store.setRunState(sessionId, server);
+    })
+    .catch(() => {
+      // 网络瞬断 / 引擎未就绪静默：下次回前台或断线重连 resync 兜底
+    })
+    .finally(() => {
+      visibleReconcileInFlight = false;
+    });
+}
+
 /**
  * SSE 帧统一入口（events.ts 调用）。
  * eventType = event: 行原文（wire type 或 "gap"）；data = data: 行 JSON 原文；
@@ -428,6 +475,13 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       if (message && tone !== "warning") {
         useUiStore.getState().showToast(message, tone === "error" ? "error" : "info");
       }
+    } else if (method !== null) {
+      // r10 todo 9（docs/08:61 候选①）：其余非四型 method 同落 waiting——未知 method 可能
+      // 是前端未渲染的阻塞式请求（权限/对话框走新 method 名时状态点不得静默灰）；回合
+      // 落定（agent_end/settled/idle→idle）与 30min 无活动清扫兜底回落。method 缺席的
+      // 畸形帧不写（无 method 语义可依）。notify 已在上方分支排除：它不应答不阻塞回合，
+      // 落 waiting 会把运行中蓝点误降琥珀。
+      sessions.setRunState(sessionId, "waiting");
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点

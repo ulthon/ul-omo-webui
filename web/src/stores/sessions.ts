@@ -46,6 +46,11 @@ interface SessionsState {
    * 该会话任何 SSE 事件刷新（touchRunStateAt），周期清扫据此判无活动超时回落。
    * 组件不消费本字段（状态点仍读 runStates，值形状因此不被破坏）。 */
   runStateAt: Record<string, number>;
+  /** 运行态写入序号（r10 todo 9 顺序护栏，与 runStates 同键并行）：setRunState 每次
+   * 写入自增（含同态写入）。回前台对账（event-dispatch.reconcileRunStateOnVisible）
+   * 发起前快照目标会话序号，回包后序号未变才应用——对账在途/之后到达的新帧写入
+   * 不被旧对账结果覆盖（新帧胜出）。组件不消费本字段。 */
+  runStateSeq: Record<string, number>;
   /** 全局搜索：标题/会话名子串（服务端实现，此状态作请求参数） */
   q: string;
   archived: ArchivedFilter;
@@ -197,6 +202,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   runStates: {},
   appliedModels: {},
   runStateAt: {},
+  runStateSeq: {},
   q: "",
   archived: "false",
   allMode: false,
@@ -342,13 +348,20 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   setRunState: (id, state) =>
     set((s) => {
       const now = Date.now();
+      // 顺序护栏（r10 todo 9）：每次写入自增（含同态写入——同态帧同样晚于对账快照，
+      // 旧对账结果一律让位于新帧）。同态路径 runStates 引用仍不变，状态点订阅者不重
+      // 渲染（runStateSeq 非组件消费字段）。
+      const runStateSeq = { ...s.runStateSeq, [id]: (s.runStateSeq[id] ?? 0) + 1 };
       if (s.runStates[id] === state) {
         // 同态写入只刷新活动时刻（runStates 引用不变，状态点订阅者不重渲染）
-        return s.runStateAt[id] === now ? s : { runStateAt: { ...s.runStateAt, [id]: now } };
+        return s.runStateAt[id] === now
+          ? { runStateSeq }
+          : { runStateAt: { ...s.runStateAt, [id]: now }, runStateSeq };
       }
       return {
         runStates: { ...s.runStates, [id]: state },
         runStateAt: { ...s.runStateAt, [id]: now },
+        runStateSeq,
       };
     }),
 
