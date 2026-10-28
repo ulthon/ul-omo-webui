@@ -2,6 +2,7 @@
 // - GET  /api/extensions            资源清单（extensions/skills/prompts 三目录 + settings packages）
 // - PUT  /api/extensions/:name      { enabled, kind? } 启停写入（服务端串行锁）
 // - GET  /api/auth/status           凭证检查（spawnSync omo auth check，0/1/2 三态，10s 超时）
+// - POST /api/auth/credentials      { provider, apiKey } 粘贴凭证写入+检查（非 ready 回滚，绝不回显 key）
 // - POST /api/extensions/install    { source } 非交互安装（async spawn 有界超时）
 // - POST /api/extensions/remove     { source } 非交互移除
 // - POST /api/extensions/update     非交互更新（omo update）
@@ -12,6 +13,7 @@ import {
   listExtensions,
   RESOURCE_KINDS,
   runExtensionAction,
+  saveAndCheckCredential,
   setResourceEnabled,
   type AuthStatus,
   type ExtensionAction,
@@ -79,6 +81,31 @@ export function createExtensionsRoutes(deps: ExtensionsRouteDeps): Hono {
       timeoutMs: deps.authTimeoutMs,
     });
     return c.json(status);
+  }));
+
+  // 粘贴凭证端到端（r10 批次任务 13）：写入 → auth check；非 ready 服务端已回滚（无效 key
+  // 不落盘）。响应只含三态 status/provider/checkedAt/detail，绝不含 key。
+  app.post("/api/auth/credentials", route(async (c: Context) => {
+    if (!deps.engineCli) {
+      throw new ApiError(503, "cli_missing", "omo CLI 不存在，凭证测试不可用（请用引擎 CLI 安装）");
+    }
+    const body = await parseJsonBody(c);
+    const provider = body.provider;
+    if (typeof provider !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(provider)) {
+      throw new ApiError(400, "invalid_provider", "provider 必填（字母/数字/./_/-，≤128 字符）");
+    }
+    const apiKey = body.apiKey;
+    if (typeof apiKey !== "string" || apiKey.trim() === "" || apiKey.length > 4096) {
+      throw new ApiError(400, "invalid_api_key", "apiKey 必填且长度 ≤ 4096");
+    }
+    const result = saveAndCheckCredential({
+      agentDir: deps.agentDir,
+      engineCli: deps.engineCli,
+      provider,
+      apiKey,
+      timeoutMs: deps.authTimeoutMs,
+    });
+    return c.json(result.status, result.status.status === "ready" ? 200 : 422);
   }));
 
   const action = (kind: ExtensionAction, needsSource: boolean) =>

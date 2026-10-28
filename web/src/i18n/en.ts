@@ -12,6 +12,7 @@ import { diff } from "./en/diff";
 import { fileTree } from "./en/fileTree";
 import { schedule } from "./en/schedule";
 import { extensions } from "./en/extensions";
+import { auth } from "./en/auth";
 import { models } from "./en/models";
 import { stats } from "./en/stats";
 import { errors } from "./en/errors";
@@ -29,6 +30,7 @@ export const en = {
   fileTree,
   schedule,
   extensions,
+  auth,
   models,
   stats,
   errors,

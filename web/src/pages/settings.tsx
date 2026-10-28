@@ -17,6 +17,7 @@ import { ModelsDiscoverSection } from "@/components/models/models-discover-secti
 import { RebindSection } from "@/components/settings/rebind-section";
 import { TrafficSection } from "@/components/stats/traffic-section";
 import { ExtensionsSection } from "@/components/extensions/extensions-section";
+import { AuthSection } from "@/components/settings/auth-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { TipsSection } from "@/components/layout/tips-section";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
@@ -760,6 +761,7 @@ export function SettingsPage() {
           <SidebarSortSection />
           <TagDisplaySection />
           <TrafficSection />
+          <AuthSection />
           <ExtensionsSection />
           <ScheduleSection />
           <ConversationSection />

@@ -11,6 +11,7 @@ import { diff } from "./zh/diff";
 import { fileTree } from "./zh/fileTree";
 import { schedule } from "./zh/schedule";
 import { extensions } from "./zh/extensions";
+import { auth } from "./zh/auth";
 import { models } from "./zh/models";
 import { stats } from "./zh/stats";
 import { errors } from "./zh/errors";
@@ -28,6 +29,7 @@ export const zh = {
   fileTree,
   schedule,
   extensions,
+  auth,
   models,
   stats,
   errors,

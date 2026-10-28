@@ -34,7 +34,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // （409 携带 mtimeNs/size 兄弟字段，c.json 直构非 ApiError 构造，路由注释内以
 // ApiError(409, "file_changed", …) 形式留痕供扫描），合计 99。r10 2026-10-27 批次
 // 任务 18（会话 rebind）追加 4 码：invalid_old_path/invalid_session_ids/
-// old_store_not_found/rebind_conflict，合计 103。
+// old_store_not_found/rebind_conflict，合计 103。r10 2026-10-27 批次任务 13（认证 UI）
+// 追加 2 码：cli_missing/invalid_api_key，合计 105。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -42,6 +43,7 @@ const SCANNED_CODES = [
   "attachment_expired",
   "attachment_not_found",
   "attachment_too_large",
+  "cli_missing",
   "compact_timeout",
   "compact_unsupported",
   "content_too_large",
@@ -59,6 +61,7 @@ const SCANNED_CODES = [
   "git_error",
   "image_attachment_failed",
   "insufficient_storage",
+  "invalid_api_key",
   "invalid_archived",
   "invalid_baseurl",
   "invalid_content",
@@ -184,12 +187,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（103 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（105 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(103);
+    expect(scanned).toHaveLength(105);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(103);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(105);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

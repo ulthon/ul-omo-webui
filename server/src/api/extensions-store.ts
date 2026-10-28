@@ -13,7 +13,7 @@
 //   `omo install npm:<不存在包>` 干净 E404 退出、`omo remove` 干净退出、`omo update`
 //   无提示持续运行），可行→做：async spawn 有界超时（install/remove 120s、update 180s）。
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isCompiledBinary, releaseRoot } from "../runtime-paths";
 import { ApiError } from "./http";
@@ -242,6 +242,82 @@ export function checkAuthStatus(opts: AuthCheckOptions): AuthStatus {
   if (r.status === 0) return { status: "ready", provider, checkedAt: now, detail: null };
   if (r.status === 1) return { status: "not_configured", provider, checkedAt: now, detail: null };
   return { status: "error", provider, checkedAt: now, detail: `凭证检查失败（exit=${r.status ?? "null"}）` };
+}
+
+// ---------------------------------------------------------------- 凭证写入（r10 批次任务 13）
+
+/** auth.json 直读（回滚快照用）；缺失/损坏返回空表 */
+function readAuthDoc(agentDir: string): Record<string, unknown> {
+  const file = join(agentDir, "auth.json");
+  if (!existsSync(file)) return {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** auth.json 原子写（temp+rename，同 settings 纪律） */
+function writeAuthDocAtomic(agentDir: string, doc: Record<string, unknown>): void {
+  mkdirSync(agentDir, { recursive: true });
+  const file = join(agentDir, "auth.json");
+  const tmp = join(agentDir, `.auth.json.tmp-${process.pid}-${Date.now()}`);
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
+}
+
+/** 写入粘贴凭证：auth.json[provider]={key}（引擎认证存储同款形态，见 readApiKey）+
+ * settings.json defaultProvider=provider（authProviderOf 检查面同源）。
+ * 返回回滚函数：恢复两处旧值（原本无 auth.json 则删除，不留空壳文件）；
+ * key 只落引擎认证文件，不经任何日志。
+ * 同步写入（调用点为单发用户动作；saveAndCheckCredential 内紧接同步检查，无并发交错面）。 */
+export function applyAuthCredential(agentDir: string, provider: string, apiKey: string): () => void {
+  const prevAuth = readAuthDoc(agentDir);
+  const prevProvider = readSettings(agentDir).defaultProvider;
+  const prevAuthExisted = existsSync(join(agentDir, "auth.json"));
+  writeAuthDocAtomic(agentDir, { ...prevAuth, [provider]: { key: apiKey } });
+  writeSettingsAtomic(agentDir, { ...readSettings(agentDir), defaultProvider: provider });
+  return () => {
+    const restore: Record<string, unknown> = { ...readAuthDoc(agentDir) };
+    if (prevAuth[provider] === undefined) delete restore[provider];
+    else restore[provider] = prevAuth[provider];
+    if (prevAuthExisted) writeAuthDocAtomic(agentDir, restore);
+    else rmSync(join(agentDir, "auth.json"), { force: true });
+    const s = readSettings(agentDir);
+    if (prevProvider === undefined) delete s.defaultProvider;
+    else s.defaultProvider = prevProvider;
+    writeSettingsAtomic(agentDir, s);
+  };
+}
+
+export interface CredentialSaveResult {
+  /** 复用既有三态检查结果（绝不回显凭证材料） */
+  status: AuthStatus;
+  /** 非 ready 时已回滚（无效 key 不落盘） */
+  rolledBack: boolean;
+}
+
+/** 粘贴凭证端到端：写入 → checkAuthStatus；非 ready 回滚（含 not_configured/error）。
+ * 同步执行（spawnSync 既有纪律），失败不抛——失败原因在 status.detail。 */
+export function saveAndCheckCredential(opts: {
+  agentDir: string;
+  engineCli: { nodeBin: string; cliJs: string } | null;
+  provider: string;
+  apiKey: string;
+  timeoutMs?: number;
+}): CredentialSaveResult {
+  const rollback = applyAuthCredential(opts.agentDir, opts.provider, opts.apiKey);
+  const status = checkAuthStatus({
+    agentDir: opts.agentDir,
+    engineCli: opts.engineCli,
+    timeoutMs: opts.timeoutMs,
+  });
+  if (status.status !== "ready") {
+    rollback();
+    return { status, rolledBack: true };
+  }
+  return { status, rolledBack: false };
 }
 
 // ---------------------------------------------------------------- install / remove / update

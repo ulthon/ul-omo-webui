@@ -1121,6 +1121,30 @@ export const api = {
   async getAuthStatus(): Promise<AuthStatusResponse> {
     return request("/api/auth/status");
   },
+  /** 粘贴凭证写入+连通检查（r10 任务 13）：服务端非 ready 已回滚；响应只含三态，绝不含 key。
+   * 422 = 检查未通过（响应体是三态 AuthStatus 而非 error 形态），原样返回供前端展示失败原因。 */
+  async saveAuthCredential(provider: string, apiKey: string): Promise<AuthStatusResponse> {
+    let res: Response;
+    try {
+      res = await fetch("/api/auth/credentials", jsonInit("POST", { provider, apiKey }));
+    } catch (err) {
+      throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
+    }
+    if (res.status === 401) {
+      redirectToLogin();
+      throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
+    }
+    const body = (await res.json().catch(() => null)) as
+      | AuthStatusResponse
+      | { error?: { code?: string; message?: string } }
+      | null;
+    if (res.ok || res.status === 422) {
+      if (body && "status" in body) return body as AuthStatusResponse;
+      throw new ApiError(res.status, "unknown", `HTTP ${res.status}`);
+    }
+    const errShape = body as { error?: { code?: string; message?: string } } | null;
+    throw new ApiError(res.status, errShape?.error?.code ?? "unknown", errShape?.error?.message ?? `HTTP ${res.status}`);
+  },
   /** 非交互 install/remove/update（async spawn 有界超时；失败 502 ok=false） */
   async runExtensionAction(action: "install" | "remove" | "update", source?: string): Promise<{ ok: boolean; message: string }> {
     return request(`/api/extensions/${action}`, jsonInit("POST", source ? { source } : {}));
