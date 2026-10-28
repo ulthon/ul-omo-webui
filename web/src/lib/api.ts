@@ -55,6 +55,17 @@ export interface SessionListItem {
   tagsRevision?: string;
 }
 
+/** 计划执行进度快照（r10 todo 12，GET /api/sessions/:id/plan-progress）：
+ *  bound=false（无绑定 goal/无 boulder/会话不在任何 work）时其余字段缺席；
+ *  bound=true 且 total=0（计划文件缺失或无 todo 行）展示层隐藏。 */
+export interface PlanProgressSnapshot {
+  bound: boolean;
+  planName?: string;
+  done?: number;
+  total?: number;
+  currentTitle?: string | null;
+}
+
 /** wire 原样条目（jsonl entry：{type:"message",id,parentId,timestamp,message} 等），渲染层自行甄别 */
 export interface WireEntry {
   type: string;
@@ -675,6 +686,10 @@ export const api = {
   },
   async getUsage(session: string): Promise<{ sessionId: string; usage: UsageInfo }> {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
+  },
+  /** 计划执行进度（r10 todo 12）：会话绑定的 goal 计划 todo 勾选态速览（只读） */
+  async getPlanProgress(sessionId: string): Promise<PlanProgressSnapshot> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/plan-progress`);
   },
 
   // ---- 附件（docs08-r3 任务 17：大文本粘贴转附件） ----

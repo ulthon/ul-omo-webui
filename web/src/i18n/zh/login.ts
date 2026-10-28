@@ -48,6 +48,10 @@ export const login = {
     openFilesLink: "打开文件管理外链",
     filesLinkTitle: "文件管理外链：{url}",
     overview: {
+      planTitle: "计划",
+      planCount: "{done}/{total}",
+      planCurrent: "当前",
+      planAllDone: "已全部完成",
       tasksTitle: "任务",
       notesTitle: "笔记",
       statsTitle: "统计",

@@ -46,6 +46,10 @@ export const login = {
     openFilesLink: "Open file manager link",
     filesLinkTitle: "File manager link: {url}",
     overview: {
+      planTitle: "Plan",
+      planCount: "{done}/{total}",
+      planCurrent: "Current",
+      planAllDone: "All complete",
       tasksTitle: "Tasks",
       notesTitle: "Notes",
       statsTitle: "Stats",

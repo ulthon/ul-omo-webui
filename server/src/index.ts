@@ -32,6 +32,7 @@ import { createFsWriteRoutes } from "./api/routes-fs-write";
 import { createSnippetsRoutes } from "./api/routes-snippets";
 import { createTagsRoutes } from "./api/routes-tags";
 import { createNotesRoutes } from "./api/routes-notes";
+import { createPlansRoutes } from "./api/routes-plans";
 import { createMemoryRoutes } from "./api/routes-memory";
 import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
 import { createExtensionsRoutes } from "./api/routes-extensions";
@@ -226,6 +227,8 @@ app.route("/", createFsWriteRoutes(deps));
 app.route("/", createSnippetsRoutes(deps));
 app.route("/", createTagsRoutes(deps));
 app.route("/", createNotesRoutes(deps));
+// 计划执行进度只读面（r10 todo 12）：会话→boulder 绑定→计划 todo 勾选态速览
+app.route("/", createPlansRoutes({ engines }));
 app.route("/", createMemoryRoutes(deps));
 app.route("/", createTipsRoutes(tipsDeps));
 // 扩展资源面与 auth 凭证检查（docs08-r7 任务 24）：CLI 缺失时 install/remove/update 降级报错
