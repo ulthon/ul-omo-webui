@@ -317,6 +317,28 @@ function isReplayOfSettledAssistant(entries: WireEntry[], start: WireMessage): b
   });
 }
 
+/** 追加路径标识对账防线（r10 todo 15，对照 b6d3df4 不变量）：REST 追加路径
+ * （gap 小缺口 ?before= 增量补齐/游标校准窗，dad6d24 引入）入列真实 id 消息条目前，
+ * 按待入列消息载荷指纹移除槽内同载荷合成孪生。b6d3df4 的收敛不变量“每条定格合成
+ * 孪生由 entry_appended 真实 id 身份归一收敛”只在 SSE 通道成立：该消息的
+ * entry_appended 帧落在 gap 内丢失时（切页/隐藏页停摆丢帧），message_end 定格的
+ * 孪生无人收敛，REST 真实 id 条目追加后即双列（6875933 越窗截断发 gap 使对账补齐
+ * 成常态，复发概率大增）。与 entry_appended 归一同口径：syntheticId（djb2，h 前缀
+ * 合成形态）与引擎真实 id 属不相交空间，只删孪生、绝不触真实条目——两个不同回合的
+ * 同文回复各有真实 id，互不坍缩（反铁律，docs/08:83）；同真实 id 回填帧由 upsertEntry
+ * 按 id 幂等 no-op。 */
+function stripSyntheticTwins(list: WireEntry[], incoming: ReadonlyArray<WireEntry>): WireEntry[] {
+  let out = list;
+  for (const entry of incoming) {
+    if (entry.type !== "message" || typeof entry.id !== "string" || entry.id === "") continue;
+    const m = entry.message as WireMessage | undefined;
+    if (m === undefined || (m.role !== "user" && m.role !== "assistant")) continue;
+    const twinId = syntheticId(m);
+    out = out.filter((e) => e.id !== twinId);
+  }
+  return out;
+}
+
 function upsertToolRun(
   session: SessionMessages,
   toolCallId: string,
@@ -452,7 +474,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       hydrateAppliedModel(sessionId, entries);
       set((s) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
-        let list = cur.entries;
+        // 追加前标识对账（r10 todo 15）：先收敛待入列真实 id 条目的同载荷合成孪生，
+        // 再逐条按 id upsert（重放/回填帧幂等 no-op）——gap 丢失 entry_appended 的
+        // 消息经 REST 补齐后不再双列（根因与口径见 stripSyntheticTwins）。
+        let list = stripSyntheticTwins(cur.entries, entries);
         for (const entry of entries) list = upsertEntry(list, entry);
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
       });
