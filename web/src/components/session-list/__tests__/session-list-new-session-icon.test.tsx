@@ -63,22 +63,35 @@ function renderList() {
 }
 
 describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
-  test("(a) 头部同一 flex 行：新建图标钮 + 搜索框 + 批量切换共存", () => {
+  test("(a) 头部同一 flex 行：新建图标钮 + 搜索框 + 批量切换为同一直接父元素的兄弟节点", () => {
     const html = renderList();
     expect(html).toContain('data-testid="new-session-btn"');
-    expect(html).toContain("size-9");
     expect(html).toContain("size-9 shrink-0 justify-center");
-    // 搜索框与批量切换同在（同一渲染块）；placeholder 经 i18n 取词而非硬编码文案
-    expect(html).toContain(`placeholder="${tSnap("sessionList.list.searchPlaceholder")}"`);
     expect(html).toContain('data-testid="batch-toggle"');
-    // 三者同处一个 flex 行容器：先出现 flex 行开标签，再依次出现三控件，
-    // 且 flex 行闭合前不含另一个行容器（结构上单行）。
-    const rowStart = html.indexOf("flex items-center gap-1.5");
-    expect(rowStart).toBeGreaterThan(-1);
-    const btn = html.indexOf('data-testid="new-session-btn"');
-    const batch = html.indexOf('data-testid="batch-toggle"');
-    expect(btn).toBeGreaterThan(rowStart);
-    expect(batch).toBeGreaterThan(btn);
+
+    // 严格同父包含：真实 DOM 里三控件（钮/搜索包裹层/批量块）共享同一直接父元素
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    return act(async () => {
+      root.render(createElement(SessionList));
+    }).then(async () => {
+      const btn = container.querySelector('[data-testid="new-session-btn"]');
+      const searchWrap = container.querySelector("input")?.parentElement;
+      const batch = container.querySelector('[data-testid="batch-toggle"]');
+      expect(btn).toBeTruthy();
+      expect(searchWrap).toBeTruthy();
+      expect(batch).toBeTruthy();
+      const row = btn.parentElement;
+      expect(row).toBe(searchWrap.parentElement);
+      expect(row).toBe(batch.parentElement?.parentElement);
+      // 行容器确为横向 flex（手机档同行语义）
+      expect(row.className).toContain("flex items-center");
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    });
   });
 
   test("(b) 旧全宽钮 DOM 消失：无 h-11 w-full 组合类", () => {
@@ -88,9 +101,11 @@ describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
     expect(html).toContain('class="hidden lg:inline"');
   });
 
-  test("(c) 桌面 lg 变体保留：lg:h-7 / lg:w-full / lg:justify-start 原样在钮上", () => {
+  test("(c) 桌面 lg 变体等于原类链：lg:h-7 / lg:w-full 保留，且无 justify-start（桌面居中不被改）", () => {
     const html = renderList();
-    expect(html).toContain("lg:h-7 lg:w-full lg:justify-start");
+    expect(html).toContain("lg:h-7 lg:w-full");
+    // button.tsx 基类 justify-center 在 lg+ 治理对齐；不得引入 justify-start 左对齐
+    expect(html).not.toContain("justify-start");
     expect(html).toContain(NEW_SESSION_LABEL);
   });
 

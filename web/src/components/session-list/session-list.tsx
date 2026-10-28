@@ -631,7 +631,7 @@ export function SessionList() {
           size="sm"
           aria-label={t("sessionList.list.newSession")}
           data-testid="new-session-btn"
-          className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:w-full lg:justify-start"
+          className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:w-full"
           disabled={creating || !currentProject}
           onClick={() => void createSession(useUiStore.getState().currentProject)}
         >
