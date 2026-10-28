@@ -62,7 +62,7 @@ export function NavRail({
   // 悬停浮卡：受控 state（不用原生 tooltip）。进入即显；移出 HOVER_HIDE_DELAY_MS 内隐藏
   // （setTimeout 清理，连换刻度先清旧定时器）；卸载兜底清理不留悬挂定时器。
   const [hover, setHover] = useState<{ tick: NavTick; top: number } | null>(null);
-  const hideTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
       if (hideTimerRef.current !== null) clearTimeout(hideTimerRef.current);
