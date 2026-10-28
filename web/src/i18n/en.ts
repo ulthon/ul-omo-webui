@@ -17,6 +17,7 @@ import { models } from "./en/models";
 import { stats } from "./en/stats";
 import { errors } from "./en/errors";
 import { files } from "./en/files";
+import { tools } from "./en/tools";
 
 export const en = {
   common,
@@ -35,4 +36,5 @@ export const en = {
   stats,
   errors,
   files,
+  tools,
 } satisfies MessageCatalogShape;

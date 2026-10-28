@@ -61,6 +61,7 @@ function readback(path: string): unknown {
   if (path === "/api/extensions") return { items: [], cliAvailable: false };
   if (path === "/api/auth/status") return { status: "not_configured", provider: null, checkedAt: 0, detail: null };
   if (path === "/api/schedule") return { jobs: [], runner: { alive: false }, invalid: [] };
+  if (path === "/api/projects/tools") return { tools: [{ name: "read", builtin: true }, { name: "bash", builtin: true }, { name: "edit", builtin: true }, { name: "write", builtin: true }, { name: "grep", builtin: true }] };
   return { ok: true };
 }
 

@@ -8,7 +8,7 @@
 // 按新 spawn 参数重建。
 import { Hono, type Context } from "hono";
 import { lstatSync, realpathSync } from "node:fs";
-import { PERMISSION_PRESET_NAMES } from "./engine-runtime";
+import { PERMISSION_PRESET_NAMES, BUILTIN_TOOL_CATALOG } from "./engine-runtime";
 import { readProjectPreferences, type ProjectConfigStores, type ProjectPreferenceView } from "./config-migration";
 import { ApiError, parseJsonBody, route } from "./http";
 import { THINKING_LEVEL_VALUES, type PreferredThinkingLevel } from "../conf/config-store";
@@ -16,13 +16,17 @@ import type { ApiDeps } from "./deps";
 import type { ProjectMeta } from "../db/meta";
 import { validateProjectInput, createProjectInput } from "./paths";
 
-/** meta 行 + 合并偏好响应（preferredModel/permissionPreset/preferredThinkingLevel 为合并值；损坏降级时附 configError） */
+/** meta 行 + 合并偏好响应（preferredModel/permissionPreset/preferredThinkingLevel/tools/excludedTools
+ *  为合并值；损坏降级时附 configError；tools 显式空集附 degradedNoTools） */
 function projectResponse(meta: ProjectMeta, view: ProjectPreferenceView) {
   return {
     ...meta,
     preferredModel: view.preferredModel,
     permissionPreset: view.permissionPreset,
     preferredThinkingLevel: view.preferredThinkingLevel,
+    tools: view.tools,
+    excludedTools: view.excludedTools,
+    ...(view.degradedNoTools ? { degradedNoTools: true } : {}),
     ...(view.configError ? { configError: true } : {}),
   };
 }
@@ -123,14 +127,46 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
       }
       preset = body.permissionPreset as string | null;
     }
-    if (Object.keys(dbPatch).length === 0 && preferredModel === undefined && preset === undefined && preferredThinkingLevel === undefined) {
-      throw new ApiError(400, "invalid_request", "需要 preferredModel/lastOpenedAt/permissionPreset/preferredThinkingLevel 至少一项");
+    // 工具启停（r10 todo 17）：tools/excludedTools 字符串数组或 null（null = 恢复引擎默认）。
+    // 元素去两端空白、丢空串、去重（保序）；空数组合法 = 显式空集（tools → --no-tools 降级）。
+    const normalizeToolList = (raw: unknown, field: string): string[] | null => {
+      if (raw === null) return null;
+      if (!Array.isArray(raw) || raw.some((v) => typeof v !== "string")) {
+        throw new ApiError(400, `invalid_${field}`, `${field} 必须是字符串数组或 null`);
+      }
+      return [...new Set((raw as string[]).map((v) => v.trim()).filter((v) => v !== ""))];
+    };
+    let tools: string[] | null | undefined;
+    if (body.tools !== undefined) tools = normalizeToolList(body.tools, "tools");
+    let excludedTools: string[] | null | undefined;
+    if (body.excludedTools !== undefined) excludedTools = normalizeToolList(body.excludedTools, "excluded_tools");
+    if (
+      Object.keys(dbPatch).length === 0 &&
+      preferredModel === undefined &&
+      preset === undefined &&
+      preferredThinkingLevel === undefined &&
+      tools === undefined &&
+      excludedTools === undefined
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_request",
+        "需要 preferredModel/lastOpenedAt/permissionPreset/preferredThinkingLevel/tools/excludedTools 至少一项",
+      );
     }
-    if (preferredModel !== undefined || preset !== undefined || preferredThinkingLevel !== undefined) {
+    if (
+      preferredModel !== undefined ||
+      preset !== undefined ||
+      preferredThinkingLevel !== undefined ||
+      tools !== undefined ||
+      excludedTools !== undefined
+    ) {
       await deps.projectConfigs(project).updateProjectConfig({
         ...(preferredModel !== undefined ? { preferredModel } : {}),
         ...(preset !== undefined ? { permissionPreset: preset } : {}),
         ...(preferredThinkingLevel !== undefined ? { preferredThinkingLevel } : {}),
+        ...(tools !== undefined ? { tools } : {}),
+        ...(excludedTools !== undefined ? { excludedTools } : {}),
       });
     }
     if (Object.keys(dbPatch).length > 0) {
@@ -180,6 +216,10 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     const meta = deps.meta.getProjectMeta(body.path);
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(body.path)) : null });
   }));
+
+  // 工具目录（r10 todo 17）：内置工具静态清单（与引擎 CLI help "Built-in Tool Names"
+  // 同源，spike-16 实证引擎无工具列表 RPC）。设置页逐工具开关的枚举源。
+  app.get("/api/projects/tools", (c: Context) => c.json({ tools: BUILTIN_TOOL_CATALOG }));
 
   // 重建项目引擎进程：spawn 参数级配置（权限预设 permissionPreset 等）
   // 变更后的生效口。会话态失效属预期（下次访问懒加载重建）。

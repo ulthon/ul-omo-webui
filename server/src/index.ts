@@ -17,6 +17,7 @@ import {
   createProjectConfigStores,
   migrateProjectPreferences,
   permissionPresetSpawnArgs,
+  toolsSpawnArgsFromConfig,
 } from "./api/config-migration";
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
 import { TitleGenService } from "./title-gen";
@@ -60,7 +61,12 @@ const manager = new EngineProcessManager({
   // 迁移过渡期库值未迁清仍生效、文件损坏降级无参数；meta_kv permission-preset:<projectPath>
   // 仅作存量过渡来源不再写入）：spawn 参数级，变更后经 POST /api/projects/restart
   // 让项目引擎重建生效
-  extraSpawnArgs: (projectPath) => permissionPresetSpawnArgs(projectConfigs, meta, projectPath),
+  // r10 todo 17：权限预设 + 工具启停（--tools/--exclude-tools/--no-tools）两类 spawn 参数
+  // 按项目合并附加；工具启停变更后同经 POST /api/projects/restart 生效
+  extraSpawnArgs: (projectPath) => [
+    ...permissionPresetSpawnArgs(projectConfigs, meta, projectPath),
+    ...toolsSpawnArgsFromConfig(projectConfigs, meta, projectPath),
+  ],
 });
 // 标题生成服务（W2 todo 8）：jsonl 直读取数 + 独立 HTTP 调模型，零引擎会话污染。
 // resolveSessionRow 不触发引擎 spawn（活跃态/store 直查/别名三级，纯读）。

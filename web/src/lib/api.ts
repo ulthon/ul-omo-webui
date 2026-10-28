@@ -28,6 +28,12 @@ export interface ProjectMeta {
   /** 权限预设（kv permission-preset:<project>，spawn 级）；null = 默认行为。
    * 变更需项目引擎重启（restartProject）后生效。 */
   permissionPreset?: string | null;
+  /** 工具白名单（r10 todo 17，spawn 级 --tools）；null = 未配置；空数组 = 显式空集降级 */
+  tools?: string[] | null;
+  /** 工具黑名单（r10 todo 17，spawn 级 --exclude-tools）；null = 未配置 */
+  excludedTools?: string[] | null;
+  /** true = tools 显式空集（引擎 --no-tools 零工具降级），UI 出降级提示 */
+  degradedNoTools?: boolean;
   /** 思考档偏好（W2 todo 8，写项目 .ul-omo-webui.json；服务端仅接受 low/high/max/null） */
   preferredThinkingLevel?: string | null;
   /** 死项目守卫（W1 #2）：仅路径已不存在/不再是目录的条目携带 missing:true，
@@ -822,8 +828,14 @@ export const api = {
     preferredThinkingLevel?: string | null;
     lastOpenedAt?: string | null;
     permissionPreset?: string | null;
+    tools?: string[] | null;
+    excludedTools?: string[] | null;
   }): Promise<{ ok: boolean; project: ProjectMeta | null }> {
     return request("/api/projects/meta", jsonInit("PATCH", patch));
+  },
+  /** 工具目录（r10 todo 17）：内置工具静态清单，设置页逐工具开关枚举源 */
+  async listToolCatalog(): Promise<{ tools: Array<{ name: string; builtin: boolean }> }> {
+    return request("/api/projects/tools");
   },
   /** 重建项目引擎进程：spawn 参数级配置（权限预设等）变更后的生效口。
    * 进行中的回合中断、会话态失效（下次访问懒加载重建）；SSE 为服务端事件流不受影响。 */

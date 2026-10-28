@@ -17,7 +17,7 @@
 // config-store 错误消息，绝不静默吞）。
 import { openConfigStore, type ConfigStore, type PreferredThinkingLevel, type ProjectConfig } from "../conf/config-store";
 import type { MetaDb } from "../db/meta";
-import { permissionPresetArgs, permissionPresetKey } from "./engine-runtime";
+import { permissionPresetArgs, permissionPresetKey, toolsSpawnArgs } from "./engine-runtime";
 
 /**
  * 按项目根解析项目配置 store。组合根创建一次并全链共用（extraSpawnArgs、路由工厂、
@@ -62,6 +62,12 @@ export interface ProjectPreferenceView {
   preferredThinkingLevel: PreferredThinkingLevel | null;
   /** 项目配置文件损坏时的降级标志（决策 10b：字段置 null，不炸整页、不误报写失败） */
   configError: boolean;
+  /** 工具白名单（r10 todo 17）：文件值，无迁移前库源（缺字段/损坏降级为 null） */
+  tools: string[] | null;
+  /** 工具黑名单（r10 todo 17）：文件值（缺字段/损坏降级为 null） */
+  excludedTools: string[] | null;
+  /** 显式空集降级标志（r10 todo 17）：tools 配置为空数组 → 引擎 --no-tools 零工具 */
+  degradedNoTools: boolean;
 }
 
 /**
@@ -79,6 +85,9 @@ export function readProjectPreferences(
       permissionPreset: meta.getKv(permissionPresetKey(projectPath)),
       preferredThinkingLevel: null,
       configError: false,
+      tools: null,
+      excludedTools: null,
+      degradedNoTools: false,
     };
   }
   let raw: Record<string, unknown> | null;
@@ -89,7 +98,15 @@ export function readProjectPreferences(
     raw = store.readProjectRaw();
   } catch {
     // 文件损坏（解析失败/字段形状非法）→ 按项目降级，单项目不炸整页（决策 10b）
-    return { preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true };
+    return {
+      preferredModel: null,
+      permissionPreset: null,
+      preferredThinkingLevel: null,
+      configError: true,
+      tools: null,
+      excludedTools: null,
+      degradedNoTools: false,
+    };
   }
   return {
     preferredModel: effectivePreference(
@@ -104,6 +121,9 @@ export function readProjectPreferences(
     ),
     preferredThinkingLevel: doc.preferredThinkingLevel,
     configError: false,
+    tools: doc.tools,
+    excludedTools: doc.excludedTools,
+    degradedNoTools: doc.tools !== null && doc.tools.length === 0,
   };
 }
 
@@ -115,6 +135,17 @@ export function permissionPresetSpawnArgs(
   projectPath: string,
 ): string[] {
   return permissionPresetArgs(readProjectPreferences(stores, meta, projectPath).permissionPreset);
+}
+
+/** 组合根 extraSpawnArgs 适配（r10 todo 17）：合并读取项目工具启停配置 → spawn 附加参数。
+ * 无配置/文件损坏返回空数组，spawn 行为与从前完全一致（决策 10b 降级）。 */
+export function toolsSpawnArgsFromConfig(
+  stores: ProjectConfigStores | null,
+  meta: MetaDb,
+  projectPath: string,
+): string[] {
+  const view = readProjectPreferences(stores, meta, projectPath);
+  return toolsSpawnArgs({ tools: view.tools, excludedTools: view.excludedTools });
 }
 
 export interface MigrationSummary {

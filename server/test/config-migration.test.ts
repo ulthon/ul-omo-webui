@@ -138,6 +138,9 @@ describe("readProjectPreferences 合并读取", () => {
         permissionPreset: "read-only",
         preferredThinkingLevel: null,
         configError: false,
+        tools: null,
+                excludedTools: null,
+                degradedNoTools: false,
       });
     } finally {
       cleanup(c);
@@ -167,7 +170,7 @@ describe("readProjectPreferences 合并读取", () => {
       registerLegacy(c, c.project, "zai-coding-cn/glm-5.3", "read-only");
       writeFileSync(join(c.project, ".ul-omo-webui.json"), "{broken");
       const view = readProjectPreferences(c.stores, c.meta, c.project);
-      expect(view).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true });
+      expect(view).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true, tools: null, excludedTools: null, degradedNoTools: false });
     } finally {
       cleanup(c);
     }
@@ -188,7 +191,7 @@ describe("readProjectPreferences 合并读取", () => {
       writeFileSync(file, JSON.stringify({ version: 1, preferredThinkingLevel: "off" }));
       utimesSync(file, new Date(3000), new Date(3000));
       const degraded = readProjectPreferences(c.stores, c.meta, c.project);
-      expect(degraded).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true });
+      expect(degraded).toEqual({ preferredModel: null, permissionPreset: null, preferredThinkingLevel: null, configError: true, tools: null, excludedTools: null, degradedNoTools: false });
     } finally {
       cleanup(c);
     }

@@ -72,6 +72,12 @@ export interface ProjectConfig {
   preferredModel: string | null;
   permissionPreset: string | null;
   preferredThinkingLevel: PreferredThinkingLevel | null;
+  /** 工具白名单（r10 todo 17，spawn 参数级 --tools）：null = 未配置（引擎默认全量）；
+   * 空数组 = 显式空集 → --no-tools（降级：引擎零工具，UI 出明确降级提示）。 */
+  tools: string[] | null;
+  /** 工具黑名单（r10 todo 17，spawn 参数级 --exclude-tools）：null = 未配置；
+   * 与 tools 同给时引擎侧黑名单在白名单之后生效（引擎 sdk 语义）。 */
+  excludedTools: string[] | null;
   [key: string]: unknown;
 }
 
@@ -81,6 +87,8 @@ export interface ProjectConfigPatch {
   preferredModel?: string | null;
   permissionPreset?: string | null;
   preferredThinkingLevel?: PreferredThinkingLevel | null;
+  tools?: string[] | null;
+  excludedTools?: string[] | null;
 }
 
 export interface OpenConfigStoreOptions {
@@ -157,6 +165,8 @@ function emptyProjectConfig(): ProjectConfig {
     preferredModel: null,
     permissionPreset: null,
     preferredThinkingLevel: null,
+    tools: null,
+    excludedTools: null,
   };
 }
 
@@ -216,6 +226,16 @@ function stringOrNull(value: unknown, filePath: string, field: string): string |
   return value;
 }
 
+/** 字符串数组或 null（r10 todo 17 工具启停字段）：非法形状抛错（绝不静默吞），
+ * 由合并读层降级 configError；数组内非字符串元素同样抛错。 */
+function stringArrayOrNull(value: unknown, filePath: string, field: string): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    throw new Error(`配置文件字段 ${field} 必须是字符串数组或 null: ${filePath}`);
+  }
+  return value as string[];
+}
+
 /** 档位字段（closed set）：非法值抛错（绝不静默吞），由合并读层降级 configError */
 function thinkingLevelOrNull(value: unknown, filePath: string, field: string): PreferredThinkingLevel | null {
   if (value === undefined || value === null) return null;
@@ -253,6 +273,8 @@ function normalizeProjectConfig(parsed: unknown, filePath: string): ProjectConfi
     preferredModel: stringOrNull(doc.preferredModel, filePath, "preferredModel"),
     permissionPreset: stringOrNull(doc.permissionPreset, filePath, "permissionPreset"),
     preferredThinkingLevel: thinkingLevelOrNull(doc.preferredThinkingLevel, filePath, "preferredThinkingLevel"),
+    tools: stringArrayOrNull(doc.tools, filePath, "tools"),
+    excludedTools: stringArrayOrNull(doc.excludedTools, filePath, "excludedTools"),
   };
 }
 
@@ -429,6 +451,8 @@ export function openConfigStore(options: OpenConfigStoreOptions = {}): ConfigSto
             patch.permissionPreset === undefined ? base.permissionPreset : patch.permissionPreset,
           preferredThinkingLevel:
             patch.preferredThinkingLevel === undefined ? base.preferredThinkingLevel : patch.preferredThinkingLevel,
+          tools: patch.tools === undefined ? base.tools : patch.tools,
+          excludedTools: patch.excludedTools === undefined ? base.excludedTools : patch.excludedTools,
         };
       });
     },

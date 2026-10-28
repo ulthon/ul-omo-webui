@@ -265,6 +265,40 @@ export function permissionPresetArgs(preset: string | null | undefined): string[
   return value ? ["--permission-preset", value] : [];
 }
 
+/** 内置工具静态目录（r10 todo 17）：与引擎 CLI help "Built-in Tool Names" 段同源
+ * （spike-16 实证：引擎无工具列表 RPC，逐工具开关的枚举源取此静态清单）。
+ * builtin = 默认启用四件 + grep（默认关闭但在内置名单内）；find/ls/powershell
+ * 引擎默认关闭，一并列出供显式开启/关闭（黑白名单按名字透传，引擎按名单匹配）。 */
+export const BUILTIN_TOOL_CATALOG: ReadonlyArray<{ name: string; builtin: boolean }> = [
+  { name: "read", builtin: true },
+  { name: "bash", builtin: true },
+  { name: "edit", builtin: true },
+  { name: "write", builtin: true },
+  { name: "grep", builtin: true },
+  { name: "find", builtin: false },
+  { name: "ls", builtin: false },
+  { name: "powershell", builtin: false },
+];
+
+/** 项目工具启停配置 → 引擎 spawn 附加参数（r10 todo 17，CLI 同源参数）。
+ * - tools 白名单非空 → --tools <逗号连接>（未列即禁，含扩展工具）；
+ * - tools 显式空数组 → --no-tools（降级：引擎零工具，调用方须向 UI 出降级提示）；
+ * - excludedTools 黑名单非空 → --exclude-tools <逗号连接>；
+ * - 两者同给时引擎侧黑名单在白名单之后生效（引擎 sdk 语义），按序透传；
+ * - 均未配置（null）→ 空数组，spawn 行为与从前完全一致。
+ * 参数是 spawn 级：变更需项目引擎重启（POST /api/projects/restart）生效。 */
+export function toolsSpawnArgs(config: { tools: string[] | null; excludedTools: string[] | null }): string[] {
+  const { tools, excludedTools } = config;
+  if (tools !== null) {
+    if (tools.length === 0) return ["--no-tools"];
+    const out = ["--tools", tools.join(",")];
+    if (excludedTools !== null && excludedTools.length > 0) out.push("--exclude-tools", excludedTools.join(","));
+    return out;
+  }
+  if (excludedTools !== null && excludedTools.length > 0) return ["--exclude-tools", excludedTools.join(",")];
+  return [];
+}
+
 /** models-store.json 直读降级（形态见 docs/verification/00-env.md；读取失败返回空列表） */
 function readModelsStore(agentDir: string): EngineModelInfo[] {
   const file = join(agentDir, "models-store.json");
