@@ -23,6 +23,7 @@ import { usePermissionsStore, type PermissionMethod, type PermissionRequest } fr
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { useSessionsStore } from "@/stores/sessions";
+import { useTasksStore } from "@/stores/tasks";
 import { useUiStore } from "@/stores/ui";
 
 /** 最后见到的全局游标（SSE id 行）；null = 尚未收到任何事件。用于服务端游标归零检测。 */
@@ -384,6 +385,20 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const event = frame.event;
   if (event === null || typeof event !== "object") return;
   const wire = event as WireEvent;
+  // r10 todo 11：omo.task.updated extension_event 帧分流（后台活动条数据源）。
+  // wire sessionId 是连接 handle（rpc-N）非会话身份，通用路由键不适用——直接取
+  // data.parent_session_id（durable id）进 tasks store；帧语义为全量快照，整包替换。
+  // 服务端 ?session= 过滤已按 parent_session_id 匹配（sse.ts 同批改动），单会话过滤
+  // 流也能收到。其余 extension_event（未知扩展事件）不进消息主通道，原样忽略。
+  if (wire.type === "extension_event") {
+    if (wire.name === "omo.task.updated") {
+      const data = wire.data as { parent_session_id?: unknown; tasks?: unknown } | undefined;
+      if (typeof data?.parent_session_id === "string" && data.parent_session_id) {
+        useTasksStore.getState().applySnapshot(data.parent_session_id, data.tasks);
+      }
+    }
+    return;
+  }
   // store 路由键：信封 durableSessionId 优先（与 REST 会话 id 一致），缺席回退 wire sessionId
   const durableSessionId =
     typeof frame.durableSessionId === "string" && frame.durableSessionId.length > 0 ? frame.durableSessionId : null;

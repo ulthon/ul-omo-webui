@@ -358,6 +358,14 @@ sseRoutes.get("/events", (c) => {
     if ((e.event as { type?: unknown }).type === SSE_HEARTBEAT_TYPE) return true
     if (sessionFilter === undefined) return true
     if (wireSessionId(e) === sessionFilter) return true
+    // extension_event（r10 todo 11）：wire sessionId 是连接 handle（rpc-N）非会话
+    // 身份，durableLookup 对它必然 miss——路由键取 data.parent_session_id（即
+    // durable 会话 id，omo.task.updated 全量快照帧的母会话身份）。匹配分支置于
+    // durable 回退之前，避免 handle="rpc-1" 走到 lookup 产生无效查询。
+    const ev = e.event as { type?: unknown; data?: { parent_session_id?: unknown } }
+    if (ev.type === "extension_event") {
+      return typeof ev.data?.parent_session_id === "string" && ev.data.parent_session_id === sessionFilter
+    }
     // durable id 匹配（加法兼容）：REST 侧只发 durable id，前端用它过滤
     const handle = wireSessionId(e)
     return handle !== undefined && durableLookup?.(e.projectPath, handle) === sessionFilter

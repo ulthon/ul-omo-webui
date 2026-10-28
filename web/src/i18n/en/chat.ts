@@ -288,6 +288,13 @@ export const chat = {
     compactionDone: "Context compaction completed",
     modelSwitch: "Model switched to {model}",
   },
+  // Background activity bar (r10 todo 11): driven by omo.task.updated snapshots, renders only when non-empty
+  activity: {
+    barTitle: "Background tasks {n}",
+    runningCount: "{n} running",
+    statusRunning: "Running",
+    statusDone: "Done",
+  },
   // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
   commands: {
     compactNote: "Compact context: direct call over the engine protocol (same entry point as the CLI)",

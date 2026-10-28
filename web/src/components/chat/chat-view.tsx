@@ -26,6 +26,7 @@ import { MessageList } from "./message-list";
 import { buildMessageItems, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionQueue } from "./question-queue";
+import { ActivityBar } from "./activity-bar";
 import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
 import { ContextUsageBar } from "@/components/layout/context-usage-bar";
@@ -310,6 +311,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+          {/* 后台活动条（r10 todo 11）：会话页级新表面，双断点同构；无快照不渲染 */}
+          <ActivityBar sessionId={sessionId} />
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
           <QueueBar sessionId={sessionId} />
           {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传入处并入 runState

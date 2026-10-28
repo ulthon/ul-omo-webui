@@ -80,6 +80,17 @@ function makeApp(opts: { capacity?: number; heartbeatMs?: number } = {}) {
   return { bus, app }
 }
 
+/** r10 todo 11：omo.task.updated extension_event 帧（wire sessionId 为连接 handle rpc-1，
+ * 会话身份在 data.parent_session_id = durable uuid）。 */
+function taskEvent(parentSessionId: string, tasks: unknown[] = []) {
+  return {
+    type: "extension_event",
+    name: "omo.task.updated",
+    data: { parent_session_id: parentSessionId, tasks },
+    sessionId: "rpc-1",
+  } as never
+}
+
 function wireEvent(sessionId: string, seq: number) {
   return { type: "message_update", sessionId, seq } as never
 }
@@ -360,6 +371,45 @@ describe("GET /api/events", () => {
     await res.body!.cancel()
   })
 
+  // r10 todo 11：extension_event 帧的 ?session= 过滤按 data.parent_session_id 路由
+  //（wire sessionId="rpc-1" 是连接 handle，不作会话身份）
+  test("extension_event 按 data.parent_session_id 匹配 ?session= 过滤", async () => {
+    const { bus, app } = makeApp()
+    // replay 路径素材：目标会话帧 + 异会话帧 + 普通帧交替
+    bus.publish(PROJ, taskEvent("dur-a", [{ task_id: "t1", status: "running" }]))
+    bus.publish(PROJ, taskEvent("dur-b", [{ task_id: "t2", status: "running" }]))
+    bus.publish(PROJ, wireEvent("dur-a", 1))
+    const res = await app.request("/api/events?session=dur-a")
+    // 新连接尾窗收敛：匹配帧全保留（extension_event 非 message_update 不做快照去重）
+    const blocks = await readSseBlocks(res.body!, 4)
+    expect(parseBlock(blocks[0]).event).toBe("replay_begin")
+    const replayed = blocks.slice(1, 3).map(parseBlock)
+    expect(replayed.map((f) => f.event)).toEqual(["extension_event", "message_update"])
+    expect(JSON.parse(replayed[0].data!).event.data.parent_session_id).toBe("dur-a")
+    expect(parseBlock(blocks[3]).event).toBe("replay_done")
+
+    // 实时路径：异会话 extension_event 不透出，同会话透出
+    bus.publish(PROJ, taskEvent("dur-b", []))
+    bus.publish(PROJ, taskEvent("dur-a", [{ task_id: "t3", status: "completed" }]))
+    const live = await readSseBlocks(res.body!, 1)
+    const f = parseBlock(live[0])
+    expect(f.event).toBe("extension_event")
+    expect(JSON.parse(f.data!).event.data.parent_session_id).toBe("dur-a")
+  })
+
+  test("extension_event 不影响非 extension_event 帧的既有过滤语义", async () => {
+    const { bus, app } = makeApp()
+    bus.publish(PROJ, taskEvent("dur-a"))
+    bus.publish(PROJ, wireEvent("s-other", 1))
+    const res = await app.request("/api/events?session=s1")
+    // 目标会话无事件：两条素材帧（extension_event parent 不匹配；普通帧 wire 会话
+    // 不匹配）均被事件帧过滤滤掉。窗口标记是连接级帧（既有语义：缓冲非空即包夹，
+    // 不按 ?session= 过滤，同 gap 口径）——只收 begin/done，零事件帧
+    const blocks = await readSseBlocksAfterIdle(res.body!, 150)
+    expect(blocks.map((b) => parseBlock(b).event)).toEqual(["replay_begin", "replay_done"])
+    await res.body!.cancel()
+  })
+
   test("非法 Last-Event-ID 按 0 处理（越界走 gap 路径）", async () => {
     const { bus, app } = makeApp({ capacity: 3 })
     for (let i = 1; i <= 5; i++) bus.publish(PROJ, wireEvent("s1", i))
@@ -375,3 +425,29 @@ describe("GET /api/events", () => {
     expect(parseBlock(blocks[5]).id).toBe("5")
   })
 })
+
+/** 空闲窗口读：timeoutMs 内无块到达返回空数组（与 readSseBlocks 的抛错语义区分）。 */
+async function readSseBlocksAfterIdle(
+  stream: ReadableStream<Uint8Array>,
+  timeoutMs: number,
+): Promise<string[]> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let pending = ""
+  const blocks: string[] = []
+  const timer = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs))
+  for (;;) {
+    const result = await Promise.race([reader.read(), timer])
+    if (result === "timeout") break
+    const { value, done } = result
+    if (done) break
+    pending += decoder.decode(value, { stream: true })
+    let idx: number
+    while ((idx = pending.indexOf("\n\n")) !== -1) {
+      blocks.push(pending.slice(0, idx))
+      pending = pending.slice(idx + 2)
+    }
+  }
+  reader.releaseLock()
+  return blocks
+}

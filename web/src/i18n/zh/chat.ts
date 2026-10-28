@@ -287,6 +287,13 @@ export const chat = {
     compactionDone: "上下文压缩完成",
     modelSwitch: "模型已切换为 {model}",
   },
+  // 后台活动条（r10 todo 11）：omo.task.updated 快照驱动，非空才渲染
+  activity: {
+    barTitle: "后台任务 {n}",
+    runningCount: "进行中 {n}",
+    statusRunning: "运行中",
+    statusDone: "已结束",
+  },
   // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
   commands: {
     compactNote: "压缩上下文：引擎协议直调（与 CLI 同入口）",
