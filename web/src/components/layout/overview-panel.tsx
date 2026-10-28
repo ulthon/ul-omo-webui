@@ -1,5 +1,6 @@
-// 右栏「总览」页签（r9 w2-t8）：聚合任务 / 笔记 / 统计 / 子代理四块的一屏速览。
-// 只读复用各页签既有数据源，不复制数据逻辑：任务走 todo-panel 导出的
+// 右栏「总览」页签（r9 w2-t8）：聚合计划 / 任务 / 笔记 / 统计 / 子代理五块的一屏速览。
+// 只读复用各页签既有数据源，不复制数据逻辑：计划走 GET /api/sessions/:id/plan-progress
+//（r10 todo 12，会话绑定 goal 的计划勾选态，无绑定整块隐藏），任务走 todo-panel 导出的
 // extractLatestTodoPhases（messages store 反向扫描），子代理走 subagent-data 的
 // collectSubagentCalls（entries + toolRuns 双路合并），统计走 stat-panel 同款
 // GET /api/usage 快照（status-bar-data 容错解析），笔记走 notes-api 列表接口。
@@ -15,6 +16,7 @@ import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
 import { collectSubagentCalls, summaryOfCall } from "@/components/chat/subagent-data";
 import { toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { notesApi, type NoteListItem } from "@/components/notes/notes-api";
+import { OverviewPlan } from "@/components/layout/overview-plan";
 
 const OVERVIEW_SECTION_CLASS = "border-b px-3 py-2.5 last:border-b-0";
 const OVERVIEW_TITLE_CLASS = "mb-1.5 text-xs font-medium text-muted-foreground";
@@ -230,10 +232,12 @@ function OverviewAgents({ sessionId }: { sessionId: string | null }) {
   );
 }
 
-/** 总览面板：四块纵排，块间分隔线；整页不滚动（各块内部滚动），外层 p-0 贴齐页签体系 */
+/** 总览面板：计划（r10 todo 12，无绑定 goal 整块隐藏）+ 四块纵排，块间分隔线；
+ *  整页不滚动（各块内部滚动），外层 p-0 贴齐页签体系 */
 export function OverviewPanel({ sessionId }: { sessionId: string | null }) {
   return (
     <div data-testid="overview-panel" className="h-full overflow-y-auto">
+      <OverviewPlan sessionId={sessionId} />
       <OverviewTasks sessionId={sessionId} />
       <OverviewNotes />
       <OverviewStats sessionId={sessionId} />

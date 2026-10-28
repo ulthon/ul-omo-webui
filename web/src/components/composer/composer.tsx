@@ -514,9 +514,8 @@ export function Composer({
           // 零假象）；投递时服务端 user 帧经载荷身份收敛守卫直接入列。
           // 不动 streaming 态（排队回合同一 run，run 尾才 settle 一次——spike (b)-5）。
           useQueueStore.getState().addPending(sessionId, outgoingText, queueModeRef.current);
-          // 入队可见反馈（docs08-r6 任务 12 ②）：排队接受即轻提示，消除「点了没反应」观感。
-          // 只读回执 disposition（服务端真实结果），不影响排队语义本身。
-          showToast(t("composer.queuedFeedback"), "info");
+          // 入队可见反馈：r10 todo 7 起 queue_update 事件行入消息流（event-dispatch wire
+          // 层写入 sessionEvents，切页可回看），此处不再弹 toast（双通道去重）。
           if (opts.clearInputs) {
             // 附件路径行已随排队文本投递 → 附件条清空；图片未投递 → 保留待直发
             setAttachmentsBoth([]);
