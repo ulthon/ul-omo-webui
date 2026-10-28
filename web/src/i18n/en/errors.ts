@@ -109,4 +109,9 @@ export const errors = {
   uploadTooLarge: "Upload exceeds the size limit",
   // Built-in file management (task 9 save endpoint)
   fileChanged: "The file was modified (by the engine or another source)",
+  // Session rebind (r10 2026-10-27 batch task 18)
+  invalidOldPath: "Old directory path is invalid (must be an absolute path)",
+  invalidSessionIds: "sessionIds must be an array of non-empty string ids",
+  oldStoreNotFound: "No session store found under the old directory",
+  rebindConflict: "A session file with the same name already exists in this project",
 } as const;

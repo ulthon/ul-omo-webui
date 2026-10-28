@@ -112,4 +112,9 @@ export const errors = {
   uploadTooLarge: "上传超过大小上限",
   // 内置文件管理（routes-fs-write 任务 9 新增码）
   fileChanged: "文件已被修改（引擎或其他来源）",
+  // 会话 rebind（r10 2026-10-27 批次任务 18 新增码）
+  invalidOldPath: "旧目录路径无效（必须是绝对路径）",
+  invalidSessionIds: "sessionIds 必须为非空字符串 id 的数组",
+  oldStoreNotFound: "旧目录下没有会话库",
+  rebindConflict: "当前项目已存在同名会话文件",
 } as const;

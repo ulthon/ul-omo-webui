@@ -14,6 +14,7 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
 import { PROJECT_SORT_KV, type ProjectSortMode } from "@/components/session-list/global-list-data";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
+import { RebindSection } from "@/components/settings/rebind-section";
 import { TrafficSection } from "@/components/stats/traffic-section";
 import { ExtensionsSection } from "@/components/extensions/extensions-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
@@ -748,6 +749,7 @@ export function SettingsPage() {
           </h2>
           <ProjectPermissionSection />
           <ProjectManagementSection />
+          <RebindSection />
           <ModelsDiscoverSection />
         </section>
         <section aria-labelledby="settings-global-group" className="mt-6">

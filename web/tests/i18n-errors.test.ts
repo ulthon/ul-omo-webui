@@ -32,7 +32,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // insufficient_storage，合计 97。内置文件管理任务 5（上传下载端点）追加 1 码：
 // upload_too_large，合计 98。内置文件管理任务 9（保存端点）追加 1 码：file_changed
 // （409 携带 mtimeNs/size 兄弟字段，c.json 直构非 ApiError 构造，路由注释内以
-// ApiError(409, "file_changed", …) 形式留痕供扫描），合计 99。
+// ApiError(409, "file_changed", …) 形式留痕供扫描），合计 99。r10 2026-10-27 批次
+// 任务 18（会话 rebind）追加 4 码：invalid_old_path/invalid_session_ids/
+// old_store_not_found/rebind_conflict，合计 103。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -75,6 +77,7 @@ const SCANNED_CODES = [
   "invalid_limit",
   "invalid_model",
   "invalid_name",
+  "invalid_old_path",
   "invalid_path",
   "invalid_permission_preset",
   "invalid_pinned",
@@ -89,6 +92,7 @@ const SCANNED_CODES = [
   "invalid_request",
   "invalid_scope",
   "invalid_session",
+  "invalid_session_ids",
   "invalid_settings",
   "invalid_snippets",
   "invalid_source",
@@ -113,12 +117,14 @@ const SCANNED_CODES = [
   "not_started",
   "note_not_found",
   "nothing_to_compact",
+  "old_store_not_found",
   "path_escape",
   "project_not_found",
   "project_not_registered",
   "provider_not_compatible",
   "provider_not_found",
   "purge_requires_deleted",
+  "rebind_conflict",
   "root_not_deletable",
   "schedule_limit",
   "schedule_runner_unavailable",
@@ -178,12 +184,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（99 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（103 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(99);
+    expect(scanned).toHaveLength(103);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(99);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(103);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

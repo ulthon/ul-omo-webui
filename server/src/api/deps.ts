@@ -35,4 +35,10 @@ export interface ApiDeps {
    * agentDir()/models.json。测试注入临时文件路径，绝不触碰真实 agent 目录。
    */
   modelsPath?: string;
+  /**
+   * 引擎 agent 目录（r10 todo 18 会话 rebind）：缺省 agentDir()。组合根注入与
+   * spawn 同源的值（会话库 <agentDir>/sessions/<编码目录> 的定位依据）；测试注入
+   * 临时目录，绝不触碰真实 omo 会话库。
+   */
+  agentDir?: string;
 }

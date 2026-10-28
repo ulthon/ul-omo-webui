@@ -23,6 +23,7 @@ import { TitleGenService } from "./title-gen";
 import { EventBus, attachEventBus, publishPermissionsInvalidated } from "./engine/events";
 import { sseRoutes, setEventBus } from "./api/sse";
 import { createSessionRoutes } from "./api/routes-session";
+import { createRebindRoutes } from "./api/routes-rebind";
 import { createMetaRoutes } from "./api/routes-meta";
 import { createCommandsRoutes } from "./api/routes-commands";
 import { createProjectRoutes } from "./api/routes-project";
@@ -215,9 +216,12 @@ const deps = {
     onSessionDeleted: (sessionId: string) =>
       abandonSessionJobs(scheduleDir(agentDir()), sessionId, "abandoned: session deleted"),
   },
+  // 会话 rebind（r10 todo 18）：与 spawn 同源的 agent 目录（会话库定位依据）
+  agentDir: agentDir(),
 };
 app.route("/", createScheduleRoutes(scheduleDeps));
 app.route("/", createSessionRoutes(deps));
+app.route("/", createRebindRoutes(deps));
 app.route("/", createMetaRoutes(deps));
 app.route("/", createCommandsRoutes(deps));
 app.route("/", createProjectRoutes(deps));

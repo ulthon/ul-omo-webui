@@ -7,6 +7,17 @@ import { t } from "@/i18n/i18n";
 
 // ---------- 领域类型 ----------
 
+/** 会话 rebind 扫描行（r10 todo 18）：alreadyBound = 目标项目已存在同名文件（重复导入预警） */
+export interface RebindScanRow {
+  id: string;
+  name: string | null;
+  firstMessage: string;
+  messageCount: number;
+  created: string;
+  modified: string;
+  alreadyBound: boolean;
+}
+
 export interface ProjectMeta {
   projectPath: string;
   preferredModel: string | null;
@@ -815,6 +826,32 @@ export const api = {
    * 进行中的回合中断、会话态失效（下次访问懒加载重建）；SSE 为服务端事件流不受影响。 */
   async restartProject(project: string): Promise<{ ok: boolean; project: string }> {
     return request("/api/projects/restart", jsonInit("POST", { project }));
+  },
+
+  // ---- 会话 rebind（r10 todo 18：旧目录会话导入重绑）----
+
+  /** 扫描旧目录会话库预览：返回可导入会话行（alreadyBound = 目标项目已存在同名文件）。
+   * 旧目录不存在/空 → 空清单（不报错）；totalFiles 与 sessions 差值 = 损坏/非会话文件数。 */
+  async scanRebindSessions(
+    project: string,
+    oldPath: string,
+  ): Promise<{ project: string; oldPath: string; totalFiles: number; sessions: RebindScanRow[] }> {
+    return request("/api/sessions/rebind/scan", jsonInit("POST", { project, oldPath }));
+  },
+
+  /** 导入重绑：逐会话移动（header cwd 重写 + sidecars 迁移，引擎 --rebind 同语义）。
+   * 逐会话容错：冲突/找不到/损坏 → skipped 结构化报告，部分失败不是 HTTP 错误。 */
+  async rebindSessions(
+    project: string,
+    oldPath: string,
+    sessionIds: string[],
+  ): Promise<{
+    project: string;
+    oldPath: string;
+    imported: Array<{ id: string; path: string; disposition: "moved" | "already_bound" }>;
+    skipped: Array<{ id: string; reason: "not_found" | "corrupt_header" | "rebind_conflict"; message: string }>;
+  }> {
+    return request("/api/sessions/rebind", jsonInit("POST", { project, oldPath, sessionIds }));
   },
 
   // ---- 输入历史 / 设置 ----
