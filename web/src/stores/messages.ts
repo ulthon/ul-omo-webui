@@ -156,6 +156,12 @@ interface MessagesState {
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
 let sessionEventSeq = 0;
 
+/** 重放窗口 delta 快进缓冲（r10 todo 14）：切页回来重连时服务端以 replay_begin/done
+ *  包夹补发积压帧，逐帧 appendDelta 会从旧位置逐帧回放（渲染滞后根因）。窗口内的
+ *  流式 delta 不逐帧 set，按会话缓冲；replay_done（或建连清残窗）时一次性快进 flush
+ *  ——合并语义与逐帧应用等价，渲染只落最新一拍。前台流式（窗口外）零改动。 */
+const replayDeltaBuffer = new Map<string, DeltaPatch[]>();
+
 function emptySessionMessages(): SessionMessages {
   return {
     entries: [],
@@ -392,11 +398,19 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       case "thinking_delta": {
         const delta = typeof ev.delta === "string" ? ev.delta : typeof ev.text === "string" ? ev.text : null;
         if (delta === null) break;
-        get().appendDelta(sessionId, {
+        const patch: DeltaPatch = {
           contentIndex,
           kind: type === "text_delta" ? "text" : "thinking",
           text: delta,
-        });
+        };
+        // 重放窗口内积压快进（r10 todo 14）：不逐帧 set，缓冲待 replay_done 合并 flush
+        if (get().replayRecovering) {
+          const buf = replayDeltaBuffer.get(sessionId);
+          if (buf) buf.push(patch);
+          else replayDeltaBuffer.set(sessionId, [patch]);
+          break;
+        }
+        get().appendDelta(sessionId, patch);
         break;
       }
       // *_end / toolcall_*（执行事实以 tool_execution_start 为准）/ 未知类型：忽略
@@ -405,13 +419,67 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
     }
   };
 
+  /** 重放窗口 delta 快进 flush（r10 todo 14）：按 (contentIndex,kind) 保序合并缓冲的
+   *  delta，每会话一次 set 应用全部积压——最终内容与逐帧应用完全一致，无逐帧回放。
+   *  flush 在窗口标记复位前执行，flush 后到达的实时帧照常逐帧。 */
+  const flushReplayDeltas = () => {
+    if (replayDeltaBuffer.size === 0) return;
+    const batches = [...replayDeltaBuffer.entries()];
+    replayDeltaBuffer.clear();
+    set((s) => {
+      const bySession = { ...s.bySession };
+      for (const [sessionId, patches] of batches) {
+        const cur = bySession[sessionId];
+        if (!cur?.streamingMessage) continue; // 定格/清理后 flush：与逐帧路径同义 no-op
+        const msg = cur.streamingMessage;
+        const content = msg.content ? msg.content.slice() : [];
+        const order: string[] = [];
+        const byKey = new Map<string, DeltaPatch>();
+        for (const p of patches) {
+          const key = `${p.contentIndex}\u0000${p.kind}`;
+          const prev = byKey.get(key);
+          if (prev) prev.text += p.text;
+          else {
+            byKey.set(key, { ...p });
+            order.push(key);
+          }
+        }
+        for (const key of order) {
+          const p = byKey.get(key)!;
+          const idx = p.contentIndex;
+          const existing = content[idx];
+          if (existing === undefined) {
+            content[idx] =
+              p.kind === "text" ? { type: "text", text: p.text } : { type: "thinking", thinking: p.text };
+          } else if (existing.type !== p.kind) {
+            continue; // 类型不匹配且已存在：容错忽略（同逐帧路径）
+          } else if (p.kind === "text") {
+            content[idx] = { ...existing, text: (typeof existing.text === "string" ? existing.text : "") + p.text };
+          } else {
+            content[idx] = {
+              ...existing,
+              thinking: (typeof existing.thinking === "string" ? existing.thinking : "") + p.text,
+            };
+          }
+        }
+        bySession[sessionId] = { ...cur, streamingMessage: { ...msg, content } };
+      }
+      return { bySession };
+    });
+  };
+
   return {
     bySession: {},
     replayRecovering: false,
 
     beginReplayRecovery: () => set({ replayRecovering: true }),
 
-    endReplayRecovery: () => set({ replayRecovering: false }),
+    endReplayRecovery: () => {
+      // r10 todo 14：窗口关闭即快进 flush（replay_done / 建连清残窗两路都收敛于此），
+      // 先应用积压再复位标记——flush 后到达的实时帧照常逐帧
+      flushReplayDeltas();
+      set({ replayRecovering: false });
+    },
 
     setCompacting: (sessionId, compacting) => {
       // 兑底布防/拆防先于 set：false 路径下 timer 里的 setCompacting(false) 不可重入
@@ -829,6 +897,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         const bySession = { ...s.bySession };
         delete bySession[sessionId];
         disarmCompactingFallback(sessionId);
+        replayDeltaBuffer.delete(sessionId); // 重放缓冲随会话清理拆除
         return { bySession };
       }),
 
