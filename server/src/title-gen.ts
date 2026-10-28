@@ -154,6 +154,66 @@ export function readSessionHead(sessionPath: string): SessionHeadMessages | null
   return parseSessionHead(content);
 }
 
+/** 尾部读取字节上限（约 2000 tokens，计划 todo 2 钦定）：取会话内容末段做标题素材 */
+export const SESSION_TAIL_CHARS = 8000;
+
+export interface SessionTailMessages {
+  /** 磁盘 header id（= durable id，与 readSessionHead 同源） */
+  durableId: string;
+  /** 尾部最后一条非空 user 消息文本；null = 尾部无 user 消息 */
+  userText: string | null;
+  /** 尾部最后一条含文本的 assistant 消息文本；null = 无 */
+  assistantText: string | null;
+}
+
+/** 解析会话 jsonl 尾部：durable id 取自 header（header 固定在文件首部，全量扫描只为取 id）；
+ * user/assistant 文本取尾部约 SESSION_TAIL_CHARS 字符内的最后一条非空。缺 header 返回 null。
+ * 尾段切分产生的首条半行/损坏行按解析失败跳过。 */
+export function parseSessionTail(content: string): SessionTailMessages | null {
+  let durableId: string | null = null;
+  for (const line of content.split("\n")) {
+    if (!line.includes('"type":"session"') && !line.includes('"type": "session"')) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: unknown; id?: unknown };
+      if (entry.type === "session" && typeof entry.id === "string" && entry.id) durableId = entry.id;
+    } catch {
+      continue;
+    }
+  }
+  if (!durableId) return null;
+  const tail = content.length > SESSION_TAIL_CHARS ? content.slice(-SESSION_TAIL_CHARS) : content;
+  let userText: string | null = null;
+  let assistantText: string | null = null;
+  for (const line of tail.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue; // 尾段首条半行/损坏行跳过
+    }
+    if (entry.type !== "message") continue;
+    const message = entry.message as { role?: unknown; content?: unknown } | undefined;
+    if (!message || typeof message.role !== "string") continue;
+    const text = extractEntryText(message.content);
+    if (!text) continue;
+    if (message.role === "user") userText = text;
+    else if (message.role === "assistant") assistantText = text;
+  }
+  return { durableId, userText, assistantText };
+}
+
+/** 会话文件尾部直读（缺失/不可读返回 null，不抛） */
+export function readSessionTail(sessionPath: string): SessionTailMessages | null {
+  let content: string;
+  try {
+    content = readFileSync(sessionPath, "utf8");
+  } catch {
+    return null;
+  }
+  return parseSessionTail(content);
+}
+
 // ---------------------------------------------------------------- prompt 与 HTTP
 
 export function buildTitlePrompt(
@@ -303,7 +363,8 @@ export class TitleGenService {
   async generateForSession(sessionId: string, language: TitleLanguage = "zh"): Promise<string> {
     const row = await this.deps.resolveSessionRow(sessionId);
     if (!row) throw new Error(`会话不存在：${sessionId}`);
-    const head = readSessionHead(row.path);
+    // 计划 todo 2：手动生成取尾部（长会话标题应反映最近内容），自动路径仍读首部
+    const head = readSessionTail(row.path);
     if (!head) throw new Error(`会话文件不可读或未落盘：${row.path}`);
     if (!head.userText) throw new Error("会话还没有用户消息，无法生成标题");
     if (this.inFlight.has(head.durableId)) throw new Error("该会话标题生成进行中");
@@ -317,7 +378,11 @@ export class TitleGenService {
     }
   }
 
-  private callModel(head: SessionHeadMessages, timeoutMs: number, language: TitleLanguage): Promise<string> {
+  private callModel(
+    head: Pick<SessionHeadMessages, "durableId" | "userText" | "assistantText">,
+    timeoutMs: number,
+    language: TitleLanguage,
+  ): Promise<string> {
     const { provider, bareModel } = splitTitleModel(this.model);
     const apiKey = readApiKey(this.deps.agentDir, provider);
     if (!apiKey) throw new Error(`凭证缺失：${this.deps.agentDir}/auth.json 无 ${provider} 的 key`);

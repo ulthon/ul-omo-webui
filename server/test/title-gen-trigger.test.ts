@@ -20,6 +20,7 @@ import { createSessionRoutes, resolveSessionTitle } from "../src/api/routes-sess
 import { openMetaDb, type MetaDb } from "../src/db/meta";
 import {
   EN_TITLE_MAX,
+  SESSION_TAIL_CHARS,
   TITLE_LANGUAGE_KV_KEY,
   TITLE_PROMPTS,
   TitleGenService,
@@ -607,5 +608,76 @@ describe("EngineRuntimeRegistry.onRoundSettled 接线", () => {
     expect(alias).toBeNull(); // handle 非 API 身份（durable 会话未注册别名）
     expect(await h.registry.resolveSessionRow("nope")).toBeNull();
     rmSync(h.projectPath, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------- r10 todo 2：手动路径取尾 / 自动路径仍取首
+
+/** 首尾话题不同的长会话：header + 开头苹果主题 + 超尾窗填充 + 结尾香蕉主题 */
+function writeLongHeadTailJsonl(dir: string, name: string, durableId: string): string {
+  const mk = (id: string, role: string, text: string) =>
+    JSON.stringify({ type: "message", id, parentId: null, timestamp: "t", message: { role, content: [{ type: "text", text }] } });
+  const filler = mk("f", "user", "填充内容。".repeat(400));
+  const pad = Math.ceil((SESSION_TAIL_CHARS * 2) / filler.length);
+  const lines = [
+    JSON.stringify({ type: "session", version: 3, id: durableId, timestamp: "2026-10-11T00:00:00.000Z", cwd: dir }),
+    mk("u0", "user", "开头主题苹果"),
+    mk("a0", "assistant", "苹果是水果"),
+  ];
+  for (let i = 0; i < pad; i++) lines.push(filler);
+  lines.push(mk("u9", "user", "结尾主题香蕉"), mk("a9", "assistant", "香蕉也是水果"));
+  const path = join(dir, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, lines.join("\n"));
+  return path;
+}
+
+function promptOf(call: FetchCall): string {
+  const body = JSON.parse((call.init as RequestInit).body as string) as { messages: Array<{ content: string }> };
+  return body.messages[0].content;
+}
+
+describe("r10 todo 2（手动标题取尾）", () => {
+  test("手动路径：prompt 含尾部话题、不含开头话题；结果仍写 renamedTitle", async () => {
+    const dir = tmpDir("tg-tail-");
+    const path = writeLongHeadTailJsonl(dir, "long.jsonl", "dur-long");
+    const { service, meta, fetchCalls } = makeService({ row: { path } });
+    const title = await service.generateForSession("whatever");
+    expect(title).toBe("并发去重与幂等写入");
+    // renamedTitle 经 getSessionMeta 读取（meta 无独立 getter）
+    expect(meta.getSessionMeta("dur-long")?.renamedTitle).toBe("并发去重与幂等写入");
+    const prompt = promptOf(fetchCalls[0]);
+    expect(prompt).toContain("结尾主题香蕉");
+    expect(prompt).not.toContain("开头主题苹果");
+    expect(prompt).not.toContain("苹果");
+  });
+
+  test("自动路径不变：仍读首部，prompt 含开头话题", async () => {
+    const dir = tmpDir("tg-auto-");
+    const path = writeLongHeadTailJsonl(dir, "long.jsonl", "dur-auto");
+    const { service, fetchCalls } = makeService({ row: { path } });
+    await service.handleRoundSettled("/proj", settle("alias", path), "agent_end");
+    expect(fetchCalls).toHaveLength(1);
+    const prompt = promptOf(fetchCalls[0]);
+    expect(prompt).toContain("开头主题苹果");
+    expect(prompt).not.toContain("结尾主题香蕉");
+  });
+
+  test("手动路径空会话/无 user 消息：降级报错不崩", async () => {
+    const dir = tmpDir("tg-empty-");
+    const emptyPath = join(dir, "empty.jsonl");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(emptyPath, "");
+    const { service } = makeService({ row: { path: emptyPath } });
+    await expect(service.generateForSession("x")).rejects.toThrow("会话文件不可读或未落盘");
+    const onlyAssistant = join(dir, "no-user.jsonl");
+    writeFileSync(
+      onlyAssistant,
+      JSON.stringify({ type: "session", version: 3, id: "dur-nu", timestamp: "t", cwd: dir }) +
+        "\n" +
+        JSON.stringify({ type: "message", id: "a", parentId: null, timestamp: "t", message: { role: "assistant", content: [{ type: "text", text: "只有助手" }] } }),
+    );
+    const svc2 = makeService({ row: { path: onlyAssistant } });
+    await expect(svc2.service.generateForSession("x")).rejects.toThrow("会话还没有用户消息");
   });
 });

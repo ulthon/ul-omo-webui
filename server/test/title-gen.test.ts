@@ -5,6 +5,8 @@ import {
   buildTitlePrompt,
   EN_TITLE_MAX,
   parseSessionHead,
+  parseSessionTail,
+  SESSION_TAIL_CHARS,
   resolveTitleLanguage,
   sanitizeTitle,
   TITLE_LANGUAGE_KV_KEY,
@@ -169,5 +171,68 @@ describe("resolveTitleLanguage（env 覆盖 > meta_kv > 缺省 zh）", () => {
   test("不传 meta 也可用（纯 env/缺省形态）", () => {
     withEnv("en", () => expect(resolveTitleLanguage()).toBe("en"));
     withEnv(undefined, () => expect(resolveTitleLanguage()).toBe("zh"));
+  });
+});
+
+// ---------------------------------------------------------------- parseSessionTail（r10 todo 2：手动标题取尾）
+
+describe("parseSessionTail", () => {
+  /** 拼长会话：header + 开头主题 + 超限填充 + 尾部主题（首尾不同话题） */
+  function longSessionJsonl(): string {
+    const mk = (id: string, role: string, text: string) =>
+      JSON.stringify({ type: "message", id, parentId: null, timestamp: "t", message: { role, content: [{ type: "text", text }] } });
+    const filler = mk("f", "user", "填充内容。".repeat(400));
+    // 填充到明显超过 SESSION_TAIL_CHARS，确保开头主题被切出尾窗
+    const pad = Math.ceil((SESSION_TAIL_CHARS * 2) / filler.length);
+    const lines = [JSON.stringify(header), mk("u0", "user", "开头主题苹果"), mk("a0", "assistant", "苹果是水果")];
+    for (let i = 0; i < pad; i++) lines.push(filler);
+    lines.push(mk("u9", "user", "结尾主题香蕉"), mk("a9", "assistant", "香蕉也是水果"));
+    return lines.join("\n");
+  }
+
+  test("长会话：取尾部话题，不含开头话题；durable id 仍取 header", () => {
+    const content = longSessionJsonl();
+    expect(content.length).toBeGreaterThan(SESSION_TAIL_CHARS * 1.5);
+    const tail = parseSessionTail(content);
+    expect(tail?.durableId).toBe("durable-1");
+    expect(tail?.userText).toBe("结尾主题香蕉");
+    expect(tail?.assistantText).toBe("香蕉也是水果");
+    const prompt = buildTitlePrompt(tail?.userText ?? "", tail?.assistantText ?? null);
+    expect(prompt).toContain("结尾主题香蕉");
+    expect(prompt).not.toContain("开头主题苹果");
+    expect(prompt).not.toContain("苹果");
+  });
+
+  test("短会话（未超尾窗）：整段即尾窗，取最后一条 user/assistant 文本", () => {
+    const mk = (id: string, role: string, text: string) =>
+      JSON.stringify({ type: "message", id, parentId: null, timestamp: "t", message: { role, content: [{ type: "text", text }] } });
+    const content = [JSON.stringify(header), mk("u1", "user", "第一问"), mk("u2", "user", "第二问"), mk("a1", "assistant", "第一答")].join("\n");
+    const tail = parseSessionTail(content);
+    expect(tail?.userText).toBe("第二问");
+    expect(tail?.assistantText).toBe("第一答");
+  });
+
+  test("空内容 / 仅损坏行 / 缺 header：返回 null 不抛", () => {
+    expect(parseSessionTail("")).toBeNull();
+    expect(parseSessionTail("{broken")).toBeNull();
+    expect(parseSessionTail(JSON.stringify({ type: "message", id: "u", parentId: null, timestamp: "t", message: { role: "user", content: "x" } }))).toBeNull();
+  });
+
+  test("尾窗切出的首条半行被跳过，不报错", () => {
+    const full = longSessionJsonl();
+    const cut = full.slice(0, full.length - 10); // 制造真实半行场景
+    const tail = parseSessionTail(cut + "\n");
+    expect(tail?.durableId).toBe("durable-1");
+    expect(tail?.userText).not.toBeNull();
+  });
+
+  test("toolCall 无文本 assistant 不作为尾部素材", () => {
+    const toolCallOnly = JSON.stringify({ type: "message", id: "a", parentId: null, timestamp: "t", message: { role: "assistant", content: [{ type: "toolCall", id: "c", name: "todo", arguments: {} }] } });
+    const mk = (id: string, role: string, text: string) =>
+      JSON.stringify({ type: "message", id, parentId: null, timestamp: "t", message: { role, content: [{ type: "text", text }] } });
+    const content = [JSON.stringify(header), mk("u", "user", "问题"), toolCallOnly].join("\n");
+    const tail = parseSessionTail(content);
+    expect(tail?.userText).toBe("问题");
+    expect(tail?.assistantText).toBeNull();
   });
 });
