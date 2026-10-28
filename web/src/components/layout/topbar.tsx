@@ -24,6 +24,8 @@ import {
 } from "@/components/session-list/global-list-data";
 import { definedTagKeys, type TagDefs } from "@/components/session-list/tag-data";
 import { TagBadges } from "@/components/session-list/tag-badge";
+import { formatRelative } from "@/components/session-list/session-item";
+import { RowPinnedBadge, RowStatusDot, RowUnreadBadge } from "@/components/session-list/row-bits";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
 import { ContextWaterRing } from "@/components/layout/context-ring";
@@ -153,10 +155,16 @@ export function SessionSwitcherSheet({
               className="flex min-h-11 w-full flex-col justify-center gap-0.5 px-4 py-1.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50 active:bg-accent"
             >
               <span className="flex min-w-0 items-center gap-1.5">
+                <RowStatusDot session={s} />
+                {s.pinned && <RowPinnedBadge />}
                 <span className="min-w-0 truncate text-base font-medium leading-snug" title={s.title}>
                   {s.title}
                 </span>
                 <TagBadges session={s} definedKeys={definedKeys} defs={tagDefs} />
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <span className="text-xs text-muted-foreground/70">{formatRelative(s.modified)}</span>
+                  <RowUnreadBadge count={s.unreadCount} />
+                </span>
               </span>
               <span
                 className="block w-full min-w-0 truncate text-xs leading-snug text-muted-foreground"
