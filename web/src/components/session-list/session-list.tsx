@@ -622,13 +622,23 @@ export function SessionList() {
           lg 档维持原 p-2/space-y-2；"新建会话"固定在 currentProject 创建
           （分组头 "+" 才是跨项目落点）。 */}
       <div className="shrink-0 space-y-1.5 border-b px-1.5 py-1.5 lg:space-y-2 lg:px-2 lg:py-2">
+        {/* r10 todo 4：手机档新建会话收成 size-9 图标钮，与搜索/批量同行防误触；
+            lg 档保持原三行堆叠（全宽钮/搜索/批量）。 */}
+        <div className="flex items-center gap-1.5 lg:flex-col lg:items-stretch lg:gap-0 lg:space-y-2">
         {/* 点击时刻实时读 currentProject：跨项目点击后 300ms 内 React 提交可能未完成，
             render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
-        <Button size="sm" className="h-11 w-full gap-1 text-xs lg:h-7" disabled={creating || !currentProject} onClick={() => void createSession(useUiStore.getState().currentProject)}>
+        <Button
+          size="sm"
+          aria-label={t("sessionList.list.newSession")}
+          data-testid="new-session-btn"
+          className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:w-full lg:justify-start"
+          disabled={creating || !currentProject}
+          onClick={() => void createSession(useUiStore.getState().currentProject)}
+        >
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          {t("sessionList.list.newSession")}
+          <span className="hidden lg:inline">{t("sessionList.list.newSession")}</span>
         </Button>
-        <div className="relative">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchInput}
@@ -727,6 +737,7 @@ export function SessionList() {
             </DropdownMenu>
           </div>
         )}
+        </div>
         {/* 已选标签 chips（todo 11）：点击移除（OR 语义下缩小命中集） */}
         {tagFilter.length > 0 && (
           <div className="flex flex-wrap gap-1" data-testid="tag-filter-chips">
