@@ -25,6 +25,7 @@ import { agentDir } from "../config";
 import { convertImagesToAttachments, modelSupportsImages, referenceizeEntries } from "./image-routing";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { sessionBackgroundRunning } from "./background-tasks";
+import { readSessionPreview } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
@@ -198,6 +199,9 @@ type SessionListRow = ReturnType<typeof mergeSessionRow> & {
   active: boolean | null;
   /** 服务端三态真相源（docs08-r6 任务 11）：running|waiting|idle；引擎未就绪为 null */
   runState: ServerSessionRunState | null;
+  /** 切换 sheet 最后消息预览（r10 todo 8）：尾读 jsonl 最后一条 user/assistant 文本
+   *  截 60 字；无消息/文件缺失为空串（预览只在 sheet 行消费，桌面列表不渲染） */
+  preview: string;
 };
 
 /** 置顶优先，其余按最后活动时间倒序（todo 15 排序语义；聚合模式跨项目全局比较） */
@@ -249,7 +253,8 @@ async function listProjectSessions(
   // （旧 fake）退回 peekActiveSessionPaths——active 照发，runState 恒 null。
   const runStates = await deps.engines.peekRunStates?.(project);
   const activePaths = runStates ? [...runStates.keys()] : await deps.engines.peekActiveSessionPaths(project);
-  return sessions.map((s) => {
+  const rows: SessionListRow[] = [];
+  for (const s of sessions) {
     const probed = runStates ? (runStates.get(s.path) ?? "idle") : null;
     // 第四态叠加（任务 12）：三源探询不在 running/waiting（回合级真相源优先）时读会话
     // jsonl 判后台任务；纯磁盘派生（mtime+size 缓存摊销，服务重启重读即恢复）。
@@ -259,12 +264,11 @@ async function listProjectSessions(
         : sessionBackgroundRunning(s.path)
           ? "background_running"
           : probed;
-    return {
-      ...s,
-      active: activePaths ? activePaths.includes(s.path) : null,
-      runState,
-    };
-  });
+    // 最后消息预览（r10 todo 8）：尾读 + LRU 缓存；文件缺失/损坏 → 空串不炸列表
+    const preview = await readSessionPreview(s.path, s.id);
+    rows.push({ ...s, preview, active: activePaths ? activePaths.includes(s.path) : null, runState });
+  }
+  return rows;
 }
 
 export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService }): Hono {

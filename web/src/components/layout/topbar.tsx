@@ -171,6 +171,13 @@ export function SessionSwitcherSheet({
               >
                 {basename(s.project)}
               </span>
+              {/* 最后消息预览（r10 todo 8）：仅 sheet 行渲染，单行截断；无消息不渲染
+                  空行（桌面会话列表不出现预览，session-item 不消费该字段） */}
+              {s.preview && (
+                <span data-testid="sheet-session-preview" className="block w-full min-w-0 truncate text-xs leading-snug text-muted-foreground" title={s.preview}>
+                  {s.preview}
+                </span>
+              )}
             </button>
           ))}
         </div>

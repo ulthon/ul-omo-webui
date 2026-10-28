@@ -64,6 +64,9 @@ export interface SessionListItem {
   tags?: Array<{ scope: string; name: string }>;
   /** 挂载整替乐观锁（r9 F1-B1）：tags 内容 sha1 hex，setSessionTags 时回传 baseRevision */
   tagsRevision?: string;
+  /** 切换 sheet 最后消息预览（r10 todo 8）：服务端尾读最后一条 user/assistant 文本截
+   *  60 字；无消息/旧服务端响应时缺席。仅 sheet 行消费，桌面列表不渲染 */
+  preview?: string;
 }
 
 /** 计划执行进度快照（r10 todo 12，GET /api/sessions/:id/plan-progress）：
