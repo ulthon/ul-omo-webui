@@ -28,7 +28,6 @@ import { formatRelative } from "@/components/session-list/session-item";
 import { RowPinnedBadge, RowStatusDot, RowUnreadBadge } from "@/components/session-list/row-bits";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
-import { ContextWaterRing } from "@/components/layout/context-ring";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -351,11 +350,11 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       )}
 
       {isMobile ? (
-        /* 手机档右簇（A3+A6）：水位环（无会话/无数据不挂载）→ 右栏入口 → 设置+连接点。
-           模型下拉手机档退役（任务 7 "更多"ModelChip 承接，中间态无模型切换入口为
-           计划内顺序状态） */
+        /* 手机档右簇（r10 todo 6 减负后）：右栏入口钮 + 连接点。水位环迁输入框下方
+           细条（context-usage-bar），文件/设置入口迁汉堡抽屉底部菜单（shell.tsx
+           AppSidebar），顶栏仅剩汉堡+右栏钮 2 图标（GAP-6）。模型下拉手机档退役
+           （任务 7 "更多"ModelChip 承接，中间态无模型切换入口为计划内顺序状态） */
         <div className="flex shrink-0 items-center gap-0.5">
-          {selectedSession && <ContextWaterRing sessionId={selectedSession.id} />}
           <Button
             variant="ghost"
             size="icon"
@@ -365,29 +364,6 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             onClick={onToggleTodoPanel}
           >
             <ListTodo className="size-5" />
-          </Button>
-          {/* 快捷键帮助（docs08-2026-10-23-24 任务 16）：手机档无键盘入口，帮助钮仅桌面档保留 */}
-          {/* 文件管理入口（builtin-file-management 任务 1）：打开独立全屏文件管理页 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-11"
-            aria-label={t("files.entry.openAria")}
-            data-testid="files-button"
-            onClick={() => setFilesPageOpen(true)}
-          >
-            <FolderOpen className="size-5" />
-          </Button>
-          {/* 设置入口（r9 2026-10-26 批次任务 9）：打开独立全屏设置页。size-11=44px 触控达标 */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-11"
-            aria-label={t("login.topbar.settings")}
-            data-testid="settings-button"
-            onClick={() => setSettingsPageOpen(true)}
-          >
-            <Settings className="size-5" />
           </Button>
           <span
             className={`mr-1 size-2 rounded-full ${connection === "online" ? "bg-emerald-500" : "bg-amber-500"}`}

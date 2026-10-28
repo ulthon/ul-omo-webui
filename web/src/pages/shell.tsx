@@ -13,7 +13,7 @@
 // oxlint-disable react/only-export-components -- useModelShortcuts 是与 shell 布局强耦合的
 // 行为 hook，独立成文件只为绕 fast-refresh 惯例反而增加间接层（todo-panel 同款处置）
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, CircleAlert, Copy, FolderOpen, GitBranch, X } from "lucide-react";
+import { Check, CircleAlert, Copy, FolderOpen, GitBranch, Settings, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
 import { connectEvents, disconnectEvents } from "@/lib/events";
@@ -195,6 +195,9 @@ export function useModelShortcuts(): void {
  * 免去拉起整页 AppShell（useModelShortcuts 同款 only-export-components 豁免已声明）。 */
 export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
   const t = useT();
+  const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
+  const setSettingsPageOpen = useUiStore((s) => s.setSettingsPageOpen);
+  const setFilesPageOpen = useUiStore((s) => s.setFilesPageOpen);
   const [width, setWidth] = useState(() => readSidebarWidthPreference());
   // 拖拽中的实时宽度镜像：pointerup 写记忆需要最终值，state 异步读不到
   const widthRef = useRef(width);
@@ -266,6 +269,35 @@ export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
         className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none lg:block"
       />
       <Sidebar />
+      {/* 手机抽屉底部菜单（r10 todo 6，闭合 GAP-6）：文件/设置入口自手机顶栏迁入，
+          点按先收抽屉再开对应全屏页（覆盖层 z-50 高于抽屉 z-40，不收也不遮挡，收起
+          防回退时抽屉意外残留）；桌面 lg+ 常驻侧栏不渲染，顶栏桌面分支零变化 */}
+      <div data-testid="drawer-menu" className="shrink-0 border-t p-2 lg:hidden">
+        <Button
+          variant="ghost"
+          className="h-11 w-full justify-start gap-2 px-2"
+          data-testid="drawer-files"
+          onClick={() => {
+            setDrawerOpen(false);
+            setFilesPageOpen(true);
+          }}
+        >
+          <FolderOpen className="size-5 shrink-0 text-muted-foreground" />
+          <span className="text-sm">{t("files.page.title")}</span>
+        </Button>
+        <Button
+          variant="ghost"
+          className="h-11 w-full justify-start gap-2 px-2"
+          data-testid="drawer-settings"
+          onClick={() => {
+            setDrawerOpen(false);
+            setSettingsPageOpen(true);
+          }}
+        >
+          <Settings className="size-5 shrink-0 text-muted-foreground" />
+          <span className="text-sm">{t("login.topbar.settings")}</span>
+        </Button>
+      </div>
     </aside>
   );}
 

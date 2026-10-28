@@ -28,6 +28,7 @@ import { PermissionQueue } from "./permission-queue";
 import { QuestionQueue } from "./question-queue";
 import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
+import { ContextUsageBar } from "@/components/layout/context-usage-bar";
 import { reconcilePendingState, zombieReconcileAndReset } from "./zombie-reset";
 
 /** 无选中会话时的空态提示 */
@@ -330,6 +331,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
             }}
             onAborted={() => setInterrupted(true)}
           />
+          {/* 手机档上下文水位细条（r10 todo 6）：顶栏水位环迁入，Composer 之下细条。
+              仅手机档渲染（桌面 StatusBar 语义不动，lg+ 零变化）；无数据自隐藏不占位 */}
+          {isMobile && <ContextUsageBar sessionId={sessionId} />}
         </div>
       </div>
       {!isMobile && <StatusBar sessionId={sessionId} />}

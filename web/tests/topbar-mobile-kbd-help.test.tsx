@@ -55,10 +55,11 @@ async function mountTopbar(mobile: boolean): Promise<HTMLDivElement> {
 }
 
 describe("任务16 手机档隐藏快捷键帮助图标", () => {
-  test("手机档渲染：快捷键帮助钮不存在", async () => {
+  test("手机档渲染：快捷键帮助钮不存在（r10 todo 6 后设置钮亦入抽屉，顶栏仅 2 图标）", async () => {
     const container = await mountTopbar(true);
     expect(container.querySelector('[data-testid="shortcuts-help-button"]')).toBeNull();
-    expect(container.querySelector('[data-testid="settings-button"]')).not.toBeNull();
+    // r10 todo 6：设置入口迁汉堡抽屉（shell.tsx AppSidebar drawer-settings），顶栏 DOM 消失
+    expect(container.querySelector('[data-testid="settings-button"]')).toBeNull();
     // 卸载（act 内清理，避免悬挂渲染）
     await act(async () => {});
   });

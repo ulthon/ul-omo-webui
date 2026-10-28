@@ -73,17 +73,32 @@ describe("builtin-file-management 任务 1：顶栏文件管理入口与占位�
     });
   });
 
-  test("手机档 files-button 存在，点击后 filesPageOpen 置 true", async () => {
+  test("手机档顶栏无 files-button，抽屉 drawer-files 承接入口（r10 todo 6）", async () => {
     stubMatchMedia(true);
     const { container, root } = await mountTopbar();
-    const button = container.querySelector('[data-testid="files-button"]');
-    expect(button).not.toBeNull();
-    await act(async () => {
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(useUiStore.getState().filesPageOpen).toBe(true);
+    // 顶栏图标减负后手机档不再有 files-button
+    expect(container.querySelector('[data-testid="files-button"]')).toBeNull();
     await act(async () => {
       root.unmount();
+    });
+    // 入口迁抽屉底部菜单：点击置位 filesPageOpen
+    const { AppSidebar } = await import("@/pages/shell");
+    useUiStore.setState({ drawerOpen: true });
+    const dcontainer = document.createElement("div");
+    document.body.appendChild(dcontainer);
+    const droot = createRoot(dcontainer);
+    await act(async () => {
+      droot.render(createElement(AppSidebar, { drawerOpen: true }));
+    });
+    const drawerFiles = dcontainer.querySelector('[data-testid="drawer-files"]');
+    expect(drawerFiles).not.toBeNull();
+    await act(async () => {
+      drawerFiles.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useUiStore.getState().filesPageOpen).toBe(true);
+    expect(useUiStore.getState().drawerOpen).toBe(false);
+    await act(async () => {
+      droot.unmount();
     });
   });
 

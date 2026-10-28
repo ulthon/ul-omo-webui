@@ -4,16 +4,11 @@
 // running=streaming||hasPendingPermission）：环色随运行态变化 + 环旁小脉冲点；点环弹
 // Popover 明细（tok/成本/输入输出/缓存/上下文/运行态），手机档承接退役状态栏的全部信息。
 // 无会话由宿主控制不挂载；无 contextUsage 数据（接口失败/无上下文窗口）整环隐藏。
-import { useEffect, useRef, useState } from "react";
-import { api, shortModelName } from "@/lib/api";
-import { useMessagesStore } from "@/stores/messages";
-import { usePermissionsStore } from "@/stores/permissions";
-import { useSessionsStore } from "@/stores/sessions";
-import { useUiStore } from "@/stores/ui";
+import { shortModelName } from "@/lib/api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { formatCost, formatTokens, toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
-import { onUsageRefresh } from "@/components/chat/compact-run";
+import { formatCost, formatTokens } from "@/components/chat/status-bar-data";
 import { calibrateContextPercent } from "./context-percent";
+import { useContextUsage } from "./use-context-usage";
 import { useT } from "@/i18n/i18n";
 
 const RADIUS = 15.5;
@@ -31,60 +26,12 @@ function DetailRow({ label, value, testid }: { label: string; value: string; tes
 }
 
 export function ContextWaterRing({ sessionId }: { sessionId: string }) {
-  const [stats, setStats] = useState<UsageStats | null>(null);
-  const runState = useSessionsStore((s) => s.runStates[sessionId]);
-  const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
-  const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
-  // 会话生效模型（docs08-r6 任务 8 ⑤⑥）：SSE model_changed / prompt 回执双路写入；
-  // 未知（null，未见回显）时 tooltip 不附模型短名、分母不校准（按引擎值）。
-  const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
-  const models = useUiStore((s) => s.models);
+  // 数据与刷新时机抽至 use-context-usage.ts（r10 todo 6）：与手机档水位细条同源同沿
+  const { stats, running, background, appliedModel, models } = useContextUsage(sessionId);
   const t = useT();
-  const running = streaming || hasPendingPermission;
-  // 第四态（任务 12）：后台任务运行中——环色/状态点独立于 running（紫），不与流式回合混同
-  const background = runState === "background_running";
   const appliedModelWindow = appliedModel
     ? (models.find((m) => `${m.provider}/${m.id}` === appliedModel)?.contextWindow ?? null)
     : null;
-
-  // 快照：会话打开拉取（切换会话 props 变更即重拉；拉取期间保留旧值防闪烁）；
-  // 生效模型变更（setModel 落定）也重拉——contextUsage 分母随模型而变
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getUsage(sessionId)
-      .then((r) => {
-        if (!cancelled) setStats(toUsageStats(r.usage));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId, appliedModel]);
-
-  // 回合落定沿（running→idle / runState→idle 边沿）刷新权威快照（status-bar 先例）
-  const prevRunRef = useRef(runState);
-  useEffect(() => {
-    const prev = prevRunRef.current;
-    prevRunRef.current = runState;
-    if (runState !== "idle" || prev === "idle") return;
-    api
-      .getUsage(sessionId)
-      .then((r) => setStats(toUsageStats(r.usage)))
-      .catch(() => {});
-  }, [runState, sessionId]);
-
-  // 压缩等非回合路径的水位刷新广播（docs08-r5 任务 8）：立即重拉，环即时反映压缩效果
-  useEffect(
-    () =>
-      onUsageRefresh(() => {
-        api
-          .getUsage(sessionId)
-          .then((r) => setStats(toUsageStats(r.usage)))
-          .catch(() => {});
-      }),
-    [sessionId],
-  );
 
   // 无数据整环隐藏（接口失败 / 无 contextUsage）
   if (!stats || !stats.context) return null;
