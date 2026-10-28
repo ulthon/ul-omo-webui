@@ -93,26 +93,24 @@ interface ActiveHistory {
 let imageSeq = 0;
 let attachmentSeq = 0;
 
-// 多行自增高共用函数（r9：两处 textarea 共用）。先量后写：scrollHeight 已增长时
-// 直接写目标值；高度未变且文本未变短则零写入（消除旧实现每次击键写 auto 的
-// 塌缩中间态——历史流抖动根因）；仅文本变短时才同帧量 auto 后立即写回，不产生
-// 中间视觉布局。超过 max-h-48 由 CSS 截断并内部滚动。模块级定义供单测直测
+// 多行自增高共用函数（r9：两处 textarea 共用）。文本不变或增长：先量后写，
+// scrollHeight 已增长时直接写目标值，未变则零写入（消除旧实现每次击键写 auto 的
+// 塌缩中间态——历史流抖动根因）；文本变短：同帧量 auto 后立即写回真实内容高，
+// 不产生中间视觉布局。r10 任务 5：变短判定优先于“target≠cur 直写”——超 max-h
+// 钳制后 scrollHeight 被 clientHeight 钉在钳制高，清空/删字时直写只会残留钳制高
+// （浏览器探针实证：发送后残留 max-h-48 高度不回单行），必须 auto 重量才能量到
+// 真实内容高。超过 max-h-48 仍由 CSS 截断并内部滚动。模块级定义供单测直测
 const lastLenByEl = new WeakMap<HTMLTextAreaElement, number>();
 export function resizeComposerTextarea(el: HTMLTextAreaElement) {
-  const target = `${el.scrollHeight}px`;
-  const cur = el.style.height;
-  if (target !== cur) {
-    el.style.height = target;
-    lastLenByEl.set(el, el.value.length);
-    return;
-  }
   const prevLen = lastLenByEl.get(el);
   lastLenByEl.set(el, el.value.length);
-  if (prevLen === undefined || el.value.length >= prevLen) return;
-  el.style.height = "auto";
-  const shrunk = `${el.scrollHeight}px`;
-  if (shrunk !== cur) el.style.height = shrunk;
-  else el.style.height = cur;
+  if (prevLen !== undefined && el.value.length < prevLen) {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+    return;
+  }
+  const target = `${el.scrollHeight}px`;
+  if (target !== el.style.height) el.style.height = target;
 }
 
 export function Composer({
