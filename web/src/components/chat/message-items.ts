@@ -7,6 +7,7 @@
 // （实测 3282 条 glm-5.3 vs 2 条变体 id），model_change 条目才记变体 id——本模块单遍
 // 时间线重建各时段生效变体，5 级回退歧义绝不猜。
 import type { WireEntry, WireMessage } from "@/lib/api";
+import type { MessageKey } from "@/i18n/i18n";
 import { memoryMarkerOf, type MemoryMarker } from "@/lib/memory-entries";
 
 /** 压缩摘要标记（docs08-r6 任务 18 ③）：顶层 type:"compaction" 条目派生。字段形态
@@ -234,7 +235,27 @@ export type ChatListItem =
   | { key: string; kind: "loopGuardGroup"; loopGuardKind: LoopGuardKind; entryIds: string[] }
   | { key: string; kind: "compactionMarker"; marker: CompactionMarker }
   | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] }
-  | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice };
+  | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice }
+  | { key: string; kind: "sessionEvent"; line: SessionEventLine };
+
+/** 会话级事件行（r10 todo 7）：纯数据形态，messages store 持有（定义在此、store 以
+ *  type 引用，防 store→组件纯逻辑模块的反向值依赖）。渲染由 message-list 的
+ *  SessionEventLineBlock 承担。 */
+export interface SessionEventLine {
+  id: string;
+  summary: { key: MessageKey; vars?: Record<string, unknown> };
+}
+
+/** 事件行并入 items（r10 todo 7）：尾部追加（事件行 = 最新发生的事实，接在全部已
+ *  落库条目与流式气泡之后，按到达序即时间序）。无事件行时原样返回（引用不变，
+ *  订阅方不重算），同 mergeMemoryItems 口径。纯函数。 */
+export function mergeSessionEventLines(
+  items: ChatListItem[],
+  lines: readonly SessionEventLine[],
+): ChatListItem[] {
+  if (lines.length === 0) return items;
+  return [...items, ...lines.map((line) => ({ key: `session-event-${line.id}`, kind: "sessionEvent", line }) as const)];
+}
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
 function messageOf(entry: WireEntry & { id: string }): WireMessage | null {

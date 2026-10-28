@@ -11,7 +11,7 @@ import { useMessagesStore } from "@/stores/messages";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice } from "./message-items";
+import { mergeMemoryItems, mergeSessionEventLines, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
 import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
@@ -153,6 +153,19 @@ const NoticeCardBlock = memo(function NoticeCardBlock({ notice }: { notice: Refl
   );
 });
 
+/** 会话级事件行块（r10 todo 7）：排队交接/压缩完成/模型切换回执三类事件的流内系统行，
+ *  哑色细行非交互（与记忆标记块同族更轻，无可展开原文）。事件行是回执而非内容，
+ *  不设 data-kind 细分，断言以文案 key 为主。 */
+export const SessionEventLineBlock = memo(function SessionEventLineBlock({ line }: { line: SessionEventLine }) {
+  const t = useT();
+  return (
+    <div data-testid="session-event-line" className="my-0.5 flex min-h-7 items-center gap-1.5 px-1.5 py-1 text-xs text-muted-foreground">
+      <span aria-hidden className="size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+      <span className="min-w-0 break-words">{t(line.summary.key, line.summary.vars)}</span>
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
@@ -162,6 +175,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;
   if (item.kind === "memoryMarkerCluster") return <AcceptedTurnsClusterBlock markers={item.markers} />;
   if (item.kind === "noticeCard") return <NoticeCardBlock notice={item.notice} />;
+  if (item.kind === "sessionEvent") return <SessionEventLineBlock line={item.line} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 
@@ -190,7 +204,13 @@ export function MessageList({
   // entries 引用不变（流式 delta 只动 streamingMessage）时 memo 不重算，无标记会话
   // mergeMemoryItems 原样返回不建数组
   const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
-  const mergedItems = useMemo(() => mergeMemoryItems(items, entries ?? []), [items, entries]);
+  // 会话级事件行（r10 todo 7）：store 每会话事件行尾部并入（切页可见、重取不冲），
+  // 无事件行时 mergeSessionEventLines 原样返回不建数组
+  const sessionEvents = useMessagesStore((s) => s.bySession[sessionId]?.sessionEvents);
+  const mergedItems = useMemo(
+    () => mergeSessionEventLines(mergeMemoryItems(items, entries ?? []), sessionEvents ?? []),
+    [items, entries, sessionEvents],
+  );
   // 压缩进行态（docs08-r6 任务 18 ①）：compaction_start/progress 置位、end 消除
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
   const compacting = useMessagesStore((s) => s.bySession[sessionId]?.compacting ?? false);

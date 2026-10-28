@@ -10,7 +10,7 @@ import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
 import { parseTaskCompletionEntry } from "@/lib/task-completion";
-import { lastModelChangeOf } from "@/components/chat/message-items";
+import { lastModelChangeOf, type SessionEventLine } from "@/components/chat/message-items";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -70,6 +70,12 @@ export interface SessionMessages {
    *  消除；消息流顶部进行条与水位环区消费。end 帧丢失时由 COMPACTING_FALLBACK_MS
    *  超时兑底回落，进行条不永挂） */
   compacting: boolean;
+  /** 会话级事件行（r10 todo 7）：排队交接/压缩完成/模型切换回执三类 wire 事件的流内
+   *  回看行，event-dispatch 转译追加；独立于 entries（服务端真相不可写，引擎 JSONL 无
+   *  客户端写入口），全量重取 setEntries 不冲掉——切页回来可见，非 toast 瞬态 UI。
+   *  应用生命周期内存态：刷新后历史事件行随引擎既有条目面（model_change 条目/压缩
+   *  摘要块）口径回看，事件行本身不跨刷新。 */
+  sessionEvents: SessionEventLine[];
 }
 
 /** SSE wire 事件（{projectPath, event} 的 event 部分），结构从宽、按 type 甄别 */
@@ -139,7 +145,16 @@ interface MessagesState {
   /** 压缩进行位置位/消除（docs08-r6 任务 18 ①，event-dispatch 由 compaction_* 帧转译）；
    *  true 布防超时兑底（end 帧丢失自愈），false/会话清理拆防 */
   setCompacting(sessionId: string, compacting: boolean): void;
+  /** 会话级事件行追加（r10 todo 7，event-dispatch 由三类 wire 事件转译）：尾部入列，
+   *  重放窗口重复帧由调用侧守卫（与 autoStarted toast 同守卫） */
+  appendSessionEvent(
+    sessionId: string,
+    summary: SessionEventLine["summary"],
+  ): void;
 }
+
+/** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
+let sessionEventSeq = 0;
 
 function emptySessionMessages(): SessionMessages {
   return {
@@ -154,6 +169,7 @@ function emptySessionMessages(): SessionMessages {
     streamingEntryId: null,
     toolRuns: {},
     compacting: false,
+    sessionEvents: [],
   };
 }
 
@@ -386,6 +402,21 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
         if (cur.compacting === compacting) return s;
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, compacting } } };
+      });
+    },
+
+    appendSessionEvent: (sessionId, summary) => {
+      // 尾部入列（事件行即最新发生的事实）；id 单调递增作流内 key。重放窗口重复帧由
+      // 调用侧守卫（与 autoStarted toast 同守卫），此处不再按内容去重。
+      const id = `ev-${++sessionEventSeq}`;
+      set((s) => {
+        const cur = s.bySession[sessionId] ?? emptySessionMessages();
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...cur, sessionEvents: [...cur.sessionEvents, { id, summary }] },
+          },
+        };
       });
     },
 

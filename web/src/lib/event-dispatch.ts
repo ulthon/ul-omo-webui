@@ -73,6 +73,17 @@ export function isRunStateSweepArmed(): boolean {
  *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。 */
 const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
 
+/** 排队事件行文本片段（r10 todo 7）：取首行非空文本，超长截断加省略号；
+ *  行内摘要非全文，全文在投递后的 user 消息内可回看 */
+function queueSnippetOf(text: string): string {
+  const firstLine =
+    text
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l !== "") ?? "";
+  return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
+}
+
 /** question 帧的 questions 数组窄化（wire 从宽甄别：异形条目跳过，全空则不入队）；
  * 丢弃路径在 DEBUG_SSE 下留诊断（ul_omo_debug_sse=1 或 ?debugSse=1）——否则
  * question 帧静默消失无从排查（引擎侧 questions 载荷漂移的直接线索）。 */
@@ -412,7 +423,11 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       // 打扰且错过即丢；无 tone 或 info 维持底部轻提示。
       const message = typeof wire.message === "string" ? wire.message : "";
       const tone = (wire as { tone?: unknown }).tone;
-      if (message && tone !== "warning") useUiStore.getState().showToast(message, "info");
+      // 分级纠偏（r10 todo 7 方向①）：error 语义的 notify 走 error 常驻，
+      // 不再误入 info 3.2s 自动消失（warning 仍入列不弹，不变）
+      if (message && tone !== "warning") {
+        useUiStore.getState().showToast(message, tone === "error" ? "error" : "info");
+      }
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点
@@ -441,6 +456,21 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     const delivered = prevItems.length > 0 && prevItems.some((i) => !deliveredTexts.has(i.text));
     useQueueStore.getState().applyUpdate(sessionId, ordered);
     if (delivered) void useSessionsStore.getState().refreshSessions();
+    // 排队→引擎队列交接回执（r10 todo 7）：ordered 中新增（文本+档位不在前快照）即
+    // 入队完成，会话消息流追加事件行（任意标签页可见，对标 CLI 队列提示在流内）；
+    // 重放窗口不追加（与 autoStarted toast 同守卫），投递本身有 user 帧入列不重复报。
+    if (!useMessagesStore.getState().replayRecovering) {
+      const prevKeys = new Set(prevItems.map((i) => `${i.mode}\u0000${i.text}`));
+      for (const o of ordered) {
+        const text = typeof o?.text === "string" ? o.text : "";
+        const mode = o?.mode === "steer" ? "steer" : "followUp";
+        if (text === "" || prevKeys.has(`${mode}\u0000${text}`)) continue;
+        useMessagesStore.getState().appendSessionEvent(sessionId, {
+          key: "chat.sessionEvents.queued",
+          vars: { text: queueSnippetOf(text) },
+        });
+      }
+    }
   }
 
   // 模型切换可观测（docs08-r6 任务 8 ③④⑤⑥）：
@@ -457,7 +487,19 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       typeof m === "object" && m !== null && typeof m.provider === "string" && m.provider &&
       typeof m.id === "string" && m.id
     ) {
-      useSessionsStore.getState().setAppliedModel(sessionId, `${m.provider}/${m.id}`);
+      // 模型切换回执（r10 todo 7）：目标 ≠ 当前生效才追加事件行（同模型重申不入列），
+      // 重放窗口不追加（与 autoStarted toast 同守卫）。回执纯数据，文案渲染在组件层。
+      const target = `${m.provider}/${m.id}`;
+      if (
+        target !== (useSessionsStore.getState().appliedModels[sessionId] ?? null) &&
+        !useMessagesStore.getState().replayRecovering
+      ) {
+        useMessagesStore.getState().appendSessionEvent(sessionId, {
+          key: "chat.sessionEvents.modelSwitch",
+          vars: { model: target },
+        });
+      }
+      useSessionsStore.getState().setAppliedModel(sessionId, target);
     }
   } else if (wire.type === "model_change_rejected") {
     const m = wire.model as { id?: unknown } | undefined;
@@ -487,6 +529,13 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     useMessagesStore.getState().setCompacting(sessionId, false);
     if (wire.status !== "declined") {
       broadcastUsageRefresh();
+      // 压缩完成事件行（r10 todo 7）：实际压缩发生即入流可回看；重放窗口不追加
+      // （与 autoStarted toast 同守卫）。手动 /compact 另有 toast 回执，事件行不冲突。
+      if (!useMessagesStore.getState().replayRecovering) {
+        useMessagesStore.getState().appendSessionEvent(sessionId, {
+          key: "chat.sessionEvents.compactionDone",
+        });
+      }
       // 摘要条目对账（docs08-r6 任务 19g）：压缩完成后渲染层依赖 type:"compaction"
       // 条目入列派生标记块，实时通道靠 entry_appended（stores 白名单放行）。帧丢失场景
       // （压缩期间断线重连 / 传输粘滞切换，F3 走查实录）下补拉一次 GET messages

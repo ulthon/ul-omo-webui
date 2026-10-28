@@ -280,6 +280,14 @@ export const chat = {
     marker: "Context compacted: {summary}",
     autoStarted: "Context nearing its limit; auto-compaction in progress…",
   },
+  // Session-level event lines (r10 todo 7): three in-stream system lines
+  // (translated in event-dispatch, held in messages store sessionEvents);
+  // {text} in queued is a first-line truncated snippet
+  sessionEvents: {
+    queued: "Queued: {text}",
+    compactionDone: "Context compaction completed",
+    modelSwitch: "Model switched to {model}",
+  },
   // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
   commands: {
     compactNote: "Compact context: direct call over the engine protocol (same entry point as the CLI)",

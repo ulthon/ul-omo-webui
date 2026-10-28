@@ -280,6 +280,13 @@ export const chat = {
     marker: "上下文已压缩：{summary}",
     autoStarted: "上下文接近上限，正在自动压缩…",
   },
+  // 会话级事件行（r10 todo 7）：三类事件流内系统行（event-dispatch 转译，
+  // messages store sessionEvents 持有）；queued 的 {text} 为首行截断片段
+  sessionEvents: {
+    queued: "已加入排队：{text}",
+    compactionDone: "上下文压缩完成",
+    modelSwitch: "模型已切换为 {model}",
+  },
   // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
   commands: {
     compactNote: "压缩上下文：引擎协议直调（与 CLI 同入口）",
