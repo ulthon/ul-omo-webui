@@ -1,6 +1,7 @@
 // todo 15 分发追加的单测：会话运行态（running/waiting/error）与未读计数递增。
 // 覆盖 event-dispatch 的 SSE → sessions store 链路：
-//   agent_start/end → running → 清除；extension_ui_request 四型 → waiting（setStatus/notify 噪音不算）；
+//   agent_start/end → running → 清除；extension_ui_request 四型与非四型（非 notify）method → waiting
+//   （r10 todo 9 收紧覆盖面：未知 method 可能是未渲染的阻塞请求；仅 notify 不算，计划 249）；
 //   error 尾缀类型 → error；message_end(assistant) 非查看态 → bumpUnread（选中且可见时不计）。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
@@ -52,16 +53,23 @@ describe("运行态（状态点数据源）", () => {
     expect(useSessionsStore.getState().runStates["durable-1"]).toBe("idle");
   });
 
-  test("四型 extension_ui_request → waiting；setStatus/notify 噪音不算", () => {
+  test("四型与非四型（非 notify）method → waiting；notify 不算（r10 todo 9 收紧覆盖面）", () => {
     for (const method of ["select", "confirm", "input", "editor"]) {
       dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method, id: "r1", sessionId: "rpc-1" }, "durable-1"), 1);
       expect(useSessionsStore.getState().runStates["durable-1"]).toBe("waiting");
       useSessionsStore.getState().clearRunState("durable-1");
     }
-    for (const method of ["setStatus", "notify", "setWidget"]) {
+    // r10 todo 9（docs/08:61 候选①）：非四型 method 可能是前端未渲染的阻塞请求
+    // （权限/对话框走新 method 名），状态点同落 waiting；回合落定与 30min 无活动
+    // 清扫兜底回落。notify 是已记录的 fire-and-forget（计划 249，不应答不阻塞回合），
+    // 不落——否则运行中蓝点被误降琥珀。
+    for (const method of ["setStatus", "setWidget", "omo_custom_dialog"]) {
       dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method, id: "r2", sessionId: "rpc-1" }, "durable-1"), 2);
-      expect(useSessionsStore.getState().runStates["durable-1"]).toBeUndefined();
+      expect(useSessionsStore.getState().runStates["durable-1"]).toBe("waiting");
+      useSessionsStore.getState().clearRunState("durable-1");
     }
+    dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method: "notify", id: "r3", sessionId: "rpc-1" }, "durable-1"), 3);
+    expect(useSessionsStore.getState().runStates["durable-1"]).toBeUndefined();
   });
 
   test("error 尾缀 wire 类型 → error（容错识别）", () => {
