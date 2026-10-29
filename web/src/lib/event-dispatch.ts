@@ -22,7 +22,7 @@ import { useMessagesStore, type WireEvent } from "@/stores/messages";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
-import { useSessionsStore } from "@/stores/sessions";
+import { BACKGROUND_STALE_MS, RUNNING_STALE_MS, useSessionsStore, WAITING_STALE_MS } from "@/stores/sessions";
 import { useTasksStore } from "@/stores/tasks";
 import { useUiStore } from "@/stores/ui";
 
@@ -38,6 +38,13 @@ const reconciling = new Set<string>();
 
 /** 进行中的回前台运行态对账（r10 todo 9，单飞去重；resetDispatchState 复位） */
 let visibleReconcileInFlight = false;
+
+/** wire handle → durable id 学习账本（r11 todo 12b 收尾帧归属）：任何同时携带 wire
+ * sessionId 与信封 durableSessionId 的帧都是一次映射观察（服务端 handleToDurable
+ * 回填后的帧形态）。回落路由：信封缺席时按已观察映射解析真实归属，收尾帧
+ * （agent_end/settled/idle）才能落到真实会话键上清态，而非裸写 holder 别名键。
+ * 游标回退（引擎/服务重启，handle 全换）时清空，防跨纪元旧映射误归属。 */
+const wireToDurable = new Map<string, string>();
 
 /** 任务 9：gap 对账分级小缺口阈值——与 r7 TAIL_WINDOW / t8 REPLAY_TAIL_WINDOW
  *（=200）对齐：gap 宽度不超过该值时帧只是被环形缓冲淘汰的近期事件，REST
@@ -154,6 +161,7 @@ export function resetDispatchState(): void {
   refetching.clear();
   reconciling.clear();
   visibleReconcileInFlight = false;
+  wireToDurable.clear();
   disarmRunStateSweep();
 }
 
@@ -274,6 +282,26 @@ export function resyncQueues(): void {
   }
 }
 
+/** 服务端缺席/null 时的陈旧判定兑底（r11 todo 12a）：对账「服务端缺席不动」是纠偏
+ * 盲区——收尾帧（agent_end/settled/question_resolved）丢失后本地 running/waiting
+ * 永无权威校准，状态点/输入框提示单点挂死。对本地 active 态叠加 runStateAt 账本
+ * 陈旧判定（阈值与周期清扫同源：running 10min / waiting 30min / background 60min），
+ * 超阈值回落 idle。账本缺时刻或阈值内不动——活跃会话的任何帧都在刷新账本
+ * （touchRunStateAt），永不被对账节拍误杀。对账兜底复用既有对账节拍（游标回退
+ * resync / 回前台 reconcile），零新增轮询。 */
+function fallBackStaleRunState(id: string): boolean {
+  const store = useSessionsStore.getState();
+  const state = store.runStates[id];
+  if (state !== "running" && state !== "waiting" && state !== "background_running") return false;
+  const at = store.runStateAt[id];
+  if (at === undefined) return false; // 账本缺时刻（外部直写残留）不判超时，宁可不回落
+  const staleMs =
+    state === "running" ? RUNNING_STALE_MS : state === "waiting" ? WAITING_STALE_MS : BACKGROUND_STALE_MS;
+  if (Date.now() - at <= staleMs) return false;
+  store.setRunState(id, "idle");
+  return true;
+}
+
 /** 服务重启（游标回退）后的运行态重同步（W1 缺陷 #3）：与 refetchLoadedSessions 并行
  * fire-and-forget——refetchSession 本身逐会话发射，没有「全部完成」时刻可耦合。
  * GET /api/sessions 聚合快照按服务端 runState 三态直接对齐（docs08-r6 任务 11：
@@ -298,8 +326,12 @@ function resyncRunStatesFromServer(): void {
           server !== "waiting" &&
           server !== "idle" &&
           server !== "background_running"
-        )
-          continue; // 缺席 / null（引擎未就绪）不动
+        ) {
+          // 缺席 / null（引擎未就绪）：权威不动保留；叠加陈旧判定兑底（r11 todo 12a）——
+          // 收尾帧丢失且账本超阈值时在此回落 idle，不再干等周期清扫
+          fallBackStaleRunState(id);
+          continue;
+        }
         if (state !== server) store.setRunState(id, server);
       }
     })
@@ -337,8 +369,11 @@ export function reconcileRunStateOnVisible(): void {
         server !== "waiting" &&
         server !== "idle" &&
         server !== "background_running"
-      )
-        return; // null / 缺席（引擎未就绪）：不动，保持未知灰
+      ) {
+        // null / 缺席（引擎未就绪）：权威不动保持未知灰；叠加陈旧判定兑底（r11 todo 12a）
+        fallBackStaleRunState(sessionId);
+        return;
+      }
       store.setRunState(sessionId, server);
     })
     .catch(() => {
@@ -370,6 +405,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       resyncQueues();
       // 运行态重同步并行发射（W1 缺陷 #3）：消息全量重取不覆盖 runStates，两路独立校准
       resyncRunStatesFromServer();
+      // 跨纪元 handle 全换（r11 todo 12b）：学习账本一并清空，旧映射不得用于新纪元帧归属
+      wireToDurable.clear();
     }
     lastCursor = cursor;
   }
@@ -409,11 +446,18 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     }
     return;
   }
-  // store 路由键：信封 durableSessionId 优先（与 REST 会话 id 一致），缺席回退 wire sessionId
+  // store 路由键：信封 durableSessionId 优先（与 REST 会话 id 一致），缺席回退 wire sessionId。
+  // r11 todo 12b：双 id 同帧即学习一次映射（同值无意义不记）；wire 键在映射账本中命中时
+  // 按真实 durable id 归属（信封缺席的收尾帧也能落到真实会话键上清态），miss 保持
+  // wire sessionId 兜底（存量语义，session-runstate 兼容测试锚定）。
   const durableSessionId =
     typeof frame.durableSessionId === "string" && frame.durableSessionId.length > 0 ? frame.durableSessionId : null;
   const wireSessionId = typeof wire.sessionId === "string" ? wire.sessionId : null;
-  const sessionId = durableSessionId ?? wireSessionId;
+  if (durableSessionId !== null && wireSessionId !== null && wireSessionId !== durableSessionId) {
+    wireToDurable.set(wireSessionId, durableSessionId);
+  }
+  const sessionId =
+    durableSessionId ?? (wireSessionId !== null ? (wireToDurable.get(wireSessionId) ?? wireSessionId) : null);
   if (!sessionId) return; // 无会话路由信息的桥级事件不进 store
 
   // D18 诊断（ul_omo_debug_sse 开关）：帧到达 + 分发目标键 + 与选中键的错配信号。

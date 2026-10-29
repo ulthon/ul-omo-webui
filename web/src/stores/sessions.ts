@@ -467,8 +467,49 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     }),
 
   markAliasId: (id) =>
-    set((s) => (id in s.aliasIds ? s : { aliasIds: { ...s.aliasIds, [id]: true } })),
+    set((s) => {
+      let aliasIds = s.aliasIds;
+      let runStates = s.runStates;
+      let runStateAt = s.runStateAt;
+      let changed = false;
+      if (!(id in aliasIds)) {
+        aliasIds = { ...aliasIds, [id]: true };
+        changed = true;
+      }
+      // 入口归零（r11 todo 12c）：createSession 回执落地即清该 id 的运行态残留——创建
+      // RPC 冷启动窗口内（引擎 spawn 数秒）boot 帧可按回执键抢先写入 waiting/running
+      // （durable=false 回执 id 可为 routing handle，engine-runtime createSession 别名
+      // 路径 `let id = opened.sessionId`），空会话没有任何回合收尾帧可清，只能入口处
+      // 一次性归零。幂等语义保留：无新增且无残留时返回原引用。
+      if (id in runStates || id in runStateAt) {
+        runStates = { ...runStates };
+        delete runStates[id];
+        runStateAt = { ...runStateAt };
+        delete runStateAt[id];
+        changed = true;
+      }
+      return changed ? { aliasIds, runStates, runStateAt } : s;
+    }),
 
   markPendingId: (id) =>
-    set((s) => (id in s.pendingIds ? s : { pendingIds: { ...s.pendingIds, [id]: true } })),
+    set((s) => {
+      let pendingIds = s.pendingIds;
+      let runStates = s.runStates;
+      let runStateAt = s.runStateAt;
+      let changed = false;
+      if (!(id in pendingIds)) {
+        pendingIds = { ...pendingIds, [id]: true };
+        changed = true;
+      }
+      // 入口归零（r11 todo 12c）：同 markAliasId——durable=true 回执落地时创建 RPC
+      // 窗口内的 boot 残留（回执键等待/运行态）一并清零。
+      if (id in runStates || id in runStateAt) {
+        runStates = { ...runStates };
+        delete runStates[id];
+        runStateAt = { ...runStateAt };
+        delete runStateAt[id];
+        changed = true;
+      }
+      return changed ? { pendingIds, runStates, runStateAt } : s;
+    }),
 }));
