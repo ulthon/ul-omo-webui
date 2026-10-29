@@ -60,15 +60,16 @@ describe("ActivityBar（r10 todo 11）", () => {
     ]);
     const { container } = mount();
     expect(q(container, '[data-testid="activity-bar"]')).toBeTruthy();
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 2");
-    // 默认收起：无任务列表；点标题行展开后出现任务行
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 1");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("已完成 1");
+    // 默认收起：无任务列表；点标题行展开后仅见运行中任务行 + 已完成折尾部计数
     expect(container.querySelector('[data-testid="activity-task-list"]')).toBeNull();
     click(q(container, '[data-testid="activity-bar-toggle"]'));
     const rows = container.querySelectorAll('[data-testid="activity-task"]');
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("Run echo hello");
     expect(rows[0].querySelector('[data-testid="activity-task-status"]').textContent).toContain("运行中");
-    expect(rows[1].querySelector('[data-testid="activity-task-status"]').textContent).toContain("已结束");
+    expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 1");
   });
 
   test("推进：快照更新反映到活动条（计数与运行态）", () => {
@@ -80,7 +81,40 @@ describe("ActivityBar（r10 todo 11）", () => {
       { task_id: "t1", status: "completed", task_summary: "A" },
       { task_id: "t2", status: "running", task_summary: "B" },
     ]);
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 2");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 1");
+    expect(container.querySelector('[data-testid="activity-bar"]').textContent).toContain("已完成 1");
+  });
+
+  test("r11 todo3：≥8 混合快照展开列表限高且仅列运行中，尾部有已完成计数", () => {
+    const tasks = [];
+    for (let i = 1; i <= 10; i++) {
+      tasks.push({ task_id: `t${i}`, status: i % 2 === 0 ? "completed" : "running", task_summary: `job ${i}` });
+    }
+    setTasks(SID, tasks);
+    const { container } = mount();
+    click(q(container, '[data-testid="activity-bar-toggle"]'));
+    const ul = q(container, '[data-testid="activity-task-list"]');
+    expect(ul.className).toContain("max-h-64");
+    expect(ul.className).toContain("overflow-y-auto");
+    const rows = container.querySelectorAll('[data-testid="activity-task"]');
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      expect(row.querySelector('[data-testid="activity-task-status"]').textContent).toContain("运行中");
+    }
+    expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 5");
+  });
+
+  test("r11 todo3：全部完成快照活动条仍渲染，展开零运行中行 + 已完成计数", () => {
+    setTasks(SID, [
+      { task_id: "t1", status: "completed", task_summary: "A" },
+      { task_id: "t2", status: "completed", task_summary: "B" },
+    ]);
+    const { container } = mount();
+    expect(q(container, '[data-testid="activity-bar"]')).toBeTruthy();
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 0");
+    click(q(container, '[data-testid="activity-bar-toggle"]'));
+    expect(container.querySelectorAll('[data-testid="activity-task"]')).toHaveLength(0);
+    expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 2");
   });
 
   test("消失：空快照后活动条不渲染无残留", () => {

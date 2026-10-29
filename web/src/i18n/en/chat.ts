@@ -294,6 +294,7 @@ export const chat = {
     runningCount: "{n} running",
     statusRunning: "Running",
     statusDone: "Done",
+    doneCount: "{n} done",
   },
   // commands.ts (task 10): note read lazily via getter; long copy transplanted verbatim
   commands: {

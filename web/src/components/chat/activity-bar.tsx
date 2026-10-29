@@ -2,7 +2,8 @@
 // 会话页级新表面，桌面/手机两断点同构渲染，不触碰既有桌面表面）。
 // 数据源 = tasks store（omo.task.updated 全量快照，event-dispatch 分流，零轮询）。
 // 有非空快照才渲染（首帧出现、后续帧推进、空快照消失，三态皆帧驱动）；
-// 点标题行展开/收起任务列表（label + 状态）。
+// 点标题行展开/收起任务列表（仅列运行中，限高滚动；已完成折为尾部计数行）。
+// r11 todo 3：展开列表 max-h-64 仅列进行中，已完成折计数；折叠主数字为运行中数。
 import { useState } from "react";
 import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
 import { useTasksStore } from "@/stores/tasks";
@@ -14,7 +15,9 @@ export function ActivityBar({ sessionId }: { sessionId: string }) {
   const t = useT();
   const list = tasks ?? [];
   if (list.length === 0) return null;
-  const running = list.filter((task) => task.status === "running").length;
+  const runningList = list.filter((task) => task.status === "running");
+  const running = runningList.length;
+  const done = list.length - running;
 
   return (
     <div data-testid="activity-bar" className="rounded-lg border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
@@ -35,12 +38,14 @@ export function ActivityBar({ sessionId }: { sessionId: string }) {
           className={`size-3.5 shrink-0 ${running > 0 ? "animate-spin" : "opacity-50"}`}
           aria-hidden
         />
-        <span className="shrink-0 tabular-nums">{t("chat.activity.barTitle", { n: list.length })}</span>
-        <span className="min-w-0 truncate">{t("chat.activity.runningCount", { n: running })}</span>
+        <span className="shrink-0 tabular-nums">{t("chat.activity.barTitle", { n: running })}</span>
+        {done > 0 && (
+          <span className="min-w-0 truncate opacity-70">{t("chat.activity.doneCount", { n: done })}</span>
+        )}
       </button>
       {expanded && (
-        <ul data-testid="activity-task-list" className="mt-0.5 space-y-0.5">
-          {list.map((task) => (
+        <ul data-testid="activity-task-list" className="mt-0.5 max-h-64 space-y-0.5 overflow-y-auto">
+          {runningList.map((task) => (
             <li key={task.id} data-testid="activity-task" className="flex items-center gap-1.5">
               <span
                 data-testid="activity-task-status"
@@ -55,6 +60,11 @@ export function ActivityBar({ sessionId }: { sessionId: string }) {
               </span>
             </li>
           ))}
+          {done > 0 && (
+            <li data-testid="activity-done-count" className="opacity-70">
+              {t("chat.activity.doneCount", { n: done })}
+            </li>
+          )}
         </ul>
       )}
     </div>

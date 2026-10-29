@@ -293,6 +293,7 @@ export const chat = {
     runningCount: "进行中 {n}",
     statusRunning: "运行中",
     statusDone: "已结束",
+    doneCount: "已完成 {n}",
   },
   // commands.ts 斜杠命令表（任务 10）：note 改 getter 懒取词，长文案逐字搬
   commands: {
