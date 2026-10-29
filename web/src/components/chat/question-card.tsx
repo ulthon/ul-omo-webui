@@ -137,14 +137,21 @@ export function QuestionCard({
 
   const toggleOption = (questionId: string, label: string, multiSelect: boolean) => {
     setInlineError(false);
-    setSelections((prev) => {
-      const current = prev[questionId] ?? [];
-      if (multiSelect) {
-        const next = current.includes(label) ? current.filter((l) => l !== label) : [...current, label];
-        return { ...prev, [questionId]: next };
-      }
-      return { ...prev, [questionId]: current.includes(label) && current.length === 1 ? [] : [label] };
-    });
+    const current = selections[questionId] ?? [];
+    if (multiSelect) {
+      const next = current.includes(label) ? current.filter((l) => l !== label) : [...current, label];
+      setSelections((prev) => ({ ...prev, [questionId]: next }));
+      return;
+    }
+    // 单选互斥：选中选项即清空该题自定义文本（取消选择则不动文本）
+    const becomesSelected = !(current.includes(label) && current.length === 1);
+    setSelections((prev) => ({ ...prev, [questionId]: becomesSelected ? [label] : [] }));
+    if (becomesSelected && texts[questionId]) {
+      setTexts((prev) => {
+        const { [questionId]: _cleared, ...rest } = prev;
+        return rest;
+      });
+    }
   };
 
   const goTo = (next: number) => {
@@ -324,9 +331,14 @@ export function QuestionCard({
                 disabled={busy || expired || submitted}
                 placeholder={t("chat.questionCard.customPlaceholder")}
                 onChange={(e) => {
-                  setInlineError(false);
-                  setTexts((prev) => ({ ...prev, [current.id]: e.target.value }));
-                }}
+                setInlineError(false);
+                // 单选互斥：输入自定义文本即清空该题已选选项（多选保留两者）
+                if (current.multiSelect === false && (selections[current.id]?.length ?? 0) > 0) {
+                  setSelections((prev) => ({ ...prev, [current.id]: [] }));
+                }
+                const value = e.target.value;
+                setTexts((prev) => ({ ...prev, [current.id]: value }));
+              }}
                 className="min-h-11 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               />
             </div>

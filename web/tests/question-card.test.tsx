@@ -407,7 +407,7 @@ describe("QuestionCard 自定义输入与选项同屏（docs08-r5 任务 10 钉�
     await unmount();
   });
 
-  test("填自定义文本后选项仍可见可选：选项与文本一并入提交载荷", async () => {
+  test("填自定义文本后选项仍可见可选（r11 互斥：单选下选中选项即清空文本）", async () => {
     const request = makeRequest();
     const { container, unmount } = await render(
       createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
@@ -419,12 +419,71 @@ describe("QuestionCard 自定义输入与选项同屏（docs08-r5 任务 10 钉�
     });
     const options = [...card.querySelectorAll("[data-testid=question-option]")] as HTMLButtonElement[];
     expect(options[0].disabled).toBe(false);
-    await click(options[0]); // q1: staging（单选）
+    await click(options[0]); // q1: staging（单选）→ 文本被清空
     const stillText = card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement;
-    expect(stillText.value).toBe("prefer canary");
+    expect(stillText.value).toBe("");
     await click(card.querySelector("[data-testid=question-submit]")!);
     expect(posted).toHaveLength(1);
-    expect(posted[0].body.answers).toEqual({ q1: { selected: ["staging"], text: "prefer canary" } });
+    expect(posted[0].body.answers).toEqual({ q1: { selected: ["staging"] } });
+    await unmount();
+  });
+
+  test("单选互斥：选选项后再输入文本 → 选项取消选中，载荷 selected 空数组 + text", async () => {
+    const request = makeRequest();
+    const { container, unmount } = await render(
+      createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
+    );
+    const card = cardEl(container);
+    await click(card.querySelector("[data-testid=question-option]")!); // q1: staging
+    const selected = card.querySelector("[data-testid=question-option][data-selected]");
+    expect(selected).not.toBeNull();
+    const text1 = card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement;
+    await act(async () => {
+      setNativeValue(text1, "别的");
+    });
+    expect(card.querySelector("[data-testid=question-option][data-selected]")).toBeNull();
+    await click(card.querySelector("[data-testid=question-submit]")!);
+    expect(posted).toHaveLength(1);
+    expect(posted[0].body.answers).toEqual({ q1: { selected: [], text: "别的" } });
+    await unmount();
+  });
+
+  test("单选互斥：先输入文本再选选项 → 输入框清空，载荷无 text 键", async () => {
+    const request = makeRequest();
+    const { container, unmount } = await render(
+      createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
+    );
+    const card = cardEl(container);
+    const text1 = card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement;
+    await act(async () => {
+      setNativeValue(text1, "自定义方案");
+    });
+    await click(card.querySelector("[data-testid=question-option]")!); // q1: staging
+    expect((card.querySelector("[data-testid=question-text-q1]") as HTMLInputElement).value).toBe("");
+    await click(card.querySelector("[data-testid=question-submit]")!);
+    expect(posted).toHaveLength(1);
+    expect(posted[0].body.answers).toEqual({ q1: { selected: ["staging"] } });
+    await unmount();
+  });
+
+  test("多选不互斥：勾两个选项且输入文本 → selected 与 text 并存入载荷", async () => {
+    const request = makeRequest();
+    useQuestionsStore.getState().pushRequest(SID, request);
+    const { container, unmount } = await render(
+      createElement(QuestionCard, { sessionId: SID, request, position: 1, total: 1 }),
+    );
+    const card = cardEl(container);
+    await click(card.querySelector("[data-testid=question-step-dot-1]")!); // 到 q2（多选）
+    const options = [...card.querySelectorAll("[data-testid=question-option]")] as HTMLButtonElement[];
+    await click(options[0]); // auth
+    await click(options[1]); // dark-mode
+    const text2 = card.querySelector("[data-testid=question-text-q2]") as HTMLInputElement;
+    await act(async () => {
+      setNativeValue(text2, "auth 必须要");
+    });
+    await click(card.querySelector("[data-testid=question-submit]")!);
+    expect(posted).toHaveLength(1);
+    expect(posted[0].body.answers).toEqual({ q2: { selected: ["auth", "dark-mode"], text: "auth 必须要" } });
     await unmount();
   });
 });
