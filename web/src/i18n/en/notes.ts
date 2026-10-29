@@ -8,7 +8,7 @@ export const notes = {
   deleteConfirm: "Delete note \"{title}\"? You can restore it from the trash.",
   loading: "Loading notes…",
   loadFailed: "Failed to load note: {message}",
-  // 任务11：note-detail/notes-view 错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
+  // 任务11（r11 todo7 裁剪后沿用）：notes 组件族错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
   actionFailed: "Operation failed",
   loadFailedBrief: "Failed to load note",
   retry: "Retry",
@@ -16,6 +16,9 @@ export const notes = {
     count: { one: "{n} note", other: "{n} notes" },
     moreActions: "More note actions",
     filterAll: "All",
+    untitled: "Untitled",
+    collapseEditor: "Collapse and save",
+    saving: "Saving…",
     noNotes: "No notes",
     noTagMatch: "No notes match this tag",
     deleteItem: "Delete {title}",
@@ -25,13 +28,10 @@ export const notes = {
     emptyTitle: "No notes yet",
     emptyHint: "Write the first note for this project",
   },
+  // 行内编辑器（r11 todo7）沿用：恢复确认与「···」菜单文案（原 详情屏命名空间裁剪）
   detail: {
-    discardConfirm: "You have unsaved changes. Discard them?",
-    titleRequired: "Title cannot be empty",
     restoreVersionConfirm: "Restore to the version from {time}? The current content will be overwritten (it can still be recovered from version history).",
     moreActions: "Note actions",
-    edit: "Edit",
-    preview: "Preview",
     versionHistory: "Version history",
     deleteNote: "Delete note",
   },
@@ -40,11 +40,8 @@ export const notes = {
     titleAria: "Note title",
     tagsPlaceholder: "Tags (comma-separated, optional)",
     tagsAria: "Note tags",
-    contentPlaceholder: "Content (Markdown supported)",
+    contentPlaceholder: "Content",
     contentAria: "Note content",
-    cancel: "Cancel",
-    saving: "Saving…",
-    save: "Save",
   },
   trash: {
     loading: "Loading trash…",

@@ -10,6 +10,8 @@ import { t } from "@/i18n/i18n";
 export interface NoteListItem {
   id: string;
   title: string;
+  /** 首行摘要（r11 todo7，服务端列表输出）：空标题行的展示兜底数据源，不含全文 */
+  preview: string;
   tags: string[];
   updatedAt: string | null;
   deletedAt: string | null;

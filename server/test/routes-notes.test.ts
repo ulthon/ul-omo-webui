@@ -155,7 +155,7 @@ describe("全回路（建/改/版本/软删/恢复/硬删）", () => {
     expect(list.status).toBe(200);
     const listed = (await list.json()).notes;
     expect(listed).toHaveLength(1);
-    expect(Object.keys(listed[0]).sort()).toEqual(["deletedAt", "id", "tags", "title", "updatedAt"]);
+    expect(Object.keys(listed[0]).sort()).toEqual(["deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
     expect(listed[0].id).toBe(note.id);
 
     // 软删：deleted=0 不可见、deleted=1 可见且带 deletedAt
@@ -190,7 +190,7 @@ describe("全回路（建/改/版本/软删/恢复/硬删）", () => {
 });
 
 describe("GET /api/notes 列表", () => {
-  test("列表项形状逐字：{id,title,tags,updatedAt,deletedAt}，不含 content", async () => {
+  test("列表项形状逐字：{id,title,preview,tags,updatedAt,deletedAt}，不含 content", async () => {
     const { app, projectDir, register, createNote } = setup();
     register();
     await createNote({ title: "T", content: "正文不应出现在列表", tags: ["a"] });
@@ -199,7 +199,7 @@ describe("GET /api/notes 列表", () => {
     const body = await res.json();
     expect(body.notes).toHaveLength(1);
     const item = body.notes[0];
-    expect(Object.keys(item).sort()).toEqual(["deletedAt", "id", "tags", "title", "updatedAt"]);
+    expect(Object.keys(item).sort()).toEqual(["deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
     expect(item.title).toBe("T");
     expect(item.tags).toEqual(["a"]);
     expect(item.deletedAt).toBeNull();
@@ -365,5 +365,36 @@ describe("404 矩阵与 purge/恢复参数", () => {
     const badPurge = await app.request(`/api/notes/${id}?purge=yes`, { method: "DELETE" });
     expect(badPurge.status).toBe(400);
     expect((await badPurge.json()).error.code).toBe("invalid_purge");
+  });
+});
+
+describe("空标题合法（r11 todo7：标题可选语义）", () => {
+  test("POST 空标题 201；PUT 置空标题 200；列表返回空标题行且带首行 preview", async () => {
+    const { app, projectDir, register, createNote } = setup();
+    register();
+
+    // POST：title 为空串 → 201（title 可选，仅校验字符串形状）
+    const created = await createNote({ title: "", content: "首行摘要\n第二行" });
+    expect(created.status).toBe(201);
+    const note = (await created.json()).note;
+    expect(note.title).toBe("");
+    expect(note.content).toBe("首行摘要\n第二行");
+
+    // PUT：把已有标题置空 → 200
+    const renamed = await app.request(`/api/notes/${note.id}`, json({ title: "" }, "PUT"));
+    expect(renamed.status).toBe(200);
+    expect((await renamed.json()).note.title).toBe("");
+
+    // 列表：返回空标题行，preview 为正文首行截断（不含 content）
+    const list = await app.request("/api/notes?project=" + encodeURIComponent(projectDir));
+    expect(list.status).toBe(200);
+    const row = (await list.json()).notes.find((n: { id: string }) => n.id === note.id);
+    expect(row.title).toBe("");
+    expect(row.preview).toBe("首行摘要");
+    expect(row.content).toBeUndefined();
+
+    // 全空笔记（空标题+空正文）：preview 为空串
+    const blank = await createNote({ title: "", content: "" });
+    expect(blank.status).toBe(201);
   });
 });

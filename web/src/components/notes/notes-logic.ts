@@ -1,6 +1,6 @@
 // 笔记页签纯逻辑（todo 15）：标签解析、标签聚合、本地过滤、相对时间。
 import { formatRelativeTime } from "@/i18n/i18n";
-// 全部无副作用，供 notes-view / note-detail 与单测直接消费。
+// 全部无副作用，供 notes-view / note-inline-editor 与单测直接消费。
 // 约定：updatedAt/createdAt/deletedAt 服务端可为 null（库层可空），展示一律容错为 "—"。
 
 /**
@@ -44,6 +44,27 @@ export function filterNotesByTag<T extends { tags: string[] }>(
 ): T[] {
   if (tag === null) return [...notes];
   return notes.filter((n) => n.tags.includes(tag));
+}
+
+/**
+ * 列表行标题兜底（r11 todo7）：标题非空原样返回；空标题取正文首行（调用方传全文或
+ * 已截断的首行摘要均可，函数内先抽非空首行）截断到 maxLen，连正文都空则回退「无标题」。
+ * 服务端列表 payload 的 preview 字段（首行摘要）与本函数共用同一语义（前后端一致）。
+ */
+export function deriveDisplayTitle(
+  title: string,
+  content: string | undefined,
+  untitledLabel: string,
+  maxLen = 40,
+): string {
+  const trimmed = title.trim();
+  if (trimmed.length > 0) return trimmed;
+  const firstLine = (content ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (firstLine === undefined) return untitledLabel;
+  return firstLine.length > maxLen ? `${firstLine.slice(0, maxLen)}…` : firstLine;
 }
 
 /** 相对时间：30 天内走统一 i18n 实现；超过 30 天保持本页签既有 YYYY-MM-DD 契约；null/非法 → "—" */

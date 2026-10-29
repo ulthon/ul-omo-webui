@@ -1,5 +1,5 @@
-// 版本历史面板（todo 15）：列表（savedAt 相对时间 + preview）+ 逐项恢复按钮。
-// 从 note-detail 拆出（250 LOC 上限）：纯展示组件，加载/恢复逻辑由父组件持有。
+// 版本历史面板（todo 15；r11 todo7 起由 note-inline-editor 弹层复用）：列表（savedAt 相对时间 + preview）+ 逐项恢复按钮。
+// 纯展示组件（原详情屏拆出，250 LOC 上限）：加载/恢复逻辑由父组件持有。
 import { X } from "lucide-react";
 import { useT } from "@/i18n/i18n";
 import type { NoteVersionInfo } from "./notes-api";

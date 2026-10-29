@@ -2,7 +2,7 @@
 // 值与迁移前组件硬编码文案逐字一致（含「」引号）；域内按组件分组。
 // 笔记正文/标题等用户内容不走字典。
 export const notes = {
-  // 面板级：notes-view 与 note-detail 共用
+  // 面板级：notes 组件族共用
   backToList: "返回笔记列表",
   newNote: "新建笔记",
   panelTitle: "笔记",
@@ -11,7 +11,7 @@ export const notes = {
   deleteConfirm: "删除笔记「{title}」？可在回收站恢复。",
   loading: "加载笔记…",
   loadFailed: "笔记加载失败：{message}",
-  // 任务11：note-detail/notes-view 错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
+  // 任务11（r11 todo7 裁剪后沿用）：notes 组件族错误展示兜底键（apiErrorMessage 未命中映射/纯 Error 时）
   actionFailed: "操作失败",
   loadFailedBrief: "笔记加载失败",
   retry: "重试",
@@ -20,6 +20,9 @@ export const notes = {
     count: { one: "{n} 条", other: "{n} 条" },
     moreActions: "笔记更多操作",
     filterAll: "全部",
+    untitled: "无标题",
+    collapseEditor: "收起并保存",
+    saving: "保存中…",
     noNotes: "没有笔记",
     noTagMatch: "没有匹配该标签的笔记",
     deleteItem: "删除 {title}",
@@ -29,28 +32,21 @@ export const notes = {
     emptyTitle: "暂无笔记",
     emptyHint: "为当前项目记录第一篇笔记",
   },
-  // note-detail 详情屏
+  // 行内编辑器（r11 todo7）沿用：恢复确认与「···」菜单文案（原 详情屏命名空间裁剪）
   detail: {
-    discardConfirm: "有未保存的修改，确定放弃吗？",
-    titleRequired: "标题不能为空",
     restoreVersionConfirm: "恢复到 {time} 的版本？当前正文将被覆盖（可再从版本历史找回）。",
     moreActions: "笔记操作",
-    edit: "编辑",
-    preview: "预览",
     versionHistory: "历史版本",
     deleteNote: "删除笔记",
   },
-  // note-edit-form 编辑表单
+  // 行内编辑器表单字段（原 编辑表单命名空间裁剪：自动保存后无保存/取消钮）
   edit: {
     titlePlaceholder: "标题",
     titleAria: "笔记标题",
     tagsPlaceholder: "标签（逗号分隔，可留空）",
     tagsAria: "笔记标签",
-    contentPlaceholder: "正文（支持 Markdown）",
+    contentPlaceholder: "正文",
     contentAria: "笔记正文",
-    cancel: "取消",
-    saving: "保存中…",
-    save: "保存",
   },
   // notes-trash 回收站列表
   trash: {

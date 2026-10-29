@@ -56,6 +56,17 @@ function toNotePayload(note: NoteMeta) {
   };
 }
 
+/** 列表行首行摘要：正文首个非空行截断到 80 字（空标题行的展示兑底数据源；不含全文） */
+function firstLinePreview(content: string): string {
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
+    }
+  }
+  return "";
+}
+
 /** 列表排序：sort 升序（null 最后）+ updated_at 降序（计划 129 行语义，测试锁定） */
 function bySortThenUpdated(a: NoteMeta, b: NoteMeta): number {
   const sa = a.sort ?? Number.POSITIVE_INFINITY;
@@ -88,6 +99,7 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
       notes: notes.map((n) => ({
         id: n.id,
         title: n.title,
+        preview: firstLinePreview(n.content),
         tags: n.tags,
         updatedAt: n.updatedAt,
         deletedAt: n.deletedAt,
@@ -103,8 +115,9 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
     if (!deps.meta.getProjectMeta(project)) {
       throw new ApiError(400, "project_not_found", `项目未注册：${project}`);
     }
+    // 标题可选（r11 todo7）：仅校验字符串形状，空串合法（列表端展示首行兑底/「无标题」）
     if (typeof body.title !== "string") {
-      throw new ApiError(400, "invalid_title", "title 必填且必须是字符串");
+      throw new ApiError(400, "invalid_title", "title 必须是字符串（可为空串）");
     }
     const content = parseContent(body.content);
     const tags = parseTags(body.tags);
@@ -130,7 +143,8 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
     const body = await parseJsonBody(c);
     const patch: { title?: string; content?: string; tags?: string[] } = {};
     if (body.title !== undefined) {
-      if (typeof body.title !== "string") throw new ApiError(400, "invalid_title", "title 必须是字符串");
+      // 标题可选：仅校验字符串形状，空串合法（语义与 POST 一致）
+      if (typeof body.title !== "string") throw new ApiError(400, "invalid_title", "title 必须是字符串（可为空串）");
       patch.title = body.title;
     }
     if (body.content !== undefined) patch.content = parseContent(body.content);
