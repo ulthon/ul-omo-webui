@@ -73,20 +73,9 @@ export const login = {
   sidebarResize: {
     resizeHandle: "Drag to resize the sidebar",
   },
-  // —— 上下文水位环（components/layout/context-ring.tsx）——
+  // —— 上下文水位细条（components/layout/context-usage-bar.tsx）——
   contextRing: {
     ringLabel: "Context usage {pct}%, open for details",
-    ringTitle: "Context {pct}% · {tokens}",
-    ringTitleWithModel: "Context {pct}% · {tokens} · {model}",
-    running: "Running",
-    background: "Background running",
-    idle: "Idle",
-    usage: "Context usage",
-    total: "Total",
-    inputOutput: "Input / Output",
-    cache: "Cache",
-    cost: "Cost",
-    context: "Context",
   },
   // —— 添加项目弹窗（components/layout/add-project-dialog.tsx）——
   addProjectDialog: {

@@ -4,7 +4,6 @@
  *   终局回落清除；清扫器后台态专属阈值（60min）超时回落、未超不扫（f，注入时钟确定性）；
  * - stopIntent（composer-logic 纯函数）：后台态+非流式 → 提示语义，不中断；
  * - SessionItem 状态点：第四态紫点呼吸 + 「后台运行中」title（d）；
- * - ContextWaterRing 水位环：第四态紫环 + 明细「后台运行中」（d）；
  * - Composer 中断钮交互：后台态点击出「有后台任务」提示、不打 abort 接口（e）。
  */
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -21,7 +20,6 @@ const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { stopIntent } = await import("@/components/composer/composer-logic");
 const { SessionItem } = await import("@/components/session-list/session-item");
-const { ContextWaterRing } = await import("@/components/layout/context-ring");
 const { Composer } = await import("@/components/composer/composer");
 const { useSessionsStore, BACKGROUND_STALE_MS } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
@@ -195,36 +193,6 @@ describe("SessionItem 状态点第四态渲染", () => {
     );
     expect(html).toContain("后台运行中");
     expect(html).toContain("bg-violet-500");
-  });
-});
-
-// ---------------------------------------------------------------- 水位环（d）
-
-describe("ContextWaterRing 第四态渲染", () => {
-  function usagePayload(): unknown {
-    return {
-      sessionId: SID,
-      usage: {
-        tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
-        cost: 0.01,
-        contextUsage: { tokens: 2048, contextWindow: 1_000_000, percent: 0.2 },
-      },
-    };
-  }
-
-  test("runStates=background_running → 紫环 + 脉冲点 + 明细「后台运行中」", async () => {
-    mockFetch(async () => okJson(usagePayload()));
-    useSessionsStore.setState({ runStates: { [SID]: "background_running" } });
-    const container = await mount(createElement(ContextWaterRing, { sessionId: SID }));
-    // 紫环 + 后台脉冲点（violet）；明细 Popover 默认收起不参与断言
-    expect(container.querySelector("svg circle.stroke-violet-500")).not.toBeNull();
-    expect(container.querySelector("[data-testid=context-ring-running-dot]")?.className).toContain("bg-violet-500");
-  });
-
-  test("无后台态 → 环不带 violet（三态渲染不变）", async () => {
-    mockFetch(async () => okJson(usagePayload()));
-    const container = await mount(createElement(ContextWaterRing, { sessionId: SID }));
-    expect(container.querySelector("svg circle.stroke-violet-500")).toBeNull();
   });
 });
 

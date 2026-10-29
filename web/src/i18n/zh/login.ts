@@ -75,20 +75,9 @@ export const login = {
   sidebarResize: {
     resizeHandle: "拖拽调整左侧栏宽度",
   },
-  // —— 上下文水位环（components/layout/context-ring.tsx）——
+  // —— 上下文水位细条（components/layout/context-usage-bar.tsx）——
   contextRing: {
     ringLabel: "上下文水位 {pct}%，点开明细",
-    ringTitle: "上下文 {pct}% · {tokens}",
-    ringTitleWithModel: "上下文 {pct}% · {tokens} · {model}",
-    running: "运行中",
-    background: "后台运行中",
-    idle: "空闲",
-    usage: "上下文水位",
-    total: "累计",
-    inputOutput: "输入 / 输出",
-    cache: "缓存",
-    cost: "成本",
-    context: "上下文",
   },
   // —— 添加项目弹窗（components/layout/add-project-dialog.tsx）——
   addProjectDialog: {

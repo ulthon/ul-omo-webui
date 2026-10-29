@@ -1,9 +1,7 @@
 // 水位三面附已用/上限 token（docs08 r7 任务 5）组件层用例：
-// - 明细浮层「上下文」行 =「23% · 57K/1M」形态（testid context-ring-ctx）；
-// - 环心仍纯百分比（context-ring-percent 不带 token，形态不漂移），tooltip 带 used/limit；
 // - 桌面状态栏 detail 追加「 · {n}% · used/limit」（testid status-detail）；
 // - failure 面：contextUsage.contextWindow<=0 → toUsageStats context=null →
-//   状态栏不出现 token 段（环侧同源 null 整环隐藏，由 store 数据 null 直证）。
+//   状态栏不出现 token 段。
 // 渲染走真实组件（happy-dom + createRoot，model-pending-badge 同款 Popover 透传化）；
 // api.getUsage 打桩喂 usage 快照，无网络无时间依赖。
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -39,7 +37,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
-const { ContextWaterRing } = await import("@/components/layout/context-ring");
 const { StatusBar } = await import("@/components/chat/status-bar");
 const { useMessagesStore } = await import("@/stores/messages");
 const { usePermissionsStore } = await import("@/stores/permissions");
@@ -83,23 +80,6 @@ afterEach(async () => {
 });
 
 describe("水位三面附 token（docs08 r7 任务 5）", () => {
-  test("环：明细行「上下文 6% · 57.0k/1.00M」，tooltip 附 used/limit，环心仍纯百分比", async () => {
-    seedStores();
-    getUsageMock.mockResolvedValue({ usage: USAGE });
-    const c = await render(createElement(ContextWaterRing, { sessionId: S }));
-    const pctEl = c.querySelector('[data-testid="context-ring-percent"]');
-    // 环心形态不漂移：纯百分比、9px 字号类保留
-    expect(pctEl?.textContent).toBe("6%");
-    expect(pctEl?.className).toContain("text-[9px]");
-    // 明细浮层「上下文」行
-    const ctxRow = c.querySelector('[data-testid="context-ring-ctx"]');
-    expect(ctxRow?.textContent).toBe("6% · 57.0k/1.00M");
-    // tooltip（title）含 used/limit
-    const trigger = c.querySelector('[data-testid="context-ring"]');
-    expect(trigger?.getAttribute("title")).toContain("57.0k/1.00M");
-    expect(trigger?.getAttribute("title")).toContain("6%");
-  });
-
   test("状态栏：detail 追加「 · 6% · 57.0k/1.00M」", async () => {
     seedStores();
     getUsageMock.mockResolvedValue({ usage: USAGE });
