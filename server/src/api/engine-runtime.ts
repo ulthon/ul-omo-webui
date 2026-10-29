@@ -1221,7 +1221,26 @@ class ProjectRuntime {
     await this.ensure();
     return this.runExclusive(async () => {
       await this.switchTo(sessionId);
-      await this.requireAdapter().abort();
+      // r11 todo 11（task-10 spike §2.2 定向）：权限等待态的中止在引擎面是静默 no-op
+      // ——abort 200/11ms 后零帧、回合悬起 >5min、仅引擎重建可解除（实测取证：
+      // .omo/evidence/r11/task-10-abort-spike.md §2.2）。修法：中止前把本回合挂起
+      // 的权限请求经既有应答通道逐个取消（{cancelled:true}，与前端权限卡「忽略」
+      // 同 wire 形态且对四型请求通用）：挂起工具以取消结果返回 → 回合自然收束 →
+      // agent_end 可达（与提问等待 abort 的 question_resolved 收尾同机制，spike
+      // §2.3 实证 +176ms）。仅当目标会话确为 webui 驱动回合（streamingId 占用）才
+      // 执行，防跨会话误拒；快照在 runExclusive 锁内读取（单驱动下项目级记账至多
+      // 对应本回合）。内联 adapter.permissionRespond + reportPermissionAnswered
+      // （与公开 permissionRespond 同通道）而非复用公开方法——锁内重入 runExclusive
+      // 会把 deny 排到本 abort 之后，破坏「先解权限门、后中止回合」的帧序。
+      const adapter = this.requireAdapter();
+      if (this.streamingId === sessionId) {
+        const pending = this.manager.getStatus(this.projectPath)?.pendingPermissions ?? [];
+        for (const requestId of pending) {
+          await adapter.permissionRespond(requestId, { cancelled: true });
+          this.manager.reportPermissionAnswered(this.projectPath, requestId);
+        }
+      }
+      await adapter.abort();
     });
   }
 

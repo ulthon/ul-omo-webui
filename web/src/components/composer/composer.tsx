@@ -592,8 +592,12 @@ export function Composer({
   }, [sessionId, onAborted, showToast]);
 
   const stopClick = useCallback(() => {
-    // 后台态停止钮（任务 12）：非流式回合下不中断——后台任务不在 abort 协议面作用域内，
-    // 出提示代替中断语义；叠加流式回合时 abort 仍作用于当前回合（stopIntent 判定）
+    // 后台态停止钮（r10 任务 12 设计语义，r11 todo 11 经 spike 实证维持）：纯后台任务
+    // 态点停只提示不调 abort——引擎对后台任务无终止协议面，真实调用 abort 也是 no-op
+    // （200 后 runState 恒 background_running、任务进程存活，实测悬持至自然终局，
+    // 取证：.omo/evidence/r11/task-10-abort-spike.md §3.3/§3.4）。误读防护：在此改
+    // 成真实 abort 无效果，除非引擎先补后台任务终止协议；叠加流式回合时 abort 仍
+    // 作用于当前回合（stopIntent 判定）
     if (stopIntent(runState, queueAvailable) === "background-hint") {
       showToast(t("composer.backgroundTaskHint"));
       return;
