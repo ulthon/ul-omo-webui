@@ -235,6 +235,10 @@ export function SessionList() {
   const createSession = async (project: string | null) => {
     if (!project || creating) return;
     setCreating(true);
+    // 引擎冷启动窗口（r11 todo 4）：新建会话首次请求可能撞 engine_not_ready（503）——
+    // 持住 creating 锁，2500ms 后自动重试一次（同 chat-view todo 26 先例，只试一次避
+    // 免死循环）；重试仍失败才走错误 toast，用户总共只见一次提示。
+    const attempt = async (isFirst: boolean) => {
     try {
       const ui = useUiStore.getState();
       if (ui.currentProject !== project) {
@@ -290,10 +294,20 @@ export function SessionList() {
       ui.setDrawerOpen(false);
       useUiStore.getState().showToast(t("sessionList.list.createdToast"));
     } catch (err) {
+      if (isFirst && err instanceof ApiError && err.code === "engine_not_ready") {
+        // 首次 engine_not_ready：保持锁，延时重试一次（重试失败则走 toast 释放锁）
+        setTimeout(() => {
+          void attempt(false);
+        }, 2500);
+        return;
+      }
       useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.createFailed"), "error");
     } finally {
-      setCreating(false);
+      // 仅在重试已排程时不释放锁：按钮保持 disabled，防重试窗口内二次点击
+      if (isFirst) setCreating(false);
     }
+    };
+    await attempt(true);
   };
 
   // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
