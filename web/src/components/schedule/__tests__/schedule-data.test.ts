@@ -3,7 +3,6 @@
 import { describe, expect, test } from "vitest";
 import {
   formatDue,
-  formatDueNow,
   formatDurationParts,
   formatEvery,
   promptExcerpt,
@@ -36,11 +35,8 @@ describe("formatDurationParts / formatDue", () => {
     expect(formatDue(Number.NaN, NOW)).toEqual({ text: "", past: true });
   });
 
-  test("formatDueNow：now 缺省取当前时刻（渲染期包装不直呼 Date.now 于组件内）", () => {
-    const at = Date.now() + 60_000;
-    const out = formatDueNow(at);
-    expect(out.past).toBe(false);
-    expect(out.text).toBe("1m");
+  test("formatDue：固定基点 1m 档位（原 formatDueNow 墙钟用例，固定 now 消除 flake）", () => {
+    expect(formatDue(NOW + 60_000, NOW)).toEqual({ text: "1m", past: false });
   });
 });
 
