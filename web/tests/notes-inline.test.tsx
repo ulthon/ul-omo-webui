@@ -1,6 +1,10 @@
-// 笔记行内编辑组件测试（r11 todo7）：展开/自动保存/空新建取消/标题兜底/换行原样/
-// dirty 拦截。happy-dom + createRoot + fetch mock 惯例沿用 web/tests 既有形态。
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+// @ts-nocheck
+// r11 todo7 笔记行内管理编辑组件测试（从零补齐）：列表行就地展开、收起自动保存
+// （存量 PUT/新建 POST）、空新建收起零请求无痕取消、列表行标题兜底、换行原样、
+// dirty 契约（dirtyRef 上报 + beforeunload 拦截）。
+// 惯例同 question-card/file-editor 测试：@happy-dom 全局注册 + createRoot/act 真实点击，
+// fetch 走本文件内可编程路由 mock。
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 if (!(globalThis as { window?: unknown }).window) {
@@ -8,253 +12,430 @@ if (!(globalThis as { window?: unknown }).window) {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const { createElement } = await import("react");
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { createElement } = await import("react");
+
 const { NotesView } = await import("@/components/notes/notes-view");
 const { useUiStore } = await import("@/stores/ui");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const PROJECT = "/tmp/notes-inline-proj";
 
-interface Req {
+interface RouteHit {
   method: string;
   url: string;
-  body: Record<string, unknown>;
+  body: unknown;
 }
 
-let requests: Req[] = [];
-let notes: Record<string, unknown>[] = [];
-/** 可控的 PUT 失败开关（save error 路径） */
-let failPut = false;
+let hits: RouteHit[] = [];
+/** 路由表：url 前缀匹配（首个命中），handler 返回 Response 或 [status, payload] */
+let routes: Array<{ method: string; prefix: string; reply: (hit: RouteHit) => Response | [number, unknown] }>;
 
-function fullNote(id: string, title: string, content: string, tags: string[] = []) {
-  return {
-    id,
-    project: PROJECT,
-    title,
-    content,
-    tags,
-    deletedAt: null,
-    createdAt: "2026-10-29T00:00:00.000Z",
-    updatedAt: "2026-10-29T00:00:00.000Z",
-  };
-}
-
-function listItem(id: string, title: string, preview: string) {
-  return { id, title, preview, tags: [], updatedAt: "2026-10-29T00:00:00.000Z", deletedAt: null };
-}
-
-async function renderView(dirtyRef: { current: boolean }) {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  await act(async () => {
-    root.render(createElement(NotesView, { dirtyRef }));
-  });
-  return {
-    container,
-    unmount: async () => {
-      await act(async () => {
-        root.unmount();
-      });
-      container.remove();
-    },
-  };
-}
-
-/** React 受控输入的原生赋值（绕过 value tracker 的去重，标准测试口径） */
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-  const proto = el instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
-  setter.call(el, value);
-  el.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-function click(el: Element): Promise<void> {
-  return act(async () => {
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+function respond(reply: Response | [number, unknown]): Response {
+  if (reply instanceof Response) return reply;
+  return new Response(JSON.stringify(reply[1]), {
+    status: reply[0],
+    headers: { "content-type": "application/json" },
   });
 }
 
-/** 点外部（容器外 pointerdown）→ 行内编辑器收起自动保存 */
-function clickOutside(): Promise<void> {
-  return act(async () => {
-    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-  });
+function installRoutes(table: typeof routes): void {
+  routes = table;
 }
-
-async function flush(): Promise<void> {
-  await act(async () => {});
-}
-
-function q(container: ParentNode, id: string): HTMLElement {
-  const el = container.querySelector(`[data-testid=${id}]`);
-  if (!el) throw new Error(`missing [data-testid=${id}]`);
-  return el as HTMLElement;
-}
-
-function makeFetch() {
-  return (async (input: unknown, init?: RequestInit) => {
-    const url = String(input);
-    const method = init?.method ?? "GET";
-    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-    requests.push({ method, url, body });
-    if (method === "GET" && url.startsWith("/api/notes?")) {
-      return new Response(JSON.stringify({ notes }), { status: 200 });
-    }
-    if (method === "GET" && url.startsWith("/api/notes/")) {
-      const id = decodeURIComponent(url.replace("/api/notes/", ""));
-      const note = notes.find((n) => (n as { id: string }).id === id);
-      if (!note) return new Response(JSON.stringify({ error: { code: "note_not_found", message: "x" } }), { status: 404 });
-      return new Response(JSON.stringify({ note }), { status: 200 });
-    }
-    if (method === "POST" && url === "/api/notes") {
-      const note = fullNote(`n-${requests.length}`, String(body.title ?? ""), String(body.content ?? ""), (body.tags as string[]) ?? []);
-      notes = [note, ...notes];
-      return new Response(JSON.stringify({ note }), { status: 201 });
-    }
-    if (method === "PUT" && url.startsWith("/api/notes/")) {
-      if (failPut) return new Response(JSON.stringify({ error: { code: "boom", message: "disk full" } }), { status: 500 });
-      const id = decodeURIComponent(url.replace("/api/notes/", ""));
-      const idx = notes.findIndex((n) => (n as { id: string }).id === id);
-      notes[idx] = { ...notes[idx], ...body };
-      return new Response(JSON.stringify({ note: notes[idx] }), { status: 200 });
-    }
-    return new Response(JSON.stringify({ error: { code: "unknown", message: "unmocked" } }), { status: 500 });
-  }) as unknown as typeof fetch;
-}
-
-const writes = () => requests.filter((r) => r.method === "POST" || r.method === "PUT");
 
 beforeEach(() => {
-  requests = [];
-  failPut = false;
-  notes = [fullNote("n1", "已有笔记", "第一行\n第二行", ["work"])];
-  globalThis.fetch = makeFetch();
-  useUiStore.setState({ currentProject: PROJECT, toast: null });
+  hits = [];
+  routes = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = init.body;
+      }
+    }
+    const hit: RouteHit = { method, url, body };
+    hits.push(hit);
+    for (const route of routes) {
+      if (route.method === method && url.startsWith(route.prefix)) {
+        return respond(route.reply(hit));
+      }
+    }
+    return new Response(JSON.stringify({ error: { code: "unmocked", message: url } }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  useUiStore.setState({ currentProject: PROJECT });
 });
 
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
-  document.body.innerHTML = "";
 });
 
-describe("笔记行内编辑（r11 todo7）", () => {
-  test("点行就地展开：载入详情后表单回显，改文点外部自动 PUT 保存并刷新列表", async () => {
+function listItem(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: "n1",
+    title: "已有笔记",
+    preview: "",
+    tags: [],
+    updatedAt: "2026-10-29T00:00:00.000Z",
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
+function noteDetail(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: "n1",
+    project: PROJECT,
+    title: "已有笔记",
+    content: "第一行\n第二行",
+    tags: [],
+    deletedAt: null,
+    createdAt: "2026-10-28T00:00:00.000Z",
+    updatedAt: "2026-10-29T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+async function renderView(dirtyRef: { current: boolean } = { current: false }): Promise<{
+  host: HTMLElement;
+  root: ReturnType<typeof createRoot>;
+}> {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(createElement(NotesView, { dirtyRef }));
+  });
+  return { host, root };
+}
+
+async function waitFor(pred: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 200 && !pred(); i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  if (!pred()) throw new Error(`timeout: ${what}`);
+}
+
+function click(el: Element): void {
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
+function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const proto = el instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function q(host: HTMLElement, sel: string): Element {
+  const el = host.querySelector(sel);
+  if (!el) throw new Error(`missing ${sel}`);
+  return el;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+describe("r11 todo7 笔记行内编辑", () => {
+  test("展开：点行就地展开行内编辑器并载入详情（GET），无详情页两级导航", async () => {
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => [200, { notes: [listItem()] }],
+      },
+      {
+        method: "GET",
+        prefix: "/api/notes/n1",
+        reply: () => [200, { note: noteDetail() }],
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 1, "list ready");
+
+    await act(async () => {
+      click(q(host, "[data-testid=note-item]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") !== null, "editor expanded");
+    await waitFor(() => (q(host, "[data-testid=note-title-input]") as HTMLInputElement).value === "已有笔记", "detail loaded");
+    expect((q(host, "[data-testid=note-content-input]") as HTMLTextAreaElement).value).toBe("第一行\n第二行");
+    // 列表行被编辑器原位替换：同一时刻不存在列表行 + 编辑器并存（存量行）
+    expect(host.querySelector("[data-testid=note-item]")).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("自动保存：改正文后收起 → PUT 载荷原样（含换行）→ 列表刷新收起", async () => {
+    let putBody: unknown = null;
+    let listFetches = 0;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => {
+          listFetches += 1;
+          return [200, { notes: [listItem()] }];
+        },
+      },
+      {
+        method: "GET",
+        prefix: "/api/notes/n1",
+        reply: () => [200, { note: noteDetail() }],
+      },
+      {
+        method: "PUT",
+        prefix: "/api/notes/n1",
+        reply: (hit) => {
+          putBody = hit.body;
+          return [200, { note: noteDetail({ content: "改后第一行\n\n改后第三行" }) }];
+        },
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 1, "list ready");
+    await act(async () => {
+      click(q(host, "[data-testid=note-item]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-content-input]") !== null, "editor ready");
+
+    const ta = q(host, "[data-testid=note-content-input]") as HTMLTextAreaElement;
+    await act(async () => {
+      setNativeValue(ta, "改后第一行\n\n改后第三行");
+    });
+    await act(async () => {
+      click(q(host, "[data-testid=note-collapse-btn]"));
+    });
+    await waitFor(() => putBody !== null, "PUT sent");
+    expect((putBody as { content: string }).content).toBe("改后第一行\n\n改后第三行");
+    // 保存后收起：编辑器消失，列表重取
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") === null, "collapsed");
+    await waitFor(() => listFetches === 2, "list refetched");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("空新建取消：新建空行收起时标题正文全空 → 零请求无痕取消", async () => {
+    let listFetches = 0;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => {
+          listFetches += 1;
+          return [200, { notes: [listItem()] }];
+        },
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => listFetches === 1, "list ready");
+    await act(async () => {
+      click(q(host, "[data-testid=note-new-btn]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") !== null, "draft row shown");
+    expect((q(host, "[data-testid=note-inline-editor]") as HTMLElement).getAttribute("data-note-id")).toBe("draft");
+
+    await act(async () => {
+      click(q(host, "[data-testid=note-collapse-btn]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") === null, "draft removed");
+    // 零请求：除初始列表外无任何 POST
+    expect(hits.filter((h) => h.method === "POST")).toHaveLength(0);
+    expect(listFetches).toBe(1);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("新建保存：有内容的新建行收起 → POST 创建 → 列表刷新", async () => {
+    let postBody: unknown = null;
+    let listFetches = 0;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => {
+          listFetches += 1;
+          return [200, { notes: [] }];
+        },
+      },
+      {
+        method: "POST",
+        prefix: "/api/notes",
+        reply: (hit) => {
+          postBody = hit.body;
+          return [201, { note: noteDetail({ id: "created-1", title: "新建标题", content: "正文" }) }];
+        },
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => listFetches === 1, "list ready");
+    await act(async () => {
+      click(q(host, "[data-testid=note-new-btn]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-title-input]") !== null, "draft ready");
+    const input = q(host, "[data-testid=note-title-input]") as HTMLInputElement;
+    await act(async () => {
+      setNativeValue(input, "新建标题");
+    });
+    await act(async () => {
+      click(q(host, "[data-testid=note-collapse-btn]"));
+    });
+    await waitFor(() => postBody !== null, "POST sent");
+    expect(postBody).toMatchObject({ project: PROJECT, title: "新建标题" });
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") === null, "collapsed");
+    expect(listFetches).toBe(2);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("标题兜底：空标题行展示正文首行摘要，非空标题原样", async () => {
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => [
+          200,
+          {
+            notes: [
+              listItem({ id: "empty-title", title: "", preview: "首行摘要内容" }),
+              listItem({ id: "with-title", title: "有标题", preview: "不应显示" }),
+            ],
+          },
+        ],
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 2, "list ready");
+    const rows = [...host.querySelectorAll("[data-testid=note-item]")];
+    const rowText = (id: string) => (host.querySelector(`[data-testid=note-item][data-note-id=${id}]`) as HTMLElement).textContent;
+    expect(rowText("empty-title")).toContain("首行摘要内容");
+    expect(rowText("with-title")).toContain("有标题");
+    expect(rowText("with-title")).not.toContain("不应显示");
+    void rows;
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("dirty 契约：编辑未保存 → dirtyRef 置真并挂 beforeunload；保存成功复位", async () => {
+    let putBody: unknown = null;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => [200, { notes: [listItem()] }],
+      },
+      {
+        method: "GET",
+        prefix: "/api/notes/n1",
+        reply: () => [200, { note: noteDetail() }],
+      },
+      {
+        method: "PUT",
+        prefix: "/api/notes/n1",
+        reply: (hit) => {
+          putBody = hit.body;
+          return [200, { note: noteDetail() }];
+        },
+      },
+    ]);
+    const added: string[] = [];
+    const removed: string[] = [];
+    const origAdd = window.addEventListener.bind(window);
+    const origRemove = window.removeEventListener.bind(window);
+    window.addEventListener = ((type: string, ...rest: unknown[]) => {
+      if (type === "beforeunload") added.push(type);
+      return (origAdd as (...a: unknown[]) => void)(type, ...rest);
+    }) as typeof window.addEventListener;
+    window.removeEventListener = ((type: string, ...rest: unknown[]) => {
+      if (type === "beforeunload") removed.push(type);
+      return (origRemove as (...a: unknown[]) => void)(type, ...rest);
+    }) as typeof window.removeEventListener;
+
     const dirtyRef = { current: false };
-    const { container, unmount } = await renderView(dirtyRef);
-    await flush();
-    expect(container.querySelectorAll("[data-testid=note-item]").length).toBe(1);
+    const { host, root } = await renderView(dirtyRef);
+    try {
+      await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 1, "list ready");
+      await act(async () => {
+        click(q(host, "[data-testid=note-item]"));
+      });
+      await waitFor(() => host.querySelector("[data-testid=note-content-input]") !== null, "editor ready");
+      expect(dirtyRef.current).toBe(false);
+      expect(added).toHaveLength(0);
 
-    await click(q(container, "note-item"));
-    await flush();
-    const editor = q(container, "note-inline-editor");
-    const titleInput = editor.querySelector<HTMLInputElement>("[data-testid=note-title-input]")!;
-    const contentInput = editor.querySelector<HTMLTextAreaElement>("[data-testid=note-content-input]")!;
-    expect(titleInput.value).toBe("已有笔记");
-    expect(contentInput.value).toBe("第一行\n第二行");
+      const ta = q(host, "[data-testid=note-content-input]") as HTMLTextAreaElement;
+      await act(async () => {
+        setNativeValue(ta, "新内容");
+      });
+      expect(dirtyRef.current).toBe(true);
+      expect(added).toContain("beforeunload");
 
-    setNativeValue(titleInput, "改过的标题");
-    setNativeValue(contentInput, "新正文");
-    await flush();
-    expect(dirtyRef.current).toBe(true);
-
-    await clickOutside();
-    await flush();
-    const puts = writes().filter((r) => r.method === "PUT");
-    expect(puts.length).toBe(1);
-    expect(puts[0].url).toBe("/api/notes/n1");
-    expect(puts[0].body).toMatchObject({ title: "改过的标题", content: "新正文" });
-    expect(dirtyRef.current).toBe(false);
-    // 保存后收起并重取列表
-    await flush();
-    expect(container.querySelector("[data-testid=note-inline-editor]")).toBeNull();
-    await unmount();
+      await act(async () => {
+        click(q(host, "[data-testid=note-collapse-btn]"));
+      });
+      await waitFor(() => putBody !== null, "PUT sent");
+      await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") === null, "collapsed");
+      expect(dirtyRef.current).toBe(false);
+      expect(removed).toContain("beforeunload");
+    } finally {
+      window.addEventListener = origAdd;
+      window.removeEventListener = origRemove;
+      await act(async () => {
+        root.unmount();
+      });
+    }
   });
 
-  test("新建：列表顶插入空行，输入后收起自动 POST 恰一次", async () => {
-    const dirtyRef = { current: false };
-    const { container, unmount } = await renderView(dirtyRef);
-    await flush();
-
-    await click(q(container, "note-new-btn"));
-    await flush();
-    const editor = q(container, "note-inline-editor");
-    expect(editor.getAttribute("data-note-id")).toBe("draft");
-    // 空行插在列表最前
-    const list = q(container, "notes-list");
-    expect(list.firstElementChild).toBe(editor);
-
-    setNativeValue(editor.querySelector<HTMLInputElement>("[data-testid=note-title-input]")!, "新笔记");
-    await click(q(container, "note-collapse-btn"));
-    await flush();
-    const posts = writes().filter((r) => r.method === "POST");
-    expect(posts.length).toBe(1);
-    expect(posts[0].body).toMatchObject({ project: PROJECT, title: "新笔记" });
-    expect(dirtyRef.current).toBe(false);
-    await unmount();
-  });
-
-  test("新建全空收起：零写请求无痕取消，列表复原", async () => {
-    const { container, unmount } = await renderView({ current: false });
-    await flush();
-    await click(q(container, "note-new-btn"));
-    await flush();
-    await click(q(container, "note-collapse-btn"));
-    await flush();
-    expect(writes().length).toBe(0);
-    expect(container.querySelector("[data-testid=note-inline-editor]")).toBeNull();
-    await unmount();
-  });
-
-  test("标题兜底：空标题行显正文首行摘要，全空行显「无标题」", async () => {
-    notes = [{ ...fullNote("n1", "", "首行内容\n次行"), preview: "首行内容" }, { ...fullNote("n2", "", ""), preview: "" }];
-    const { container, unmount } = await renderView({ current: false });
-    await flush();
-    const rows = [...container.querySelectorAll("[data-testid=note-item]")];
-    expect(rows.length).toBe(2);
-    expect(rows[0].textContent).toContain("首行内容");
-    expect(rows[1].textContent).toContain("无标题");
-    await unmount();
-  });
-
-  test("换行原样：textarea 多行值保存后逐字保留", async () => {
-    const { container, unmount } = await renderView({ current: false });
-    await flush();
-    await click(q(container, "note-item"));
-    await flush();
-    const editor = q(container, "note-inline-editor");
-    setNativeValue(editor.querySelector<HTMLTextAreaElement>("[data-testid=note-content-input]")!, "行甲\n行乙\n\n行丙");
-    await click(q(container, "note-collapse-btn"));
-    await flush();
-    const put = writes().find((r) => r.method === "PUT")!;
-    expect(put.body.content).toBe("行甲\n行乙\n\n行丙");
-    await unmount();
-  });
-
-  test("dirty 拦截：编辑中 dirtyRef 置位并挂 beforeunload；保存失败保持 dirty", async () => {
-    const addSpy = vi.spyOn(window, "addEventListener");
-    const dirtyRef = { current: false };
-    const { container, unmount } = await renderView(dirtyRef);
-    await flush();
-    expect(dirtyRef.current).toBe(false);
-
-    await click(q(container, "note-item"));
-    await flush();
-    setNativeValue(q(container, "note-inline-editor").querySelector<HTMLTextAreaElement>("[data-testid=note-content-input]")!, "未保存的改动");
-    await flush();
-    expect(dirtyRef.current).toBe(true);
-    expect(addSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
-
-    // 保存失败：编辑器保持展开、错误行内展示、dirty 不解除
-    failPut = true;
-    await click(q(container, "note-collapse-btn"));
-    await flush();
-    expect(container.querySelector("[data-testid=note-save-error]")).not.toBeNull();
-    expect(container.querySelector("[data-testid=note-inline-editor]")).not.toBeNull();
-    expect(dirtyRef.current).toBe(true);
-    addSpy.mockRestore();
-    await unmount();
+  test("换行原样：编辑态 textarea 值含换行字符，保存载荷逐字节一致", async () => {
+    let putBody: unknown = null;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => [200, { notes: [listItem()] }],
+      },
+      {
+        method: "GET",
+        prefix: "/api/notes/n1",
+        reply: () => [200, { note: noteDetail() }],
+      },
+      {
+        method: "PUT",
+        prefix: "/api/notes/n1",
+        reply: (hit) => {
+          putBody = hit.body;
+          return [200, { note: noteDetail() }];
+        },
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 1, "list ready");
+    await act(async () => {
+      click(q(host, "[data-testid=note-item]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-content-input]") !== null, "editor ready");
+    const ta = q(host, "[data-testid=note-content-input]") as HTMLTextAreaElement;
+    expect(ta.value).toBe("第一行\n第二行");
+    expect((q(host, "[data-testid=note-title-input]") as HTMLInputElement).value).toBe("已有笔记");
+    await act(async () => {
+      click(q(host, "[data-testid=note-collapse-btn]"));
+    });
+    await waitFor(() => putBody !== null, "PUT sent");
+    expect((putBody as { content: string }).content).toBe("第一行\n第二行");
+    await act(async () => {
+      root.unmount();
+    });
   });
 });

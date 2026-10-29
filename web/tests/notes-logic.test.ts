@@ -1,6 +1,27 @@
 // 笔记页签纯逻辑单测（todo 15）：列表过滤、标签解析（逗号分隔）、chips 聚合、相对时间。
 import { describe, expect, test } from "vitest";
-import { collectTags, filterNotesByTag, parseTagInput, relTime, tagsToInput } from "@/components/notes/notes-logic";
+import { collectTags, deriveDisplayTitle, filterNotesByTag, parseTagInput, relTime, tagsToInput } from "@/components/notes/notes-logic";
+
+describe("deriveDisplayTitle（r11 todo7 列表行标题兑底）", () => {
+  test("标题非空原样返回", () => {
+    expect(deriveDisplayTitle(" 有标题 ", "正文", "无标题")).toBe("有标题");
+  });
+
+  test("空标题取正文首个非空行", () => {
+    expect(deriveDisplayTitle("", "\n\n  第二行在前 \n第一行", "无标题")).toBe("第二行在前");
+  });
+
+  test("首行超长截断到 maxLen 加省略号", () => {
+    const long = "字".repeat(50);
+    expect(deriveDisplayTitle("", long, "无标题")).toBe("字".repeat(40) + "…");
+  });
+
+  test("标题正文全空回退「无标题」标签", () => {
+    expect(deriveDisplayTitle("", "", "无标题")).toBe("无标题");
+    expect(deriveDisplayTitle("", undefined, "无标题")).toBe("无标题");
+    expect(deriveDisplayTitle("", "\n \n", "无标题")).toBe("无标题");
+  });
+});
 
 describe("parseTagInput（编辑态逗号分隔标签解析）", () => {
   test("英文逗号分隔并去首尾空白", () => {
