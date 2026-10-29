@@ -237,8 +237,11 @@ export function SessionList() {
     setCreating(true);
     // 引擎冷启动窗口（r11 todo 4）：新建会话首次请求可能撞 engine_not_ready（503）——
     // 持住 creating 锁，2500ms 后自动重试一次（同 chat-view todo 26 先例，只试一次避
-    // 免死循环）；重试仍失败才走错误 toast，用户总共只见一次提示。
+    // 免死循环）；重试仍失败才走错误 toast，用户总共只见一次提示。锁的释放条件：
+    // 「未排程重试（正常完成或非 engine 错误）」或「重试已结束」——重试窗口内按钮
+    // 保持 disabled，防二次点击重复建会话。
     const attempt = async (isFirst: boolean) => {
+    let retryScheduled = false;
     try {
       const ui = useUiStore.getState();
       if (ui.currentProject !== project) {
@@ -296,6 +299,7 @@ export function SessionList() {
     } catch (err) {
       if (isFirst && err instanceof ApiError && err.code === "engine_not_ready") {
         // 首次 engine_not_ready：保持锁，延时重试一次（重试失败则走 toast 释放锁）
+        retryScheduled = true;
         setTimeout(() => {
           void attempt(false);
         }, 2500);
@@ -303,8 +307,9 @@ export function SessionList() {
       }
       useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.createFailed"), "error");
     } finally {
-      // 仅在重试已排程时不释放锁：按钮保持 disabled，防重试窗口内二次点击
-      if (isFirst) setCreating(false);
+      // 排程了重试则不在此释放：锁由重试自身的完成路径（本 finally，isFirst=false）
+      // 释放；未排程重试时立即释放（正常完成或非 engine 错误的 toast 路径）
+      if (!isFirst || !retryScheduled) setCreating(false);
     }
     };
     await attempt(true);

@@ -72,8 +72,10 @@ async function mountList() {
   });
   const btn = container.querySelector('[data-testid="new-session-btn"]');
   expect(btn).toBeTruthy();
+  const btnRef = () => container.querySelector('[data-testid="new-session-btn"]');
   return {
     btn,
+    btnRef,
     async click() {
       await act(async () => {
         btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -107,6 +109,8 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
     const h = await mountList();
     await h.click();
     expect(api.createSession).toHaveBeenCalledTimes(1);
+    // B2：重试窗口内（2500ms 未到）按钮必须保持 disabled，防二次点击重复建会话
+    expect((h.btnRef() as HTMLButtonElement).disabled).toBe(true);
     // 冷启动窗口：2500ms 延时后才发起第二次请求
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2499);
@@ -140,6 +144,8 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
     });
     expect(api.createSession).toHaveBeenCalledTimes(2);
     expect(toastSpy).toHaveBeenCalledTimes(1);
+    // 重试最终失败后锁释放：按钮重新可点击
+    expect((h.btnRef() as HTMLButtonElement).disabled).toBe(false);
     await h.close();
   });
 
