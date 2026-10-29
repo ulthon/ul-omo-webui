@@ -1,6 +1,5 @@
-// 水位数据 hook（r10 todo 6 从 context-ring.tsx 抽出）：ContextWaterRing 与手机档
-// 输入框下方水位细条（context-usage-bar.tsx）共用同源数据与刷新时机，保证两处数值
-// 永远一致。数据 GET /api/usage 的 contextUsage（toUsageStats 与 status-bar 同源）；
+// 水位数据 hook（r10 todo 6 从 context-ring.tsx 抽出）：手机档输入框下方水位细条
+// （context-usage-bar.tsx）与状态栏共用同源数据与刷新时机，保证数值永远一致。数据 GET /api/usage 的 contextUsage（toUsageStats 与 status-bar 同源）；
 // 刷新时机 = 会话打开 + 生效模型变更 + 回合落定沿（status-bar.tsx:114-121 先例）+
 // 压缩等非回合路径的 onUsageRefresh 广播。不做流式跟随动画。
 import { useEffect, useRef, useState } from "react";

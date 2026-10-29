@@ -64,7 +64,6 @@ const { api } = await import("@/lib/api");
 const { Topbar } = await import("../topbar");
 const { AppSidebar } = await import("@/pages/shell");
 const { ContextUsageBar } = await import("../context-usage-bar");
-const { ContextWaterRing } = await import("../context-ring");
 const { useUiStore } = await import("@/stores/ui");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { calibrateContextPercent } = await import("@/components/layout/context-percent");
@@ -159,7 +158,7 @@ describe("手机顶栏减负（r10 todo 6）", () => {
     expect(useUiStore.getState().drawerOpen).toBe(false);
   });
 
-  test("(c1) 水位细条在 Composer 落位组件中渲染，百分比与水位环同源同值", async () => {
+  test("(c1) 水位细条在 Composer 落位组件中渲染，百分比与数据源一致", async () => {
     mobileMatches = true;
     api.getUsage.mockImplementation(() => Promise.resolve(USAGE_PAYLOAD));
     const expectedPct = Math.round(
@@ -172,10 +171,6 @@ describe("手机顶栏减负（r10 todo 6）", () => {
     const fill = container.querySelector('[data-testid="context-usage-bar-fill"]');
     expect(fill.getAttribute("data-percent")).toBe(String(expectedPct));
     expect(Number(bar.getAttribute("aria-valuenow"))).toBe(expectedPct);
-    // 同值性：同 sessionId 同 mock 下环中心百分比一致（同一 use-context-usage 数据源）
-    const ringWrap = await mount(createElement(ContextWaterRing, { sessionId: "s1" }));
-    const pctText = ringWrap.container.querySelector('[data-testid="context-ring-percent"]');
-    expect(pctText?.textContent).toBe(`${expectedPct}%`);
   });
 
   test("(c2) 水位数据缺失时细条隐藏不占位", async () => {
