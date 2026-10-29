@@ -22,10 +22,10 @@ import { useT } from "@/i18n/i18n";
 import { Composer } from "@/components/composer/composer";
 import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
-import { MessageList } from "./message-list";
+import { MessageList, type MessageListHandle } from "./message-list";
 import { buildMessageItems, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
-import { QuestionQueue } from "./question-queue";
+import { QuestionHintBar } from "./question-hint-bar";
 import { ActivityBar } from "./activity-bar";
 import { QueueBar } from "./queue-bar";
 import { StatusBar } from "./status-bar";
@@ -107,6 +107,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const [syncing, setSyncing] = useState(false);
   const syncingUntilRef = useRef(0);
   const syncInFlightRef = useRef(false);
+  // 消息列表命令句柄（r11 todo 6d）：待答提问提示条点击 → scrollToQuestion 定位流内卡
+  const listRef = useRef<MessageListHandle | null>(null);
 
   const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
@@ -304,9 +306,14 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <MessageList items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
+      <MessageList ref={listRef} items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
       <PermissionQueue sessionId={sessionId} />
-      <QuestionQueue sessionId={sessionId} />
+      {/* 待答提问提示条（r11 todo 6d）：卡片改渲染在消息流内锚点位，输入区上方仅细
+          提示条；点击定位队首 pending 卡（权限卡位置行为不动，仍在其上） */}
+      <QuestionHintBar
+        sessionId={sessionId}
+        onView={(requestId) => listRef.current?.scrollToQuestion(requestId)}
+      />
       {/* docs08-r4 任务 7：手机档容器贴边（左右 12px，底部安全区由 Composer 自带 pb 承担），
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">

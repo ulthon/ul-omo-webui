@@ -3,16 +3,18 @@
 // 用户上滚即暂停跟随并浮出"回到底部"。顶部触顶触发增量同步（游标分页钩子，ChatView 提供）。
 // 记忆标记（docs08-r4 任务 13）：entries 中白名单 memory 条目经 mergeMemoryItems 并入 items，
 // 标记块随虚拟化正常测量渲染。
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CirclePause, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CircleCheck, CirclePause, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
+import { useQuestionsStore, type QuestionRequest, type QuestionResolvedSummary } from "@/stores/questions";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, mergeSessionEventLines, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine } from "./message-items";
+import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
+import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
 
@@ -166,6 +168,33 @@ export const SessionEventLineBlock = memo(function SessionEventLineBlock({ line 
   );
 });
 
+/** 落定提问摘要行（r11 todo 6e）：question_resolved 后流内卡位替换的一行瞬态痕——
+ *  仅内存（questions store resolvedSummaries，刷新即无）；outcome→文案映射在此（数据面不携 i18n）。 */
+export const QuestionResolvedLineBlock = memo(function QuestionResolvedLineBlock({ summary }: { summary: QuestionResolvedSummary }) {
+  const t = useT();
+  const key =
+    summary.outcome === "answered"
+      ? "chat.questionCard.resolvedAnswered"
+      : summary.outcome === "timed_out"
+        ? "chat.questionCard.resolvedTimedOut"
+        : summary.outcome === "cancelled"
+          ? "chat.questionCard.resolvedCancelled"
+          : "chat.questionCard.resolvedGeneric";
+  return (
+    <div
+      data-testid="question-resolved-line"
+      data-outcome={summary.outcome}
+      className="my-0.5 flex min-h-7 items-center gap-1.5 px-1.5 py-1 text-xs text-muted-foreground"
+    >
+      <CircleCheck className="size-3.5 shrink-0 text-muted-foreground/60" aria-hidden />
+      <span className="min-w-0 break-words">
+        {t(key)}
+        {summary.snippet !== "" ? `：${summary.snippet}` : ""}
+      </span>
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
@@ -176,6 +205,11 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   if (item.kind === "memoryMarkerCluster") return <AcceptedTurnsClusterBlock markers={item.markers} />;
   if (item.kind === "noticeCard") return <NoticeCardBlock notice={item.notice} />;
   if (item.kind === "sessionEvent") return <SessionEventLineBlock line={item.line} />;
+  if (item.kind === "questionCard")
+    return (
+      <QuestionCard sessionId={sessionId} request={item.request} position={item.position} total={item.total} />
+    );
+  if (item.kind === "questionResolved") return <QuestionResolvedLineBlock summary={item.summary} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 
@@ -185,12 +219,25 @@ const BOTTOM_THRESHOLD = 80;
 /** 滚动容器 py-4 顶垫（粘性判定把测量缓存偏移换算到视口坐标用） */
 const STICKY_TOP_PAD = 16;
 
+/** 空队列引用稳定值（订阅 selector 兑底，避免 memo 重算） */
+const NO_QUESTIONS: QuestionRequest[] = [];
+const NO_SUMMARIES: QuestionResolvedSummary[] = [];
+
+/** MessageList 命令句柄（r11 todo 6d）：待答提问提示条点击定位流内卡用 */
+export interface MessageListHandle {
+  /** 滚动定位流内提问卡；虚拟化窗外时先 scrollToIndex 挂载该行再定位 */
+  scrollToQuestion(requestId: string): void;
+}
+
 export function MessageList({
+  ref,
   items,
   sessionId,
   syncing,
   onReachTop,
 }: {
+  /** React 19 ref-as-prop：命令句柄（scrollToQuestion，提示条点击定位用） */
+  ref?: React.Ref<MessageListHandle>;
   items: ChatListItem[];
   sessionId: string;
   syncing: boolean;
@@ -207,9 +254,18 @@ export function MessageList({
   // 会话级事件行（r10 todo 7）：store 每会话事件行尾部并入（切页可见、重取不冲），
   // 无事件行时 mergeSessionEventLines 原样返回不建数组
   const sessionEvents = useMessagesStore((s) => s.bySession[sessionId]?.sessionEvents);
+  // 待答提问卡与落定摘要（r11 todo 6d/e）：questions store → 合成层在锚点 entry 后
+  // 插入流内（每张 pending 卡各自渲染于各自锚点，不折叠收敛）；resolved 后原卡位替换
+  // 为一行瞬态摘要。空队列引用稳定（NO_* 兑底），memo 不重算。
+  const pendingQuestions = useQuestionsStore((s) => s.bySession[sessionId] ?? NO_QUESTIONS);
+  const resolvedSummaries = useQuestionsStore((s) => s.resolvedSummaries[sessionId] ?? NO_SUMMARIES);
   const mergedItems = useMemo(
-    () => mergeSessionEventLines(mergeMemoryItems(items, entries ?? []), sessionEvents ?? []),
-    [items, entries, sessionEvents],
+    () =>
+      mergeSessionEventLines(
+        mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
+        sessionEvents ?? [],
+      ),
+    [items, entries, sessionEvents, pendingQuestions, resolvedSummaries],
   );
   // 压缩进行态（docs08-r6 任务 18 ①）：compaction_start/progress 置位、end 消除
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
@@ -228,6 +284,27 @@ export function MessageList({
     overscan: 6,
     getItemKey: (index) => mergedItems[index].key,
   });
+
+  // 待答提问卡定位（r11 todo 6d）：提示条点击 → 流内卡 scrollIntoView；虚拟化窗外
+  // （未挂载）先 scrollToIndex 挂载该行，下一帧再定位
+  const scrollToQuestion = useCallback(
+    (requestId: string) => {
+      const selector = `[data-question-card-id="${requestId}"]`;
+      const el = scrollRef.current?.querySelector(selector);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      const idx = mergedItems.findIndex((it) => it.kind === "questionCard" && it.request.id === requestId);
+      if (idx < 0) return;
+      virtualizer.scrollToIndex(idx, { align: "center" });
+      requestAnimationFrame(() => {
+        scrollRef.current?.querySelector(selector)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    },
+    [mergedItems, virtualizer],
+  );
+  useImperativeHandle(ref, () => ({ scrollToQuestion }), [scrollToQuestion]);
 
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;

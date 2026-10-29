@@ -189,6 +189,17 @@ export const chat = {
     submitFallback: "No confirmation after submit; retry or cancel",
     retrySubmit: "Retry",
     cancelSubmit: "Cancel answer",
+    // r11 todo 6: tabbed control model additions
+    questionTab: "Question",
+    commentTab: "Notes",
+    remainingHint: "{n} question(s) unanswered",
+    resolvedAnswered: "Question answered",
+    resolvedTimedOut: "Question timed out",
+    resolvedCancelled: "Question cancelled",
+    resolvedGeneric: "Question resolved",
+    hintPending: "Questions pending",
+    hintCount: "{n} total",
+    hintView: "View",
   },
   // permission-card.tsx
   permissionCard: {

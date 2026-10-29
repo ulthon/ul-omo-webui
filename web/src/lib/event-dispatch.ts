@@ -133,6 +133,16 @@ function pageVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
+/** 当时消息流末条 entry id（r11 todo 6b 提问帧锚点；空流/末条无 id → null 挂流末兜底） */
+function lastStreamEntryId(sessionId: string): string | null {
+  const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const id = entries[i]!.id;
+    if (typeof id === "string" && id !== "") return id;
+  }
+  return null;
+}
+
 /** 当前分发游标（单测断言用） */
 export function getDispatchCursor(): number | null {
   return lastCursor;
@@ -449,7 +459,10 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   } else if (wire.type === "extension_ui_request") {
     const method = typeof wire.method === "string" ? wire.method : null;
     if (method === "question") {
-      // q1 提问卡片：结构化问题帧（waitForAnswer=true 阻塞回合 → waiting）
+      // q1 提问卡片：结构化问题帧（waitForAnswer=true 阻塞回合 → waiting）。
+      // r11 todo 6b 保锚：wire askedAtMs（对账重挂重定位用）+ 当时消息流末条 entry id
+      // 写入请求——卡片改在流内锚点渲染；重放窗口内重投同 id 由 pushRequest 去重，
+      // 首帧锚点为准不漂移。
       const questions = narrowQuestionSpecs(wire.questions);
       if (typeof wire.id === "string" && wire.id && questions) {
         if (wire.waitForAnswer === true) sessions.setRunState(sessionId, "waiting");
@@ -459,6 +472,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
           questions,
           deadlineAtMs: typeof wire.deadlineAtMs === "number" ? wire.deadlineAtMs : Date.now() + 30 * 60_000,
           timeout: typeof wire.timeout === "number" ? wire.timeout : 30 * 60_000,
+          askedAtMs: typeof wire.askedAtMs === "number" ? wire.askedAtMs : Date.now(),
+          anchorEntryId: lastStreamEntryId(sessionId),
         };
         useQuestionsStore.getState().pushRequest(sessionId, request);
       }
@@ -613,13 +628,17 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     }
   }
 
-  // 提问卡片生命周期（q1）：updated 刷截止；resolved 终局出队（超时/取消/异端应答）
+  // 提问卡片生命周期（q1）：updated 刷截止；resolved 终局出队（超时/取消/异端应答）。
+  // r11 todo 6e 落定瞬态痕：resolved 时流内卡位替换为一行摘要（resolveRequest 幂等，
+  // 重放窗口重播的重复 resolved 帧不二次报；未知 id 无卡可替 no-op），零持久化刷新即无。
   if (wire.type === "question_updated" && typeof wire.id === "string") {
     if (typeof wire.deadlineAtMs === "number") {
       useQuestionsStore.getState().updateDeadline(sessionId, wire.id, wire.deadlineAtMs);
     }
   } else if (wire.type === "question_resolved" && typeof wire.id === "string") {
-    useQuestionsStore.getState().removeRequest(sessionId, wire.id);
+    useQuestionsStore
+      .getState()
+      .resolveRequest(sessionId, wire.id, typeof wire.outcome === "string" ? wire.outcome : "");
   }
 
   // 消息主通道（未知类型在 store 内静默忽略）

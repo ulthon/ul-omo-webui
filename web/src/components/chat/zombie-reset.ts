@@ -1,10 +1,45 @@
 // 僵尸复位对账（docs08-r6 任务 6 ②）：未决提问 + 排队快照的对账拉取（会话打开与
 // 僵尸复位前共用同款代码）与复位决策。独立叶模块——chat-view 组件文件保持仅导出
 // 组件（fast-refresh lint 口径），单测直接驱动本模块。
-import { api, type QuestionWireFrame } from "@/lib/api";
+import { api, type QuestionWireFrame, type WireEntry } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
+
+/** entry.timestamp → ms epoch（ISO 字串/毫秒数字均收；缺失/不可解析 → null 不比时间） */
+function entryTimestampMs(e: WireEntry): number | null {
+  const raw = (e as { timestamp?: unknown }).timestamp;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw !== "") {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+/** 对账重挂锚点（r11 todo 6b）：①既有锚点仍在场（条目未被压缩/截断出窗）→ 保锚不漂移；
+ *  ②按 askedAtMs 重定位——提问时刻（含）之前最后一条携 id 条目 = 提问发生位置；
+ *  ③无可比时间戳或全部晚于提问时刻（流外提问/时钟不可比）→ 挂消息流末条；空流 null。
+ *  漏写则刷新后所有 pending 卡静默走「挂消息流末尾」兜底，IS-4 降级。 */
+function reanchorQuestion(sessionId: string, requestId: string, askedAtMs: number): string | null {
+  const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
+  const existing = useQuestionsStore.getState().bySession[sessionId]?.find((r) => r.id === requestId);
+  if (existing?.anchorEntryId != null && entries.some((e) => e.id === existing.anchorEntryId)) {
+    return existing.anchorEntryId;
+  }
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    const ts = entryTimestampMs(e);
+    if (ts === null || ts > askedAtMs) continue;
+    if (typeof e.id === "string" && e.id !== "") return e.id;
+  }
+  // 无可比时间戳或全部晚于提问时刻：不猜位置，挂消息流末条；空流 null
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const id = entries[i]!.id;
+    if (typeof id === "string" && id !== "") return id;
+  }
+  return null;
+}
 
 /** 未决提问 + 排队快照对账（q1 / docs08-r4 任务 11 同款；docs08-r6 任务 6 ②提为共用）：
  *  GET questions/queue 并落 store（问题帧入队、排队快照整替），任一失败不抛——对应
@@ -26,12 +61,17 @@ export async function reconcilePendingState(
       if (!snapshotIds.has(stale.id)) useQuestionsStore.getState().removeRequest(sessionId, stale.id);
     }
     for (const frame of questions) {
-      useQuestionsStore.getState().pushRequest(sessionId, {
+      // r11 todo 6b：对账重建同样写入 askedAtMs + 重定位锚点（reconcileRequest 同 id
+      // 更新锚点而保留草稿，重挂后卡片回到原位）
+      const askedAtMs = typeof frame.askedAtMs === "number" ? frame.askedAtMs : Date.now();
+      useQuestionsStore.getState().reconcileRequest(sessionId, {
         id: frame.id,
         waitForAnswer: frame.waitForAnswer === true,
         questions: frame.questions,
         deadlineAtMs: frame.deadlineAtMs,
         timeout: frame.timeout,
+        askedAtMs,
+        anchorEntryId: reanchorQuestion(sessionId, frame.id, askedAtMs),
       });
     }
   }

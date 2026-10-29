@@ -63,6 +63,8 @@ function setPendingQuestion(pending: boolean): void {
           ],
           deadlineAtMs: Date.now() + 30 * 60_000,
           timeout: 30 * 60_000,
+          askedAtMs: Date.now(),
+          anchorEntryId: null,
         },
       ];
     } else {

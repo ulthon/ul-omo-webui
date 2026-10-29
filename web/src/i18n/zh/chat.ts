@@ -189,6 +189,17 @@ export const chat = {
     submitFallback: "提交后未收到确认，可重试或取消",
     retrySubmit: "重试",
     cancelSubmit: "取消作答",
+    // r11 todo 6：页签化控件模型新增键
+    questionTab: "问题",
+    commentTab: "补充",
+    remainingHint: "剩 {n} 题未答",
+    resolvedAnswered: "提问已回答",
+    resolvedTimedOut: "提问已超时",
+    resolvedCancelled: "提问已取消",
+    resolvedGeneric: "提问已处理",
+    hintPending: "有待答提问",
+    hintCount: "共 {n} 个",
+    hintView: "查看",
   },
   // permission-card.tsx 权限卡片 chrome（引擎传入的 title/message 不在域内）。
   // kindChoice（docs08-r6 任务 6 ③）：非权限 select（提问降级/登录选择）的中性标题

@@ -127,6 +127,8 @@ describe("僵尸复位前对账——维持锁定路径", () => {
       questions: [],
       deadlineAtMs: Date.now() + 1000,
       timeout: 1000,
+      askedAtMs: Date.now(),
+      anchorEntryId: null,
     });
     stubFetch({ questions: { body: { sessionId: SID, questions: [questionFrame("q-a")] } } });
     markZombieStreaming();

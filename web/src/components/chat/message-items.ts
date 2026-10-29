@@ -9,6 +9,7 @@
 import type { WireEntry, WireMessage } from "@/lib/api";
 import type { MessageKey } from "@/i18n/i18n";
 import { memoryMarkerOf, type MemoryMarker } from "@/lib/memory-entries";
+import type { QuestionRequest, QuestionResolvedSummary } from "@/stores/questions";
 
 /** 压缩摘要标记（docs08-r6 任务 18 ③）：顶层 type:"compaction" 条目派生。字段形态
  *  钉死于 task-3 枚举（.omo/evidence/docs08-r6/task-3-enumeration.md §三）：summary
@@ -236,7 +237,9 @@ export type ChatListItem =
   | { key: string; kind: "compactionMarker"; marker: CompactionMarker }
   | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] }
   | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice }
-  | { key: string; kind: "sessionEvent"; line: SessionEventLine };
+  | { key: string; kind: "sessionEvent"; line: SessionEventLine }
+  | { key: string; kind: "questionCard"; request: QuestionRequest; position: number; total: number }
+  | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary };
 
 /** 会话级事件行（r10 todo 7）：纯数据形态，messages store 持有（定义在此、store 以
  *  type 引用，防 store→组件纯逻辑模块的反向值依赖）。渲染由 message-list 的
@@ -255,6 +258,87 @@ export function mergeSessionEventLines(
 ): ChatListItem[] {
   if (lines.length === 0) return items;
   return [...items, ...lines.map((line) => ({ key: `session-event-${line.id}`, kind: "sessionEvent", line }) as const)];
+}
+
+/** 提问卡合成层（r11 todo 6d）：每张 pending 卡各自渲染于各自锚点 entry 之后（不做
+ *  多卡折叠收敛）；锚点解析不出（提问先于任何消息/锚条目被压缩出窗/显式 null）时挂
+ *  消息流末尾（流式气泡之前——提问先于其后的流式输出发生）。落定瞬态摘要行
+ *  （r11 todo 6e）同规则插在同一锚点位。纯函数：不改入参，无重复列（卡片只来源于
+ *  questions store，帧重投由 pushRequest 同 id 去重兑底）。 */
+export function mergeQuestionCards(
+  items: ChatListItem[],
+  entries: readonly WireEntry[],
+  requests: ReadonlyArray<QuestionRequest>,
+  resolvedSummaries: ReadonlyArray<QuestionResolvedSummary> = [],
+): ChatListItem[] {
+  if (requests.length === 0 && resolvedSummaries.length === 0) return items;
+  const ordOf = new Map<string, number>();
+  entries.forEach((e, i) => {
+    if (typeof e.id === "string" && e.id !== "" && !ordOf.has(e.id)) ordOf.set(e.id, i);
+  });
+  // 已插入卡/摘要行的锚序（后续同锚插入保持到达序，不反序）
+  const cardOrd = new Map<ChatListItem, number>();
+  const ordOfItem = (it: ChatListItem): number | null => {
+    if (cardOrd.has(it)) return cardOrd.get(it)!;
+    let id: string | null = null;
+    if (it.kind === "entry" || it.kind === "customMessage") id = it.entryId;
+    else if (it.kind === "memoryMarker") id = it.marker.entryId;
+    else if (it.kind === "compactionMarker") id = it.marker.entryId;
+    else if (it.kind === "noticeCard") id = it.notice.entryId;
+    else if (it.kind === "loopGuardGroup") id = it.entryIds[0] ?? null;
+    else if (it.kind === "memoryMarkerCluster") id = it.markers[0]?.entryId ?? null;
+    if (id === null) return null;
+    return ordOf.get(id) ?? null;
+  };
+  let out = items.slice();
+  const insertAtAnchor = (anchorEntryId: string | null, make: () => ChatListItem): void => {
+    const anchorOrd = anchorEntryId !== null ? ordOf.get(anchorEntryId) : undefined;
+    let at: number;
+    if (anchorOrd !== undefined) {
+      // 自尾向前找最后一个锚序 ≤ 锚点的可见行，插其后（锚条目本身不可见时落到其后
+      // 首个可见行之前；全部晚于锚点时插首位）
+      at = 0;
+      for (let i = out.length - 1; i >= 0; i--) {
+        const o = ordOfItem(out[i]!);
+        if (o !== null && o <= anchorOrd) {
+          at = i + 1;
+          break;
+        }
+      }
+      const item = make();
+      cardOrd.set(item, anchorOrd);
+      out.splice(at, 0, item);
+    } else {
+      // 兑底挂流末：流式气泡之前，无流式则末尾
+      at = out.length;
+      for (let i = 0; i < out.length; i++) {
+        if (out[i]!.kind === "streaming") {
+          at = i;
+          break;
+        }
+      }
+      const item = make();
+      cardOrd.set(item, Number.MAX_SAFE_INTEGER);
+      out.splice(at, 0, item);
+    }
+  };
+  requests.forEach((r, i) =>
+    insertAtAnchor(r.anchorEntryId, () => ({
+      key: `question-${r.id}`,
+      kind: "questionCard",
+      request: r,
+      position: i + 1,
+      total: requests.length,
+    })),
+  );
+  resolvedSummaries.forEach((summary) =>
+    insertAtAnchor(summary.anchorEntryId, () => ({
+      key: `question-resolved-${summary.id}`,
+      kind: "questionResolved",
+      summary,
+    })),
+  );
+  return out;
 }
 
 /** message 载荷窄化（wire 形态从宽）：role 非字符串视为不可渲染条目跳过 */
