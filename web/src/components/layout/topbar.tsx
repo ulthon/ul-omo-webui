@@ -44,6 +44,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/** 站点名（engine-upgrade 2026-10-30 批次 todo3）：服务端注入 window.__SITE_NAME__，
+ * 未设置/非字符串/空串 → null 不渲染（零新增 i18n 键，直用配置值）；登录页同型读取。 */
+function readSiteName(): string | null {
+  const v = (window as { __SITE_NAME__?: unknown }).__SITE_NAME__;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 function basename(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts.length > 0 ? parts[parts.length - 1] : path;
@@ -280,6 +287,9 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   }, [models]);
 
   const t = useT();
+  // 站点名（todo3）：标题区小字，桌面/手机档同显；身份钮纵向内边距随三行行高压缩
+  const siteName = readSiteName();
+  const identityPad = siteName ? "py-0.5" : "py-1";
   const noModels = modelsLoaded && models.length === 0;
   const modelLabel = noModels
     ? t("login.topbar.noModels")
@@ -308,7 +318,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
             aria-label={t("login.topbar.sessionIdentity")}
             aria-haspopup="dialog"
             aria-expanded={switcherOpen}
-            className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 py-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            className={`flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 rounded-lg px-2 ${identityPad} text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50`}
             onClick={() => setSwitcherOpen(true)}
           >
             {selectedSession && (
@@ -329,6 +339,16 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               </span>
               <ChevronDown className="size-3 shrink-0" aria-hidden />
             </span>
+            {/* 站点名小字第三行（todo3）：text-[11px] leading-none 控制三行总高，
+                配合上方 py-0.5 仍收在 h-14 顶栏内；未设置整行不渲染 */}
+            {siteName && (
+              <span
+                data-testid="topbar-site-name"
+                className="block w-full truncate text-[11px] leading-none text-muted-foreground"
+              >
+                {siteName}
+              </span>
+            )}
           </button>
           <SessionSwitcherSheet
             open={switcherOpen}
@@ -342,10 +362,24 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {/* 窄屏 max-w 收敛（todo 26 走查修复：390 顶栏溢出 scrollWidth=430；sm 起保持原桌面宽度） */}
-            <Button variant="ghost" className="max-w-[32vw] gap-1.5 px-2 sm:max-w-xs">
-              <span className="truncate font-medium">
-                {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
+            {/* 站点名小字（todo3）：标题钮内第二行，h-auto 覆盖默认 h-8 让两行立起，
+                chevron 位置不变（图标布局不动）；未设置单行原样 */}
+            <Button
+              variant="ghost"
+              className={`max-w-[32vw] gap-1.5 px-2 sm:max-w-xs ${siteName ? "h-auto py-1" : ""}`}
+            >
+              <span className="flex min-w-0 flex-col items-start gap-0.5">
+                <span className="max-w-full truncate font-medium">
+                  {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
+                </span>
+                {siteName && (
+                  <span
+                    data-testid="topbar-site-name"
+                    className="max-w-full truncate text-[11px] font-normal leading-tight text-muted-foreground"
+                  >
+                    {siteName}
+                  </span>
+                )}
               </span>
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
             </Button>

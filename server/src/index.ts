@@ -1,10 +1,11 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { relative } from "node:path";
-import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR } from "./config";
-import { loadEmbeddedStatic, embeddedRelPath } from "./embedded-static";
+import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR, siteName } from "./config";
+import { loadEmbeddedStatic, embeddedRelPath, injectSiteName } from "./embedded-static";
 import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
@@ -282,6 +283,10 @@ function mimeTypeOf(path: string): string {
 
 const embeddedStatic = await loadEmbeddedStatic();
 
+// 站点名（engine-upgrade 2026-10-30 批次 todo3）：env 单源，进程期不变，启动时预计算。
+// 未设置时 servedIndexHtml 恒等原资产对象、磁盘路拦截不注册——未设置全链与历史版本逐字节一致。
+const site = siteName();
+
 function embeddedAssetResponse(relPath: string, asset: { data: string; binary: boolean }, cacheControl: string): Response {
   const body = asset.binary ? Buffer.from(asset.data, "base64") : asset.data;
   return new Response(body, {
@@ -295,6 +300,8 @@ if (embeddedStatic) {
     console.error("启动失败：内嵌静态资产缺少 index.html（构建产物不完整），请重跑 scripts/build-binary.ts");
     process.exit(1);
   }
+  // SPA fallback 与直接 /index.html 命中共用注入版（启动时一次性替换，逐请求零开销）
+  const servedIndexHtml = site ? { data: injectSiteName(indexHtml.data, site), binary: false } : indexHtml;
   app.get("*", (c) => {
     if (c.req.path.startsWith("/api/")) {
       return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
@@ -307,6 +314,10 @@ if (embeddedStatic) {
     } catch (err) {
       return toErrorResponse(c, err);
     }
+    // 站点名已设置时 /index.html 显式命中也走注入版（未设置沿原路，缓存语义不变）
+    if (site && relPath === "index.html") {
+      return embeddedAssetResponse(relPath, servedIndexHtml, "no-cache");
+    }
     const asset = embeddedStatic[relPath];
     if (asset) {
       // vite 产物 assets/ 文件名带内容 hash，可长缓存 immutable
@@ -314,10 +325,31 @@ if (embeddedStatic) {
       return embeddedAssetResponse(relPath, asset, cache);
     }
     // SPA fallback：非文件路径全部回落 index.html（登录页与前端路由依赖）
-    return embeddedAssetResponse("index.html", indexHtml, "no-cache");
+    return embeddedAssetResponse("index.html", servedIndexHtml, "no-cache");
   });
 } else {
   const staticRoot = relative(process.cwd(), STATIC_DIR);
+  // 磁盘路同源注入（engine-upgrade 2026-10-30 批次 todo3，勿只改一路）：@hono/node-server
+  // 的 serveStatic 对 GET / 命中目录索引 index.html（statSync 目录后拼 index.html 直达）、
+  // 对 GET /index.html 显式命中原文件——两处都会绕过 SPA fallback，拦截须注册在中间件
+  // 之前。逐请求读盘注入：开发期 web 重建后注入值跟随最新产物（no-cache 语义）。
+  const serveDiskIndexHtml = site
+    ? (c: Context): Response => {
+        let html: string;
+        try {
+          html = readFileSync(join(STATIC_DIR, "index.html"), "utf8");
+        } catch {
+          return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
+        }
+        return new Response(injectSiteName(html, site), {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+        });
+      }
+    : null;
+  if (serveDiskIndexHtml) {
+    app.get("/", serveDiskIndexHtml);
+    app.get("/index.html", serveDiskIndexHtml);
+  }
   app.use("*", serveStatic({ root: staticRoot }));
 
   // SPA fallback：非 /api 的未命中路径全部回落 index.html；/api 未命中返回 404 JSON
@@ -326,6 +358,8 @@ if (embeddedStatic) {
     if (c.req.path.startsWith("/api/")) {
       return c.json({ error: { code: "not_found", message: "route not found" } }, 404);
     }
+    // 站点名已设置时 fallback 同步走读盘注入（SPA 路由如 /login 的标签页标题同源）
+    if (serveDiskIndexHtml) return serveDiskIndexHtml(c);
     return (await serveIndex(c, async () => {})) ?? c.json({ error: { code: "not_found", message: "route not found" } }, 404);
   });
 }

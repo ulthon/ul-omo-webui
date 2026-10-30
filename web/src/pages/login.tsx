@@ -12,6 +12,14 @@ import { Input } from "@/components/ui/input";
 // 探测值不落 localStorage（不冒充显式选择），登录后 bootstrap 以 kv 校正。
 applyInitialLocale();
 
+// 站点名（engine-upgrade 2026-10-30 批次 todo3）：服务端已把 UL_OMO_WEBUI_SITE_NAME
+// 注入为 window.__SITE_NAME__（内联 script 载荷，服务端已做 JSON.stringify+转义硬化）；
+// 未设置/非字符串/空串 → null，不渲染副标题行（零新增 i18n 键，直用配置值）。
+function readSiteName(): string | null {
+  const v = (window as { __SITE_NAME__?: unknown }).__SITE_NAME__;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +43,7 @@ export function LoginPage() {
   }, []);
 
   const t = useT();
+  const siteName = readSiteName();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!password || submitting) return;
@@ -53,6 +62,12 @@ export function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-8 shadow-sm">
         <h1 className="text-xl font-semibold tracking-tight">ul-omo webui</h1>
+        {/* 站名副标题行（todo3）：仅已设置站点名时渲染，位于标题与默认副标题之间 */}
+        {siteName && (
+          <p className="mt-1 text-sm font-medium" data-testid="login-site-name">
+            {siteName}
+          </p>
+        )}
         <p className="mt-1 text-sm text-muted-foreground">{t("login.subtitle")}</p>
         <div className="mt-6 space-y-3">
           <Input

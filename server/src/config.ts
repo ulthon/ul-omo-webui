@@ -68,6 +68,16 @@ export function agentDir(): string {
   return process.env.UL_OMO_WEBUI_AGENT_DIR ?? join(homedir(), ".omo", "agent");
 }
 
+/** 自定义站点名（engine-upgrade 2026-10-30 批次 todo3）：UL_OMO_WEBUI_SITE_NAME，缺省 null。
+ * 全链单一来源：服务端注入（标签页 <title> 替换 + window.__SITE_NAME__ 载荷）与前端两处
+ * 呈现（登录副标题行、顶栏标题区小字）都消费本值；未设置/空串 → null（不注入不渲染，
+ * 行为与历史版本逐字节一致）。不做设置页配置项（本批 env 单源定调）。函数形态逐调用
+ * 读取 env（对齐 metaDbPath/agentDir 先例，测试可注入）。 */
+export function siteName(): string | null {
+  const raw = process.env.UL_OMO_WEBUI_SITE_NAME;
+  return raw === undefined || raw === "" ? null : raw;
+}
+
 /** SSE 链路诊断日志开关（D18 排查）：UL_OMO_WEBUI_DEBUG_SSE truthy 时服务端 stdout 输出
  * 连接建立/状态迁移/帧写出/durableLookup miss 日志；关闭时零输出零行为差异。 */
 export const DEBUG_SSE = /^(1|true|yes|on)$/i.test(process.env.UL_OMO_WEBUI_DEBUG_SSE ?? "");
