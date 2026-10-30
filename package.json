@@ -26,10 +26,10 @@
     "test": "npm test --workspaces --if-present"
   },
   "dependencies": {
-    "@code-yeongyu/senpi": "2026.10.11",
+    "@code-yeongyu/senpi": "2026.10.27-1",
     "@hono/node-server": "2.1.5",
     "hono": "4.13.13",
-    "omo-ai": "5.1.30"
+    "omo-ai": "5.1.51"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
