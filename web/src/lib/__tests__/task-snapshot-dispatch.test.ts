@@ -1,10 +1,15 @@
 // r10 todo 11：omo.task.updated 全量快照分发进 tasks store——三断言（首帧出现、
 // 帧到推进、空快照消失）+ 乱序快照整包替换不合并（snapshot 语义）+ 路由键取
 // data.parent_session_id（wire sessionId=rpc-N 连接 handle 不作路由）。
+// engine-upgrade 2026-10-30 todo 7：fixture 升级到 5.1.51 快照字段面（锚点字段
+// parent_session_id/task_id/task_summary/name 之外，新增 residency_state 与
+// truncated_tasks 可选字段），并补未知 method 的 extension_ui_request 落 waiting
+// 守卫断言（event-dispatch 既有行为，防契约回退）。
 // 仿 event-dispatch-session-events.test.ts：@ts-nocheck + 动态 import + fake 帧。
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 
 const { useTasksStore } = await import("@/stores/tasks");
+const { useSessionsStore } = await import("@/stores/sessions");
 const { dispatchSseEvent, resetDispatchState } = await import("@/lib/event-dispatch");
 
 const SID = "dur-task-test";
@@ -23,11 +28,13 @@ function emitTaskFrame(
   );
 }
 
+// 5.1.51 omo-task.js 快照字段面：residency_state 常驻字段 + truncated_tasks 可选字段
 const task = (id: string, status: string, summary?: string) => ({
   task_id: id,
   status,
   task_summary: summary ?? `task ${id}`,
   name: id,
+  residency_state: "resident",
 });
 
 beforeEach(() => {
@@ -81,6 +88,24 @@ describe("r10 todo 11：快照三断言", () => {
     expect(Object.keys(bySession).sort()).toEqual([SID, "dur-other"].sort());
     expect(bySession[SID].map((t) => t.id)).toEqual(["t1"]);
     expect(bySession["dur-other"].map((t) => t.id)).toEqual(["t9"]);
+  });
+
+  test("5.1.51 新字段面：快照携带 truncated_tasks 等未知字段不破坏分发（store 只取锚点字段）", () => {
+    emitTaskFrame(SID, [{ ...task("t1", "running"), truncated_tasks: 3 }]);
+    const tasks = useTasksStore.getState().bySession[SID];
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ id: "t1", status: "running" });
+  });
+
+  test("守卫：未知 method 的 extension_ui_request 落 waiting（防状态点契约回退）", () => {
+    useSessionsStore.setState({ runStates: {} });
+    dispatchSseEvent(
+      "extension_ui_request",
+      JSON.stringify({ event: { type: "extension_ui_request", method: "some_future_method", sessionId: "rpc-1" } }),
+      400,
+    );
+    // 路由键：无 durableSessionId 信封时回退 wire sessionId（rpc-1）
+    expect(useSessionsStore.getState().runStates["rpc-1"]).toBe("waiting");
   });
 
   test("畸形帧容错：缺 parent_session_id / tasks 非数组不崩，未知 extension_event 忽略", () => {
