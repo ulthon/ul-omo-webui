@@ -301,7 +301,7 @@ export const chat = {
   },
   // Background activity bar (r10 todo 11): driven by omo.task.updated snapshots, renders only when non-empty
   activity: {
-    barTitle: "Background tasks {n}",
+    barTitle: "Background tasks · {n} running",
     statusRunning: "Running",
     statusDone: "Done",
     doneCount: "{n} done",

@@ -1,4 +1,4 @@
-// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，任务/变更/笔记/统计/记忆/子代理六页签收敛到右栏。
+// 右栏多功能页签容器（C15 骨架）：中栏永久对话后，总览/任务/变更/笔记/统计/记忆/子代理七页签收敛到右栏。
 // 三处宿主由本组件统一渲染：桌面展开（lg 常驻，带拖宽分隔条）、桌面折叠窄条（w-10）、
 // 手机固定右缘抽屉（<lg，勿套 --app-height，镜像左栏模式）；开合状态与记忆
 // （ul-omo-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
@@ -10,9 +10,9 @@
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
 // 页签面板 lazy：变更/笔记按需加载（react-diff-view / notes 组件本体不进首屏），
 // 统计/记忆为静态轻组件（无重依赖，惰性反而闪 fallback）；todo 沿用静态 TodoPanel（首屏右栏常驻，惰性反而闪 fallback）。
-// 六页签宽度（docs08-r6 任务 17 在 R4 五页签基础上加「子代理」）：桌面展开默认 384px 内
-// zh 全档自然宽不溢出；en 档及拖窄至 <340px 时页签条横向滚动（shrink-0 + overflow-x-auto，
-// 替代 R4 的 flex-1 等分——等分下 3 字标签（子代理）会 nowrap 溢出按钮盒，六页签所需宽
+// 七页签宽度（docs08-r6 任务 17 在 R4 五页签基础上加「子代理」，总览后加入）：桌面展开默认 384px 内
+// zh 全档自然宽不溢出；页签条恒 shrink-0 + overflow-x-auto，超宽（en 档或拖窄至 <340px）即横向滚动兜底，
+// 替代 R4 的 flex-1 等分——等分下 3 字标签（子代理）会 nowrap 溢出按钮盒，七页签所需宽
 // 度已不可等分容纳）。触控目标高度 min-h-11 保持；不换行不截断语义保留（溢出改滚动）。
 // oxlint-disable react/only-export-components -- 宽度记忆读写助手与组件强耦合（todo-panel 同款处置）
 import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";

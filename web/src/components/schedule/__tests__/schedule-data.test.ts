@@ -1,8 +1,9 @@
 // schedule-data 纯函数单测（docs08-2026-10-22 批次任务 22）：到期相对档/循环人读格式/
 // 摘要截断/状态映射/明天 9 点预设。全部确定性（now 显式注入），无时间/随机因素。
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   formatDue,
+  formatDueNow,
   formatDurationParts,
   formatEvery,
   promptExcerpt,
@@ -37,6 +38,46 @@ describe("formatDurationParts / formatDue", () => {
 
   test("formatDue：固定基点 1m 档位（原 formatDueNow 墙钟用例，固定 now 消除 flake）", () => {
     expect(formatDue(NOW + 60_000, NOW)).toEqual({ text: "1m", past: false });
+  });
+});
+
+describe("formatDueNow（Date.now 包装直测：fake timers 钉死墙钟，确定性）", () => {
+  const NOW = 1_800_000_000_000;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("今天内未来到期 → past:false + 紧凑档位", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatDueNow(NOW + 30_000)).toEqual({ text: "30s", past: false });
+  });
+
+  test("明日到期 → past:false + 小时档", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatDueNow(NOW + 3 * 3_600_000)).toEqual({ text: "3h", past: false });
+  });
+
+  test("跨周边界（超一周）→ past:false + 天档", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatDueNow(NOW + 8 * 86_400_000)).toEqual({ text: "8d", past: false });
+  });
+
+  test("越界（已到期/恰为 now）→ past:true，不显示负倒计时", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatDueNow(NOW - 60_000)).toEqual({ text: "", past: true });
+    expect(formatDueNow(NOW)).toEqual({ text: "", past: true });
+  });
+
+  test("非法输入 NaN/Infinity → past:true 兕底", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatDueNow(Number.NaN)).toEqual({ text: "", past: true });
+    expect(formatDueNow(Number.POSITIVE_INFINITY)).toEqual({ text: "", past: true });
   });
 });
 

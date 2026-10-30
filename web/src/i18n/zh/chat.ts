@@ -300,7 +300,7 @@ export const chat = {
   },
   // 后台活动条（r10 todo 11）：omo.task.updated 快照驱动，非空才渲染
   activity: {
-    barTitle: "后台任务 {n}",
+    barTitle: "后台任务 · 进行中 {n}",
     statusRunning: "运行中",
     statusDone: "已结束",
     doneCount: "已完成 {n}",

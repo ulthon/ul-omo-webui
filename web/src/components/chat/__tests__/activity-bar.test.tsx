@@ -60,7 +60,7 @@ describe("ActivityBar（r10 todo 11）", () => {
     ]);
     const { container } = mount();
     expect(q(container, '[data-testid="activity-bar"]')).toBeTruthy();
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 1");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 · 进行中 1");
     expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("已完成 1");
     // 默认收起：无任务列表；点标题行展开后仅见运行中任务行 + 已完成折尾部计数
     expect(container.querySelector('[data-testid="activity-task-list"]')).toBeNull();
@@ -75,13 +75,13 @@ describe("ActivityBar（r10 todo 11）", () => {
   test("推进：快照更新反映到活动条（计数与运行态）", () => {
     setTasks(SID, [{ task_id: "t1", status: "running", task_summary: "A" }]);
     const { container } = mount();
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 1");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 · 进行中 1");
     expect(q(container, '[data-testid="activity-bar-spinner"]')).toBeTruthy();
     setTasks(SID, [
       { task_id: "t1", status: "completed", task_summary: "A" },
       { task_id: "t2", status: "running", task_summary: "B" },
     ]);
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 1");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 · 进行中 1");
     expect(container.querySelector('[data-testid="activity-bar"]').textContent).toContain("已完成 1");
   });
 
@@ -111,7 +111,7 @@ describe("ActivityBar（r10 todo 11）", () => {
     ]);
     const { container } = mount();
     expect(q(container, '[data-testid="activity-bar"]')).toBeTruthy();
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 0");
+    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 · 进行中 0");
     click(q(container, '[data-testid="activity-bar-toggle"]'));
     expect(container.querySelectorAll('[data-testid="activity-task"]')).toHaveLength(0);
     expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 2");
