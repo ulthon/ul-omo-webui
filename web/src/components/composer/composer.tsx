@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
+import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
 import { useT } from "@/i18n/i18n";
 import { isSendKey } from "@/lib/shortcuts";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -317,9 +318,18 @@ export function Composer({
   // 记录打开前内容（覆盖 onChange/回填/草稿恢复全部路径——use-draft 恢复不经 update）
   const slashToken = useMemo(() => slashTriggerToken(text), [text]);
   const t = useT();
-  // 等待提示条（docs08-r6 任务 12 ①）：runState=waiting（等待提问/权限应答）时明示
+  // 等待提示条（docs08-r6 任务 12 ①；engine-upgrade 2026-10-30 缺陷 C 双信号）：
+  // runState=waiting 且（最近 120s 内有 SSE 帧到达 或 有待答提问卡/权限卡）时明示
   // 「等待中」，消除“回合在跑却没动静”的观感。纯派生渲染，不锁任何输入（排队语义不变）。
-  const showWaitingHint = runState === "waiting";
+  // 静默隐去只在帧静默超阈值且无待答卡时经既有 60s 清扫节拍置抑制标志触发
+  // （event-dispatch.sweepWaitingHintSuppression）；分层边界：120s 只作用于提示条
+  // 派生条件——runStates/runStateAt 清态语义与 WAITING_STALE_MS 30min 档完全不动
+  // （30min 有意从宽：权限等待合法滞留数小时）。
+  const lastFrameAt = useSessionsStore((s) => s.lastFrameAt[sessionId]);
+  const waitingHintHidden = useSessionsStore((s) => s.waitingHintHidden[sessionId] === true);
+  const frameFresh = lastFrameAt !== undefined && Date.now() - lastFrameAt < WAITING_HINT_SILENCE_MS;
+  const showWaitingHint =
+    runState === "waiting" && !waitingHintHidden && (frameFresh || hasPendingQuestion || permissionLocked);
   const waitingHintNode = showWaitingHint ? (
     <div
       data-testid="composer-waiting-hint"

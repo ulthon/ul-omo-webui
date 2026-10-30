@@ -1,10 +1,15 @@
-// waiting 态输入明示（docs08-r6 任务 12）：
-// ① composer 头部等待提示条：runState=waiting 时显示「等待提问 / 权限应答中」，
-//    桌面（sm+）与手机胶囊（<sm）双渲染支都出；非 waiting 态零渲染（回归护栏）。
-// ② 排队入队可见反馈：回执 disposition=queued 时 ui store 出现 info toast（轻提示），
-//    消除「点了没反应」观感。排队语义不回退：输入不禁用（waiting 态 textarea 仍可编辑）。
-// 提示条为纯派生渲染：matchMedia 桩切档 + renderToStaticMarkup 静态断言（composer-interrupt
-// 惯例）；入队反馈走真实 sendText 流程（api 层 vi.spyOn 桩，无网络），createRoot 驱动。
+// waiting 态输入明示（docs08-r6 任务 12；engine-upgrade 2026-10-30 缺陷 C 契约更新）：
+// ① composer 头部等待提示条：runState=waiting 且双信号（最近 120s 内有 SSE 帧到达 或
+//    有待答提问卡/权限卡）时显示「等待提问 / 权限应答中」，桌面（sm+）与手机胶囊（<sm）
+//    双渲染支都出；非 waiting 态零渲染（回归护栏）。契约变化（缺陷 C）：waiting 单独
+//    不再出条——直写 waiting（对账回写形态）无帧信号无卡时不显示，静默超 120s 且无卡
+//    时经 60s 清扫节拍隐去（静默隐去路径见 composer-waiting-hint-dual-signal.test.tsx）。
+// ② 排队入队可见反馈：回执 disposition=queued 时零 toast（双通道去重），仅排队条入列。
+//    排队语义不回退：输入不禁用（waiting 态 textarea 仍可编辑）。
+// 正例走真实 dispatchSseEvent 帧路径（帧信号新鲜，与生产写入链同源）；直写负例锁定
+// 「waiting 单独不出条」的新契约。提示条为纯派生渲染：matchMedia 桩切档 +
+// renderToStaticMarkup 静态断言（composer-interrupt 惯例）；入队反馈走真实 sendText
+// 流程（api 层 vi.spyOn 桩，无网络），createRoot 驱动。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -18,10 +23,13 @@ const { renderToStaticMarkup } = await import("react-dom/server");
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { Composer } = await import("@/components/composer/composer");
+const { dispatchSseEvent, resetDispatchState } = await import("@/lib/event-dispatch");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
 const { useQueueStore } = await import("@/stores/queue");
 const { useMessagesStore } = await import("@/stores/messages");
+const { usePermissionsStore } = await import("@/stores/permissions");
+const { useQuestionsStore } = await import("@/stores/questions");
 const apiMod = await import("@/lib/api");
 
 const SID = "qa-waiting-1";
@@ -64,23 +72,55 @@ function renderComposer(queueAvailable: boolean): string {
   );
 }
 
+/** wire 帧信封（wire sessionId + durableSessionId=SID，与生产路由键同源） */
+function envelope(wire: Record<string, unknown>, durable?: string): string {
+  return JSON.stringify(
+    durable ? { projectPath: "/p", event: wire, durableSessionId: durable } : { projectPath: "/p", event: wire },
+  );
+}
+
+/** 阻塞型 confirm 帧（真实 waiting 写入链：帧信号新鲜 + 权限卡入队） */
+function waitingFrame(): string {
+  return envelope(
+    { type: "extension_ui_request", method: "confirm", id: "r-hint", title: "确认执行？", sessionId: "rpc-hint" },
+    SID,
+  );
+}
+
 beforeEach(() => {
+  resetDispatchState();
+  useSessionsStore.setState({ lastFrameAt: {}, waitingHintHidden: {} });
+  usePermissionsStore.setState({ bySession: {} });
+  useQuestionsStore.setState({ bySession: {} });
+  useMessagesStore.setState({ bySession: {} });
   setRunState(undefined);
   useUiStore.setState({ toast: null });
 });
 
 afterEach(() => {
+  resetDispatchState(); // 拆防 dispatch 布防的清扫 interval（本文件真实定时器）
+  useSessionsStore.setState({ lastFrameAt: {}, waitingHintHidden: {} });
+  usePermissionsStore.setState({ bySession: {} });
+  useQuestionsStore.setState({ bySession: {} });
+  useMessagesStore.setState({ bySession: {} });
   window.matchMedia = REAL_MATCH_MEDIA;
   setRunState(undefined);
   useUiStore.setState({ toast: null });
 });
 
 describe("waiting 提示条（桌面档）", () => {
-  test("runState=waiting → 提示条可见（含等待文案）", () => {
-    setRunState("waiting");
+  test("runState=waiting（真实帧写入，帧信号新鲜）→ 提示条可见（含等待文案）", () => {
+    dispatchSseEvent("extension_ui_request", waitingFrame(), 1);
+    expect(useSessionsStore.getState().runStates[SID]).toBe("waiting");
     const html = renderComposer(false);
     expect(html).toContain('data-testid="composer-waiting-hint"');
     expect(html).toContain("等待提问 / 权限应答中");
+  });
+
+  test("runState=waiting 直写（对账回写形态：无帧信号、无待答卡）→ 不显示（缺陷 C 双信号契约）", () => {
+    setRunState("waiting");
+    const html = renderComposer(false);
+    expect(html).not.toContain('data-testid="composer-waiting-hint"');
   });
 
   test.each(["running", "idle", "error", undefined] as const)(
@@ -93,7 +133,7 @@ describe("waiting 提示条（桌面档）", () => {
   );
 
   test("waiting 态输入不被锁：textarea 无 disabled，中断钮在、排队模式钮随 queueAvailable", () => {
-    setRunState("waiting");
+    dispatchSseEvent("extension_ui_request", waitingFrame(), 1);
     const html = renderComposer(false);
     // textarea 开标签内不存在 disabled 属性（disabled:opacity-50 是 class，需边界排除）
     const inputTag = /<textarea[^>]*>/.exec(html)?.[0] ?? "";
@@ -103,8 +143,8 @@ describe("waiting 提示条（桌面档）", () => {
     expect(html).not.toContain('data-testid="queue-mode-btn"');
   });
 
-  test("queueAvailable=true 且 waiting → 排队模式钮仍在（排队语义不回退）", () => {
-    setRunState("waiting");
+  test("queueAvailable=true 且 waiting（帧信号新鲜）→ 排队模式钮仍在（排队语义不回退）", () => {
+    dispatchSseEvent("extension_ui_request", waitingFrame(), 1);
     const html = renderComposer(true);
     expect(html).toContain('data-testid="composer-waiting-hint"');
     expect(html).toContain('data-testid="queue-mode-btn"');
@@ -112,9 +152,9 @@ describe("waiting 提示条（桌面档）", () => {
 });
 
 describe("waiting 提示条（手机胶囊档）", () => {
-  test("runState=waiting → 胶囊档渲染提示条（双档都出）", () => {
+  test("runState=waiting（帧信号新鲜）→ 胶囊档渲染提示条（双档都出）", () => {
     stubMatchMedia(true);
-    setRunState("waiting");
+    dispatchSseEvent("extension_ui_request", waitingFrame(), 1);
     const html = renderComposer(false);
     expect(html).toContain('data-testid="composer-capsule"');
     expect(html).toContain('data-testid="composer-waiting-hint"');

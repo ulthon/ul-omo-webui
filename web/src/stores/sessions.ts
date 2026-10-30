@@ -51,6 +51,15 @@ interface SessionsState {
    * 发起前快照目标会话序号，回包后序号未变才应用——对账在途/之后到达的新帧写入
    * 不被旧对账结果覆盖（新帧胜出）。组件不消费本字段。 */
   runStateSeq: Record<string, number>;
+  /** 每帧活动时刻账本（engine-upgrade 2026-10-30 缺陷 C 双信号，与 runStateAt 并行的
+   * 轻量字段）：event-dispatch 每个路由到会话的帧刷新（noteSessionFrame）。分层边界：
+   * runStateAt 服务运行态清扫/对账语义（30min 陈旧档），本字段只服务等待提示条的
+   * 「最近有帧」派生信号，不参与任何运行态语义。 */
+  lastFrameAt: Record<string, number>;
+  /** 等待提示抑制标志（缺陷 C 静默隐去；UI 派生字段，不写 runStates）：60s 清扫节拍对
+   * waiting 会话检查帧静默超 120s 且无待答卡时置位，新帧到达即清除。组件读它抑制
+   * 提示条渲染。 */
+  waitingHintHidden: Record<string, true>;
   /** 全局搜索：标题/会话名子串（服务端实现，此状态作请求参数） */
   q: string;
   archived: ArchivedFilter;
@@ -102,6 +111,12 @@ interface SessionsState {
   clearRunState(id: string): void;
   /** 该会话任一 SSE 事件的活动记账（event-dispatch 调用；无运行态时 no-op） */
   touchRunStateAt(id: string): void;
+  /** 每帧活动记账（缺陷 C 双信号）：event-dispatch 每个路由到会话的帧调用——刷新
+   * lastFrameAt 并清除等待提示抑制标志（新帧 = 提示信号复位）。无条件建条目
+   * （与 touchRunStateAt 的 no-op 门不同：本字段不依赖运行态存在）。 */
+  noteSessionFrame(id: string): void;
+  /** 等待提示抑制标志写入（60s 清扫节拍调用）；值不变时返回原引用（订阅者不重渲染） */
+  setWaitingHintHidden(id: string, hidden: boolean): void;
   /** 无活动超时清扫（W1 缺陷 #3，60s 周期由 event-dispatch 驱动）：running/waiting
    * 最后活动距今超过阈值回落 idle（常量见文件头）。now 供单测注入确定性时刻。 */
   sweepStaleRunStates(now?: number): void;
@@ -203,6 +218,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   appliedModels: {},
   runStateAt: {},
   runStateSeq: {},
+  lastFrameAt: {},
+  waitingHintHidden: {},
   q: "",
   archived: "false",
   allMode: false,
@@ -380,6 +397,24 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
 
   touchRunStateAt: (id) =>
     set((s) => (id in s.runStateAt ? { runStateAt: { ...s.runStateAt, [id]: Date.now() } } : s)),
+
+  noteSessionFrame: (id) =>
+    set((s) => {
+      const lastFrameAt = { ...s.lastFrameAt, [id]: Date.now() };
+      if (!(id in s.waitingHintHidden)) return { lastFrameAt };
+      const waitingHintHidden = { ...s.waitingHintHidden };
+      delete waitingHintHidden[id];
+      return { lastFrameAt, waitingHintHidden };
+    }),
+
+  setWaitingHintHidden: (id, hidden) =>
+    set((s) => {
+      if (hidden === (id in s.waitingHintHidden)) return s;
+      const waitingHintHidden = { ...s.waitingHintHidden };
+      if (hidden) waitingHintHidden[id] = true;
+      else delete waitingHintHidden[id];
+      return { waitingHintHidden };
+    }),
 
   sweepStaleRunStates: (now = Date.now()) =>
     set((s) => {

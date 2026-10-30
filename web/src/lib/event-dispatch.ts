@@ -14,6 +14,11 @@
 // 常量在 stores/sessions.ts），该会话任何 SSE 帧都刷新活动时刻，活跃会话不被误回落；
 // (2) 游标回退（=服务重启强信号）时在 refetchLoadedSessions 旁并行 fire-and-forget
 // GET /api/sessions 重同步（active 三态校准，见 resyncRunStatesFromServer）。
+// 收尾帧归属兜底与提示条双信号（engine-upgrade 2026-10-30 缺陷 B+C）：(B) 收尾帧
+// （agent_end/settled/idle）路由键是 store 不认识的孤儿键（wire 键映射缺席的 holder
+// 别名）时，清态兜底落到唯一活跃会话或触发服务端对账（见 orphanEndTarget），孤儿键
+// 不写 runStates；(C) 每帧刷新 lastFrameAt，60s 清扫节拍对 waiting 会话帧静默超
+// 120s 且无待答卡时置提示条抑制标志（纯 UI 派生，runStates/30min 陈旧档不动）。
 import { api, ApiError } from "@/lib/api";
 import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
@@ -46,6 +51,12 @@ let visibleReconcileInFlight = false;
  * 游标回退（引擎/服务重启，handle 全换）时清空，防跨纪元旧映射误归属。 */
 const wireToDurable = new Map<string, string>();
 
+/** 当前帧序纪元内见过活跃态的会话（engine-upgrade 2026-10-30 缺陷 B 帧序窗口判据）：
+ * 每帧分发落定后，runState 为 waiting/running 的会话入账；游标回退（纪元边界）清空。
+ * rescue 候选必须被本纪元帧见证过——跨纪元残留的旧活跃态（服务重启前的孤儿）不得被
+ * 新纪元的收尾帧误清（r11 todo 12b 契约：交给对账兜底）。时钟无关（冻结时钟测试同样成立）。 */
+const epochActiveSessions = new Set<string>();
+
 /** 任务 9：gap 对账分级小缺口阈值——与 r7 TAIL_WINDOW / t8 REPLAY_TAIL_WINDOW
  *（=200）对齐：gap 宽度不超过该值时帧只是被环形缓冲淘汰的近期事件，REST
  * ?before= 后向翻页一窗即可覆盖；超过则走既有 full=1 全量对账（承重不动） */
@@ -53,6 +64,12 @@ export const GAP_INCREMENTAL_WINDOW = 200;
 
 /** 运行态清扫周期（W1 缺陷 #3）：60s 一扫；回落阈值常量见 stores/sessions.ts。 */
 export const SWEEP_INTERVAL_MS = 60_000;
+
+/** 等待提示静默阈值（engine-upgrade 2026-10-30 缺陷 C）：waiting 会话的 SSE 帧静默
+ * 超过该时长且无待答卡时，经既有 60s 清扫节拍置提示条抑制标志（纯 UI 派生隐去）。
+ * 分层边界（写进测试）：本阈值只作用于提示条派生条件——runStates/runStateAt 清态
+ * 语义与 WAITING_STALE_MS 30min 档完全不动（30min 有意从宽：权限等待合法滞留数小时）。 */
+export const WAITING_HINT_SILENCE_MS = 120_000;
 
 /** 运行态清扫定时器（首个 SSE 帧到达时布防——runStates 只能由 SSE 写入，先有帧后有态；
  * resetDispatchState 拆防，单测隔离用） */
@@ -62,6 +79,7 @@ function armRunStateSweep(): void {
   if (sweepTimer !== null) return;
   sweepTimer = setInterval(() => {
     useSessionsStore.getState().sweepStaleRunStates();
+    sweepWaitingHintSuppression();
   }, SWEEP_INTERVAL_MS);
   // bun 单测环境不挂住进程退出（浏览器 Timer 无 unref，可选调用自动跳过）
   (sweepTimer as unknown as { unref?: () => void }).unref?.();
@@ -76,6 +94,25 @@ function disarmRunStateSweep(): void {
 /** 清扫是否已布防（单测断言用） */
 export function isRunStateSweepArmed(): boolean {
   return sweepTimer !== null;
+}
+
+/** 等待提示静默清扫（engine-upgrade 2026-10-30 缺陷 C，挂接在既有 60s 清扫节拍回调内——
+ * 继承例外非新增轮询）：对 waiting 会话检查双信号——帧静默超 WAITING_HINT_SILENCE_MS
+ * 且无待答提问卡/权限卡时置提示条抑制标志；否则清除（含自愈：新帧已清则无写入）。
+ * lastFrameAt 缺席（服务端重同步写入的 waiting，未见任何帧）不隐——宁可不隐不误伤。
+ * 分层边界：只写 UI 派生抑制标志，不写 runStates（30min 陈旧档语义不变）。 */
+function sweepWaitingHintSuppression(): void {
+  const store = useSessionsStore.getState();
+  const now = Date.now();
+  for (const [id, state] of Object.entries(store.runStates)) {
+    if (state !== "waiting") continue;
+    const at = store.lastFrameAt[id];
+    const hasPendingCard =
+      (useQuestionsStore.getState().bySession[id]?.length ?? 0) > 0 ||
+      (usePermissionsStore.getState().bySession[id]?.length ?? 0) > 0;
+    const silent = at !== undefined && now - at > WAITING_HINT_SILENCE_MS;
+    store.setWaitingHintHidden(id, silent && !hasPendingCard);
+  }
 }
 
 /** 四型对话框 UI method（verification/02）；extension_ui_request 其余非 notify 的
@@ -162,6 +199,7 @@ export function resetDispatchState(): void {
   reconciling.clear();
   visibleReconcileInFlight = false;
   wireToDurable.clear();
+  epochActiveSessions.clear();
   disarmRunStateSweep();
 }
 
@@ -384,6 +422,35 @@ export function reconcileRunStateOnVisible(): void {
     });
 }
 
+/** 收尾帧孤儿归属判定（engine-upgrade 2026-10-30 缺陷 B）：agent_end/settled/idle 的
+ * 路由键（wire 键经 wireToDurable 解析，映射缺席回落裸 wire 键）在 sessions store
+ * 无对应会话（不在 runStates/别名/整替保护/任何项目行）时返回兜底目标：
+ *   - store 恰有一个 waiting/running 会话，且其活跃态被当前帧序纪元见证过（至少一帧，
+ *     见 epochActiveSessions——跨纪元残留旧态不合格），且 runStateAt 落在帧序窗口内
+ *     （进入活跃态的时刻早于收尾帧到达时刻，Date.now() 即该帧到达基准）→ 返回该会话
+ *     id，清态落到真实归属；
+ *   - 否则返回 resync 哨兵（调用方保留 r11 孤儿键留痕写入并触发既有
+ *     resyncRunStatesFromServer 对账，宁可不误清）。
+ * 正常归属（键已知）返回 null，收尾帧体原样执行。 */
+function orphanEndTarget(routeKey: string): string | "resync" | null {
+  const store = useSessionsStore.getState();
+  const known =
+    routeKey in store.runStates ||
+    routeKey in store.aliasIds ||
+    routeKey in store.pendingIds ||
+    Object.values(store.byProject).some((rows) => rows.some((row) => row.id === routeKey));
+  if (known) return null;
+  const actives = Object.entries(store.runStates).filter(
+    ([, state]) => state === "waiting" || state === "running",
+  );
+  if (actives.length === 1) {
+    const [targetId] = actives[0]!;
+    const at = store.runStateAt[targetId];
+    if (epochActiveSessions.has(targetId) && at !== undefined && at <= Date.now()) return targetId;
+  }
+  return "resync";
+}
+
 /**
  * SSE 帧统一入口（events.ts 调用）。
  * eventType = event: 行原文（wire type 或 "gap"）；data = data: 行 JSON 原文；
@@ -407,6 +474,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       resyncRunStatesFromServer();
       // 跨纪元 handle 全换（r11 todo 12b）：学习账本一并清空，旧映射不得用于新纪元帧归属
       wireToDurable.clear();
+      // 纪元边界：帧序窗口重置，跨纪元残留活跃态失去 rescue 资格（交给对账兜底）
+      epochActiveSessions.clear();
     }
     lastCursor = cursor;
   }
@@ -473,6 +542,9 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   // 活动记账（W1 缺陷 #3）：该会话任何 SSE 帧都刷新运行态活动时刻——流式 chunk / 工具
   // 事件持续到达即活跃，永不被 60s 清扫回落；无运行态时 no-op。
   useSessionsStore.getState().touchRunStateAt(sessionId);
+  // 每帧记账（engine-upgrade 2026-10-30 缺陷 C 双信号）：刷新提示条「最近有帧」信号
+  // 并清除抑制标志（新帧 = 提示恢复）。
+  useSessionsStore.getState().noteSessionFrame(sessionId);
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
   const sessions = useSessionsStore.getState();
@@ -484,21 +556,45 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     // 失败静默（回合落定路径 refreshSessions 兜底）。
     void sessions.refreshSessions();
   } else if (wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle") {
-    sessions.patchSession(sessionId, { active: false });
-    // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
-    // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
-    sessions.setRunState(sessionId, "idle");
-    // 回合自然结束补拉会话列表（task 19h，fire-and-forget）：对齐服务端真相——
-    // durable=true 创建的占位行由 pendingIds 保护至列表带回，此后真实行落位，
-    // 消息计数/标题等元数据同步；失败静默（下次回合结束/手动刷新兜底）。
-    void sessions.refreshSessions();
-    // 回合落定即权限队列全落定（含应答后 UI 未及时移除的残留），整队清空
-    usePermissionsStore.getState().clearSession(sessionId);
-    // synthetic settle（server settle_watchdog / engine_crash 合成）：真实回合事件
-    // 未送达（引擎事件断流），applyWireEvent 定格不到 assistant 内容——按 server
-    // 设计约定补拉 GET messages，兜底显示已落盘的回复（真实事件流零此开销）
-    if (wire.type === "agent_settled" && wire.synthetic === true) {
-      refetchSession(sessionId);
+    // B 收尾帧归属兜底（engine-upgrade 2026-10-30）：路由键是 store 不认识的孤儿键
+    // （wire 键映射缺席的 holder 别名）时，清态兜底落到唯一活跃会话（rescue，不写
+    // 孤儿键），或保留 r11 留痕写入并叠加服务端对账（resync）。正常归属帧体原样。
+    const orphan = orphanEndTarget(sessionId);
+    if (orphan === "resync") {
+      if (sseDebugEnabled()) {
+        console.debug(
+          `[sse-dispatch] 孤儿收尾帧 type=${wire.type} route=${sessionId} → resyncRunStatesFromServer`,
+        );
+      }
+      // r11 todo 12b 契约保留：孤儿键留痕落 idle（诚实记录该 handle 回合已收束，
+      // 垃圾键由周期清扫/对账自然兑底，跨纪元帧不误清旧会话）；叠加本批对账（缺陷 B）
+      sessions.setRunState(sessionId, "idle");
+      resyncRunStatesFromServer();
+    } else if (orphan !== null) {
+      // 唯一活跃候选：清态落到真实归属（patchSession 对不在列表的键自然 no-op）
+      if (sseDebugEnabled()) {
+        console.debug(`[sse-dispatch] 孤儿收尾帧 type=${wire.type} route=${sessionId} → 归属兜底 ${orphan}`);
+      }
+      sessions.patchSession(orphan, { active: false });
+      sessions.setRunState(orphan, "idle");
+      usePermissionsStore.getState().clearSession(orphan);
+    } else {
+      sessions.patchSession(sessionId, { active: false });
+      // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
+      // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
+      sessions.setRunState(sessionId, "idle");
+      // 回合自然结束补拉会话列表（task 19h，fire-and-forget）：对齐服务端真相——
+      // durable=true 创建的占位行由 pendingIds 保护至列表带回，此后真实行落位，
+      // 消息计数/标题等元数据同步；失败静默（下次回合结束/手动刷新兜底）。
+      void sessions.refreshSessions();
+      // 回合落定即权限队列全落定（含应答后 UI 未及时移除的残留），整队清空
+      usePermissionsStore.getState().clearSession(sessionId);
+      // synthetic settle（server settle_watchdog / engine_crash 合成）：真实回合事件
+      // 未送达（引擎事件断流），applyWireEvent 定格不到 assistant 内容——按 server
+      // 设计约定补拉 GET messages，兜底显示已落盘的回复（真实事件流零此开销）
+      if (wire.type === "agent_settled" && wire.synthetic === true) {
+        refetchSession(sessionId);
+      }
     }
   } else if (wire.type === "extension_ui_request") {
     const method = typeof wire.method === "string" ? wire.method : null;
@@ -560,6 +656,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点
     sessions.setRunState(sessionId, "error");
+  }
+
+  // 帧序纪元记账（缺陷 B 帧序窗口判据）：本帧分发落定后，该会话 runState 为
+  // waiting/running 即记入当前纪元（含本帧刚建立的 waiting——question 帧在分支内
+  // 落态，此处读分发后的新值）。跨纪元残留旧态无帧见证，不得被新纪元收尾帧误清。
+  const stateAfterDispatch = useSessionsStore.getState().runStates[sessionId];
+  if (stateAfterDispatch === "waiting" || stateAfterDispatch === "running") {
+    epochActiveSessions.add(sessionId);
   }
 
   // 未读计数：新 assistant 消息到达且非查看态（未选中或页面后台）→ +1。

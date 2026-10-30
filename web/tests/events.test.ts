@@ -359,7 +359,11 @@ describe("事件分发", () => {
       );
       await tick();
       await tick();
-      expect(fetchLog.calls).toHaveLength(0); // 未加载会话不在补拉范围
+      // 本用例原意：未加载会话不在消息补拉范围。缺陷 B（engine-upgrade 2026-10-30）
+      // 起，孤儿收尾帧另发既有 resyncRunStatesFromServer 对账（GET /api/sessions，
+      // 计划拍板动作），不计入「不补拉」断言；对账恰发一次钉住新契约
+      expect(fetchLog.calls.filter((c) => c.includes("/messages"))).toHaveLength(0);
+      expect(fetchLog.calls.filter((c) => c.includes("/api/sessions"))).toHaveLength(1);
     } finally {
       fetchLog.restore();
     }
