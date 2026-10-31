@@ -82,6 +82,13 @@ export function siteName(): string | null {
  * 连接建立/状态迁移/帧写出/durableLookup miss 日志；关闭时零输出零行为差异。 */
 export const DEBUG_SSE = /^(1|true|yes|on)$/i.test(process.env.UL_OMO_WEBUI_DEBUG_SSE ?? "");
 
+/** 服务端统一观测日志（2026-10-31 采集增强批）：
+ * - UL_OMO_WEBUI_LOG_LEVEL：trace/debug/info/warn/error，缺省 info（obs/logger.ts 解析）；
+ * - UL_OMO_WEBUI_LOG_FILE：文件落盘开关，缺省开（0/false/no/off 关）；
+ * - 目录随 DATA_DIR（logs/），按天滚动保留 7 天。 */
+export const LOG_DIR = join(DATA_DIR, "logs");
+export const LOG_FILE_ENABLED = !/^(0|false|no|off)$/i.test(process.env.UL_OMO_WEBUI_LOG_FILE ?? "");
+
 /** 内置文件管理上传上限缺省（builtin-file-management 任务 5）：1GiB。 */
 export const FS_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 

@@ -23,7 +23,9 @@ import {
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
 import { TitleGenService } from "./title-gen";
 import { EventBus, attachEventBus, publishPermissionsInvalidated } from "./engine/events";
-import { sseRoutes, setEventBus } from "./api/sse";
+import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
+import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
+import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
 import { createRebindRoutes } from "./api/routes-rebind";
 import { createMetaRoutes } from "./api/routes-meta";
@@ -245,6 +247,32 @@ app.route("/", createTipsRoutes(tipsDeps));
 // 扩展资源面与 auth 凭证检查（docs08-r7 任务 24）：CLI 缺失时 install/remove/update 降级报错
 app.route("/", createExtensionsRoutes({ agentDir: agentDir(), engineCli: resolveEngineCli(resolveEnginePaths().pluginDir) }));
 app.route("/", createTrafficRoutes({ meter: trafficMeter }));
+// 诊断面（采集增强批）：日志查询/运行快照/前端日志上报；随 /api/* 鉴权中间件保护
+app.route(
+  "/",
+  createDiagnosticsRoutes({
+    logger: log,
+    engines: () =>
+      meta.listProjectMeta().map((p) => {
+        const st = manager.getStatus(p.projectPath);
+        return {
+          projectPath: p.projectPath,
+          state: st?.state ?? "inactive",
+          pid: st?.pid ?? undefined,
+          restarts: st?.consecutiveRestarts ?? 0,
+          runningSessions: st?.runningSessions.length ?? 0,
+          lastActivityAt: st?.lastActivityAt ?? null,
+        };
+      }),
+    sseConnections: () => sseConnectionCount(),
+    bootInfo: () => ({
+      node: process.version,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      uptimeSec: Math.round(process.uptime()),
+      pid: process.pid,
+    }),
+  }),
+);
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
@@ -402,6 +430,14 @@ try {
   });
   const onListening = () => {
     console.log(`ul-omo-webui listening on http://${HOST}:${PORT}`);
+  log.info("boot", "ready", {
+    host: HOST,
+    port: PORT,
+    dataDir: DATA_DIR,
+    logLevel: log.stats().level,
+    logFile: log.stats().file,
+    node: process.version,
+  });
     // 存量项目偏好迁移（todo 6）：监听就绪后 fire-and-forget——per-project 失败仅
     // console.warn 并保留库值（幂等下次补迁），allSettled 隔离单项目只读目录/挂死
     // （网络盘语义）不拖累其余项目，更不阻塞监听与请求
