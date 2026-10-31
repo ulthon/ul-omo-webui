@@ -22,7 +22,7 @@
 // 生命周期钩子（start/stop）为 no-op——引擎崩溃重启后管理器会造新 client，
 // ensure() 检测到 client 更换即重建 adapter 并清空会话态。
 import type { RpcClient } from "@code-yeongyu/senpi";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +48,8 @@ import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 import { DEBUG_PERF, logPerfSpan, projHash8, type PerfSpan } from "./perf";
+import { log, type LogVal } from "../obs/logger";
+import { currentRid } from "../obs/req-context";
 
 /** 错误 → 业务码（ApiError/EngineAdapterError 带 code；其余归 internal）。埋点 err 段用。 */
 function perfErrCode(err: unknown): string {
@@ -887,6 +889,9 @@ class ProjectRuntime {
     return undefined;
   }
 
+  /** 采集增强批：上次 store 扫描指纹（path+modified 汇总哈希 8 位；变化记 info——抓 CLI 跨进程双写/外部改动） */
+  private storeFingerprint: string | undefined;
+
   /** SDK 直读会话库（不依赖引擎进程，sessionsList 不走 rpc） */
   async listStore(): Promise<EngineSessionSummary[]> {
     if (!this.adapter) {
@@ -896,11 +901,39 @@ class ProjectRuntime {
         agentDir: this.opts.agentDir ?? defaultAgentDir(),
       });
     }
-    return this.adapter.sessionsList(this.projectPath);
+    const rows = await this.adapter.sessionsList(this.projectPath);
+    this.observeStoreScan(rows);
+    return rows;
   }
 
-  /** 在本项目中按 id 查会话（活跃态 → store 行 → 未落盘别名）；查不到抛 404 */
+  /** 采集增强批：store 扫描观测（行数+指纹；指纹变化 info 一行——外部改动现形）。观测失败不影响主链路 */
+  private observeStoreScan(rows: EngineSessionSummary[]): void {
+    try {
+      const fp = createHash("sha256")
+        .update(rows.map((r) => `${r.path}:${r.modified}`).join("|"))
+        .digest("hex")
+        .slice(0, 8);
+      const prev = this.storeFingerprint;
+      this.storeFingerprint = fp;
+      if (prev !== undefined && prev !== fp) {
+        log.info("gw", "store.changed", { proj: projHash8(this.projectPath), rows: rows.length, fp, prev });
+      }
+      if (log.isDebugEnabled()) {
+        log.debug("gw", "store.scan", { proj: projHash8(this.projectPath), rows: rows.length, fp });
+      }
+    } catch {
+      // 指纹/观测异常静默：不干扰主链路
+    }
+  }
+
+  /** 在本项目中按 id 查会话（活跃态 → store 行 → 未落盘别名）；查不到抛 404。
+ *  采集增强批：命中层级逐次观测（debug），404 miss 时 warn 带全量上下文
+ *  （index/activeId/aliases/claims/磁盘行数）——「session 找不到」确诊主数据源 */
   async resolveSession(sessionId: string): Promise<EngineSessionSummary> {
+    const tResolve = performance.now();
+    let hit = "?";
+    let rowsSeen = -1;
+    try {
     // 引擎认领却从未落盘的会话（t1 根因形态）：先于三级查找报结构化错误——
     // 笼统 404「会话不存在」会让用户误以为删库，实际是引擎承诺的 sessionFile
     // 从未写盘（任务 6 消静默）。409 与 exportSessionHtml 的 session_not_persisted 同码。
@@ -910,6 +943,13 @@ class ProjectRuntime {
       if (existsSync(claimedPath)) {
         this.unpersistedClaims.delete(sessionId);
       } else {
+        hit = "claim_unpersisted";
+        log.warn("gw", "resolve.claim", {
+          session: sessionId.slice(0, 8),
+          proj: projHash8(this.projectPath),
+          claimed: claimedPath.slice(-48),
+          rid: currentRid(),
+        });
         throw new ApiError(
           409,
           "session_not_persisted",
@@ -921,6 +961,7 @@ class ProjectRuntime {
     if (this.activeId === sessionId) {
       const active = this.adapter?.getActiveSession();
       if (active) {
+        hit = "active";
         return {
           path: active.sessionPath,
           id: sessionId,
@@ -933,10 +974,15 @@ class ProjectRuntime {
       }
     }
     const rows = await this.listStore();
+    rowsSeen = rows.length;
     const row = rows.find((r) => r.id === sessionId);
-    if (row) return row;
+    if (row) {
+      hit = "store";
+      return row;
+    }
     const aliasPath = this.aliases.get(sessionId);
     if (aliasPath) {
+      hit = "alias";
       return {
         path: aliasPath,
         id: sessionId,
@@ -947,7 +993,34 @@ class ProjectRuntime {
         firstMessage: "",
       };
     }
+    hit = "miss";
     throw new ApiError(404, "session_not_found", `会话不存在（项目 ${this.projectPath}）：${sessionId}`);
+    } catch (err) {
+    if (err instanceof ApiError && err.code === "session_not_found") {
+      log.warn("gw", "resolve.miss", {
+        session: sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        rows: rowsSeen,
+        aliases: this.aliases.size,
+        claims: this.unpersistedClaims.size,
+        active: this.activeId ? this.activeId.slice(0, 8) : "-",
+        rid: currentRid(),
+        ms: Math.round(performance.now() - tResolve),
+      });
+    }
+    throw err;
+    } finally {
+    if (hit !== "miss" && log.isDebugEnabled()) {
+      log.debug("gw", "resolve", {
+        session: sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        hit,
+        rows: rowsSeen,
+        ms: Math.round(performance.now() - tResolve),
+        rid: currentRid(),
+      });
+    }
+    }
   }
 
   /** Fix0 性能埋点（docs08-2026-10-22-batch 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关）：
@@ -955,9 +1028,53 @@ class ProjectRuntime {
    * 收尾（含失败）统一落一行 [perf] 日志。关闭路径与原实现等价：不建 span、不计时，
    * 仅 body 写入共享哑对象（无读者）。 */
   private runTraced<T>(op: string, sessionId: string, body: (span: PerfSpan) => Promise<T>): Promise<T> {
+    // 采集增强批：gateway op 观测行（失败 warn / 慢于 1s info / 其余 debug）。
+    //  与 [perf] 行契约并行互不干扰；默认 info 级下只有失败与慢 op 落盘零噪。
+    //  非 DEBUG_PERF 路径不读共享哑 span（其段字段是历史写入残留，不可信），仅记总耗时。
+    const tOp = performance.now();
+    let seenErr: unknown;
+    const logGw = (span: PerfSpan | null): void => {
+      const ms = performance.now() - tOp;
+      const failed = seenErr !== undefined;
+      if (!failed && !log.isDebugEnabled() && ms <= 1000) return;
+      const f: Record<string, LogVal> = {
+        op,
+        session: sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        ms: Math.round(ms),
+        rid: currentRid(),
+      };
+      if (span) {
+        if (span.ensureMs !== undefined) f.ensureMs = span.ensureMs;
+        if (span.queueWaitMs !== undefined) f.queueWaitMs = span.queueWaitMs;
+        if (span.switchToMs !== undefined) f.switchToMs = span.switchToMs;
+        if (span.rpcMs !== undefined) f.rpcMs = span.rpcMs;
+        if (span.entries !== undefined) f.entries = span.entries;
+      }
+      if (failed) {
+        f.err = perfErrCode(seenErr);
+        log.warn("gw", "op", f);
+      } else if (ms > 1000) {
+        log.info("gw", "op", { ...f, slow: 1 });
+      } else {
+        log.debug("gw", "op", f);
+      }
+    };
     if (!DEBUG_PERF) {
       // 关闭路径与原实现等价：ensure() 就绪后再进互斥队列（原方法体逐字语义）
-      return this.ensure().then(() => this.runExclusive(() => body(INERT_PERF_SPAN)));
+      return this.ensure()
+        .then(() => this.runExclusive(() => body(INERT_PERF_SPAN)))
+        .then(
+          (r) => {
+            logGw(null);
+            return r;
+          },
+          (err: unknown) => {
+            seenErr = err;
+            logGw(null);
+            throw err;
+          },
+        );
     }
     const span: PerfSpan = { op, proj: projHash8(this.projectPath), session: sessionId };
     const t0 = performance.now();
@@ -976,10 +1093,14 @@ class ProjectRuntime {
         });
       })
       .catch((err) => {
+        seenErr = err;
         span.err ??= perfErrCode(err);
         throw err;
       })
-      .finally(() => logPerfSpan(span));
+      .finally(() => {
+        logPerfSpan(span);
+        logGw(span);
+      });
   }
 
   runExclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -1493,11 +1614,18 @@ export class EngineRuntimeRegistry implements EngineGateway {
     return rt;
   }
 
-  /** 全局反查会话所属项目（索引 → 已知项目逐个扫 store；扫描不触发 spawn） */
+  /** 全局反查会话所属项目（索引 → 已知项目逐个扫 store；扫描不触发 spawn）。
+ *  采集增强批：路由观测（index 命中/逐项目扫描/全局 miss 三态） */
   private async resolveRuntime(sessionId: string): Promise<ProjectRuntime> {
+    const s8 = sessionId.slice(0, 8);
     const hit = this.index.get(sessionId);
-    if (hit) return hit;
+    if (hit) {
+      if (log.isDebugEnabled()) log.debug("gw", "route", { session: s8, via: "index" });
+      return hit;
+    }
+    let scanned = 0;
     for (const project of this.opts.listProjects()) {
+      scanned++;
       const rt = this.runtimeFor(project);
       try {
         await rt.resolveSession(sessionId);
@@ -1505,8 +1633,19 @@ export class EngineRuntimeRegistry implements EngineGateway {
         continue;
       }
       this.index.set(sessionId, rt);
+      log.debug("gw", "route", { session: s8, via: "scan", scanned });
       return rt;
     }
+    // 全局 miss（404 第一现场）：扫描项目数与候选项目指纹全量留痕
+    log.warn("gw", "route.miss", {
+      session: s8,
+      scanned,
+      projects: this.opts
+        .listProjects()
+        .map((p) => projHash8(p))
+        .join(","),
+      rid: currentRid(),
+    });
     throw new ApiError(404, "session_not_found", `会话不存在于任何已知项目：${sessionId}`);
   }
 

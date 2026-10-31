@@ -38,6 +38,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { isCompiledBinary, releaseRoot, selfDir } from "../runtime-paths"
+import { log } from "../obs/logger"
 import { PidRegistry } from "./pid-registry"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "./rpc-capabilities"
 import {
@@ -361,6 +362,23 @@ export class EngineProcessManager {
   }
 
   private emit(event: EngineManagerEvent): void {
+    // 采集增强批：生命周期事件常开观测（engine_event 帧级在事件桥 publish 侧，不在此重复）
+    switch (event.type) {
+      case "state_changed":
+        log.info("engine", "state", { proj: event.projectPath, from: event.from, to: event.to })
+        break
+      case "process_crashed":
+        log.warn("engine", "crash", { proj: event.projectPath, pid: event.pid, restarts: event.consecutiveRestarts })
+        break
+      case "engine_unavailable":
+        log.error("engine", "unavailable", { proj: event.projectPath, reason: event.reason })
+        break
+      case "engine_reclaimed":
+        log.info("engine", "reclaimed", { proj: event.projectPath, reason: event.reason })
+        break
+      case "engine_event":
+        break
+    }
     for (const listener of [...this.listeners]) {
       try {
         listener(event)
@@ -384,7 +402,7 @@ export class EngineProcessManager {
       .then(() => hook(engine.projectPath, client as unknown as RpcClient))
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
-        console.warn(`[process-manager] warmup 失败 ${engine.projectPath}: ${msg}`)
+        log.warn("engine", "warmup_fail", { proj: engine.projectPath, msg: msg.slice(0, 300) })
       })
   }
 
@@ -594,23 +612,23 @@ export class EngineProcessManager {
       // 响应严格校验（malformed-input 类：垃圾/HTML/非 JSON 形态在此一律失败）
       const env = res as { success?: unknown; data?: { sessionId?: unknown; state?: unknown } | null } | null | undefined
       if (!env || env.success !== true || typeof env.data !== "object" || env.data === null) {
-        console.warn(`[probe-gate-debug] 响应非成功帧: ${JSON.stringify(env)?.slice(0, 300)}`)
+        log.warn("engine", "probe_gate", { step: "响应非成功帧", detail: JSON.stringify(env)?.slice(0, 300) })
         return false
       }
       const state = env.data.state
       if (typeof state !== "object" || state === null) {
-        console.warn(`[probe-gate-debug] state 缺失/非对象: ${JSON.stringify(state)?.slice(0, 200)}`)
+        log.warn("engine", "probe_gate", { step: "state 缺失/非对象", detail: JSON.stringify(state)?.slice(0, 200) })
         return false
       }
       const claimedId = (state as { sessionId?: unknown }).sessionId
       const claimedPath = (state as { sessionFile?: unknown }).sessionFile
       if (typeof claimedId !== "string" || claimedId === "") {
-        console.warn(`[probe-gate-debug] sessionId 非法: ${JSON.stringify(claimedId)?.slice(0, 100)}`)
+        log.warn("engine", "probe_gate", { step: "sessionId 非法", detail: JSON.stringify(claimedId)?.slice(0, 100) })
         return false
       }
       // 认领路径必须是本探针路径（防误导性成功：引擎拿其它会话文件充数）
       if (typeof claimedPath !== "string" || resolve(claimedPath) !== resolve(probePath)) {
-        console.warn(`[probe-gate-debug] sessionFile 不匹配: claimed=${JSON.stringify(claimedPath)} probe=${JSON.stringify(probePath)}`)
+        log.warn("engine", "probe_gate", { step: "sessionFile 不匹配", claimed: String(claimedPath).slice(0, 200), probe: probePath })
         return false
       }
       // 有界等待探针文件落盘（t6 同族判定：磁盘为准，不以口头认领为准）
@@ -619,12 +637,12 @@ export class EngineProcessManager {
         await this.probe.sleep(25)
       }
       if (!existsSync(probePath)) {
-        console.warn(`[probe-gate-debug] 探针文件未落盘（等待 ${this.opts.probeWriteTimeoutMs}ms）: ${probePath}`)
+        log.warn("engine", "probe_gate", { step: "探针文件未落盘", waited: this.opts.probeWriteTimeoutMs, probe: probePath })
         return false
       }
       return true
     } catch (e) {
-      console.warn(`[probe-gate-debug] 异常: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn("engine", "probe_gate", { step: "异常", detail: (e instanceof Error ? e.message : String(e)).slice(0, 300) })
       return false
     } finally {
       // 即焚：引擎侧关会话 + 本地探针文件删除（成功失败两向都清，防残留）

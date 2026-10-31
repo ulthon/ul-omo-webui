@@ -47,6 +47,7 @@ import {
   type EngineTodoState,
   type EngineUsageStats,
 } from "./engine-adapter"
+import { log } from "../obs/logger"
 
 /** 宿主仓库根（源码形态 server/src/adapter -> 上三级，realpath 解析符号链接）；
  * 编译形态 = 可执行文件所在目录（发行包根）。 */
@@ -337,6 +338,24 @@ export class SenpiAdapter implements EngineAdapter {
     return this.active
   }
 
+  /** 采集增强批：引擎 RPC 观测（成功 debug / 失败 warn 带错误原文；级别走统一日志门控）。
+ *  只包关键驾驶面（open_session/prompt/get_entries/abort），读面不包防噪声 */
+  private async tracedRpc<T>(method: string, fn: () => Promise<T>): Promise<T> {
+    const t0 = performance.now()
+    try {
+      const r = await fn()
+      if (log.isDebugEnabled()) log.debug("rpc", "call", { method, ms: Math.round(performance.now() - t0) })
+      return r
+    } catch (err) {
+      log.warn("rpc", "fail", {
+        method,
+        ms: Math.round(performance.now() - t0),
+        msg: (err instanceof Error ? err.message : String(err)).slice(0, 200),
+      })
+      throw err
+    }
+  }
+
   async start(): Promise<void> {
     if (this.client) return
     if (this.starting) return this.starting
@@ -406,15 +425,17 @@ export class SenpiAdapter implements EngineAdapter {
 
   async openSession(options: EngineOpenSessionOptions): Promise<EngineOpenSessionResult> {
     const client = this.rpc()
-    const res = await withTimeout(
-      client.openSession({
-        sessionPath: options.sessionPath,
-        provider: options.provider ?? this.options.provider,
-        modelId: options.modelId ?? this.options.modelId,
-        thinkingLevel: options.thinkingLevel,
-      }),
-      OPEN_TIMEOUT_MS,
-      "open_session",
+    const res = await this.tracedRpc("open_session", () =>
+      withTimeout(
+        client.openSession({
+          sessionPath: options.sessionPath,
+          provider: options.provider ?? this.options.provider,
+          modelId: options.modelId ?? this.options.modelId,
+          thinkingLevel: options.thinkingLevel,
+        }),
+        OPEN_TIMEOUT_MS,
+        "open_session",
+      ),
     )
     // open_session 返回的 sessionId 是 routing handle；durable id 在 state.sessionId（verification/01 结论 2）
     const sessionId = String(res.state?.sessionId ?? "")
@@ -439,14 +460,14 @@ export class SenpiAdapter implements EngineAdapter {
   async messages(cursor?: string): Promise<EngineMessagesPage> {
     this.requireActive()
     try {
-      const page = await this.rpc().getEntries(cursor)
+      const page = await this.tracedRpc("get_entries", () => this.rpc().getEntries(cursor))
       // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
       return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
     } catch (err) {
       // 引擎对未知 since 报 "Entry not found: <id>"——游标失效（如引擎重启后会话态
       // 重建）属异常路径，降级全量让客户端按条目 id 幂等收敛，历史完整性优先
       if (err instanceof Error && err.message.includes("Entry not found")) {
-        const page = await this.rpc().getEntries()
+        const page = await this.tracedRpc("get_entries_full", () => this.rpc().getEntries())
         return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
       }
       throw err
@@ -457,11 +478,13 @@ export class SenpiAdapter implements EngineAdapter {
     this.requireActive()
     // spike 铁律（task-2-spike (b)-8 实测）：排队 prompt 不得携带 thinkingLevel，
     // 引擎直接拒绝（"Cannot set thinkingLevel on a queued prompt…"）——边界处剥除
-    const res = await this.rpc().prompt(input.text, {
-      thinkingLevel: input.streamingBehavior ? undefined : input.thinkingLevel,
-      images: input.images,
-      streamingBehavior: input.streamingBehavior,
-    })
+    const res = await this.tracedRpc("prompt", () =>
+      this.rpc().prompt(input.text, {
+        thinkingLevel: input.streamingBehavior ? undefined : input.thinkingLevel,
+        images: input.images,
+        streamingBehavior: input.streamingBehavior,
+      }),
+    )
     // disposition="handled" 表示无回合（如 /命令），调用方不要等 agent_settled（verification/02 结论 4）；
     // disposition="queued" 表示回合中入队（streamingBehavior 生效），同一 run 尾才 settle
     return { disposition: String(res ?? "") }
@@ -482,7 +505,7 @@ export class SenpiAdapter implements EngineAdapter {
 
   async abort(): Promise<void> {
     this.requireActive()
-    await this.rpc().abort()
+    await this.tracedRpc("abort", () => this.rpc().abort())
   }
 
   events(listener: (event: EngineEvent) => void): EngineEventSubscription {

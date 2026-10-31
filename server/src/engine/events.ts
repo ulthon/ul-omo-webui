@@ -28,6 +28,7 @@
  */
 
 import type { EngineProcessManager, RpcClientEvent } from "./process-manager"
+import { log } from "../obs/logger"
 
 /** 事件桥内部事件形态：wire 原样 + 汇聚元数据。 */
 export interface BridgeEvent {
@@ -87,6 +88,17 @@ export class EventBus {
   publish(projectPath: string, event: RpcClientEvent): BridgeEvent {
     this.cursor += 1
     const bridge: BridgeEvent = { id: this.cursor, projectPath, event }
+    // 采集增强批：帧级观测（debug 级，默认零输出）；debug 门控先行省字段构造
+    if (log.isDebugEnabled()) {
+      const rawType = (event as { type?: unknown }).type
+      const rawSession = (event as { sessionId?: unknown }).sessionId
+      log.debug("bridge", "frame", {
+        id: bridge.id,
+        type: typeof rawType === "string" ? rawType : undefined,
+        proj: projectPath,
+        session: typeof rawSession === "string" ? rawSession.slice(0, 16) : undefined,
+      })
+    }
     this.buffer.push(bridge)
     if (this.buffer.length > this.capacity) {
       this.buffer.splice(0, this.buffer.length - this.capacity)

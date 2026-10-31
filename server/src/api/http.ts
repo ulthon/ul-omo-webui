@@ -3,6 +3,8 @@
 // 鉴权 401（todo 12 的 {error:"unauthorized"}）与登录端点不在本层管辖。
 import type { Context } from "hono";
 import { EngineAdapterError } from "../adapter/engine-adapter";
+import { log } from "../obs/logger";
+import { newRid, withRid } from "../obs/req-context";
 
 /** 业务错误：REST 层按 status/code 直接序列化 */
 export class ApiError extends Error {
@@ -106,18 +108,31 @@ async function logRouteObservation(c: Context, res: Response, ms: number, err: u
  * 注：/api/events 当前在 sse.ts 以裸 handler 注册、不经本包装，本层对其零打点；
  * 经 route() 的流式端点（如 /api/fs/download）按上述判定只计建立耗时。
  */
+/** 采集增强批：HTTP 观测行（debug 级，默认零输出，与 [slow]/[5xx] 契约互不干扰）；
+ * rid 取请求头 X-Request-Id（前端生成）或服务端补生成，经 AsyncLocalStorage
+ * 贯穿 gateway/adapter 埋点——前后端日志按 rid 串联 */
+function logHttp(c: Context, res: Response, ms: number, rid: string): void {
+  if (!log.isDebugEnabled()) return;
+  log.debug("http", "req", { m: c.req.method, path: c.req.path, st: res.status, ms, rid });
+}
+
 export function route(handler: (c: Context) => Promise<Response> | Response) {
   return async (c: Context): Promise<Response> => {
     const startedAt = Date.now();
-    try {
-      const res = await handler(c);
-      await logRouteObservation(c, res, Date.now() - startedAt, undefined);
-      return res;
-    } catch (err) {
-      const res = toErrorResponse(c, err);
-      await logRouteObservation(c, res, Date.now() - startedAt, err);
-      return res;
-    }
+    const rid = c.req.header("x-request-id") || newRid();
+    return withRid(rid, async () => {
+      try {
+        const res = await handler(c);
+        await logRouteObservation(c, res, Date.now() - startedAt, undefined);
+        logHttp(c, res, Date.now() - startedAt, rid);
+        return res;
+      } catch (err) {
+        const res = toErrorResponse(c, err);
+        await logRouteObservation(c, res, Date.now() - startedAt, err);
+        logHttp(c, res, Date.now() - startedAt, rid);
+        return res;
+      }
+    });
   };
 }
 

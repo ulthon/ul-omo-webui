@@ -62,6 +62,7 @@ import { Hono } from "hono"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, type BridgeEvent } from "../engine/events"
 import { DEBUG_SSE } from "../config"
+import { log } from "../obs/logger"
 
 /** D18 诊断日志（UL_OMO_WEBUI_DEBUG_SSE 开关，默认关）：连接/帧/durableLookup 观测，
  * 关闭时零输出、生产行为零改动。 */
@@ -70,6 +71,12 @@ function dlog(line: string): void {
 }
 
 export const sseRoutes = new Hono()
+
+/** 活跃 SSE 连接数（采集增强批：诊断 summary 观测面；streamSSE 生命周期内递增递减） */
+let openSseConnections = 0
+export function sseConnectionCount(): number {
+  return openSseConnections
+}
 
 /** 心跳 wire 事件 type（D18 修复）：具名 `event: hb` 帧替代注释行 `: ping`。
  * EventSource 只对客户端监听列表内的类型派发事件，看门狗续期依赖 hb 可派发。 */
@@ -379,10 +386,14 @@ sseRoutes.get("/events", (c) => {
     // "连接关闭" 的 promise 上，由 cleanup（写失败 / abort）解除挂起。
     let closeResolve: (() => void) | null = null
     dlog(`open afterId=${afterId} filter=${sessionFilter ?? "-"} heartbeatMs=${heartbeatMs}`)
+    openSseConnections++
+    log.debug("sse", "open", { afterId, filter: sessionFilter ?? "-", hb: heartbeatMs })
 
     const cleanup = (): void => {
       if (cleaned) return
       cleaned = true
+      openSseConnections = Math.max(0, openSseConnections - 1)
+      log.debug("sse", "close", { lastSentId: conn.lastSentId, queue: conn.queue.length })
       conn.closed = true
       unsubscribe?.()
       unsubscribe = null
@@ -397,7 +408,10 @@ sseRoutes.get("/events", (c) => {
     const flush = async (): Promise<void> => {
       if (conn.flushing || conn.closed) return
       // 慢消费者观测（嫌疑 a 旁证：队列停摆/积压会让帧滞留服务端，客户端侧表现为不实时）
-      if (conn.queue.length > 100) dlog(`backlog queue=${conn.queue.length} lastSentId=${conn.lastSentId}`)
+      if (conn.queue.length > 100) {
+        dlog(`backlog queue=${conn.queue.length} lastSentId=${conn.lastSentId}`)
+        log.warn("sse", "backlog", { queue: conn.queue.length, lastSentId: conn.lastSentId })
+      }
       conn.flushing = true
       try {
         while (conn.queue.length > 0 && !conn.closed) {
@@ -405,6 +419,7 @@ sseRoutes.get("/events", (c) => {
           if (!frame) break
           if (frame.kind === "gap") {
             dlog(`gap frame from=${frame.from} to=${frame.to} id=${frame.id}`)
+            log.info("sse", "gap", { from: frame.from, to: frame.to, id: frame.id })
             await stream.writeSSE({
               event: "gap",
               data: JSON.stringify({ from: frame.from, to: frame.to }),
