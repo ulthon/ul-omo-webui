@@ -436,13 +436,23 @@ export function buildMessageItems(
       ? resolveTimelineModels(entries, opts.modelRegistry, opts.appliedModel ?? null)
       : null;
   const list: ChatListItem[] = [];
+  // 停驻→恢复追踪（2026-10-31）：末次停驻之后若出现 reflection-completion（反思成功
+  // 收轨，run merged），停驻警示已过期，不再渲染任何 noticeCard
+  let parkedSeen = false;
+  let resumedAfterParked = false;
   for (const e of entries) {
     // custom 型条目（非 custom_message）：仅记忆停驻通知有已知结构（docs08 2026-10-25），
     // 窄化命中入列为警示卡；其余 custom 条目维持不入列旧口径（未来按 customType 逐个注册，
     // 不猜测未知结构）。
     if (e.type === "custom") {
       const parked = reflectionParkedOf(e);
-      if (parked !== null) list.push({ key: `notice-${e.id}`, kind: "noticeCard", notice: parked });
+      if (parked !== null) {
+        parkedSeen = true;
+        resumedAfterParked = false;
+        list.push({ key: `notice-${e.id}`, kind: "noticeCard", notice: parked });
+      } else if (e.customType === "senpi-memory.reflection-completion" && parkedSeen) {
+        resumedAfterParked = true;
+      }
       continue;
     }
     // custom_message 分支（docs08-r6 任务 10 ③）：仅 display=true 入列渲染占位行
@@ -493,14 +503,21 @@ export function buildMessageItems(
   // 同类警示卡聚合（2026-10-31，与 CLI 对齐）：引擎在会话重载/引擎重启时会重复写
   // reflection-parked 条目（实测同 parkedAt 成簇 6+ 条），CLI 仅事件到达时画一次、历史
   // 不堆叠；webui 同类 noticeCard 只保留最末一条（最新状态，位置也在最末条目处），
-  // 旧的不再渲染——数据不动，纯展示层收敛。
-  let lastNoticeIdx = -1;
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].kind === "noticeCard") lastNoticeIdx = i;
-  }
-  if (lastNoticeIdx >= 0) {
+  // 旧的不再渲染——数据不动，纯展示层收敛。恢复成功（resumedAfterParked）则全部
+  // 不渲染：停驻事实已被后续成功收尾推翻。
+  if (resumedAfterParked) {
     for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].kind === "noticeCard" && i !== lastNoticeIdx) list.splice(i, 1);
+      if (list[i].kind === "noticeCard") list.splice(i, 1);
+    }
+  } else {
+    let lastNoticeIdx = -1;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].kind === "noticeCard") lastNoticeIdx = i;
+    }
+    if (lastNoticeIdx >= 0) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].kind === "noticeCard" && i !== lastNoticeIdx) list.splice(i, 1);
+      }
     }
   }
     if (opts.hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });

@@ -151,6 +151,9 @@ interface MessagesState {
     sessionId: string,
     summary: SessionEventLine["summary"],
   ): void;
+  /** 排队事件行按送达片段移除（2026-10-31 对齐 CLI 瞬态）：引擎队列消化后排队提示
+   *  不再常驻消息流底部，按已送达条目首行片段精确匹配移除 */
+  dismissQueuedEvents(sessionId: string, snippets: ReadonlySet<string>): void;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
@@ -506,6 +509,25 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             ...s.bySession,
             [sessionId]: { ...cur, sessionEvents: [...cur.sessionEvents, { id, summary }] },
           },
+        };
+      });
+    },
+
+    dismissQueuedEvents: (sessionId, snippets) => {
+      // 送达即撤（2026-10-31）：仅移除排队类事件行且片段命中已送达项，其余事件行不动；
+      // 无命中返回原引用不触发重渲染
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (cur === undefined || cur.sessionEvents.length === 0) return s;
+        const kept = cur.sessionEvents.filter(
+          (l) =>
+            l.summary.key !== "chat.sessionEvents.queued" ||
+            typeof l.summary.vars?.text !== "string" ||
+            !snippets.has(l.summary.vars.text),
+        );
+        if (kept.length === cur.sessionEvents.length) return s;
+        return {
+          bySession: { ...s.bySession, [sessionId]: { ...cur, sessionEvents: kept } },
         };
       });
     },

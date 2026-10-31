@@ -63,12 +63,10 @@ function linesOf(sessionId) {
 }
 
 describe("r10 todo 7：三类事件进消息流", () => {
-  test("(a) 压缩完成（status!=declined）→ 消息流含 compactionDone 事件行", () => {
+  test("(a) 压缩完成（status!=declined）→ 不再追加事件行（标记块承载，2026-10-31 撤双报）", () => {
     useMessagesStore.setState({ bySession: { s1: slot() } });
     emit("s1", { type: "compaction_end", status: "completed" });
-    const lines = linesOf("s1");
-    expect(lines).toHaveLength(1);
-    expect(lines[0].summary.key).toBe("chat.sessionEvents.compactionDone");
+    expect(linesOf("s1")).toHaveLength(0);
   });
 
   test("(a2) declined 压缩与重放窗口内的完成帧均不追加事件行", () => {
@@ -98,9 +96,9 @@ describe("r10 todo 7：三类事件进消息流", () => {
       ordered: [{ text: "帮我查天气\n附注第二行", mode: "followUp", enqueueOrder: 1 }],
     });
     expect(linesOf("s1")).toHaveLength(1);
-    // 投递（ordered 出队宣布）→ user 帧入列承载，事件行不重复报
+    // 投递（ordered 出队宣布）→ 事件行送达即撤（2026-10-31 对齐 CLI 瞬态），不再常驻
     emit("s1", { type: "queue_update", ordered: [] });
-    expect(linesOf("s1")).toHaveLength(1);
+    expect(linesOf("s1")).toHaveLength(0);
   });
 
   test("(c) 模型切换回执 → modelSwitch 事件行；同模型重申不追加，异模型再切追加", () => {
@@ -129,7 +127,7 @@ describe("r10 todo 7：三类事件进消息流", () => {
 
   test("(a3) 切页回来可见：全量重取 setEntries 整替 entries 不冲掉事件行（非 toast 瞬态）", () => {
     useMessagesStore.setState({ bySession: { s1: slot() } });
-    emit("s1", { type: "compaction_end", status: "completed" });
+    emit("s1", { type: "model_changed", model: { provider: "p", id: "m1" } });
     expect(linesOf("s1")).toHaveLength(1);
     // 模拟切页回来触发的水合点：GET messages 全量整替 entries（重取替换服务端真相）
     useMessagesStore.getState().setEntries("s1", [], null, null);
@@ -156,11 +154,11 @@ describe("mergeSessionEventLines 归并纯函数", () => {
     const items = [{ key: "e1", kind: "entry", entryId: "e1", interrupted: false, model: null }];
     expect(mergeSessionEventLines(items, [])).toBe(items);
     const merged = mergeSessionEventLines(items, [
-      { id: "ev-1", summary: { key: "chat.sessionEvents.compactionDone" } },
+      { id: "ev-1", summary: { key: "chat.sessionEvents.modelSwitch", vars: { model: "p/m" } } },
     ]);
     expect(merged).toHaveLength(2);
     expect(merged[1].kind).toBe("sessionEvent");
     expect(merged[1].key).toBe("session-event-ev-1");
-    expect(merged[1].line.summary.key).toBe("chat.sessionEvents.compactionDone");
+    expect(merged[1].line.summary.key).toBe("chat.sessionEvents.modelSwitch");
   });
 });

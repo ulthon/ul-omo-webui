@@ -50,4 +50,17 @@ describe("noticeCard 同类聚合", () => {
     expect(items[0].kind).toBe("noticeCard");
     expect(items[1].kind).toBe("entry");
   });
+
+  test("停驻后出现 reflection-completion（恢复成功）→ 停驻卡全部不渲染（信息已过期）", () => {
+    const completion = {
+      type: "custom", customType: "senpi-memory.reflection-completion",
+      data: { schemaVersion: 1, outcome: "merged" },
+      id: "e9", parentId: null, timestamp: "2026-10-31T12:00:00.000Z",
+    } as unknown as WireEntry & { id: string };
+    const items = buildMessageItems(
+      [parked("e1", 7), completion, msg("m1")],
+      { hasStreamingMessage: false, interrupted: false },
+    );
+    expect(items.filter((i) => i.kind === "noticeCard")).toHaveLength(0);
+  });
 });

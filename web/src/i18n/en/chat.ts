@@ -291,12 +291,12 @@ export const chat = {
     marker: "Context compacted: {summary}",
     autoStarted: "Context nearing its limit; auto-compaction in progress…",
   },
-  // Session-level event lines (r10 todo 7): three in-stream system lines
+  // Session-level event lines (r10 todo 7): in-stream system lines
   // (translated in event-dispatch, held in messages store sessionEvents);
-  // {text} in queued is a first-line truncated snippet
+  // {text} in queued is a first-line truncated snippet (dismissed on delivery);
+  // compactionDone line removed 2026-10-31 (marker block carries the fact)
   sessionEvents: {
     queued: "Queued: {text}",
-    compactionDone: "Context compaction completed",
     modelSwitch: "Model switched to {model}",
   },
   // Background activity bar (r10 todo 11): driven by omo.task.updated snapshots, renders only when non-empty

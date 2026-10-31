@@ -694,9 +694,17 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     // 判定取投递前快照对比（applyUpdate 后旧项已并入引擎真相无法区分）。
     const prevItems = useQueueStore.getState().bySession[sessionId]?.items ?? [];
     const deliveredTexts = new Set(ordered.map((o) => String(o.text ?? "")));
-    const delivered = prevItems.length > 0 && prevItems.some((i) => !deliveredTexts.has(i.text));
+    const deliveredItems = prevItems.filter((i) => !deliveredTexts.has(i.text));
+    const delivered = prevItems.length > 0 && deliveredItems.length > 0;
     useQueueStore.getState().applyUpdate(sessionId, ordered);
     if (delivered) void useSessionsStore.getState().refreshSessions();
+    // 排队行送达即撤（2026-10-31 用户反馈，对齐 CLI 瞬态语义）：排队提示只在引擎队列
+    // 还持有该条时可见，快照消化（条目消失）即移除对应事件行，不再常驻消息流底部。
+    if (deliveredItems.length > 0) {
+      useMessagesStore
+        .getState()
+        .dismissQueuedEvents(sessionId, new Set(deliveredItems.map((i) => queueSnippetOf(i.text))));
+    }
     // 排队→引擎队列交接回执（r10 todo 7）：ordered 中新增（文本+档位不在前快照）即
     // 入队完成，会话消息流追加事件行（任意标签页可见，对标 CLI 队列提示在流内）；
     // 重放窗口不追加（与 autoStarted toast 同守卫），投递本身有 user 帧入列不重复报。
@@ -771,13 +779,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     useMessagesStore.getState().setCompacting(sessionId, false);
     if (wire.status !== "declined") {
       broadcastUsageRefresh();
-      // 压缩完成事件行（r10 todo 7）：实际压缩发生即入流可回看；重放窗口不追加
-      // （与 autoStarted toast 同守卫）。手动 /compact 另有 toast 回执，事件行不冲突。
-      if (!useMessagesStore.getState().replayRecovering) {
-        useMessagesStore.getState().appendSessionEvent(sessionId, {
-          key: "chat.sessionEvents.compactionDone",
-        });
-      }
+      // 压缩完成不再追加事件行（2026-10-31 用户反馈双报）：type:"compaction" 条目
+      // 派生的标记块（上下文已压缩：摘要）已在流内承载同一事实，事件行属重复呈现。
       // 摘要条目对账（docs08-r6 任务 19g）：压缩完成后渲染层依赖 type:"compaction"
       // 条目入列派生标记块，实时通道靠 entry_appended（stores 白名单放行）。帧丢失场景
       // （压缩期间断线重连 / 传输粘滞切换，F3 走查实录）下补拉一次 GET messages
