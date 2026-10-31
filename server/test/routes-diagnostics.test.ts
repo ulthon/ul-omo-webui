@@ -63,8 +63,8 @@ describe("mergeLogSources", () => {
     ];
     const merged = mergeLogSources(buffer, fileLines);
     expect(merged.map((e) => e.seq)).toEqual([1, 2, 3]);
-    // seq=2 缓冲条目胜出（带结构化 f）
-    expect(merged[1].f).toEqual({ op: "prompt" });
+    // seq=2 缓冲条目胜出（带结构化 f）；联合类型收窄到 LogEntry（缓冲源才带 f）
+    expect((merged[1] as LogEntry).f).toEqual({ op: "prompt" });
   });
 });
 
