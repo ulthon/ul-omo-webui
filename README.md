@@ -1,124 +1,154 @@
 # ul-omo-webui
 
-senpi/omo 引擎的 web 工作台：功能集对标 opencode v1 TUI，兼容手机浏览器，自托管单用户。
+senpi/omo 引擎的 Web 工作台。自托管、单用户，功能集对标 opencode v1 TUI，兼容手机浏览器。
 
-## 三条核心理念
+[English](README.en.md)
 
-1. **同一引擎的第二前端**。web 版不是独立产品，而是 senpi 引擎的第二个 UI。会话数据、agent 配置、凭证、工作产出与命令行版完全同一份（关键保证：宿主 spawn 引擎子进程时继承相同的 HOME 与项目 cwd）。终端 TUI 聊到一半，手机浏览器打开同一个会话接着聊，零迁移。
-2. **薄壳**。引擎不动，web 只做宿主：事件桥 + UI。不做 Electron、不做多服务器聚合、不做账号系统。单 Node/Bun 进程 + 一个 sqlite 元数据库。
-3. **薄核 + 外挂可选**。核心只做“对话 + 会话 + 与对话直接联动的东西”。文件管理已内置（跟随项目，开箱即用）；Git 历史浏览等专门能力外链独立自托管工具（cgit 等），反代按路径挂载；外挂 filebrowser 可选并存，内置功能不依赖它。
+## 项目是什么
 
-## 功能一览
+这是一个跑在引擎旁边的 Web 客户端：Hono Node 服务器托管一个 React 19 + Vite 构建的 SPA，通过 REST 上行、SSE 下行与引擎通信。会话在服务端运行，手机锁屏或杀掉浏览器都不影响执行，回来刷新即见结果。
 
-**对话**
-- 流式输出、工具调用卡片（按工具语义结构化摘要）、权限确认、todo 快照、diff 总览
-- 提问卡片：助手发起的结构化提问（单选/多选/自由文本）交互卡——含倒计时与跨回合存活（不阻塞式提问在回合结束后仍可回答，答案作为新消息送达）；刷新/断线重连自动恢复未决问题
-- 模型与思考级别切换（Ctrl+P 快捷、随 prompt 注入引擎、可存为项目偏好，切换回执回显实际生效模型、排队期显示待生效徽标）；新会话默认模型取引擎配置默认（回退链：项目偏好 > 引擎默认 > 列表首项）
-- 思考块可设默认展开（跨设备设置，展开态滚动跟随、手滑即停）
-- 回合进行中可继续输入排队发送（followUp/steer 可切，待发列表可整队撤销与重排，等待提问/权限应答时输入区明示等待提示）
-- 大段文本粘贴可转附件按需占用上下文；消息流模型切换点标记；右缘导航轨快速跳转历史输入
-- 断线重连全量对账（心跳具名帧 + 客户端滚动看门狗，实测断网零丢消息）
+主要功能：
 
-**会话与项目**
-- 多项目注册（目录树浏览添加）、侧栏平铺全部项目会话（分组折叠记忆）、跨项目最近会话直达
-- 置顶/归档/搜索/批量/fork/导出；标签（全局与项目两级）；首回合后自动生成短标题
-- URL `?session=` 恢复选中会话；项目可隐藏/恢复/移除/排序
+- 多会话管理：侧栏会话列表，新建、切换、删除、搜索、置顶、归档、排序，未读计数与运行状态标识
+- 对话流：SSE 增量渲染、Markdown 与代码高亮（Shiki）、thinking 折叠、虚拟列表支撑长会话
+- 工具调用卡片：名称、参数摘要、运行状态、结果折叠，diff 视图（react-diff-view）
+- 权限确认：卡片式 允许/拒绝/总是允许，触控友好
+- todo 任务结构化渲染、子代理面板、问题卡片、记忆面板、统计面板
+- 文件树 + 只读预览，@引用进对话；内置文件管理（上传/下载/编辑）
+- Git 只读视图：未提交变更总览（git status/diff 渲染）
+- 项目管理：按工作目录分组会话，项目级偏好（记住 agent/模型），引擎 systemd 生命周期托管（按项目 spawn、重启、空闲回收）
+- 自动会话命名、输入草稿跨设备续写、基础命令（/compact /clear /new /undo）、中断按钮
 
-**效率与记忆**
-- 常用语（全局与项目两级，可从输入历史导入）；斜杠命令提示（引擎命令/技能/用户提示），/compact 压缩上下文；移动端斜杠提示内联展示不遮挡输入框
-- 项目笔记页签（markdown 渲染、标签分类、回收站软删除 + 版本恢复）
-- 只读"记忆"页签（项目记忆库 facts 按月分组，与 CLI 共库，页签头部只读遥测卡：今日条数/库总量与文件数/最近落条/system 体积）；会话内记忆写入/召回标记
+## 快速上手
 
-**统计与手机端**
-- token 用量统计、回合速度 tok/s、上下文水位指示；右栏“子代理”页签聚合呈现 task 子代理的运行/终态
-- 手机端整体适配：全屏会话抽屉、上下结构输入区（上行整行宽输入、下行功能钮与发送，命令按钮行已退役）、底部上拉浮层避开键盘、44px 触控底线
+前置条件：
 
-## 快速开始
+- Node.js >= 24（服务器使用 node:sqlite，package.json engines 强制 >=24）
+- omo/senpi 引擎可用（`@code-yeongyu/senpi` 等引擎包为 external 依赖，运行时从 node_modules 解析）
 
-### 安装（npm，要求 node >= 24）
+安装与构建（仓库为 npm workspace，根目录执行）：
 
-```
-npm install -g @ulthon/ul-omo-webui
-ul-omo-webui
-```
-
-首次启动自动生成随机密码打印在 stdout 并写入数据目录的 `password` 文件，之后每次启动直接读取该文件。浏览器打开 `http://<主机>:7788` 登录（缺省监听 `0.0.0.0:7788`）。
-
-数据目录缺省（npm 安装形态）：Linux `~/.local/share/ul-omo-webui/`、macOS `~/Library/Application Support/ul-omo-webui/`、Windows `%APPDATA%\ul-omo-webui\`；`UL_OMO_WEBUI_DATA_DIR` 可覆盖。命令行验证登录：
-
-```
-curl -X POST http://127.0.0.1:7788/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"password":"<你的密码>"}'
-```
-
-### 从源码构建（开发）
-
-```
-git clone https://github.com/ulthon/ul-omo-webui.git
-cd ul-omo-webui
+```bash
 npm install
-npm run build      # web 构建 + 内嵌资产 + esbuild 打包 -> server/dist/index.js
-node server/dist/index.js
+npm run build   # 构建 web 前端并打包 server/dist/index.js（esbuild 单文件 bundle，静态资产内嵌）
 ```
 
-测试：`npm test`（server 368 用例 + web 425 用例，vitest）。
+启动服务器：
 
-### 环境变量
+```bash
+node server/dist/index.js
+# 或开发模式（只构建 server，跳过前端）：
+cd server && npm run dev
+```
 
-| 变量 | 作用 | 缺省 |
+默认监听 `0.0.0.0:7788`，浏览器打开 <http://localhost:7788>。首次启动若未设置 `UL_OMO_WEBUI_PASSWORD`，服务器会生成随机密码打印到控制台并写入数据目录的 `password` 文件，用它登录即可。
+
+### 生产部署（systemd）
+
+推荐直接用内置 CLI 生成服务（快照当前环境变量进服务定义，改环境后需重新 enable）：
+
+```bash
+ul-omo-webui startup enable [--system]
+```
+
+也可手写单元，形如（对应 `server/src/startup.ts` 生成的格式）：
+
+```ini
+[Unit]
+Description=ul-omo-webui (senpi/omo web workbench)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /usr/lib/node_modules/@ulthon/ul-omo-webui/server/dist/index.js
+Restart=on-failure
+RestartSec=3
+Environment=UL_OMO_WEBUI_PORT=7788
+Environment=UL_OMO_WEBUI_PASSWORD=你的密码
+Environment=UL_OMO_WEBUI_DATA_DIR=/var/lib/ul-omo-webui
+
+[Install]
+WantedBy=multi-user.target
+```
+
+用户级服务（`--user`）需要 `loginctl enable-linger` 才能不登录常驻；系统级服务（`--system`）无此依赖，单元文件会收紧到 600 权限。详见 docs/09-自启动与更新立项.md。
+
+## 环境变量全表
+
+以下为服务器代码实际读取的全部环境变量（来源：`server/src/config.ts`、`obs/logger.ts`、`auth/password.ts`、`api/perf.ts`、`api/http.ts`、`conf/config-store.ts`、`title-gen.ts`、`engine/schedule-runner.ts`、`engine/process-manager.ts`、`api/routes-memory.ts`）。
+
+| 变量名 | 默认值 | 作用 |
 |---|---|---|
-| `UL_OMO_WEBUI_HOST` | 监听地址 | `0.0.0.0` |
-| `UL_OMO_WEBUI_PORT` | 监听端口 | `7788` |
-| `UL_OMO_WEBUI_DATA_DIR` | 运行数据目录 | npm 安装形态：平台数据目录；源码形态：`server/data/` |
-| `UL_OMO_WEBUI_META_DB` | 元数据库路径 | `<DATA_DIR>/meta.db` |
-| `UL_OMO_WEBUI_AGENT_DIR` | 引擎 agent 目录 | `~/.omo/agent` |
-| `UL_OMO_WEBUI_STATIC_DIR` | 磁盘静态目录（逃生口） | 内嵌资产 |
-| `UL_OMO_WEBUI_PASSWORD` | 登录密码 | 自动生成随机密码 |
-| `UL_OMO_WEBUI_CONFIG_DIR` | 全局配置目录 | `~/.config/ul-omo-webui/` |
-| `UL_OMO_WEBUI_TITLE_BASEURL` | 标题生成 API 端点 | zai coding 端点 |
-| `UL_OMO_WEBUI_TITLE_MODEL` | 标题生成模型 | glm-5.3-flash |
-| `UL_OMO_WEBUI_DEBUG_SSE` | SSE 诊断日志开关 | 关 |
+| UL_OMO_WEBUI_HOST | 0.0.0.0 | 监听地址 |
+| UL_OMO_WEBUI_PORT | 7788 | 监听端口，非法值启动即退出 |
+| UL_OMO_WEBUI_DATA_DIR | 源码形态 server/data；npm 安装形态平台数据目录（Linux 按 XDG_DATA_HOME，缺省 ~/.local/share/ul-omo-webui；macOS Library/Application Support；Windows 按 APPDATA） | 运行数据目录（元数据库、日志、PID 登记表、密码文件等） |
+| UL_OMO_WEBUI_STATIC_DIR | 源码形态 web/dist | 磁盘静态资源目录，仅源码形态与显式覆盖时读取，安装形态走内嵌资产 |
+| UL_OMO_WEBUI_META_DB | DATA_DIR/meta.db | 元数据库（sqlite）路径 |
+| UL_OMO_WEBUI_AGENT_DIR | ~/.omo/agent | 引擎 agent 目录（凭证、自定义模型、会话库），spawn 与 SDK 路径推导同源 |
+| UL_OMO_WEBUI_SITE_NAME | 未设置 | 自定义站点名，注入标签页标题与顶栏/登录页呈现；空串视为未设置 |
+| UL_OMO_WEBUI_PASSWORD | 未设置时首次随机生成，写入 DATA_DIR/password | 登录密码 |
+| UL_OMO_WEBUI_LOG_LEVEL | info | 观测日志级别（trace/debug/info/warn/error） |
+| UL_OMO_WEBUI_LOG_FILE | 开启 | 日志文件落盘开关（0/false/no/off 关闭）；目录随 DATA_DIR/logs，按天滚动保留 7 天 |
+| UL_OMO_WEBUI_DEBUG_SSE | 关闭 | SSE 链路诊断日志（连接建立/状态迁移/帧写出） |
+| UL_OMO_WEBUI_DEBUG_PERF | 关闭 | 性能埋点日志（切换链路四层耗时归因） |
+| UL_OMO_WEBUI_SLOW_MS | 1000 | 慢请求告警阈值（毫秒） |
+| UL_OMO_WEBUI_FS_UPLOAD_MAX_BYTES | 1073741824（1 GiB） | 内置文件管理上传上限，非法值告警后回退默认 |
+| UL_OMO_WEBUI_CONFIG_DIR | ~/.config/ul-omo-webui | 全局配置存储目录 |
+| UL_OMO_WEBUI_TITLE_BASEURL | https://api.z.ai/api/coding/paas/v4/chat/completions | 会话自动命名调用的 API 端点 |
+| UL_OMO_WEBUI_TITLE_MODEL | zai-coding-cn/glm-5.3-flash | 自动命名使用的模型 |
+| UL_OMO_WEBUI_TITLE_LANG | 缺省随设置（zh） | 自动命名语言，仅接受 zh/en |
+| UL_OMO_WEBUI_SCHEDULE_DELIVER_URL | 未设置 | 计划任务结果投递的 Webhook 地址 |
+| UL_OMO_WEBUI_SCHEDULE_DELIVER_TOKEN | 未设置 | 投递 Webhook 的 Bearer Token |
+| SENPI_ENGINE_PROBE_GATE | 关闭 | 引擎进程探针门控开关（引擎子进程管理器读取） |
+| OMO_MEMORY_HOME | ~/.omo/memory | 记忆目录（记忆路由读取） |
 
-详见 `server/src/config.ts` 与 `deploy/备份.md`。
+另：`XDG_DATA_HOME`（Linux）与 `APPDATA`（Windows）会间接影响数据目录默认值；systemd 用户单元会显式带入 enable 时的 `PATH`（引擎子进程 spawn node 需要）。
 
-### 配置文件与多机同步
+## 目录结构
 
-标签与常用语的定义以文本文件形态存在，git 管理即备份与多机同步：
-
-- 全局：`~/.config/ul-omo-webui/`（`tags.json` 全局标签集、`snippets.json` 全局常用语集）。把它放进你的 dotfiles git 仓库，新机器 clone 后配置即就位；目录位置可用 `UL_OMO_WEBUI_CONFIG_DIR` 覆盖。文件是外部改动（如 git pull）后下一次读取自动生效，无需重启。
-- 项目级：项目根下 `.ul-omo-webui.json`（项目级标签、常用语、preferredModel、permissionPreset），随项目仓库走。
-
-注意：`.ul-omo-webui.json` 在提交之前会以未跟踪文件出现在 `git status` 与"未提交变更"页签里，属预期行为。提交它才能获得多机同步；把它加进 `.gitignore` 会静默破坏同步。
-
-标题生成是服务端对模型 API 的独立调用（与引擎同源凭证，读引擎 agent 目录的 auth.json），可用 `UL_OMO_WEBUI_TITLE_BASEURL` 与 `UL_OMO_WEBUI_TITLE_MODEL` 换端点或模型。
-
-## 部署参考件
-
-`deploy/` 目录提供参考配置（均为参考件，不承担编排验收）：`Caddyfile.example`（反代 + /git /files 路径分发，含 SSE 长连接防缓冲配置）、`docker-compose.example.yml`（cgit + filebrowser 外链编排示例）、`备份.md`（备份对象与恢复步骤）。注意：文件管理为内置功能（跟随项目），不依赖 filebrowser 外挂链路，不部署外挂工具不影响任何内置能力。
-
-## 部署安全说明
-
-缺省 `HOST=0.0.0.0` 是为了手机在局域网内直连，但请清楚这意味着什么：
-
-- 应用为**纯 HTTP**——登录口令与会话 cookie 明文传输，局域网内可被嗅探。
-- server 持有**可执行任意命令的引擎凭证**（引擎以你的用户身份跑 agent，能读写文件、执行命令），拿到登录态等于拿到这个能力。
-
-因此：**仅在信任的局域网内使用**（家庭/个人内网）。需要暴露到更强对抗环境时，自行把 `UL_OMO_WEBUI_HOST=127.0.0.1` 绑定回环，再由反代做 TLS 终结对外（见 `deploy/Caddyfile.example`）。
+```
+senpi-webui/
+├── server/            # Hono Node 服务器
+│   ├── src/           # 入口 cli.ts/index.ts、config.ts、engine/（子进程管理）、api/（REST+SSE 路由）、auth/、db/、obs/
+│   ├── test/          # vitest 测试套件
+│   └── dist/          # 构建产物（gitignore）
+├── web/               # React + Vite SPA
+│   ├── src/components/chat/   # 会话、消息流、工具卡片、权限、todo、子代理等聊天界面组件
+│   ├── tests/         # vitest 测试套件
+│   └── dist/          # 构建产物（gitignore）
+├── docs/              # 设计文档
+├── scripts/           # 构建脚本（build-package.mjs：esbuild 打包；build-binary.ts）
+└── deploy/            # 部署辅助
+```
 
 ## 文档索引
 
-| 文档 | 内容 |
-|---|---|
-| [docs/01-功能清单.md](docs/01-功能清单.md) | 已冻结的功能集、明确不做的事、手机适配要求 |
-| [docs/02-技术选型.md](docs/02-技术选型.md) | 全栈技术栈与理由、部署形态 |
-| [docs/03-架构设计.md](docs/03-架构设计.md) | 总体架构、EngineAdapter 接口、数据一致性模型 |
-| [docs/04-引擎与生态调研.md](docs/04-引擎与生态调研.md) | senpi/pi/omo/opencode v2/OpenChamber 的调研结论与竞品 |
-| [docs/05-数据层实证.md](docs/05-数据层实证.md) | 本机 opencode 数据库分析（产品行为参照） |
-| [docs/06-技术验证清单.md](docs/06-技术验证清单.md) | 实施前必须实测的验证项 |
-| [docs/07-待定问题.md](docs/07-待定问题.md) | 尚未最终拍板的问题 |
-| [docs/08-产品待办.md](docs/08-产品待办.md) | 功能设想与待拍板方案，只记录不实施 |
+- [01-功能清单.md](docs/01-功能清单.md)：功能范围与边界
+- [02-技术选型.md](docs/02-技术选型.md)：技术栈与理由
+- [03-架构设计.md](docs/03-架构设计.md)：总体架构与引擎适配
+- [09-自启动与更新立项.md](docs/09-自启动与更新立项.md)：自启动服务与更新机制
 
-## 许可证
+## 截图
 
-[MIT](LICENSE)。引擎层 senpi 同为 MIT。
+<!-- TODO: 真图后补，放到 docs/screenshots/ 下 -->
+
+<!--
+<img src="docs/screenshots/desktop-session.png" alt="桌面端会话" width="800">
+<img src="docs/screenshots/mobile-session.png" alt="手机端会话" width="390">
+<img src="docs/screenshots/permission-card.png" alt="权限确认卡片" width="390">
+-->
+
+## 开发指南
+
+```bash
+npm test                          # 根目录跑全部 workspace 测试（vitest）
+cd web && npm run dev             # 前端开发服务器（Vite HMR）
+cd server && npm run dev          # 只构建 server 后启动（跳过前端构建）
+cd web && npm run build           # tsc -b 类型检查 + vite build
+cd web && npm run lint            # oxlint
+cd web && npm run scan:cn         # 硬编码中文扫描
+```
+
+- 测试：server 与 web 各有 vitest 套件（`server/test`、`web/tests`），根目录 `npm test` 一键运行
+- 类型检查：web 构建含 `tsc -b` 门禁；server 构建由 esbuild 打包
+- 提交代码前建议跑一遍 `npm test` 与 web 的 `tsc -b`
