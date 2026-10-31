@@ -1212,6 +1212,13 @@ export const api = {
   async diagnosticsSummary(): Promise<Record<string, unknown>> {
     return request("/api/diagnostics/summary");
   },
+  /** 诊断开关（2026-10-31 面板化）：生效值 = env 启动默认 OR 面板持久态 */
+  async diagnosticsFlags(): Promise<{ perf: boolean; sse: boolean }> {
+    return request("/api/diagnostics/flags");
+  },
+  async setDiagnosticsFlags(patch: { perf?: boolean; sse?: boolean }): Promise<{ perf: boolean; sse: boolean }> {
+    return request("/api/diagnostics/flags", { method: "POST", body: JSON.stringify(patch) });
+  },
 };
 
 /** 定时任务行（server ScheduleJob + 目录派生 state；时间字段均为 epoch 毫秒） */

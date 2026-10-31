@@ -14,4 +14,7 @@ export const diagnostics = {
   exportFailed: "Export failed",
   serverUnavailable: "Server logs unreachable (bundle contains frontend only)",
   empty: "No entries yet (level too high or page just opened)",
+  flagPerf: "Performance tracing (4-layer spans)",
+  flagSse: "SSE link debug log",
+  flagToggleFailed: "Failed to toggle",
 };

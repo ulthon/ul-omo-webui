@@ -5,6 +5,8 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { join, relative } from "node:path";
 import { readFileSync } from "node:fs";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR, siteName } from "./config";
+import { initDiagnosticsFlags } from "./conf/diagnostics-flags";
+initDiagnosticsFlags(DATA_DIR);
 import { loadEmbeddedStatic, embeddedRelPath, injectSiteName } from "./embedded-static";
 import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";

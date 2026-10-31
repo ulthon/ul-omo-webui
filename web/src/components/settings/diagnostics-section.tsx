@@ -65,6 +65,9 @@ function levelBadgeClass(lvl: string): string {
   }
 }
 
+/** 诊断开关生效值（null = 载入中/不可达） */
+type DiagFlags = { perf: boolean; sse: boolean };
+
 export function DiagnosticsSection() {
   const t = useT();
   const [level, setLevelState] = useState<DiagLevel>(diagLevel());
@@ -73,7 +76,24 @@ export function DiagnosticsSection() {
   const [auto, setAuto] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [flags, setFlags] = useState<DiagFlags | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 开关载入与写入（2026-10-31 面板化）：写入即生效免重启；返回生效值回显（env 项不可关）
+  const flipFlag = async (key: "perf" | "sse", on: boolean): Promise<void> => {
+    try {
+      setFlags(await api.setDiagnosticsFlags({ [key]: on }));
+    } catch {
+      setNotice(t("diagnostics.flagToggleFailed"));
+    }
+  };
+
+  useEffect(() => {
+    api
+      .diagnosticsFlags()
+      .then((f) => setFlags(f))
+      .catch(() => setFlags(null));
+  }, []);
 
   const refresh = async (): Promise<void> => {
     if (source === "frontend") {
@@ -147,6 +167,31 @@ export function DiagnosticsSection() {
     <section aria-label={t("diagnostics.title")} className="rounded-lg border p-3">
       <h3 className="text-sm font-semibold">{t("diagnostics.title")}</h3>
       <p className="pt-1 text-xs text-muted-foreground">{t("diagnostics.desc")}</p>
+
+      {/* 诊断开关（2026-10-31 面板化）：写入即生效免重启；env 为真项不可关（服务端返回生效值回显） */}
+      <div className="flex flex-wrap items-center gap-4 pt-3" data-testid="diag-flags">
+        <label className="flex items-center gap-1.5 text-xs" data-testid="diag-flag-perf-label">
+          <input
+            type="checkbox"
+            data-testid="diag-flag-perf"
+            checked={flags?.perf ?? false}
+            onChange={(e) => void flipFlag("perf", e.target.checked)}
+            className="size-3.5"
+          />
+          {t("diagnostics.flagPerf")}
+        </label>
+        <label className="flex items-center gap-1.5 text-xs" data-testid="diag-flag-sse-label">
+          <input
+            type="checkbox"
+            data-testid="diag-flag-sse"
+            checked={flags?.sse ?? false}
+            onChange={(e) => void flipFlag("sse", e.target.checked)}
+            className="size-3.5"
+          />
+          {t("diagnostics.flagSse")}
+        </label>
+        {flags === null && <span className="text-xs text-muted-foreground">…</span>}
+      </div>
 
       <div className="flex flex-wrap items-center gap-2 pt-3">
         <label className="text-xs text-muted-foreground" htmlFor="diag-level">

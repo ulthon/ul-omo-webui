@@ -298,3 +298,22 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
     expect(text).not.toContain("最近会话");
   });
 });
+
+
+describe("手机顶栏项目名随选中会话（2026-10-31 缺陷回归）", () => {
+  test("水合态：选中会话属 /p1 而全局 currentProject=/p2 → 显 p1；无选中回落全局", async () => {
+    globalThis.fetch = (async () => okJson({ models: [], favorites: [], defaults: null })) as typeof fetch;
+    const s1 = makeSession("a1", { project: "/p1" });
+    useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: "/p2" });
+    useSessionsStore.setState({ byProject: { "/p1": [s1] }, selectedId: "a1" });
+    const container = await mountTopbar();
+    expect(container.querySelector('[data-testid="topbar-session-title"]')?.textContent).toBe("会话-a1");
+    const proj = container.querySelector('[data-testid="topbar-project-name"]')?.textContent ?? "";
+    expect(proj).toContain("p1");
+    expect(proj).not.toContain("p2");
+    await act(async () => {
+      useSessionsStore.setState({ selectedId: null });
+    });
+    expect(container.querySelector('[data-testid="topbar-project-name"]')?.textContent).toContain("p2");
+  });
+});

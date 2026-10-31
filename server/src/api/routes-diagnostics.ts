@@ -9,6 +9,7 @@ import { Hono, type Context } from "hono";
 import type { ObsLogger, LogEntry, LogVal } from "../obs/logger";
 import { levelValue, LOG_LEVELS, type LogLevel } from "../obs/level";
 import { ApiError, parseJsonBody, route } from "./http";
+import { getDiagnosticsFlags, setDiagnosticsFlags } from "../conf/diagnostics-flags";
 
 export interface DiagnosticsRouteDeps {
   logger: Pick<ObsLogger, "entries" | "readFileTail" | "stats" | "relay">;
@@ -149,6 +150,23 @@ export function createDiagnosticsRoutes(deps: DiagnosticsRouteDeps): Hono {
         sseConnections: deps.sseConnections?.() ?? 0,
         log: deps.logger.stats(),
       });
+    }),
+  );
+
+  // 诊断开关（2026-10-31 面板化）：GET 生效值；POST 写入即生效免重启（env 为真项
+  // 不可关，返回值始终为生效值供面板回显）
+  app.get(
+    "/api/diagnostics/flags",
+    route(async (c: Context) => c.json(getDiagnosticsFlags())),
+  );
+  app.post(
+    "/api/diagnostics/flags",
+    route(async (c: Context) => {
+      const body = await parseJsonBody(c);
+      const patch: { perf?: boolean; sse?: boolean } = {};
+      if (typeof body.perf === "boolean") patch.perf = body.perf;
+      if (typeof body.sse === "boolean") patch.sse = body.sse;
+      return c.json(setDiagnosticsFlags(patch));
     }),
   );
 

@@ -31,7 +31,8 @@ import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from ".
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
 import { CursorInvalidError, readEntriesBefore, readTailEntries } from "../adapter/session-file";
-import { DEBUG_PERF, logPerfHttp } from "./perf";
+import { debugPerfOn } from "../conf/diagnostics-flags";
+import { logPerfHttp } from "./perf";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set(["low", "high", "max"]);
 
@@ -350,7 +351,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     const cursor = c.req.query("cursor") || undefined;
     const before = c.req.query("before") || undefined;
     const full = c.req.query("full") === "1";
-    const t0 = DEBUG_PERF ? performance.now() : 0;
+    const t0 = debugPerfOn() ? performance.now() : 0;
     try {
       let page: Awaited<ReturnType<typeof deps.engines.messages>>;
       let hasMore = false;
@@ -387,7 +388,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
           oldestId = page.entries[0]?.id ?? null;
         }
       }
-      if (DEBUG_PERF) logPerfHttp(200, performance.now() - t0, page.entries.length);
+      if (debugPerfOn()) logPerfHttp(200, performance.now() - t0, page.entries.length);
       // 历史引用化（任务 19）：条目下发前把 user image part 的 base64 换成附件引用
       // （边车 img-* 内容寻址落盘，客户端按需取）。会话项目解析失败/网关无该面 →
       // 原样下发（legacy base64 兼容，渲染不破）。
@@ -409,7 +410,7 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
         oldestId,
       });
     } catch (err) {
-      if (DEBUG_PERF) logPerfHttp(toErrorResponse(c, err).status, performance.now() - t0, undefined);
+      if (debugPerfOn()) logPerfHttp(toErrorResponse(c, err).status, performance.now() - t0, undefined);
       throw err;
     }
   }));

@@ -335,7 +335,14 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               className="flex w-full min-w-0 items-center gap-0.5 text-xs leading-tight text-muted-foreground"
             >
               <span className="min-w-0 truncate">
-                {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
+                {/* 会话身份块的项目名随选中会话走（2026-10-31 缺陷：刷新水合后全局
+                    currentProject 可能是最近项目，与选中会话不同源；重选才同步）。桌面
+                    项目选择器钮仍用 currentProject（那是选项目入口非会话身份）。 */}
+                {selectedSession
+                  ? basename(selectedSession.project)
+                  : currentProject
+                    ? basename(currentProject)
+                    : t("login.topbar.chooseProject")}
               </span>
               <ChevronDown className="size-3 shrink-0" aria-hidden />
             </span>

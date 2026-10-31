@@ -47,7 +47,8 @@ import {
 import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
-import { DEBUG_PERF, logPerfSpan, projHash8, type PerfSpan } from "./perf";
+import { debugPerfOn } from "../conf/diagnostics-flags";
+import { logPerfSpan, projHash8, type PerfSpan } from "./perf";
 import { log, type LogVal } from "../obs/logger";
 import { currentRid } from "../obs/req-context";
 
@@ -1060,7 +1061,7 @@ class ProjectRuntime {
         log.debug("gw", "op", f);
       }
     };
-    if (!DEBUG_PERF) {
+    if (!debugPerfOn()) {
       // 关闭路径与原实现等价：ensure() 就绪后再进互斥队列（原方法体逐字语义）
       return this.ensure()
         .then(() => this.runExclusive(() => body(INERT_PERF_SPAN)))
