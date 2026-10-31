@@ -35,7 +35,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // ApiError(409, "file_changed", …) 形式留痕供扫描），合计 99。r10 2026-10-27 批次
 // 任务 18（会话 rebind）追加 4 码：invalid_old_path/invalid_session_ids/
 // old_store_not_found/rebind_conflict，合计 103。r10 2026-10-27 批次任务 13（认证 UI）
-// 追加 2 码：cli_missing/invalid_api_key，合计 105。
+// 追加 2 码：cli_missing/invalid_api_key，合计 105。2026-10-31 批次（计划暂停/恢复控制面，
+// routes-plans pause/resume）追加 1 码：plan_not_bound，合计 106。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -122,6 +123,7 @@ const SCANNED_CODES = [
   "nothing_to_compact",
   "old_store_not_found",
   "path_escape",
+  "plan_not_bound",
   "project_not_found",
   "project_not_registered",
   "provider_not_compatible",
@@ -190,9 +192,9 @@ describe("任务11 ApiError code → 词典键映射", () => {
   test("映射恰好覆盖 server 扫描集（105 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(105);
+    expect(scanned).toHaveLength(106);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(105);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(106);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

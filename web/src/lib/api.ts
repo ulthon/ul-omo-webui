@@ -85,6 +85,10 @@ export interface PlanProgressSnapshot {
   done?: number;
   total?: number;
   currentTitle?: string | null;
+  /** 绑定 work 的 boulder 键（bound:true 时回传） */
+  workId?: string;
+  /** 绑定 work 的 status 原样；"user_paused" = 用户暂停态（前端显恢复钮） */
+  status?: string | null;
 }
 
 /** wire 原样条目（jsonl entry：{type:"message",id,parentId,timestamp,message} 等），渲染层自行甄别 */
@@ -725,6 +729,15 @@ export const api = {
   /** 计划执行进度（r10 todo 12）：会话绑定的 goal 计划 todo 勾选态速览（只读） */
   async getPlanProgress(sessionId: string): Promise<PlanProgressSnapshot> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/plan-progress`);
+  },
+  /** 暂停计划执行（方案 b）：写绑定 work status=user_paused + abort 当回合。
+   *  未绑定 409 plan_not_bound；未知会话 404 session_not_found。 */
+  async pausePlan(sessionId: string): Promise<{ ok: boolean; workId: string; status: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/plan-pause`, jsonInit("POST", {}));
+  },
+  /** 恢复计划执行（方案 b）：写回 active + 服务端发固定唤醒 prompt。 */
+  async resumePlan(sessionId: string): Promise<{ ok: boolean; workId: string; status: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/plan-resume`, jsonInit("POST", {}));
   },
 
   // ---- 附件（docs08-r3 任务 17：大文本粘贴转附件） ----

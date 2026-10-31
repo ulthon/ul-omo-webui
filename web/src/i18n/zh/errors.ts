@@ -71,6 +71,7 @@ export const errors = {
   // 项目与资源
   noProject: "尚无已知项目",
   notRegistered: "项目未注册",
+  planNotBound: "会话未绑定任何执行中的计划",
   projectNotFound: "项目不存在",
   projectNotRegistered: "项目未注册",
   noteNotFound: "笔记不存在",

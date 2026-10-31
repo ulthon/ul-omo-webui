@@ -1,6 +1,9 @@
-// 计划执行进度只读路由（r10 todo 12）：会话绑定的 goal 计划 todo 勾选态速览。
-// 直读项目 .omo 存储两件套——boulder.json（会话→work 绑定）+ plans/*.md（todo 行），
-// 纯展示无任何写路径（Must NOT：不新建计划管理功能）。
+// 计划执行进度路由（r10 todo 12）+ 暂停/恢复控制面（2026-10-31 方案 b）：
+// 会话绑定的 goal 计划 todo 勾选态速览 + 对绑定 work 的暂停（写 status=user_paused
+// + abort 当回合）/ 恢复（写回 active + 固定 prompt 唤醒）。
+// 直读项目 .omo 存储两件套——boulder.json（会话→work 绑定）+ plans/*.md（todo 行）。
+// 写路径收敛为单文件单字段（boulder.json 绑定 work 的 status），读写机制见
+// boulder-store.ts 头注释（tmp+rename 原子写、引擎状态门语义）。
 //
 // —— 会话→work 绑定规则（2026-10-28 磁盘实证）——
 // boulder.json works[*].session_ids 形如 "senpi:01a17aca-…"（agent 前缀 + durable uuid）；
@@ -18,6 +21,7 @@
 // 当前步 = 文件序首个未勾选行（顺序执行语义；全勾选 → currentTitle=null）。
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath, sep } from "node:path";
+import { ACTIVE_STATUS, USER_PAUSED_STATUS, getBoundWork, setBoundWorkStatus } from "./boulder-store";
 import { Hono } from "hono";
 import { ApiError, requireParam, route } from "./http";
 import type { EngineGateway } from "./engine-runtime";
@@ -44,6 +48,11 @@ export interface PlanProgressSnapshot {
   done?: number;
   total?: number;
   currentTitle?: string | null;
+  /** 绑定 work 的 boulder 键（bound:true 时回传，供控制面定位） */
+  workId?: string;
+  /** 绑定 work 的 status 原样（引擎无枚举校验，任意字符串透传；缺失为 null）。
+   *  "user_paused" = 用户暂停（续跑钩子永久沉默）；"active"/"paused" 为引擎可续跑态。 */
+  status?: string | null;
 }
 
 /** 列首 todo 行：`- [([ x])] (数字). 标题`——缩进行不匹配（列首锚定），F 前缀行不匹配（纯数字捕获） */
@@ -77,6 +86,7 @@ interface BoulderWork {
   session_ids?: unknown;
   active_plan?: unknown;
   plan_name?: unknown;
+  status?: unknown;
 }
 
 /** 绑定判定：boulder 会话键形如 "<agent>:<uuid>"，与 durable id（uuid 本身）按
@@ -90,7 +100,7 @@ function sessionKeyMatches(entry: unknown, sessionId: string): boolean {
 export function matchBoundWork(
   boulder: unknown,
   sessionId: string,
-): { workId: string; planName: string; activePlan: string } | null {
+): { workId: string; planName: string; activePlan: string; status: string | null } | null {
   if (typeof boulder !== "object" || boulder === null) return null;
   const works = (boulder as { works?: unknown }).works;
   if (typeof works !== "object" || works === null) return null;
@@ -107,8 +117,9 @@ export function matchBoundWork(
   const work = (works as Record<string, BoulderWork>)[workId];
   const activePlan = typeof work.active_plan === "string" && work.active_plan !== "" ? work.active_plan : "";
   const planName = typeof work.plan_name === "string" && work.plan_name !== "" ? work.plan_name : workId;
+  const status = typeof work.status === "string" ? work.status : null;
   if (activePlan === "") return null;
-  return { workId, planName, activePlan };
+  return { workId, planName, activePlan, status };
 }
 
 /** 项目 cwd + 会话 id → 计划进度快照（全只读）。
@@ -123,10 +134,11 @@ export async function loadPlanProgress(cwd: string, sessionId: string): Promise<
   }
   const work = matchBoundWork(boulder, sessionId);
   if (!work) return { bound: false };
+  const { status, workId, planName } = work;
   // 计划路径以 cwd 为基解析，且必须落在 cwd 内（active_plan 来自外部文件，防越界读）
   const planPath = resolvePath(cwd, work.activePlan);
   if (planPath !== cwd && !planPath.startsWith(cwd + sep)) {
-    return { bound: true, planName: work.planName, done: 0, total: 0, currentTitle: null };
+    return { bound: true, planName, workId, status, done: 0, total: 0, currentTitle: null };
   }
   let summary: PlanTodoSummary = { done: 0, total: 0, currentTitle: null };
   try {
@@ -134,7 +146,7 @@ export async function loadPlanProgress(cwd: string, sessionId: string): Promise<
   } catch {
     // 计划文件缺失/不可读：保持 0/0 空汇总（bound 真实，展示层隐藏）
   }
-  return { bound: true, planName: work.planName, ...summary };
+  return { bound: true, planName, workId, status, ...summary };
 }
 
 /** 会话行网关（结构能力探测先例同 routes-session.ts）：真实 registry 提供
@@ -147,8 +159,47 @@ export interface PlansRouteDeps {
   engines: SessionRowGateway;
 }
 
+/** 恢复唤醒固定 prompt：回合结束后 agent_settled → 续跑钩子状态门放行 → 自动续跑链恢复 */
+const RESUME_PROMPT = "恢复执行当前计划";
+
 export function createPlansRoutes(deps: PlansRouteDeps): Hono {
   const app = new Hono();
+
+  /** 解析会话行 + 定位绑定 work；未注册会话 404 / 未绑定 409（控制面共用前置） */
+  const requireBoundWork = async (sessionId: string): Promise<{ cwd: string; workId: string }> => {
+    const row = await deps.engines.resolveSessionRow?.(sessionId);
+    if (!row) throw new ApiError(404, "session_not_found", `会话不存在：${sessionId}`);
+    const bound = await getBoundWork(row.cwd, sessionId);
+    if (!bound) throw new ApiError(409, "plan_not_bound", `会话未绑定任何执行中计划：${sessionId}`);
+    return { cwd: row.cwd, workId: bound.workId };
+  };
+
+  // 暂停：先写盘（status=user_paused）后 abort——abort 引发的 settle 会立刻走续跑
+  // 钩子，此时状态已是 user_paused，钩子判定 not-continuable，双保险。abort 失败
+  // 不回滚：盘上状态已保证持久暂停，当回合最多多跑到自然结束。
+  app.post(
+    "/api/sessions/:id/plan-pause",
+    route(async (c) => {
+      const sessionId = requireParam(c, "id");
+      const { cwd, workId } = await requireBoundWork(sessionId);
+      await setBoundWorkStatus(cwd, sessionId, USER_PAUSED_STATUS);
+      await deps.engines.abort(sessionId).catch(() => undefined);
+      return c.json({ ok: true, workId, status: USER_PAUSED_STATUS });
+    }),
+  );
+
+  // 恢复：改回 active + 发固定 prompt 唤醒。回合进行中 prompt 抛 409 already_processing
+  // 原样透传（errors 词典已映射）；status 已落盘，唤醒可由下一次会话活动自然补上。
+  app.post(
+    "/api/sessions/:id/plan-resume",
+    route(async (c) => {
+      const sessionId = requireParam(c, "id");
+      const { cwd, workId } = await requireBoundWork(sessionId);
+      await setBoundWorkStatus(cwd, sessionId, ACTIVE_STATUS);
+      await deps.engines.prompt(sessionId, { text: RESUME_PROMPT });
+      return c.json({ ok: true, workId, status: ACTIVE_STATUS });
+    }),
+  );
   app.get(
     "/api/sessions/:id/plan-progress",
     route(async (c) => {

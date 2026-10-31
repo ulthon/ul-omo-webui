@@ -10,7 +10,7 @@
 // - visibilitychange 回前台：拉取一次（补会话外进程改写的计划进度）。
 // 隐藏规则：无会话 / 拉取失败 / bound=false（无绑定 goal）/ total=0（计划无 todo 行
 // 或文件缺失）→ 整块不渲染（null，不留空面板）。
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PlanProgressSnapshot } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useT } from "@/i18n/i18n";
@@ -23,12 +23,24 @@ const OVERVIEW_BODY_CLASS = "max-h-64 overflow-y-auto";
 /** 消息活动触发重拉的去抖间隔（尾沿）：合流式帧间隙的连续 entries 变化 */
 const ACTIVITY_REFETCH_DEBOUNCE_MS = 1500;
 
+const BTN_CLASS =
+  "shrink-0 rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 disabled:pointer-events-none";
+
 export function OverviewPlan({ sessionId }: { sessionId: string | null }) {
   const t = useT();
   const [snap, setSnap] = useState<PlanProgressSnapshot | null>(null);
+  // 控制面操作中：禁用按钮防重复提交（同一请求面唯一状态）
+  const [pending, setPending] = useState(false);
   const entries = useMessagesStore((s) => (sessionId ? s.bySession[sessionId]?.entries : undefined));
   // 挂载首跑不算「消息活动」：entries 引用未变（含 undefined）时不调度去抖重拉
   const prevEntries = useRef(entries);
+
+  const refetch = useCallback((sid: string): void => {
+    api
+      .getPlanProgress(sid)
+      .then((r) => setSnap(r))
+      .catch(() => {});
+  }, []);
 
   // 会话切换/挂载：立即拉取；回前台补拉。stale 标记防竞态（旧会话响应不落新会话状态）
   useEffect(() => {
@@ -74,9 +86,33 @@ export function OverviewPlan({ sessionId }: { sessionId: string | null }) {
   // 隐藏规则：无数据 / 未绑定 / 无 todo 行 → 整块不渲染
   if (!sessionId || !snap?.bound || (snap.total ?? 0) === 0) return null;
 
+  // 控制面三态：user_paused → 恢复钮；其余绑定态（active/引擎 paused/未知）→ 暂停钮
+  const paused = snap.status === "user_paused";
+  const onToggle = (): void => {
+    setPending(true);
+    const done = (): void => {
+      setPending(false);
+      refetch(sessionId);
+    };
+    (paused ? api.resumePlan(sessionId) : api.pausePlan(sessionId))
+      .then(done)
+      .catch(() => done()); // 失败也复位按钮；状态以后续轮询/重拉为准
+  };
+
   return (
     <section data-testid="overview-plan" className={OVERVIEW_SECTION_CLASS}>
-      <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.planTitle")}</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.planTitle")}</h3>
+        <button
+          type="button"
+          data-testid={paused ? "overview-plan-resume" : "overview-plan-pause"}
+          className={BTN_CLASS}
+          disabled={pending}
+          onClick={onToggle}
+        >
+          {t(paused ? "login.rightRail.overview.planResume" : "login.rightRail.overview.planPause")}
+        </button>
+      </div>
       <div className={OVERVIEW_BODY_CLASS}>
         <p className="flex items-baseline justify-between gap-2 text-sm">
           <span className="min-w-0 truncate text-foreground" title={snap.planName}>

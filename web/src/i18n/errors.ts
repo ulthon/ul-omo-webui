@@ -83,6 +83,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   nothing_to_compact: "errors.nothingToCompact",
   old_store_not_found: "errors.oldStoreNotFound",
   path_escape: "errors.pathEscape",
+  plan_not_bound: "errors.planNotBound",
   project_not_found: "errors.projectNotFound",
   project_not_registered: "errors.projectNotRegistered",
   purge_requires_deleted: "errors.purgeRequiresDeleted",

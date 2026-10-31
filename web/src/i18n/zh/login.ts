@@ -52,6 +52,8 @@ export const login = {
       planCount: "{done}/{total}",
       planCurrent: "当前",
       planAllDone: "已全部完成",
+      planPause: "暂停执行",
+      planResume: "恢复执行",
       tasksTitle: "任务",
       notesTitle: "笔记",
       statsTitle: "统计",

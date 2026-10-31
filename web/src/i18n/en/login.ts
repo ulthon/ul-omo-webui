@@ -50,6 +50,8 @@ export const login = {
       planCount: "{done}/{total}",
       planCurrent: "Current",
       planAllDone: "All complete",
+      planPause: "Pause",
+      planResume: "Resume",
       tasksTitle: "Tasks",
       notesTitle: "Notes",
       statsTitle: "Stats",

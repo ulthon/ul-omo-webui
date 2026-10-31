@@ -69,6 +69,7 @@ export const errors = {
   // 项目与资源
   noProject: "No known project yet",
   notRegistered: "Project not registered",
+  planNotBound: "This session is not bound to an active plan",
   projectNotFound: "Project not found",
   projectNotRegistered: "Project not registered",
   noteNotFound: "Note not found",
