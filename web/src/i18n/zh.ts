@@ -17,6 +17,7 @@ import { stats } from "./zh/stats";
 import { errors } from "./zh/errors";
 import { files } from "./zh/files";
 import { tools } from "./zh/tools";
+import { diagnostics } from "./zh/diagnostics";
 
 export const zh = {
   common,
@@ -36,4 +37,5 @@ export const zh = {
   errors,
   files,
   tools,
+  diagnostics,
 } as const;
