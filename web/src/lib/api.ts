@@ -4,6 +4,7 @@
 import { useUiStore } from "@/stores/ui";
 import { effectiveThinkingLevel } from "@/lib/thinking-level";
 import { t } from "@/i18n/i18n";
+import { diag, newRid8 } from "@/lib/diag";
 
 // ---------- 领域类型 ----------
 
@@ -453,13 +454,27 @@ interface RequestOptions {
   authRedirect?: boolean;
 }
 
+/** 采集增强批：请求关联 id 注入（保留原 init 其余字段；本仓 headers 均为普通对象） */
+function withRequestId(init: (RequestInit & RequestOptions) | undefined, rid: string): RequestInit {
+  if (!init) return { headers: { "x-request-id": rid } };
+  return { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "x-request-id": rid } };
+}
+
 async function request<T>(path: string, init?: RequestInit & RequestOptions): Promise<T> {
+  // 采集增强批：网络层观测（每请求一行，成功 debug/失败 warn；rid 与服务端日志串联）
+  const rid = newRid8();
+  const method = init?.method ?? "GET";
+  const t0 = performance.now();
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(path, withRequestId(init, rid));
   } catch (err) {
+    diag.warn("api", "req", { m: method, path, st: 0, ms: Math.round(performance.now() - t0), rid, err: "network" });
     throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
   }
+  const ms = Math.round(performance.now() - t0);
+  if (res.status >= 400) diag.warn("api", "req", { m: method, path, st: res.status, ms, rid });
+  else diag.debug("api", "req", { m: method, path, st: res.status, ms, rid });
   if (res.status === 401) {
     if (init?.authRedirect !== false) redirectToLogin();
     throw new ApiError(401, "unauthorized", t("common.lib.unauthorized"));
@@ -1160,6 +1175,29 @@ export const api = {
   /** 非交互 install/remove/update（async spawn 有界超时；失败 502 ok=false） */
   async runExtensionAction(action: "install" | "remove" | "update", source?: string): Promise<{ ok: boolean; message: string }> {
     return request(`/api/extensions/${action}`, jsonInit("POST", source ? { source } : {}));
+  },
+
+  // ---- 诊断（2026-10-31 采集增强批） ----
+  /** 服务端日志查询：环形缓冲+滚动文件合并，按 seq 去重尾部 limit 条 */
+  async diagnosticsLogs(params?: {
+    limit?: number;
+    level?: string;
+    mod?: string;
+    contains?: string;
+    since?: string;
+  }): Promise<{ entries: unknown[]; matched: number; truncated: boolean; log: { level: string; buffered: number; seq: number; file: string } }> {
+    const q = new URLSearchParams();
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.level) q.set("level", params.level);
+    if (params?.mod) q.set("mod", params.mod);
+    if (params?.contains) q.set("contains", params.contains);
+    if (params?.since) q.set("since", params.since);
+    const qs = q.toString();
+    return request(`/api/diagnostics/logs${qs ? `?${qs}` : ""}`);
+  },
+  /** 运行快照：boot 元信息/引擎进程表/SSE 连接数/日志统计 */
+  async diagnosticsSummary(): Promise<Record<string, unknown>> {
+    return request("/api/diagnostics/summary");
   },
 };
 

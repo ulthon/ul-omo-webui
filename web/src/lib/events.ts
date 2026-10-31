@@ -20,6 +20,7 @@
 // 再从最旧可用续发。分发层据 gap 帧与游标回退做活动会话全量重取兜底；停摆/半死触发的
 // 重连额外强制 refetchLoadedSessions 全量对账（防御纵深，见 dispatch 侧游标回退路径）。
 import { dispatchSseEvent, getDispatchCursor, reconcileRunStateOnVisible, refetchLoadedSessions } from "@/lib/event-dispatch";
+import { diag } from "@/lib/diag";
 import { useMessagesStore } from "@/stores/messages";
 import { useUiStore } from "@/stores/ui";
 
@@ -224,6 +225,7 @@ export class EventsClient {
     this.es = es;
     es.onopen = () => {
       dlog("es open");
+      diag.debug("sse", "open", { transport: "es" });
       this.backoffMs = this.baseBackoffMs; // 恢复在线复位退避
       this.online = true;
       this.opened = true;
@@ -236,6 +238,7 @@ export class EventsClient {
     };
     es.onerror = () => {
       dlog(`es error opened=${this.opened} gotFrame=${this.gotFrame} stickyFetch=${this.stickyFetch}`);
+      diag.info("sse", "error", { transport: "es", opened: this.opened, gotFrame: this.gotFrame });
       this.online = false;
       this.disarmStallWatch();
       // OPEN 过但零帧即断（无论停滞超时还是 Chrome 侧提前断开）= EventSource 通道零产出，
@@ -276,6 +279,7 @@ export class EventsClient {
     this.disarmStallWatch();
     this.stallCancel = this.scheduleFn(() => {
       dlog(`es stall-watch fired ${this.stallWindowMs}ms no-frame -> sticky fetch + full refetch`);
+      diag.info("sse", "stall", { windowMs: this.stallWindowMs, stickyFetch: true });
       this.stallCancel = null;
       this.stickyFetch = true;
       this.online = false;
@@ -310,6 +314,7 @@ export class EventsClient {
         }
         if (!res.body) throw new Error("sse fetch 无响应体");
         dlog("fetch open");
+        diag.debug("sse", "open", { transport: "fetch" });
         this.online = true;
         this.backoffMs = this.baseBackoffMs;
         useUiStore.getState().setConnection("online");
@@ -319,6 +324,13 @@ export class EventsClient {
       })
       .catch((err: unknown) => {
         dlog(`fetch error aborted=${controller.signal.aborted} stopped=${this.stopped} msg=${err instanceof Error ? err.message : String(err)}`);
+        if (!controller.signal.aborted && !this.stopped) {
+          diag.info("sse", "error", {
+            transport: "fetch",
+            msg: (err instanceof Error ? err.message : String(err)).slice(0, 160),
+            idleTimedOut: this.fetchIdleTimedOut,
+          });
+        }
         if (controller.signal.aborted || this.stopped) return; // 主动关闭不重连
         controller.abort(); // 幂等：异常退出（idle timeout / stream ended）时中止半死的响应流，防连接累积
         this.abortController = null; // 连接已结束，允许下次 open 重建
@@ -416,6 +428,7 @@ export class EventsClient {
     const delay = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 2, this.maxBackoffMs);
     dlog(`reconnect scheduled in ${delay}ms stickyFetch=${this.stickyFetch}`);
+    diag.info("sse", "reconnect", { delay, backoffMs: this.backoffMs, stickyFetch: this.stickyFetch });
     this.cancelTimer = this.scheduleFn(() => {
       this.cancelTimer = null;
       this.open();

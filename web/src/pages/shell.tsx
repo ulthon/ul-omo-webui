@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { Check, CircleAlert, Copy, FolderOpen, GitBranch, Settings, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { bootstrap } from "@/lib/bootstrap";
+import { diag, installDiagGlobalCapture, startDiagReporter } from "@/lib/diag";
 import { connectEvents, disconnectEvents } from "@/lib/events";
 import { useT, t } from "@/i18n/i18n";
 import { readSessionUrl } from "@/lib/session-url";
@@ -377,6 +378,10 @@ export function AppShell() {
 
   useEffect(() => {
     let cancelled = false;
+    // 采集增强批：全局捕获 + 批量上报一次性安装（幂等），随后记一条页面引导起点
+    installDiagGlobalCapture();
+    startDiagReporter();
+    diag.info("page", "boot", {});
     bootstrap()
       .then(() => {
         // B1 显式恢复：引导完成后按 URL 参数选中会话，store 与 URL 一致（非仅视图兜底）。
