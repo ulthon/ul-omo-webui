@@ -490,6 +490,19 @@ export function buildMessageItems(
       model: modelNames?.get(e.id) ?? null,
     });
   }
+  // 同类警示卡聚合（2026-10-31，与 CLI 对齐）：引擎在会话重载/引擎重启时会重复写
+  // reflection-parked 条目（实测同 parkedAt 成簇 6+ 条），CLI 仅事件到达时画一次、历史
+  // 不堆叠；webui 同类 noticeCard 只保留最末一条（最新状态，位置也在最末条目处），
+  // 旧的不再渲染——数据不动，纯展示层收敛。
+  let lastNoticeIdx = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].kind === "noticeCard") lastNoticeIdx = i;
+  }
+  if (lastNoticeIdx >= 0) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].kind === "noticeCard" && i !== lastNoticeIdx) list.splice(i, 1);
+    }
+  }
     if (opts.hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });
   return list;
 }
