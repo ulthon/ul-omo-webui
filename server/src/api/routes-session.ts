@@ -25,6 +25,7 @@ import { agentDir } from "../config";
 import { convertImagesToAttachments, modelSupportsImages, referenceizeEntries } from "./image-routing";
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { sessionBackgroundRunning } from "./background-tasks";
+import { ledgerHasRunning as backgroundTaskLedgerHasRunning } from "./background-task-ledger";
 import { readSessionPreview } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
@@ -261,7 +262,7 @@ async function listProjectSessions(
     const runState: ServerSessionRunState | null =
       probed === "running" || probed === "waiting"
         ? probed
-        : sessionBackgroundRunning(s.path)
+        : sessionBackgroundRunning(s.path) || backgroundTaskLedgerHasRunning(project, s.id)
           ? "background_running"
           : probed;
     // 最后消息预览（r10 todo 8）：尾读 + LRU 缓存；文件缺失/损坏 → 空串不炸列表

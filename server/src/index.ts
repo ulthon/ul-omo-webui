@@ -23,6 +23,10 @@ import {
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
 import { TitleGenService } from "./title-gen";
 import { EventBus, attachEventBus, publishPermissionsInvalidated } from "./engine/events";
+import {
+  attachBackgroundTaskLedger,
+  handleProjectEngineDeath,
+} from "./api/background-task-ledger";
 import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
 import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
 import { log } from "./obs/logger";
@@ -115,6 +119,9 @@ const engines = new EngineRuntimeRegistry(manager, {
 //   durable id（磁盘 header id）；data 帧注入 durableSessionId 供前端按 durable 键路由。
 const eventBus = new EventBus({ capacity: 1000 });
 const detachEventBus = attachEventBus(manager, eventBus);
+// 后台任务内存账本（orphan-ledger 2026-10-31，spike §3.2）：订阅 omo.task.updated
+// 实时扇出，abort 竞态下 spawn 回执不落 jsonl 时任务仍可见（零轮询，纯帧驱动）。
+const detachTaskLedger = attachBackgroundTaskLedger(eventBus);
 setEventBus(eventBus, {
   heartbeatMs: 8000,
   durableLookup: (projectPath, handle) => engines.durableSessionIdFor(projectPath, handle),
@@ -137,6 +144,17 @@ const detachTombstones = manager.onEvent((e) => {
     (e.type === "state_changed" && e.to === "stopped")
   ) {
     publishPermissionsInvalidated(eventBus, e.projectPath);
+    // 引擎死亡失效（spike §3.3 + §5.2 第二缺陷）：三个信号 = 该项目全部任务子会话
+    // 已死（owner-fd 看门狗 ≤2s）。清账本项目快照 + 冻结 jsonl 推导的启动态指纹
+    //（修复「回执已落盘 + 引擎死亡 → background_running 永久卡死」的假阳性）。
+    // sessionsList 是 SDK 直读（不走 rpc、不 spawn），死引擎下也能列出会话路径；
+    // 失败按空列表降级（账本清项目仍生效）。
+    void engines
+      .sessionsList(e.projectPath)
+      .then(
+        (rows) => handleProjectEngineDeath(e.projectPath, rows.map((row) => row.path)),
+        () => handleProjectEngineDeath(e.projectPath, []),
+      );
   }
 });
 
@@ -398,6 +416,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   detachEventBus();
+  detachTaskLedger();
   detachTombstones();
   try {
     await scheduleSupervisor?.stop();

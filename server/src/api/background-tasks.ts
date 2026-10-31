@@ -125,6 +125,8 @@ export function sessionBackgroundRunning(sessionPath: string): boolean {
   try {
     if (!existsSync(sessionPath)) return false;
     const st = statSync(sessionPath);
+    // 引擎死亡冻结：死亡时刻指纹未变 → 该回执对应的任务子会话可证明已死（spike §4）
+    if (frozenByEngineDeath(sessionPath, st)) return false;
     const hit = cache.get(sessionPath);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
     const value = hasRunningBackgroundTask(readFileSync(sessionPath, "utf8"));
@@ -138,4 +140,44 @@ export function sessionBackgroundRunning(sessionPath: string): boolean {
 /** 清空磁盘缓存（服务重启模拟 / 单测隔离用） */
 export function clearBackgroundStateCache(): void {
   cache.clear();
+}
+
+// 引擎死亡假阳性修复（orphan-ledger 2026-10-31，spike §5.2 第二缺陷）：回执已落盘 +
+// 引擎进程死亡 → jsonl 永不再来完成通知，纯重算恒为 true（运行 2 实测 18 次轮询贯穿
+// 引擎重启全为真）。引擎死亡经 owner-fd 看门狗在 ≤2s 内杀死全部任务子会话，此刻的
+// 启动态回执是「可证明已死」——记录死亡时刻的文件指纹（mtime+size），推导面见到
+// 指纹未变即抑制为 false；指纹变化（死亡后 jsonl 有新活动，如新 spawn / 完成 / 回合
+// 写入）即解除抑制恢复常态推导（新回执自然重新派生，不误伤后续真实运行）。
+// 内存态：服务重启后冻结集为空（孤儿清扫已杀光遗留引擎，属既有口径，不在本批范围）。
+
+/** 会话路径 → 引擎死亡时刻的文件指纹（与 CacheEntry 同形态，便于同款比对） */
+const deadFrozen = new Map<string, CacheEntry>();
+
+/**
+ * 引擎死亡失效：对这些会话冻结当前 jsonl 磁盘指纹并清缓存（下次推导强制重算，
+ * 命中冻结指纹 → false）。文件缺失 / stat 失败的会话无指纹可冻，仅清缓存。
+ */
+export function invalidateBackgroundStateOnEngineDeath(sessionPaths: string[]): void {
+  for (const path of sessionPaths) {
+    cache.delete(path);
+    try {
+      if (!existsSync(path)) {
+        deadFrozen.delete(path);
+        continue;
+      }
+      const st = statSync(path);
+      deadFrozen.set(path, { mtimeMs: st.mtimeMs, size: st.size, value: false });
+    } catch {
+      deadFrozen.delete(path);
+    }
+  }
+}
+
+/** 死亡指纹仍在且与当前文件一致 = 死亡后无任何 jsonl 活动，启动态可证明已死 */
+function frozenByEngineDeath(path: string, st: { mtimeMs: number; size: number }): boolean {
+  const frozen = deadFrozen.get(path);
+  if (!frozen) return false;
+  if (frozen.mtimeMs === st.mtimeMs && frozen.size === st.size) return true;
+  deadFrozen.delete(path); // 死亡后有新活动：解除抑制，恢复常态推导
+  return false;
 }
