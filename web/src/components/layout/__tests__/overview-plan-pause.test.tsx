@@ -8,7 +8,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (!(globalThis as { window?: unknown }).window) {
   GlobalRegistrator.register();
 }
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -48,7 +48,7 @@ const { OverviewPlan } = await import("@/components/layout/overview-plan");
 async function renderInto(sessionId: string | null): Promise<HTMLElement> {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  let root: { unmount: () => void } | null = null;
+  let root: ReturnType<typeof createRoot> | null = null;
   await act(async () => {
     root = createRoot(container);
     root.render(createElement(OverviewPlan, { sessionId }));
