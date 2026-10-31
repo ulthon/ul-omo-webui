@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
 import { writeSessionUrl } from "@/lib/session-url";
+import { diag, sendTrace } from "@/lib/diag";
 import { useUiStore } from "@/stores/ui";
 import { t } from "@/i18n/i18n";
 
@@ -237,6 +238,9 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   // 清参而非留陈旧选中（N2：宁缺勿错，避免 URL 指向刷新必错的占位 id）
   select: (id) => {
     const isAlias = id !== null && useSessionsStore.getState().aliasIds[id] === true;
+    // 采集增强批：会话切换埋点（info 默认可见）+ 发送链悬挂 span 清理
+    diag.event("session.select", { session: id ? id.slice(0, 8) : "-", alias: isAlias || undefined });
+    if (id) sendTrace.drop(id, "switch");
     set({ selectedId: id });
     writeSessionUrl(isAlias ? null : id);
   },
@@ -362,7 +366,12 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return changed ? { byProject } : s;
     }),
 
-  setRunState: (id, state) =>
+  setRunState: (id, state) => {
+    // 采集增强批：runState 迁移埋点（runState 不回落类缺陷的直接观测面）
+    const prevRun = useSessionsStore.getState().runStates[id];
+    if (prevRun !== state) {
+      diag.info("run", "state", { session: id.slice(0, 8), from: prevRun ?? "-", to: state });
+    }
     set((s) => {
       const now = Date.now();
       // 顺序护栏（r10 todo 9）：每次写入自增（含同态写入——同态帧同样晚于对账快照，
@@ -380,7 +389,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         runStateAt: { ...s.runStateAt, [id]: now },
         runStateSeq,
       };
-    }),
+    });
+  },
 
   setAppliedModel: (id, model) =>
     set((s) => (s.appliedModels[id] === model ? s : { appliedModels: { ...s.appliedModels, [id]: model } })),

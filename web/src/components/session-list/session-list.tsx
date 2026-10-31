@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
+import { diag } from "@/lib/diag";
 import { loadProjectModels } from "@/lib/bootstrap";
 import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -255,10 +256,16 @@ export function SessionList() {
         await loadProjectModels(project);
       }
       const { selectedModel, selectedThinkingLevel } = useUiStore.getState();
+      const tCreate = performance.now();
       const res = await api.createSession({
         project,
         model: selectedModel ?? undefined,
         thinkingLevel: selectedThinkingLevel ?? undefined,
+      });
+      // 采集增强批：新建会话耗时（点击→回执；列表占位与可发送由后续 select/messages 行补全链路）
+      diag.info("perf", "create", {
+        project: project.slice(-32),
+        createMs: Math.round(performance.now() - tCreate),
       });
       // 空会话不落盘（引擎实证）——先 upsert 占位行，发送首条消息落盘后刷新即以真实数据替换
       const now = new Date().toISOString();

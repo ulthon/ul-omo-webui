@@ -20,6 +20,7 @@
 // 不写 runStates；(C) 每帧刷新 lastFrameAt，60s 清扫节拍对 waiting 会话帧静默超
 // 120s 且无待答卡时置提示条抑制标志（纯 UI 派生，runStates/30min 陈旧档不动）。
 import { api, ApiError } from "@/lib/api";
+import { diag, sendTrace } from "@/lib/diag";
 import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
 import { broadcastUsageRefresh } from "@/components/chat/compact-run";
@@ -279,6 +280,11 @@ function reconcileGapFrame(data: string): void {
     typeof from === "number" && Number.isFinite(from) && from >= 1 &&
     typeof to === "number" && Number.isFinite(to) && to >= from &&
     to - from + 1 <= GAP_INCREMENTAL_WINDOW;
+  diag.info("dispatch", "gap", {
+    from: typeof from === "number" ? from : undefined,
+    to: typeof to === "number" ? to : undefined,
+    incremental: smallGap,
+  });
   if (!smallGap) {
     refetchLoadedSessions();
     return;
@@ -545,6 +551,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   // 每帧记账（engine-upgrade 2026-10-30 缺陷 C 双信号）：刷新提示条「最近有帧」信号
   // 并清除抑制标志（新帧 = 提示恢复）。
   useSessionsStore.getState().noteSessionFrame(sessionId);
+  // 采集增强批：发送链首帧/收尾钩子（message_start 首帧计时；收尾帧三型皆结算）
+  if (wire.type === "message_start") sendTrace.firstFrame(sessionId);
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
   const sessions = useSessionsStore.getState();
@@ -556,6 +564,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     // 失败静默（回合落定路径 refreshSessions 兜底）。
     void sessions.refreshSessions();
   } else if (wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle") {
+    sendTrace.settled(sessionId, wire.type);
     // B 收尾帧归属兜底（engine-upgrade 2026-10-30）：路由键是 store 不认识的孤儿键
     // （wire 键映射缺席的 holder 别名）时，清态兜底落到唯一活跃会话（rescue，不写
     // 孤儿键），或保留 r11 留痕写入并叠加服务端对账（resync）。正常归属帧体原样。
@@ -732,6 +741,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
         });
       }
       useSessionsStore.getState().setAppliedModel(sessionId, target);
+      diag.info("run", "model", { session: sessionId.slice(0, 8), model: target });
     }
   } else if (wire.type === "model_change_rejected") {
     const m = wire.model as { id?: unknown } | undefined;

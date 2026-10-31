@@ -11,6 +11,7 @@ import { MessagesSquare } from "lucide-react";
 import { api, setPromptGate } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
 import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
+import { diag } from "@/lib/diag";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
 import { resolveReachTopAction } from "./reach-top";
@@ -172,6 +173,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // loading 初值即 "loading"（会话切换经 key 重挂载），重试按钮在事件里显式置 loading。
   useEffect(() => {
     let cancelled = false;
+    const tLoad = performance.now();
     const existing = useMessagesStore.getState().bySession[sessionId];
     const cursor = existing?.loaded ? (existing.cursor ?? undefined) : undefined;
     // Fix0 前端埋点（docs08 任务 1；localStorage ulomo_perf=1 门控，默认零输出）：
@@ -196,6 +198,12 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           });
         }
         setLoadState("done");
+        diag.info("perf", "messages", {
+          session: sessionId.slice(0, 8),
+          ms: Math.round(performance.now() - tLoad),
+          entries: page.entries.length,
+          incr: cursor ? 1 : 0,
+        });
         if (perfOn) {
           const ms = perfMeasure(`ulomo:messages:${sessionId}`, loadMark, `ulomo:messages-end:${sessionId}`);
           if (ms !== undefined) {

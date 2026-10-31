@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
+import { sendTrace } from "@/lib/diag";
 import { useT } from "@/i18n/i18n";
 import { isSendKey } from "@/lib/shortcuts";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -496,6 +497,8 @@ export function Composer({
         const rs = useSessionsStore.getState().runStates[sessionId];
         // 已知 running（SSE 权威链）同样转排队（docs08-r5 任务 6：r4 排队语义不回退）
         const queuing = msgStreaming || rs === "running" || rs === "waiting";
+        // 采集增强批：发送链起点（点发送→回执→首帧→落定四点计时，不记正文）
+        sendTrace.begin(sessionId, { len: outgoingText.length, images: outgoingImages?.length ?? 0, queued: queuing });
         // 排队请求只带 streamingBehavior（spike 铁律；api.prompt 自动剥模型/思考档注入，
         // images 未实测随排队投递、同样省略——图片条保留待下次直发）
         let receipt: PromptReceipt;
@@ -513,6 +516,7 @@ export function Composer({
           // 一律 queued（跨进程从不 409），排队是 already processing 的正确动作。
           receipt = await api.prompt(sessionId, { text: outgoingText, streamingBehavior: queueModeRef.current });
         }
+        sendTrace.receipt(sessionId, { disposition: receipt.disposition });
         // 缺陷修复（新会话首条用户消息不显示）：prompt 成功即本地乐观入列——首条消息
         // 的服务端事件以路由句柄寻址，handle→durable 映射回填前不入列，靠本地占位；
         // 回执带回真实 id 时即时换 key（消息槽 + 会话行 + 选中态），不等会话行刷新。
