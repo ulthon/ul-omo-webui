@@ -1,5 +1,5 @@
 // 提问卡片数据面（q1）：会话内未决 question 型 UI 请求队列。
-// wire 契约（server/spike/q1-question.ts 实证 + 引擎 connection-question-bridge.js）：
+// wire 契约（历史 q1 spike 实证（脚本已删，见 git 历史）+ 引擎 connection-question-bridge.js）：
 // - method:"question" 帧：{id, waitForAnswer, questions:[{id,header,question,options,multiSelect}],
 //   timeout, deadlineAtMs, remainingMs, askedAtMs}——waitForAnswer=true 阻塞回合等答案，false 跨回合存活；
 // - question_updated：{id, deadlineAtMs, remainingMs} 截止刷新（progress 驱动，可无）；

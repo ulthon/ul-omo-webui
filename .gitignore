@@ -46,3 +46,7 @@ docs/verification/
 .DS_Store
 Thumbs.db
 server/tsconfig.tsbuildinfo
+
+# 根目录会话导出残片（防复发，2026-10-31 清理第 1 步）
+/OmO-session-*.html
+/x
