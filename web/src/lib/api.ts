@@ -1219,7 +1219,34 @@ export const api = {
   async setDiagnosticsFlags(patch: { perf?: boolean; sse?: boolean }): Promise<{ perf: boolean; sse: boolean }> {
     return request("/api/diagnostics/flags", { method: "POST", body: JSON.stringify(patch) });
   },
+
+  // ---- 更新（2026-10-31 update-m23 批次） ----
+  /** 检查 WebUI/引擎 新版本；registry 不可达时该项 latest="unknown"、hasUpdate:false（服务端静默降级） */
+  async updateCheck(): Promise<UpdateCheck> {
+    return request("/api/update/check");
+  },
+  /** 触发更新（服务端按 docs/09 D3 合并执行，target 只发 webui）；200 = 已调度重启 */
+  async updateInstall(body: UpdateInstallBody): Promise<{ restarting: boolean; version: string }> {
+    return request("/api/update/install", { method: "POST", body: JSON.stringify(body) });
+  },
 };
+
+/** 更新检查单侧结果（server routes-update 契约；latest="unknown" = registry 不可达降级） */
+export interface UpdateSide {
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+}
+
+export interface UpdateCheck {
+  webui: UpdateSide;
+  engine: UpdateSide;
+}
+
+export interface UpdateInstallBody {
+  target: "webui" | "engine";
+  version: string;
+}
 
 /** 定时任务行（server ScheduleJob + 目录派生 state；时间字段均为 epoch 毫秒） */
 export interface ScheduleJobItem {

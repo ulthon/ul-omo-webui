@@ -4,6 +4,7 @@ import type { MessageCatalogShape } from "./i18n";
 import { common } from "./en/common";
 import { login } from "./en/login";
 import { diagnostics } from "./en/diagnostics";
+import { update } from "./en/update";
 import { shortcuts } from "./en/shortcuts";
 import { chat } from "./en/chat";
 import { composer } from "./en/composer";
@@ -39,4 +40,5 @@ export const en = {
   files,
   tools,
   diagnostics,
+  update,
 } satisfies MessageCatalogShape;

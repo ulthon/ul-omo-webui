@@ -22,6 +22,7 @@ import { AuthSection } from "@/components/settings/auth-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { TipsSection } from "@/components/layout/tips-section";
 import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
+import { UpdateSection } from "@/components/settings/update-section";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -770,6 +771,7 @@ export function SettingsPage() {
           <ConversationSection />
           <TipsSection />
           <DiagnosticsSection />
+          <UpdateSection />
           <LanguageSection />
         </section>
       </div>

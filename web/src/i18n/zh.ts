@@ -18,6 +18,7 @@ import { errors } from "./zh/errors";
 import { files } from "./zh/files";
 import { tools } from "./zh/tools";
 import { diagnostics } from "./zh/diagnostics";
+import { update } from "./zh/update";
 
 export const zh = {
   common,
@@ -38,4 +39,5 @@ export const zh = {
   files,
   tools,
   diagnostics,
+  update,
 } as const;

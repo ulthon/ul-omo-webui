@@ -31,6 +31,7 @@ import {
 } from "./api/background-task-ledger";
 import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
 import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
+import { createUpdateRoutes } from "./api/routes-update";
 import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
 import { createRebindRoutes } from "./api/routes-rebind";
@@ -293,6 +294,9 @@ app.route(
     }),
   }),
 );
+// 更新面（2026-10-31 update 批）：check + install；shutdown 注入——安装成功由路由
+// 响应后延迟触发本文件的优雅关停路径（引擎子进程/元库同收口），路由不碰 process.exit
+app.route("/", createUpdateRoutes({ shutdown: () => void shutdown() }));
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
