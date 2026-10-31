@@ -438,4 +438,60 @@ describe("r11 todo7 笔记行内编辑", () => {
       root.unmount();
     });
   });
+
+  test("输入法组合中收起：挂起保存，compositionend 后完整上屏再 PUT（2026-10-31 竞态回归）", async () => {
+    let putBody: unknown = null;
+    let putCalls = 0;
+    installRoutes([
+      {
+        method: "GET",
+        prefix: `/api/notes?project=${encodeURIComponent(PROJECT)}`,
+        reply: () => [200, { notes: [listItem()] }],
+      },
+      {
+        method: "GET",
+        prefix: "/api/notes/n1",
+        reply: () => [200, { note: noteDetail() }],
+      },
+      {
+        method: "PUT",
+        prefix: "/api/notes/n1",
+        reply: (hit) => {
+          putCalls += 1;
+          putBody = hit.body;
+          return [200, { note: noteDetail({ content: "和大家好" }) }];
+        },
+      },
+    ]);
+    const { host, root } = await renderView();
+    await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 1, "list ready");
+    await act(async () => {
+      click(q(host, "[data-testid=note-item]"));
+    });
+    await waitFor(() => host.querySelector("[data-testid=note-content-input]") !== null, "editor ready");
+    const ta = q(host, "[data-testid=note-content-input]") as HTMLTextAreaElement;
+    // 已上屏「和」后进入组合（拼音未上屏）
+    await act(async () => {
+      setNativeValue(ta, "和");
+      ta.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    });
+    // 组合未结束即点收起：不保存、编辑器仍在（挂起）
+    await act(async () => {
+      click(q(host, "[data-testid=note-collapse-btn]"));
+    });
+    expect(putCalls).toBe(0);
+    expect(host.querySelector("[data-testid=note-inline-editor]")).not.toBeNull();
+    // 组合落定：末次 input 完整上屏 + compositionend → 延后一步后保存完整文本
+    await act(async () => {
+      setNativeValue(ta, "和大家好");
+      ta.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      await flushMicrotasks();
+    });
+    await waitFor(() => putCalls === 1, "PUT after compositionend");
+    expect((putBody as { content: string }).content).toBe("和大家好");
+    await waitFor(() => host.querySelector("[data-testid=note-inline-editor]") === null, "collapsed");
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });

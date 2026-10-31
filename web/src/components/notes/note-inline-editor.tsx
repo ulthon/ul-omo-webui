@@ -50,6 +50,12 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
   const draft = noteId === null;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const disposedRef = useRef(false);
+  // 输入法组合竞态（2026-10-31 实录修复）：组合中（拼音未上屏）收起保存会丢弃组合
+  // 内文本，只剩已上屏部分（实录仅剩「和」）。组合中挂起收起，compositionend（浏览器
+  // 失焦时强制结束组合）落定、末次 input 刷进受控状态后再执行保存。
+  const composingRef = useRef(false);
+  const collapsePendingRef = useRef(false);
+  const collapseRef = useRef<() => void>(() => {});
   const [note, setNote] = useState<NoteData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retrySeq, setRetrySeq] = useState(0);
@@ -110,6 +116,11 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
 
   const collapse = () => {
     if (saving) return;
+    // 组合中不立即收起：挂起等 compositionend（否则保存捕获的是部分上屏文本）
+    if (composingRef.current) {
+      collapsePendingRef.current = true;
+      return;
+    }
     // 新建全空 → 无痕取消，零请求
     if (draft && (edit === null || (edit.title.trim() === "" && edit.content.trim() === ""))) {
       dirtyRef.current = false;
@@ -196,6 +207,22 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
   // 点外部（收起=自动保存）：radix 菜单/弹层渲染在 portal（容器外），忽略之，
   // 否则点「···」菜单项会同时触发收起与菜单动作竞态
   useEffect(() => {
+    collapseRef.current = collapse;
+  });
+  // 输入法组合感知：组合结束若挂起了收起，宏任务延后一步让末次 input 先刷进受控
+  // 状态再走保存（不同浏览器 compositionend 与末次 input 先后不一，延后避序；
+  // collapseRef 取新渲染闭包，不读到过期的 edit/saving）。
+  const onCompositionStart = () => {
+    composingRef.current = true;
+  };
+  const onCompositionEnd = () => {
+    composingRef.current = false;
+    if (collapsePendingRef.current) {
+      collapsePendingRef.current = false;
+      setTimeout(() => collapseRef.current(), 0);
+    }
+  };
+  useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Element | null;
       if (!target) return;
@@ -244,6 +271,8 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
             <input
               value={edit.title}
               onChange={(e) => setEdit({ ...edit, title: e.target.value })}
+              onCompositionStart={onCompositionStart}
+              onCompositionEnd={onCompositionEnd}
               placeholder={t("notes.edit.titlePlaceholder")}
               aria-label={t("notes.edit.titleAria")}
               data-testid="note-title-input"
@@ -286,6 +315,8 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
           <textarea
             value={edit.content}
             onChange={(e) => setEdit({ ...edit, content: e.target.value })}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             placeholder={t("notes.edit.contentPlaceholder")}
             aria-label={t("notes.edit.contentAria")}
             data-testid="note-content-input"
@@ -294,6 +325,8 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
           <input
             value={edit.tagsText}
             onChange={(e) => setEdit({ ...edit, tagsText: e.target.value })}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             placeholder={t("notes.edit.tagsPlaceholder")}
             aria-label={t("notes.edit.tagsAria")}
             data-testid="note-tags-input"
