@@ -245,7 +245,7 @@ export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 w-full border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:w-[var(--sidebar-width)] lg:translate-x-0 ${
+      className={`flex flex-col fixed inset-y-0 left-0 z-40 w-full border-r bg-sidebar transition-transform duration-200 lg:static lg:h-auto lg:w-[var(--sidebar-width)] lg:translate-x-0 ${
         drawerOpen ? "translate-x-0" : "-translate-x-full"
       }`}
       style={{ ["--sidebar-width" as string]: `${width}px` }}
@@ -269,7 +269,9 @@ export function AppSidebar({ drawerOpen }: { drawerOpen: boolean }) {
         onDoubleClick={onHandleDoubleClick}
         className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none lg:block"
       />
-      <Sidebar />
+      <div className="min-h-0 flex-1">
+        <Sidebar />
+      </div>
       {/* 手机抽屉底部菜单（r10 todo 6，闭合 GAP-6）：文件/设置入口自手机顶栏迁入，
           点按先收抽屉再开对应全屏页（覆盖层 z-50 高于抽屉 z-40，不收也不遮挡，收起
           防回退时抽屉意外残留）；桌面 lg+ 常驻侧栏不渲染，顶栏桌面分支零变化 */}
