@@ -7,11 +7,12 @@
 // 真实 id 与槽内合成孪生身份归一（诊断杠杆 1）；服务端重放窗口标记（replay_begin/done）
 // 界定的单次恢复窗口内，已落库段的无 id start 重播抑制流式重建（诊断杠杆 2）。
 import { create } from "zustand";
-import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
+import type { MessagesPage, WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
 import { parseTaskCompletionEntry } from "@/lib/task-completion";
 import {
   lastModelChangeOf,
+  modelChangeBackfillOf,
   type SessionEventLine,
   type StreamErrorItem,
 } from "@/components/chat/message-items";
@@ -83,6 +84,16 @@ export interface SessionMessages {
   /** 流内错误卡（发送失败常驻卡，对齐 CLI 信息流行为）：独立于 entries，全量重取
    *  不冲掉，带关闭钮手动消除；应用生命周期内存态。 */
   errors: StreamErrorItem[];
+  /** 消息级模型归因表（2026-11-01 消息级模型归因补全批）：
+   *  receiptModel = 最近一次直发回执 appliedModel（composer 发送成功点写入，
+   *  "provider/model" 形态；气泡解析与流式态就近消费；内存态，重启/重取后由
+   *  modelBackfill 水合兑底）；
+   *  modelBackfill = 首载尾窗缺 model_change 时全量回读的窗口外变更点（只取
+   *  model_change 类型，不参与渲染），前插进解析时间线使归因覆盖全程；
+   *  modelBackfillDone = 回读闸（每会话至多一次全量拉取，失败也落闸防风暴）。 */
+  receiptModel: string | null;
+  modelBackfill: Array<WireEntry & { id: string }>;
+  modelBackfillDone: boolean;
 }
 
 /** SSE wire 事件（{projectPath, event} 的 event 部分），结构从宽、按 type 甄别 */
@@ -166,6 +177,17 @@ interface MessagesState {
   pushError(sessionId: string, text: string): void;
   /** 错误卡关闭钮：按 id 移除单条 */
   dismissError(sessionId: string, id: string): void;
+  /** 直发回执 appliedModel 落归因表（2026-11-01 归因补全批，composer 发送成功点
+   *  调用；会话槽缺席不建槽——发送必在查看态，槽已由首载建立） */
+  markReceiptModel(sessionId: string, model: string): void;
+  /** 水合回读（2026-11-01 归因补全批）：首载尾窗不含任何 model_change 且还有更早
+   *  历史（hasMore）时，经 fetchPage 全量拉一次，挑出窗口外变更点入归因表并复用
+   *  水合口径写会话生效模型；fetchPage 注入（测试免 mock api 模块）。每会话至多
+   *  一次，失败落闸静默降级（归因是软增强）。 */
+  backfillModelTimeline(
+    sessionId: string,
+    fetchPage: (opts: { full?: boolean }) => Promise<MessagesPage>,
+  ): Promise<void>;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
@@ -195,6 +217,9 @@ function emptySessionMessages(): SessionMessages {
     compacting: false,
     sessionEvents: [],
     errors: [],
+    receiptModel: null,
+    modelBackfill: [],
+    modelBackfillDone: false,
   };
 }
 
@@ -629,6 +654,46 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           },
         };
       }),
+
+    markReceiptModel: (sessionId, model) =>
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (cur === undefined || cur.receiptModel === model) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, receiptModel: model } } };
+      }),
+
+    backfillModelTimeline: async (sessionId, fetchPage) => {
+      const cur = get().bySession[sessionId];
+      if (!cur?.loaded || cur.modelBackfillDone) return;
+      // 时间线自足（尾窗已含变更点）或已是全量（无窗外可补）：只落闸，不拉全量
+      if (lastModelChangeOf(cur.entries) !== null || !cur.hasMore) {
+        set((s) => {
+          const st = s.bySession[sessionId];
+          return st ? { bySession: { ...s.bySession, [sessionId]: { ...st, modelBackfillDone: true } } } : s;
+        });
+        return;
+      }
+      try {
+        const page = await fetchPage({ full: true });
+        const now = get().bySession[sessionId];
+        if (now === undefined) return; // 等待期间会话清理：放弃本轮
+        const changes = modelChangeBackfillOf(page.entries, now.entries);
+        set((s) => ({
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...now, modelBackfill: changes, modelBackfillDone: true },
+          },
+        }));
+        // 窗口外最末变更点即当前生效模型：复用水合写入口径（appliedModels + 选中对齐）
+        if (changes.length > 0) hydrateAppliedModel(sessionId, changes);
+      } catch {
+        // 全量拉取失败静默降级（归因是软增强，不报错不重试风暴）：落闸
+        set((s) => {
+          const st = s.bySession[sessionId];
+          return st ? { bySession: { ...s.bySession, [sessionId]: { ...st, modelBackfillDone: true } } } : s;
+        });
+      }
+    },
 
     applyWireEvent: (sessionId, event) => {
       switch (event.type) {

@@ -24,7 +24,7 @@ import { Composer } from "@/components/composer/composer";
 import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList, type MessageListHandle } from "./message-list";
-import { buildMessageItems, type ChatListItem } from "./message-items";
+import { buildMessageItems, modelChangeBackfillOf, type ChatListItem } from "./message-items";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionHintBar } from "./question-hint-bar";
 import { ActivityBar } from "./activity-bar";
@@ -196,6 +196,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
             hasMore: page.hasMore ?? false,
             oldestId: page.oldestId ?? null,
           });
+          // 模型归因回读（2026-11-01 消息级模型归因补全）：首载尾窗缺 model_change
+          // 时全量回读窗口外变更点（动作内自判需要，只取 model_change 不参与渲染）
+          void store.backfillModelTimeline(sessionId, (opts) => api.listMessages(sessionId, opts));
         }
         setLoadState("done");
         diag.info("perf", "messages", {
@@ -273,13 +276,23 @@ function ChatSession({ sessionId }: { sessionId: string }) {
       });
   }, [sessionId]);
 
-  const messageEntries = useMemo(
-    () => (entries ?? []).filter((e) => isMessageEntry(e) || isCustomMessageEntry(e) || isCustomEntry(e) || isModelChangeEntry(e)),
-    [entries],
-  );
+  // 消息级归因表（2026-11-01 消息级模型归因补全）：回执模型 + 窗口外变更点回读
+  const receiptModel = useMessagesStore((s) => s.bySession[sessionId]?.receiptModel ?? null);
+  const modelBackfill = useMessagesStore((s) => s.bySession[sessionId]?.modelBackfill);
+
+  const messageEntries = useMemo(() => {
+    const windowEntries = (entries ?? []).filter(
+      (e) => isMessageEntry(e) || isCustomMessageEntry(e) || isCustomEntry(e) || isModelChangeEntry(e),
+    );
+    // 窗口外 model_change 前插（回读变更点全部早于尾窗，前插即时间序；id 去重幂等）
+    // ——单遍时间线解析的归因覆盖全程
+    const backfilled = modelBackfill !== undefined ? modelChangeBackfillOf(modelBackfill, windowEntries) : [];
+    return backfilled.length > 0 ? [...backfilled, ...windowEntries] : windowEntries;
+  }, [entries, modelBackfill]);
 
   // 变体名解析数据源（docs08 2026-10-22 批次任务 18）：注册表 = GET /api/models 行
-  // （服务端已合并 upstreamId）；appliedModel = 会话内最新生效（内存态，刷新后空）。
+  // （服务端已合并 upstreamId）；appliedModel = 会话内最新生效（内存态，刷新后空），
+  // 缺席时回落消息域回执归因表（发送成功点写入）。
   const models = useUiStore((s) => s.models);
   const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
 
@@ -289,9 +302,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         hasStreamingMessage,
         interrupted,
         modelRegistry: models,
-        appliedModel,
+        appliedModel: appliedModel ?? receiptModel,
       }),
-    [messageEntries, hasStreamingMessage, interrupted, models, appliedModel],
+    [messageEntries, hasStreamingMessage, interrupted, models, appliedModel, receiptModel],
   );
 
   if (loadState === "loading") {

@@ -555,6 +555,9 @@ export function Composer({
             const appliedKey =
               typeof receipt.durableSessionId === "string" && receipt.durableSessionId ? receipt.durableSessionId : sessionId;
             useSessionsStore.getState().setAppliedModel(appliedKey, receipt.appliedModel);
+            // 回执归因落消息域（2026-11-01 消息级模型归因补全）：同值写入消息 store
+            // 归因表，气泡解析与流式态就近消费；重启/重取后由水合回读兑底，不持久化
+            messages.markReceiptModel(appliedKey, receipt.appliedModel);
           }
           if (opts.clearInputs) {
             setImagesBoth([]);

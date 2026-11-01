@@ -115,6 +115,26 @@ function modelChangeOf(entry: WireEntry): { provider: string; modelId: string } 
   return { provider, modelId };
 }
 
+/** 窗口外 model_change 回读（2026-11-01 消息级模型归因补全）：从 source 挑出窄化有效
+ *  （modelChangeOf 判定 + 携 id）的变更点，剔除窗口已有 id 后保序返回。两个消费面：
+ *  source=全量页（水合回读）时即「早于尾窗的变更点」，作归因表存储；source=归因表
+ *  （items 组装）时即「待前插的窗口外变更点」——回读页含尾窗重叠区，按 id 去重幂等。
+ *  纯函数。 */
+function isTimelineChangeEntry(entry: WireEntry): entry is WireEntry & { id: string } {
+  return typeof entry.id === "string" && modelChangeOf(entry) !== null;
+}
+
+export function modelChangeBackfillOf(
+  source: ReadonlyArray<WireEntry>,
+  window: ReadonlyArray<WireEntry>,
+): Array<WireEntry & { id: string }> {
+  const known = new Set<string>();
+  for (const e of window) {
+    if (typeof e.id === "string") known.add(e.id);
+  }
+  return source.filter((e): e is WireEntry & { id: string } => isTimelineChangeEntry(e) && !known.has(e.id));
+}
+
 /** 单条 assistant 消息的模型名 5 级回退（docs08 2026-10-22 批次任务 18）：
  *  1 时间线+注册表确证（upstreamId===raw）→ 变体名；
  *  2 时间线命中但注册表无法确证（变体已删/基础模型无映射）且裸 id 一致 → 时间线 modelId；

@@ -414,14 +414,16 @@ export const LoopGuardGroupBubble = memo(function LoopGuardGroupBubble({
 
 /** 流式 assistant 气泡：本层只订阅"存在性"，delta 由 StreamingParts 按下标消化。
  *  模型名（docs08 2026-10-22 批次任务 18）：appliedModels 优先（会话内引擎回执的
- *  生效变体 "provider/model"，渲染层 shortModelName 归一），缺席回落 message_start
- *  裸名（老数据/裸流不误报）。 */
+ *  生效变体 "provider/model"，渲染层 shortModelName 归一），缺席回落消息域回执
+ *  归因表（2026-11-01 归因补全批：刷新后首回合流式头部也可见模型短名），再回落
+ *  message_start 裸名（老数据/裸流不误报）。 */
 export function StreamingBubble({ sessionId }: { sessionId: string }) {
   const present = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
+  const receiptModel = useMessagesStore((s) => s.bySession[sessionId]?.receiptModel ?? null);
   const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
   if (!present) return null;
   return (
-    <BubbleShell role="assistant" timestamp={null} model={appliedModel ?? streamingModelOf(sessionId)} live>
+    <BubbleShell role="assistant" timestamp={null} model={appliedModel ?? receiptModel ?? streamingModelOf(sessionId)} live>
       <StreamingParts sessionId={sessionId} />
     </BubbleShell>
   );

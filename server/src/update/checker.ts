@@ -8,6 +8,9 @@
 //   不报错（检查是后台软信号，不该打断使用）。
 // - 版本比较：点分数字逐段（引擎版本形如 2026.10.27-1，取每段数字前缀，段缺失按 0）；
 //   unknown 永不计为有更新。
+// - 引擎 current 兑底（2026-11-01 批）：node_modules 解析失败（生产 checkout 形态）时
+//   spawn PATH 上引擎 CLI --version（默认 omo；UL_OMO_WEBUI_UPDATE_ENGINE_BIN 覆盖/
+//   空串关闸，同 env 注入风格），结果按 bin 缓存进程生命周期。
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -28,6 +31,8 @@ export interface UpdateCheckResult {
 const OWN_PKG_NAME = "@ulthon/ul-omo-webui";
 const DEFAULT_ENGINE_PKG = "@code-yeongyu/senpi";
 const FETCH_TIMEOUT_MS = 8000;
+/** 引擎 CLI --version 兑底探测超时（3s 内不出即弃，落 unknown） */
+const ENGINE_BIN_TIMEOUT_MS = 3000;
 
 /** fetch 形状收窄（测试注入用；实现方决定是否消费 signal） */
 type FetchLike = (url: string, init?: { readonly signal?: AbortSignal }) => Promise<Response>;
@@ -109,12 +114,36 @@ export function enginePackageName(): string {
   return process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG?.trim() || DEFAULT_ENGINE_PKG;
 }
 
-/** 引擎当前版本：node_modules 内包的 package.json（node 原生解析，缺包 → unknown） */
+/** 引擎当前版本：node_modules 内包的 package.json（node 原生解析）；解析失败
+ *  （生产 checkout 形态缺包/不可读）兑底引擎 CLI --version，仍失败 → unknown */
 export function engineCurrentVersion(): string {
   try {
     const pkgPath = createRequire(import.meta.url).resolve(`${enginePackageName()}/package.json`);
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
     return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return engineVersionFromBin();
+  }
+}
+
+/** 引擎 CLI --version 兑底探测：UL_OMO_WEBUI_UPDATE_ENGINE_BIN > "omo"（PATH）；
+ *  空串显式关闸（单测保持 unknown 旧语义，同 env 注入风格）。结果按 bin 缓存进程
+ *  生命周期（CLI 版本运行期不变，不重复 spawn）；spawn/超时/空输出一律 unknown
+ *  且不缓存（下次检查可重试）。 */
+const engineBinVersionCache = new Map<string, string>();
+
+function engineVersionFromBin(): string {
+  const override = process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN?.trim();
+  if (override === "") return "unknown";
+  const bin = override !== undefined && override !== "" ? override : "omo";
+  const cached = engineBinVersionCache.get(bin);
+  if (cached !== undefined) return cached;
+  try {
+    const out = execFileSync(bin, ["--version"], { encoding: "utf8", timeout: ENGINE_BIN_TIMEOUT_MS });
+    const version = out.split("\n", 1)[0]?.trim() ?? "";
+    if (version === "") return "unknown";
+    engineBinVersionCache.set(bin, version);
+    return version;
   } catch {
     return "unknown";
   }

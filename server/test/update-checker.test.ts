@@ -1,7 +1,10 @@
 // 更新检测单测（2026-10-31 update 批）：fetch 注入三态——有更新/无更新/registry 死。
 // env 全量注入（registry 基址/包名/当前版本），不触网、不探测本机 npm config。
+// 2026-11-01 批：引擎 current 的 CLI 兑底默认关闸（ENGINE_BIN 空串），未装 stub 包
+// 仍保持 unknown 旧语义；兑底自身由专用用例注入 bin 脚本驱动。
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
-import { checkUpdates, compareVersions } from "../src/update/checker";
+import { checkUpdates, compareVersions, engineCurrentVersion } from "../src/update/checker";
 
 const REGISTRY = "http://registry.test";
 
@@ -10,6 +13,8 @@ function setEnv(): void {
   process.env.UL_OMO_WEBUI_UPDATE_PKG = "qa-webui-stub";
   process.env.UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE = "1.0.0";
   process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG = "qa-engine-stub";
+  // CLI 兑底关闸：stub 包未安装，保持 current unknown 旧语义（兑底另测）
+  process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN = "";
 }
 
 afterEach(() => {
@@ -17,6 +22,7 @@ afterEach(() => {
   delete process.env.UL_OMO_WEBUI_UPDATE_PKG;
   delete process.env.UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE;
   delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG;
+  delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN;
 });
 
 function metaResponse(latest: string): Response {
@@ -66,5 +72,39 @@ describe("compareVersions", () => {
     expect(compareVersions("1.2", "1.2.0")).toBe(0);
     expect(compareVersions("1.10.0", "1.9.0")).toBeGreaterThan(0);
     expect(compareVersions("0.9.9", "1.0.0")).toBeLessThan(0);
+  });
+});
+
+// CLI 兑底（2026-11-01 批）：node_modules 解析失败 → 注入 bin --version 取版本。
+// stub 放仓库内 test/tmp/（本机 /tmp 可能 noexec，exec 位脚本须在可执行挂载点）。
+describe("engineCurrentVersion CLI 兑底", () => {
+  const STUB_DIR = new URL("./tmp/update-checker-bin-stub/", import.meta.url).pathname;
+
+  function writeVersionStub(version: string): string {
+    mkdirSync(STUB_DIR, { recursive: true });
+    const path = `${STUB_DIR}omo-stub.sh`;
+    writeFileSync(path, `#!/bin/sh\necho ${version}\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  test("node_modules 解析失败 → bin 注入返回 2026.10.27-1；结果缓存进程生命周期", () => {
+    setEnv();
+    const stub = writeVersionStub("2026.10.27-1");
+    try {
+      process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN = stub;
+      expect(engineCurrentVersion()).toBe("2026.10.27-1");
+      // 缓存生效：stub 移除后再取仍同值（进程内不重复 spawn）
+      rmSync(stub);
+      expect(engineCurrentVersion()).toBe("2026.10.27-1");
+    } finally {
+      rmSync(STUB_DIR, { recursive: true, force: true });
+    }
+  });
+
+  test("兑底 spawn 失败（bin 不存在）→ unknown 不报错", () => {
+    setEnv();
+    process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN = "./qa-no-such-bin";
+    expect(engineCurrentVersion()).toBe("unknown");
   });
 });
