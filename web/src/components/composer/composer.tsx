@@ -576,7 +576,8 @@ export function Composer({
           // 兜底文案（spike 指引 4）：正常"发送撞回合"已转排队，409 仅剩外部驱动/状态漂移
           setError(t("composer.sessionBusy"));
         } else {
-          setError(err instanceof Error ? err.message : String(err));
+          // 发送失败入流（对齐 CLI 信息流）：会话上下文内错误不再瞬时提示，常驻错误卡可回看
+          useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, "chat.streamError.sendFailed"));
         }
       } finally {
         setSending(false);

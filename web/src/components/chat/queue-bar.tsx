@@ -11,7 +11,6 @@ import { ListOrdered, SendHorizontal, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
-import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { restructureQueue } from "@/components/chat/queue-actions";
@@ -19,7 +18,6 @@ import { restructureQueue } from "@/components/chat/queue-actions";
 export function QueueBar({ sessionId }: { sessionId: string }) {
   const items = useQueueStore((s) => s.bySession[sessionId]?.items);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
-  const showToast = useUiStore((s) => s.showToast);
   const [busy, setBusy] = useState(false);
   const t = useT();
   const list = items ?? [];
@@ -30,7 +28,8 @@ export function QueueBar({ sessionId }: { sessionId: string }) {
     setBusy(true);
     action()
       .catch((err: unknown) => {
-        showToast(apiErrorMessage(err, failKey), "error");
+        // 重排失败入流（对齐 CLI）：会话上下文内错误常驻错误卡可回看，不再瞬时 toast
+        useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, failKey));
       })
       .finally(() => setBusy(false));
   };

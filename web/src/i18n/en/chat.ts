@@ -334,4 +334,9 @@ export const chat = {
     memoryReflectionPausedProbe: "Next automatic probe at {time}",
     memoryReflectionPausedRetry: "Run /reflect to retry now",
   },
+  /** In-stream error card (send failure lands in stream, CLI parity) */
+  streamError: {
+    dismiss: "Dismiss",
+    sendFailed: "Failed to send",
+  },
 } as const;

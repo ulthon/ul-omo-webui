@@ -10,7 +10,11 @@ import { create } from "zustand";
 import type { WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
 import { parseTaskCompletionEntry } from "@/lib/task-completion";
-import { lastModelChangeOf, type SessionEventLine } from "@/components/chat/message-items";
+import {
+  lastModelChangeOf,
+  type SessionEventLine,
+  type StreamErrorItem,
+} from "@/components/chat/message-items";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -76,6 +80,9 @@ export interface SessionMessages {
    *  应用生命周期内存态：刷新后历史事件行随引擎既有条目面（model_change 条目/压缩
    *  摘要块）口径回看，事件行本身不跨刷新。 */
   sessionEvents: SessionEventLine[];
+  /** 流内错误卡（发送失败常驻卡，对齐 CLI 信息流行为）：独立于 entries，全量重取
+   *  不冲掉，带关闭钮手动消除；应用生命周期内存态。 */
+  errors: StreamErrorItem[];
 }
 
 /** SSE wire 事件（{projectPath, event} 的 event 部分），结构从宽、按 type 甄别 */
@@ -154,10 +161,18 @@ interface MessagesState {
   /** 排队事件行按送达片段移除（2026-10-31 对齐 CLI 瞬态）：引擎队列消化后排队提示
    *  不再常驻消息流底部，按已送达条目首行片段精确匹配移除 */
   dismissQueuedEvents(sessionId: string, snippets: ReadonlySet<string>): void;
+  /** 流内错误卡追加（发送/建会话失败入流，对齐 CLI）：尾部入列；同刻同 text 未消
+   *  去重不堆叠；id 单调递增作流内 key */
+  pushError(sessionId: string, text: string): void;
+  /** 错误卡关闭钮：按 id 移除单条 */
+  dismissError(sessionId: string, id: string): void;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
 let sessionEventSeq = 0;
+
+/** 流内错误卡 id 序列：模块级单调递增，仅作流内 React key */
+let streamErrorSeq = 0;
 
 /** 重放窗口 delta 快进缓冲（r10 todo 14）：切页回来重连时服务端以 replay_begin/done
  *  包夹补发积压帧，逐帧 appendDelta 会从旧位置逐帧回放（渲染滞后根因）。窗口内的
@@ -179,6 +194,7 @@ function emptySessionMessages(): SessionMessages {
     toolRuns: {},
     compacting: false,
     sessionEvents: [],
+    errors: [],
   };
 }
 
@@ -510,6 +526,31 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             [sessionId]: { ...cur, sessionEvents: [...cur.sessionEvents, { id, summary }] },
           },
         };
+      });
+    },
+
+    pushError: (sessionId, text) => {
+      const id = `err-${++streamErrorSeq}`;
+      set((s) => {
+        const cur = s.bySession[sessionId] ?? emptySessionMessages();
+        // 同文去重：相同 text 的错误卡未消时不重复加（同刻多次失败不堆叠）
+        if (cur.errors.some((e) => e.text === text)) return s;
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...cur, errors: [...cur.errors, { id, text, ts: Date.now() }] },
+          },
+        };
+      });
+    },
+
+    dismissError: (sessionId, id) => {
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (cur === undefined || cur.errors.length === 0) return s;
+        const kept = cur.errors.filter((e) => e.id !== id);
+        if (kept.length === cur.errors.length) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, errors: kept } } };
       });
     },
 

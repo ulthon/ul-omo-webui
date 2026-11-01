@@ -60,7 +60,8 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
         await api.prompt(forked.session.id, { text: forked.text });
       }
     } catch (err) {
-      showToast(apiErrorMessage(err, "chat.messageActions.retryFailed"), "error");
+      // 重试失败入流（对齐 CLI）：会话上下文内错误常驻错误卡可回看，不再瞬时 toast
+      useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, "chat.messageActions.retryFailed"));
     } finally {
       setBusy(false);
     }

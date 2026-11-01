@@ -239,7 +239,26 @@ export type ChatListItem =
   | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice }
   | { key: string; kind: "sessionEvent"; line: SessionEventLine }
   | { key: string; kind: "questionCard"; request: QuestionRequest; position: number; total: number }
-  | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary };
+  | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary }
+  | { key: string; kind: "streamError"; error: StreamErrorItem };
+
+/** 流内错误卡（发送失败常驻卡，对齐 CLI 信息流行为）：纯数据形态，messages store
+ *  持有（同 SessionEventLine 口径），渲染由 message-list 的 StreamErrorCardBlock 承担。 */
+export interface StreamErrorItem {
+  id: string;
+  text: string;
+  ts: number;
+}
+
+/** 错误卡并入 items（尾部追加：错误 = 最新发生的事实，接在全部条目/事件行之后）。
+ *  无错误时原样返回（引用不变，订阅方不重算），同 mergeSessionEventLines 口径。纯函数。 */
+export function mergeStreamErrors(
+  items: ChatListItem[],
+  errors: readonly StreamErrorItem[],
+): ChatListItem[] {
+  if (errors.length === 0) return items;
+  return [...items, ...errors.map((error) => ({ key: `err-${error.id}`, kind: "streamError" as const, error }))];
+}
 
 /** 会话级事件行（r10 todo 7）：纯数据形态，messages store 持有（定义在此、store 以
  *  type 引用，防 store→组件纯逻辑模块的反向值依赖）。渲染由 message-list 的

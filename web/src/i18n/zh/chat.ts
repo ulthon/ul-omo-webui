@@ -333,4 +333,9 @@ export const chat = {
     memoryReflectionPausedProbe: "下次自动探针 {time}",
     memoryReflectionPausedRetry: "可运行 /reflect 立即重试",
   },
+  /** 流内错误卡（发送失败入流，对齐 CLI） */
+  streamError: {
+    dismiss: "关闭",
+    sendFailed: "发送失败",
+  },
 } as const;

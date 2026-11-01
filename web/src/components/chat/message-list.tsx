@@ -5,14 +5,14 @@
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CircleCheck, CirclePause, Database, Lightbulb, BookCheck, Pin } from "lucide-react";
+import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CircleCheck, CirclePause, CircleAlert, Database, Lightbulb, BookCheck, Pin, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { useQuestionsStore, type QuestionRequest, type QuestionResolvedSummary } from "@/stores/questions";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine } from "./message-items";
+import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
@@ -195,6 +195,35 @@ export const QuestionResolvedLineBlock = memo(function QuestionResolvedLineBlock
   );
 });
 
+/** 流内错误卡（发送/建会话失败入流，对齐 CLI）：红系警示卡（同 notice-card 警示形，
+ *  destructive 语义 token），常驻不自动消失，text + 小字时间 + 关闭钮。 */
+export const StreamErrorCardBlock = memo(function StreamErrorCardBlock({ sessionId, error }: { sessionId: string; error: StreamErrorItem }) {
+  const t = useT();
+  return (
+    <div
+      data-testid="stream-error-card"
+      className="my-1 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
+      <div className="flex items-start gap-2">
+        <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="break-words">{error.text}</div>
+          <div className="mt-0.5 text-xs opacity-70 tabular-nums">{new Date(error.ts).toLocaleTimeString()}</div>
+        </div>
+        <button
+          type="button"
+          data-testid="stream-error-dismiss"
+          aria-label={t("chat.streamError.dismiss")}
+          onClick={() => useMessagesStore.getState().dismissError(sessionId, error.id)}
+          className="shrink-0 rounded-sm p-0.5 opacity-70 transition-opacity hover:opacity-100"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+    </div>
+  );
+});
+
 const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
@@ -210,6 +239,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
       <QuestionCard sessionId={sessionId} request={item.request} position={item.position} total={item.total} />
     );
   if (item.kind === "questionResolved") return <QuestionResolvedLineBlock summary={item.summary} />;
+  if (item.kind === "streamError") return <StreamErrorCardBlock sessionId={sessionId} error={item.error} />;
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 
@@ -259,13 +289,19 @@ export function MessageList({
   // 为一行瞬态摘要。空队列引用稳定（NO_* 兑底），memo 不重算。
   const pendingQuestions = useQuestionsStore((s) => s.bySession[sessionId] ?? NO_QUESTIONS);
   const resolvedSummaries = useQuestionsStore((s) => s.resolvedSummaries[sessionId] ?? NO_SUMMARIES);
+  // 流内错误卡（发送失败入流）：store 每会话错误尾部并入（重取不冲、带关闭钮），
+  // 无错误时原样返回不建数组（mergeStreamErrors 内部口径）
+  const streamErrors = useMessagesStore((s) => s.bySession[sessionId]?.errors);
   const mergedItems = useMemo(
     () =>
-      mergeSessionEventLines(
-        mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
-        sessionEvents ?? [],
+      mergeStreamErrors(
+        mergeSessionEventLines(
+          mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
+          sessionEvents ?? [],
+        ),
+        streamErrors ?? [],
       ),
-    [items, entries, sessionEvents, pendingQuestions, resolvedSummaries],
+    [items, entries, sessionEvents, pendingQuestions, resolvedSummaries, streamErrors],
   );
   // 压缩进行态（docs08-r6 任务 18 ①）：compaction_start/progress 置位、end 消除
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
