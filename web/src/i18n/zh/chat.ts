@@ -267,6 +267,11 @@ export const chat = {
   // nav-rail.tsx 右缘导航轨
   navRail: {
     jumpTo: "跳转到：{title}",
+    today: "今天",
+    yesterday: "昨天",
+    loadEarlier: "加载更早",
+    noMore: "无更多",
+    locating: "定位中",
   },
   // permission-queue.tsx 权限队列容器
   permissionQueue: {

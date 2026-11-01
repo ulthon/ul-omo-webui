@@ -10,6 +10,7 @@ import type { LucideIcon } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { useQuestionsStore, type QuestionRequest, type QuestionResolvedSummary } from "@/stores/questions";
 import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
@@ -474,7 +475,13 @@ export function MessageList({
         )}
       </div>
 
-      <NavRail items={mergedItems} sessionId={sessionId} scrollRef={scrollRef} virtualizer={virtualizer} />
+      <NavRail
+        items={mergedItems}
+        sessionId={sessionId}
+        scrollRef={scrollRef}
+        virtualizer={virtualizer}
+        fetchPage={(opts) => api.listMessages(sessionId, opts)}
+      />
 
       {(syncing || compacting) && (
         <div className={`pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center gap-1 ${stickyUser ? "top-10" : "top-2"}`}>

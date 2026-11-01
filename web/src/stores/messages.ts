@@ -188,6 +188,14 @@ interface MessagesState {
     sessionId: string,
     fetchPage: (opts: { full?: boolean }) => Promise<MessagesPage>,
   ): Promise<void>;
+  /** 段回溯取数（nav-rail 分段指示器）：按 before 游标拉一窗更早条目并头插合并（同
+   *  触顶翻页通道 prependEntries，id 去重拼缝零重复零丢失；fetchPage 注入同
+   *  backfillModelTimeline，测试免 mock api 模块）。 */
+  fetchEarlierPage(
+    sessionId: string,
+    before: string,
+    fetchPage: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage>,
+  ): Promise<void>;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
@@ -661,6 +669,14 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         if (cur === undefined || cur.receiptModel === model) return s;
         return { bySession: { ...s.bySession, [sessionId]: { ...cur, receiptModel: model } } };
       }),
+
+    fetchEarlierPage: async (sessionId, before, fetchPage) => {
+      const page = await fetchPage({ before });
+      get().prependEntries(sessionId, page.entries, {
+        hasMore: page.hasMore ?? false,
+        oldestId: page.oldestId ?? null,
+      });
+    },
 
     backfillModelTimeline: async (sessionId, fetchPage) => {
       const cur = get().bySession[sessionId];

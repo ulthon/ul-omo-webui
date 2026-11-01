@@ -71,6 +71,8 @@ async function mountRail(): Promise<Harness> {
     sessionId: "s1",
     scrollRef,
     virtualizer: stubVirtualizer(),
+    // 段回溯/加载更早翻页注入面（悬停浮卡用不到，传桩满足新必填 prop）
+    fetchPage: async () => ({ sessionId: "s1", entries: [], leafId: null, cursor: null }),
   };
   await act(async () => {
     root.render(createElement(NavRail, props));
