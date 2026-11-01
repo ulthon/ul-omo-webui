@@ -139,8 +139,12 @@ function engineVersionFromBin(): string {
   const cached = engineBinVersionCache.get(bin);
   if (cached !== undefined) return cached;
   try {
-    const out = execFileSync(bin, ["--version"], { encoding: "utf8", timeout: ENGINE_BIN_TIMEOUT_MS });
-    const version = out.split("\n", 1)[0]?.trim() ?? "";
+    const out = execFileSync(bin, ["--version"], { encoding: "utf8", timeout: ENGINE_BIN_TIMEOUT_MS }) as string;
+    // 归一化：omo --version 实测输出「omo 5.1.51 (engine: senpi 2026.10.27-1)」，取
+    // senpi 版本；无包装时取首个版本形 token；解不出则 unknown（不缓存可重试）
+    const line = out.split("\n", 1)[0]?.trim() ?? "";
+    const m = line.match(/senpi\s+v?([0-9][^\s)]*)/i) ?? line.match(/v?([0-9][0-9._-]*)/);
+    const version = m?.[1] ?? "";
     if (version === "") return "unknown";
     engineBinVersionCache.set(bin, version);
     return version;
