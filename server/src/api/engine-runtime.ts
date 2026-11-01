@@ -564,9 +564,16 @@ class ProjectRuntime {
    */
   async ensure(): Promise<void> {
     await this.manager.ensureRunning(this.projectPath);
-    const client = this.manager.getClient(this.projectPath);
-    if (!client) {
-      throw new ApiError(503, "engine_not_ready", `项目引擎未就绪：${this.projectPath}`);
+    // 有界等待就绪（冷启动窗口竞态修复）：ensureRunning 返回时可能仍在 starting，
+    // 立即 503 迫使用户手动重试三四次；改为等待握手完成（上限 15s，250ms 轮询）
+    const deadline = Date.now() + 15_000;
+    let client = this.manager.getClient(this.projectPath);
+    while (client === undefined || this.manager.getStatus(this.projectPath)?.state !== "ready") {
+      if (Date.now() >= deadline) {
+        throw new ApiError(503, "engine_not_ready", `项目引擎未就绪：${this.projectPath}`);
+      }
+      await new Promise((r) => setTimeout(r, 250));
+      client = this.manager.getClient(this.projectPath);
     }
     if (!this.adapter || this.wrappedClient !== client) {
       this.wrappedClient = client;
