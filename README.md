@@ -71,7 +71,7 @@ Environment=UL_OMO_WEBUI_DATA_DIR=/var/lib/ul-omo-webui
 WantedBy=multi-user.target
 ```
 
-A user-level unit (`--user`) needs `loginctl enable-linger` to survive logout; a system-level unit (`--system`) has no such dependency and the unit file is tightened to mode 600. See docs/09-自启动与更新立项.md for the design.
+A user-level unit (`--user`) needs `loginctl enable-linger` to survive logout; a system-level unit (`--system`) has no such dependency and the unit file is tightened to mode 600.
 
 ## Environment variables
 

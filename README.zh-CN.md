@@ -71,7 +71,7 @@ Environment=UL_OMO_WEBUI_DATA_DIR=/var/lib/ul-omo-webui
 WantedBy=multi-user.target
 ```
 
-用户级服务（`--user`）需要 `loginctl enable-linger` 才能不登录常驻；系统级服务（`--system`）无此依赖，单元文件会收紧到 600 权限。详见 docs/09-自启动与更新立项.md。
+用户级服务（`--user`）需要 `loginctl enable-linger` 才能不登录常驻；系统级服务（`--system`）无此依赖，单元文件会收紧到 600 权限。
 
 ## 环境变量全表
 
