@@ -390,7 +390,16 @@ export function MessageList({
       window.setTimeout(() => scrollToBottom(), 100);
     });
     return () => cancelAnimationFrame(raf);
-  }, [hasItems, scrollToBottom]);
+  }, [hasItems, sessionId, scrollToBottom]);
+
+  // 页面重新可见（手机切出再切回）：原本贴底则回底——防止系统滚动恢复/SSE 重连重排后停在旧位置
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible" && followRef.current) scrollToBottom();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [scrollToBottom]);
 
   return (
     <div className="relative min-h-0 flex-1">
