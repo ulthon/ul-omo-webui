@@ -1,6 +1,6 @@
 # ul-omo-webui
 
-A web workbench for the senpi/omo agent engine. Self-hosted, single user, feature set benchmarked against the opencode v1 TUI, usable from a phone browser.
+The web UI for omo native — works out of the box on desktop and mobile browsers.
 
 [中文版](README.zh-CN.md)
 
@@ -124,9 +124,8 @@ senpi-webui/
 ## Docs
 
 - [01-功能清单.md](docs/01-功能清单.md): feature scope and boundaries (Chinese)
-- [02-技术选型.md](docs/02-技术选型.md): tech stack and rationale (Chinese)
 - [03-架构设计.md](docs/03-架构设计.md): overall architecture and engine adapter (Chinese)
-- [09-自启动与更新立项.md](docs/09-自启动与更新立项.md): autostart services and update mechanism (Chinese)
+- Built-in updater: check for new versions and self-update from Settings (npm global reinstall + self-healing restart)
 
 ## Screenshots
 
