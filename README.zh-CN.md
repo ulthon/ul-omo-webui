@@ -22,56 +22,28 @@ omo native 的网页版——电脑、手机浏览器开箱即用。
 
 ## 快速上手
 
-前置条件：
+前置条件：Node.js >= 24（服务器使用 node:sqlite），npm 源可用。
 
-- Node.js >= 24（服务器使用 node:sqlite，package.json engines 强制 >=24）
-- omo/senpi 引擎可用（`@code-yeongyu/senpi` 等引擎包为 external 依赖，运行时从 node_modules 解析）
-
-安装与构建（仓库为 npm workspace，根目录执行）：
+安装与启动（全局包，装完即用）：
 
 ```bash
-npm install
-npm run build   # 构建 web 前端并打包 server/dist/index.js（esbuild 单文件 bundle，静态资产内嵌）
-```
-
-启动服务器：
-
-```bash
-node server/dist/index.js
-# 或开发模式（只构建 server，跳过前端）：
-cd server && npm run dev
+npm install -g @ulthon/ul-omo-webui
+ul-omo-webui
 ```
 
 默认监听 `0.0.0.0:7788`，浏览器打开 <http://localhost:7788>。首次启动若未设置 `UL_OMO_WEBUI_PASSWORD`，服务器会生成随机密码打印到控制台并写入数据目录的 `password` 文件，用它登录即可。
 
-### 生产部署（systemd）
-
-推荐直接用内置 CLI 生成服务（快照当前环境变量进服务定义，改环境后需重新 enable）：
+常驻运行（守护进程，systemd 托管、开机自启、崩溃自动拉起）：
 
 ```bash
-ul-omo-webui startup enable [--system]
+sudo ul-omo-webui startup enable --system     # 系统级服务（推荐服务器部署）
+ul-omo-webui startup status                   # 查看服务状态
+ul-omo-webui startup disable --system         # 停用并移除服务
 ```
 
-也可手写单元，形如（对应 `server/src/startup.ts` 生成的格式）：
+用户级服务（`ul-omo-webui startup enable`，不加 `sudo`）适合个人机器，需 `loginctl enable-linger` 保持登出后常驻。
 
-```ini
-[Unit]
-Description=ul-omo-webui (senpi/omo web workbench)
-After=network-online.target
-
-[Service]
-ExecStart=/usr/bin/node /usr/lib/node_modules/@ulthon/ul-omo-webui/server/dist/index.js
-Restart=on-failure
-RestartSec=3
-Environment=UL_OMO_WEBUI_PORT=7788
-Environment=UL_OMO_WEBUI_PASSWORD=你的密码
-Environment=UL_OMO_WEBUI_DATA_DIR=/var/lib/ul-omo-webui
-
-[Install]
-WantedBy=multi-user.target
-```
-
-用户级服务（`--user`）需要 `loginctl enable-linger` 才能不登录常驻；系统级服务（`--system`）无此依赖，单元文件会收紧到 600 权限。
+升级：设置页「更新」区一键检查并自更新（npm 全局重装 + 服务自愈重启）；或在终端 `npm install -g @ulthon/ul-omo-webui@latest` 后 `systemctl restart ul-omo-webui`。
 
 ## 环境变量全表
 

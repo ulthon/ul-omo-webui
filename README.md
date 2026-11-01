@@ -20,58 +20,30 @@ Key features:
 - Project management: sessions grouped by working directory, per-project agent/model preferences, engine lifecycle managed by the server (per-project spawn, restart, idle reclaim)
 - Auto session titles, cross-device input drafts, basic commands (/compact /clear /new /undo), stop button
 
-## Quick start
+## Quick Start
 
-Prerequisites:
+Prerequisites: Node.js >= 24 (the server uses node:sqlite) and a working npm registry.
 
-- Node.js >= 24 (the server uses node:sqlite; package.json engines enforces >=24)
-- The omo/senpi engine available (engine packages such as `@code-yeongyu/senpi` stay external and resolve from node_modules at runtime)
-
-Install and build (npm workspace, run at the repo root):
+Install and run (global package, ready to use):
 
 ```bash
-npm install
-npm run build   # builds the web frontend and bundles server/dist/index.js (esbuild single file, static assets embedded)
+npm install -g @ulthon/ul-omo-webui
+ul-omo-webui
 ```
 
-Start the server:
+The server listens on `0.0.0.0:7788` by default; open <http://localhost:7788> in a browser. On first start, if `UL_OMO_WEBUI_PASSWORD` is not set, a random password is generated, printed to the console and written to the `password` file in the data directory — use it to sign in.
+
+Run as a daemon (systemd-managed, auto-start on boot, auto-restart on crash):
 
 ```bash
-node server/dist/index.js
-# or dev mode (server only, skips the frontend build):
-cd server && npm run dev
+sudo ul-omo-webui startup enable --system     # system-level service (recommended for servers)
+ul-omo-webui startup status                   # check service status
+ul-omo-webui startup disable --system         # stop and remove the service
 ```
 
-The default listen address is `0.0.0.0:7788`, open <http://localhost:7788>. If `UL_OMO_WEBUI_PASSWORD` is unset on first start, the server generates a random password, prints it to the console and writes it to the `password` file in the data directory.
+A user-level service (`ul-omo-webui startup enable`, without `sudo`) suits personal machines; run `loginctl enable-linger` so it survives logout.
 
-### Production deployment (systemd)
-
-The built-in CLI generates the service for you (it snapshots the current environment into the unit; changing envs requires re-enabling):
-
-```bash
-ul-omo-webui startup enable [--system]
-```
-
-A hand-written unit looks like this (matching what `server/src/startup.ts` generates):
-
-```ini
-[Unit]
-Description=ul-omo-webui (senpi/omo web workbench)
-After=network-online.target
-
-[Service]
-ExecStart=/usr/bin/node /usr/lib/node_modules/@ulthon/ul-omo-webui/server/dist/index.js
-Restart=on-failure
-RestartSec=3
-Environment=UL_OMO_WEBUI_PORT=7788
-Environment=UL_OMO_WEBUI_PASSWORD=your-password
-Environment=UL_OMO_WEBUI_DATA_DIR=/var/lib/ul-omo-webui
-
-[Install]
-WantedBy=multi-user.target
-```
-
-A user-level unit (`--user`) needs `loginctl enable-linger` to survive logout; a system-level unit (`--system`) has no such dependency and the unit file is tightened to mode 600.
+Upgrading: check and self-update in one click from the Settings page (npm global reinstall + self-healing restart); or from a terminal, `npm install -g @ulthon/ul-omo-webui@latest` then `systemctl restart ul-omo-webui`.
 
 ## Environment variables
 
