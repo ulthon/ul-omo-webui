@@ -37,6 +37,9 @@ export const composer = {
   historyEscHint: "Esc to exit",
   pendingImageAlt: "Pending image",
   imageRemove: "Remove image",
+  // Image chip send-mode badge (task 20): destination visible at paste time
+  imageChipInline: "Sent inline; visible to vision models",
+  imageChipAttach: "Sent as an attachment reference",
   attachmentRemove: "Remove attachment",
   queueFollowUpAria: "Queue mode: follow up",
   queueInsertAria: "Queue mode: insert",

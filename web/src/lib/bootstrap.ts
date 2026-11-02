@@ -3,7 +3,7 @@
 import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
-import { THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parsePasteImageMode, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, parseLocale, useLocaleStore, t } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -136,6 +136,8 @@ export async function bootstrap(): Promise<void> {
     ui.setTagDisplayMode(parseTagDisplayMode(settings[TAG_DISPLAY_MODE_KV]));
     // 用法提示开关（docs08 2026-10-22 批次任务 25）：键缺失/非 "false" 一律开启（缺省开）
     ui.setTipsEnabled(parseTipsEnabled(settings[TIPS_ENABLED_KV]));
+    // 粘贴图片发送方式（任务 20）：键缺失/非法值回退 auto（现状行为）
+    ui.setPasteImageMode(parsePasteImageMode(settings[PASTE_IMAGE_MODE_KV]));
     // 界面语言（任务2）：kv 为准——键存在且合法才 setLocale（同步 document.lang 并回写
     // localStorage 镜像）；键缺失/非法值不动当前语言（保留 localStorage/navigator 先行值）
     const kvLocale = parseLocale(settings[LANGUAGE_KV]);

@@ -63,6 +63,7 @@ export const login = {
       notesNoProject: "请先添加项目",
       notesEmpty: "暂无笔记",
       notesCount: "共 {n} 条",
+      notesEditHint: "点击笔记可直接编辑",
       statsNoSession: "未选择会话",
       statsUnavailable: "统计暂不可用",
       statsEmpty: "暂无统计数据",
@@ -172,6 +173,14 @@ export const login = {
     tagDisplayGrid: "色格",
     tagDisplayNote: "色格模式下会话行以小色方格显示标签配色；含强制文字标签的行回退文字徽标。筛选、打标签与管理弹层永远显示文字加色点。",
     tagDisplaySaveFailed: "保存标签设置失败",
+    // 输入分区（任务 20：粘贴图片发送方式三档）
+    pasteImageHeading: "输入",
+    pasteImageMode: "粘贴图片发送方式",
+    pasteImageAuto: "自动分流",
+    pasteImageAttach: "总是附件",
+    pasteImageInline: "总是内联",
+    pasteImageNote: "控制粘贴截图时的发送方式：自动分流与总是内联将图片随消息内联发送（视觉模型可见）；总是附件将图片上传后以附件引用路径发送。粘贴后的预览图上会标注实际去向。",
+    pasteImageSaveFailed: "保存粘贴图片设置失败",
     // 语言分区（标签用各语言自我称谓，两种语言档下同值）
     langSaveFailed: "保存语言设置失败",
     languageHeading: "语言",

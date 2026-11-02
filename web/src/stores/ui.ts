@@ -28,6 +28,18 @@ export const THINKING_EXPANDED_KV = "chat.thinkingDefaultExpanded";
  * （文字徽标，历史形态）；行级标签 display 覆盖之上才是全局档（rowTagDisplayMode）。 */
 export const TAG_DISPLAY_MODE_KV = "tags.displayMode";
 
+/** 粘贴图片发送方式（任务 20）：meta_kv 键，"auto"|"attach"|"inline" 字符串存储，缺省 auto。
+ * auto = 现状行为（图片始终走内联 images 链路；引擎侧无模型能力分流面）；
+ * attach = 图片粘贴改走二进制附件 chip 通道；inline = 强制内联。 */
+export const PASTE_IMAGE_MODE_KV = "composer.pasteImageMode";
+
+export type PasteImageMode = "auto" | "attach" | "inline";
+
+/** 仅精确 "attach"/"inline" 视为对应档；键缺失/其他任何值回退 auto（缺省现状） */
+export function parsePasteImageMode(raw: string | null | undefined): PasteImageMode {
+  return raw === "attach" || raw === "inline" ? raw : "auto";
+}
+
 /** 仅 "grid" 视为色格；键缺失/其他任何值回退 text（缺省文字，与历史行为一致） */
 export function parseTagDisplayMode(raw: string | null | undefined): TagDisplayMode {
   return raw === "grid" ? "grid" : "text";
@@ -96,6 +108,9 @@ interface UiState {
   /** 用法提示显示开关（docs08 2026-10-22 批次任务 25）：meta_kv tips.enabled 持久
    * （缺省开）；空态提示卡与设置「提示」分区共同消费。 */
   tipsEnabled: boolean;
+  /** 粘贴图片发送方式：meta_kv composer.pasteImageMode 持久（缺省 auto=现状）；
+   * composer onPaste 路由与图片 chip 徽标共同消费。 */
+  pasteImageMode: PasteImageMode;
   toasts: Toast[];
 
   setConnection(status: ConnectionStatus): void;
@@ -122,6 +137,7 @@ interface UiState {
   setThinkingDefaultExpanded(expanded: boolean): void;
   setTagDisplayMode(mode: TagDisplayMode): void;
   setTipsEnabled(enabled: boolean): void;
+  setPasteImageMode(mode: PasteImageMode): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
 }
@@ -162,6 +178,7 @@ export const useUiStore = create<UiState>()((set) => ({
   thinkingDefaultExpanded: false,
   tagDisplayMode: "text",
   tipsEnabled: true,
+  pasteImageMode: "auto",
   toasts: [],
 
   setConnection: (status) => set({ connection: status }),
@@ -184,6 +201,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setThinkingDefaultExpanded: (thinkingDefaultExpanded) => set({ thinkingDefaultExpanded }),
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
+  setPasteImageMode: (pasteImageMode) => set({ pasteImageMode }),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

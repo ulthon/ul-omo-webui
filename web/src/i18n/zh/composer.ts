@@ -39,6 +39,9 @@ export const composer = {
   historyEscHint: "Esc 退出",
   pendingImageAlt: "待发送图片",
   imageRemove: "移除图片",
+  // 图片 chip 发送方式徽标（任务 20）：粘贴即见去向
+  imageChipInline: "将内联发送，视觉模型可见",
+  imageChipAttach: "将作为附件引用发送",
   attachmentRemove: "移除附件",
   queueFollowUpAria: "排队模式：跟答",
   queueInsertAria: "排队模式：插入",

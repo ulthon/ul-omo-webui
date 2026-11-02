@@ -135,6 +135,8 @@ export function Composer({
   onAborted: () => void;
 }) {
   const showToast = useUiStore((s) => s.showToast);
+  // 粘贴图片发送方式档（任务 20）：bootstrap 读 GET /api/settings 填充，粘贴时取当前值路由
+  const pasteImageMode = useUiStore((s) => s.pasteImageMode);
   const project = useUiStore((s) => s.currentProject);
   // 中断逃逸口（docs08-r6 任务 6 ①）：runState running/waiting 与未决提问并入中断钮
   // 可见性（保守并集，宁多勿少）——SSE 信号缺失/僵尸复位后 runState 停 waiting、或仅
@@ -769,7 +771,13 @@ export function Composer({
         e.preventDefault();
         const images = files.filter((f) => f.type.startsWith("image/"));
         const others = files.filter((f) => !f.type.startsWith("image/"));
-        if (images.length > 0) void addImageFiles(images);
+        // 粘贴图片发送方式（任务 20）：系统配置档路由——auto/inline 走内联 images 链路
+        // （auto = 现状，引擎侧无模型能力分流面）；attach 改走二进制附件 chip 通道
+        // （同非图片文件链路，POST 成功后作为附件引用路径随消息发送）
+        if (images.length > 0) {
+          if (pasteImageMode === "attach") addFileFiles(images);
+          else void addImageFiles(images);
+        }
         if (others.length > 0) void addFileFiles(others);
         return;
       }
@@ -793,7 +801,7 @@ export function Composer({
         void uploadPasteAttachment(id, text);
       }
     },
-    [addImageFiles, addFileFiles, setAttachmentsBoth, uploadPasteAttachment],
+    [addImageFiles, addFileFiles, setAttachmentsBoth, uploadPasteAttachment, pasteImageMode],
   );
 
   // ---------- 大段粘贴零点击三态（docs08-r7 任务 3） ----------
@@ -1038,6 +1046,14 @@ export function Composer({
             >
               <X className="size-4" />
             </button>
+            {/* 发送方式徽标（任务 20）：粘贴即见去向。图片 chip 只在内联链路出现
+             * （attach 档已改走附件 chip），auto 档按实际判定显示内联说明 */}
+            <span
+              data-testid="image-chip-mode"
+              className="absolute inset-x-0 bottom-0 rounded-b-lg bg-background/80 px-1 text-[10px] leading-4 text-muted-foreground"
+            >
+              {pasteImageMode === "attach" ? t("composer.imageChipAttach") : t("composer.imageChipInline")}
+            </span>
           </div>
         ))}
       </div>

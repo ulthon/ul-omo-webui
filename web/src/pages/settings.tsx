@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowLeft, FolderPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
@@ -548,6 +548,66 @@ export function TagDisplaySection() {
   );
 }
 
+/** 设置页"输入"分区（任务 20）：粘贴图片发送方式三档单选（自动分流/总是附件/总是内联）。
+ * 档位存 meta_kv composer.pasteImageMode（走既有 PUT /api/settings，跨设备一致）；
+ * 改档即存即生效（composer onPaste 从 ui store 读档路由，图片 chip 徽标同步）。导出供单测。 */
+const PASTE_IMAGE_OPTIONS: ReadonlyArray<{ value: PasteImageMode; labelKey: MessageKey }> = [
+  { value: "auto", labelKey: "login.topbar.pasteImageAuto" },
+  { value: "attach", labelKey: "login.topbar.pasteImageAttach" },
+  { value: "inline", labelKey: "login.topbar.pasteImageInline" },
+];
+
+export function PasteImageModeSection() {
+  const pasteImageMode = useUiStore((s) => s.pasteImageMode);
+  const [saving, setSaving] = useState(false);
+
+  const t = useT();
+  const changeMode = async (mode: PasteImageMode) => {
+    if (mode === pasteImageMode || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [PASTE_IMAGE_MODE_KV]: mode });
+      useUiStore.getState().setPasteImageMode(mode);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.pasteImageSaveFailed"), "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">{t("login.topbar.pasteImageHeading")}</p>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.pasteImageMode")}</p>
+        <div role="radiogroup" aria-label={t("login.topbar.pasteImageMode")} data-testid="paste-image-mode-group" className="space-y-1">
+          {PASTE_IMAGE_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7"
+              data-testid={`paste-image-mode-option-${opt.value}`}
+            >
+              <input
+                type="radio"
+                name="paste-image-mode"
+                value={opt.value}
+                checked={pasteImageMode === opt.value}
+                disabled={saving}
+                onChange={() => void changeMode(opt.value)}
+                className="size-4 accent-primary"
+              />
+              {t(opt.labelKey)}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.pasteImageNote")}</p>
+      </div>
+    </div>
+  );
+}
+
 /** 设置页"对话"分区（docs08-r5 任务 13）：思考块默认展开开关。
  * 布尔存 meta_kv chat.thinkingDefaultExpanded（"true"/"false" 字符串，走既有
  * PUT /api/settings，跨设备一致）；改档即存即生效（ThinkingBlock 挂载时读 ui store
@@ -764,6 +824,7 @@ export function SettingsPage() {
           <ExternalLinksSection />
           <SidebarSortSection />
           <TagDisplaySection />
+          <PasteImageModeSection />
           <TrafficSection />
           <AuthSection />
           <ExtensionsSection />

@@ -1,13 +1,13 @@
 // 右栏「总览」页签（r9 w2-t8）：聚合计划 / 任务 / 笔记 / 统计 / 子代理五块的一屏速览。
-// 只读复用各页签既有数据源，不复制数据逻辑：计划走 GET /api/sessions/:id/plan-progress
+// 计划/任务/统计/子代理只读复用各页签既有数据源，不复制数据逻辑：计划走 GET /api/sessions/:id/plan-progress
 //（r10 todo 12，会话绑定 goal 的计划勾选态，无绑定整块隐藏），任务走 todo-panel 导出的
 // extractLatestTodoPhases（messages store 反向扫描），子代理走 subagent-data 的
 // collectSubagentCalls（entries + toolRuns 双路合并），统计走 stat-panel 同款
-// GET /api/usage 快照（status-bar-data 容错解析），笔记走 notes-api 列表接口。
-// 不修改 todo-panel/notes-view/stat-panel/subagent-panel 本体（零改动复用），
-// 不新建后端接口。四块各自限高（max-h-64）内部滚动、独立空态文案（zh/en 词条
-// 在 login.rightRail.overview），块间 border-b 分隔。
-import { useEffect, useMemo, useState } from "react";
+// GET /api/usage 快照（status-bar-data 容错解析），笔记走 notes-api。
+// 不新建后端接口。笔记块（r11 直接编辑改造）复用笔记 tab 同款 NoteInlineEditor：
+// 条目点击就地展开编辑器，收起/点外部自动保存；其余四块各自限高（max-h-64）内部滚动、
+// 独立空态文案（zh/en 词条在 login.rightRail.overview），块间 border-b 分隔。
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useUiStore } from "@/stores/ui";
@@ -16,6 +16,8 @@ import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
 import { collectSubagentCalls, summaryOfCall } from "@/components/chat/subagent-data";
 import { toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { notesApi, type NoteListItem } from "@/components/notes/notes-api";
+import { NoteInlineEditor } from "@/components/notes/note-inline-editor";
+import { deriveDisplayTitle } from "@/components/notes/notes-logic";
 import { OverviewPlan } from "@/components/layout/overview-plan";
 
 const OVERVIEW_SECTION_CLASS = "border-b px-3 py-2.5 last:border-b-0";
@@ -68,12 +70,18 @@ function OverviewTasks({ sessionId }: { sessionId: string | null }) {
   );
 }
 
-// —— 笔记块：notes-api 列表摘要（计数 + 前 5 条标题），项目维度与会话无关 ——
+// —— 笔记块：notes-api 列表 + 条目点击就地直接编辑（r11 复用笔记 tab 同款
+// NoteInlineEditor，含 composition 安全保存），项目维度与会话无关 ——
 function OverviewNotes() {
   const t = useT();
   const project = useUiStore((s) => s.currentProject);
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // 就地展开的条目 id；保存/取消后收起并重取列表。dirtyRef 仅满足编辑器契约
+  //（总览块不参与右栏切页签确认，切走时编辑器卸载、点外部收起已先触发保存）
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [reloadSeq, setReloadSeq] = useState(0);
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     if (!project) return;
@@ -81,7 +89,10 @@ function OverviewNotes() {
     notesApi
       .list(project)
       .then((r) => {
-        if (!stale) setNotes(r.notes);
+        if (!stale) {
+          setNotes(r.notes);
+          setFailed(false);
+        }
       })
       .catch(() => {
         if (!stale) setFailed(true);
@@ -89,7 +100,9 @@ function OverviewNotes() {
     return () => {
       stale = true;
     };
-  }, [project]);
+  }, [project, reloadSeq]);
+
+  const onChanged = useCallback(() => setReloadSeq((n) => n + 1), []);
 
   return (
     <section data-testid="overview-notes" className={OVERVIEW_SECTION_CLASS}>
@@ -109,13 +122,51 @@ function OverviewNotes() {
           <OverviewEmpty text={t("login.rightRail.overview.notesEmpty")} />
         ) : (
           <div className="space-y-0.5">
-            <p className="text-xs text-muted-foreground">{t("login.rightRail.overview.notesCount", { n: notes.length })}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("login.rightRail.overview.notesCount", { n: notes.length })}
+              <span className="mx-1">·</span>
+              {t("login.rightRail.overview.notesEditHint")}
+            </p>
             <ul>
-              {notes.slice(0, 5).map((note) => (
-                <li key={note.id} className="truncate text-sm leading-relaxed text-foreground">
-                  {note.title}
-                </li>
-              ))}
+              {notes.slice(0, 5).map((note) =>
+                editingId === note.id ? (
+                  <li key={note.id} className="py-1">
+                    <NoteInlineEditor
+                      noteId={note.id}
+                      project={project}
+                      dirtyRef={dirtyRef}
+                      onSaved={() => {
+                        setEditingId(null);
+                        onChanged();
+                      }}
+                      onCancel={() => setEditingId(null)}
+                      onDeleted={() => {
+                        setEditingId(null);
+                        onChanged();
+                      }}
+                    />
+                  </li>
+                ) : (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(note.id)}
+                      data-testid="overview-note-item"
+                      data-note-id={note.id}
+                      title={t("login.rightRail.overview.notesEditHint")}
+                      className="block w-full min-w-0 py-0.5 text-left transition-colors hover:bg-muted/40"
+                    >
+                      <span className="block truncate text-sm leading-relaxed text-foreground">
+                        {deriveDisplayTitle(note.title, note.preview, t("notes.view.untitled"))}
+                      </span>
+                      {/* 标题非空才展示首行摘要，避免空标题兜底后两行重复 */}
+                      {note.title.trim() !== "" && note.preview !== "" && (
+                        <span className="block truncate text-xs leading-relaxed text-muted-foreground">{note.preview}</span>
+                      )}
+                    </button>
+                  </li>
+                ),
+              )}
             </ul>
           </div>
         )}

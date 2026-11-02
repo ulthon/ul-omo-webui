@@ -61,6 +61,7 @@ export const login = {
       notesNoProject: "Add a project first",
       notesEmpty: "No notes yet",
       notesCount: "{n} in total",
+      notesEditHint: "Click a note to edit in place",
       statsNoSession: "No session selected",
       statsUnavailable: "Stats unavailable",
       statsEmpty: "No stats yet",
@@ -170,6 +171,14 @@ export const login = {
     tagDisplayGrid: "Color grid",
     tagDisplayNote: "In color-grid mode session rows show tags as a small color grid; rows carrying a force-text tag fall back to text badges. Filter, tag picker and manage dialogs always show text with a color dot.",
     tagDisplaySaveFailed: "Failed to save tag settings",
+    // Composer section (task 20: paste image send mode, three options)
+    pasteImageHeading: "Composer",
+    pasteImageMode: "Paste image send mode",
+    pasteImageAuto: "Auto (default)",
+    pasteImageAttach: "Always attach",
+    pasteImageInline: "Always inline",
+    pasteImageNote: "Controls how pasted screenshots are sent: Auto and Always inline send images inline with the message (visible to vision models); Always attach uploads the image and sends it as an attachment reference path. The preview chip shows the actual destination.",
+    pasteImageSaveFailed: "Failed to save paste image settings",
     // 语言分区（标签用各语言自我称谓，两种语言档下同值）
     langSaveFailed: "Failed to save language setting",
     languageHeading: "Language",
