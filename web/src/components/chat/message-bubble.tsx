@@ -10,6 +10,7 @@ import { PartsView, ToolResultLine, StreamingParts } from "./parts";
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
+import type { RestoreDigestNotice } from "./message-items";
 import { isLongUserText } from "./user-text-collapse";
 import { originAgentName, originDurationLabel } from "./message-origin";
 import type { LoopGuardKind, ResolvedModelName } from "./message-items";
@@ -287,6 +288,23 @@ export const CustomMessageBubble = memo(function CustomMessageBubble({
       className="my-0.5 inline-flex max-w-full items-center rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
     >
       {t("chat.customMessage.unsupported", { customType })}
+    </div>
+  );
+});
+
+/** CLI 恢复摘要静音行（2026-11-02）：内容为引擎一句状态句（英文原文），标签+截断
+ *  正文呈现，title 悬停全文；与「未支持内容」兜底卡区分——这是已知结构的信息条目，
+ *  不是未知类型。数据已由 buildMessageItems 同类收敛（只留最末一条）。 */
+export const RestoreDigestLine = memo(function RestoreDigestLine({ digest }: { digest: RestoreDigestNotice }) {
+  const t = useT();
+  return (
+    <div
+      data-testid="restore-digest-line"
+      title={digest.content}
+      className="my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
+    >
+      <span className="shrink-0 opacity-70">{t("chat.restoreDigest.label")}</span>
+      <span className="truncate">{digest.content}</span>
     </div>
   );
 });

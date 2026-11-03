@@ -28,6 +28,17 @@ export const THINKING_EXPANDED_KV = "chat.thinkingDefaultExpanded";
  * （文字徽标，历史形态）；行级标签 display 覆盖之上才是全局档（rowTagDisplayMode）。 */
 export const TAG_DISPLAY_MODE_KV = "tags.displayMode";
 
+/** 站点名覆盖（2026-11-03 前端小修 A）：meta_kv 键，非空字符串覆盖服务端 env 注入默认
+ * （UL_OMO_WEBUI_SITE_NAME 降为部署默认）；留空/缺省回退 env 注入值。 */
+export const SITE_NAME_KV = "ui.siteName";
+
+/** 站点名消费取值：kv 优先（trim 后非空）> env 注入默认；两者皆无 → null（不渲染） */
+export function resolveSiteName(kv: string | null | undefined, injected: string | null): string | null {
+  const fromKv = kv?.trim();
+  if (fromKv) return fromKv;
+  return injected;
+}
+
 /** 粘贴图片发送方式（任务 20）：meta_kv 键，"auto"|"attach"|"inline" 字符串存储，缺省 auto。
  * auto = 现状行为（图片始终走内联 images 链路；引擎侧无模型能力分流面）；
  * attach = 图片粘贴改走二进制附件 chip 通道；inline = 强制内联。 */
@@ -111,6 +122,9 @@ interface UiState {
   /** 粘贴图片发送方式：meta_kv composer.pasteImageMode 持久（缺省 auto=现状）；
    * composer onPaste 路由与图片 chip 徽标共同消费。 */
   pasteImageMode: PasteImageMode;
+  /** 站点名覆盖（kv ui.siteName，缺省 null=回退 env 注入默认）；
+   * 顶栏小字/标签页标题与设置页共同消费（resolveSiteName 取值）。 */
+  siteName: string | null;
   toasts: Toast[];
 
   setConnection(status: ConnectionStatus): void;
@@ -138,6 +152,7 @@ interface UiState {
   setTagDisplayMode(mode: TagDisplayMode): void;
   setTipsEnabled(enabled: boolean): void;
   setPasteImageMode(mode: PasteImageMode): void;
+  setSiteName(name: string | null): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
 }
@@ -179,6 +194,7 @@ export const useUiStore = create<UiState>()((set) => ({
   tagDisplayMode: "text",
   tipsEnabled: true,
   pasteImageMode: "auto",
+  siteName: null,
   toasts: [],
 
   setConnection: (status) => set({ connection: status }),
@@ -202,6 +218,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
   setPasteImageMode: (pasteImageMode) => set({ pasteImageMode }),
+  setSiteName: (siteName) => set({ siteName }),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

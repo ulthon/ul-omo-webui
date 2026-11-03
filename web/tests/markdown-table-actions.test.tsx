@@ -121,25 +121,25 @@ describe("markdown-table 纯助手", () => {
   });
 });
 
-describe("markdown 表格行操作结构", () => {
-  test("类切换：按钮容器移动端常显（opacity-100）、桌面悬停显（lg:group-hover/row），行挂命名组 group/row", () => {
+describe("markdown 表格浮钮组结构（小修 C：表级 hover 收敛）", () => {
+  test("无常驻操作列；包相对定位容器（group/table），浮钮组 hover/focus 显现类齐备", () => {
     const html = renderToStaticMarkup(createElement(Markdown, { text: TABLE_MD }));
-    expect(html).toContain("group/row");
-    expect(html).toContain("lg:opacity-0");
-    expect(html).toContain("lg:group-hover/row:opacity-100");
-    expect(html).toContain("opacity-100");
+    expect(html).not.toContain("table-row-actions-cell");
+    expect(html).toContain("data-md-table-wrap");
+    expect(html).toContain("group/table");
+    expect(html).toContain("group-hover/table:opacity-100");
+    expect(html).toContain("focus-within:opacity-100");
   });
 
-  test("每行（含表头行）都有操作单元格，双钮 aria-label 与 title 齐备（复制表格/下载 CSV）", () => {
+  test("整表一组浮钮（非每行）：复制表格/下载 CSV aria-label 与 title 齐备各一次", () => {
     const html = renderToStaticMarkup(createElement(Markdown, { text: TABLE_MD }));
-    expect((html.match(/table-row-actions-cell/g) ?? []).length).toBe(3);
-    expect((html.match(/aria-label="复制表格"/g) ?? []).length).toBe(3);
-    expect((html.match(/aria-label="下载 CSV"/g) ?? []).length).toBe(3);
+    expect((html.match(/aria-label="复制表格"/g) ?? []).length).toBe(1);
+    expect((html.match(/aria-label="下载 CSV"/g) ?? []).length).toBe(1);
     expect(html).toContain('title="复制表格"');
     expect(html).toContain('title="下载 CSV"');
   });
 
-  test("表头-only 表格（空数据行）渲染不崩且仍有操作钮", () => {
+  test("表头-only 表格（空数据行）渲染不崩且仍有浮钮组", () => {
     const html = renderToStaticMarkup(createElement(Markdown, { text: "| 唯一 |\n| --- |" }));
     expect(html).toContain("<table");
     expect(html).toContain('aria-label="下载 CSV"');

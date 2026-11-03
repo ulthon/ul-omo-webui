@@ -55,6 +55,10 @@ export const chat = {
   customMessage: {
     unsupported: "未支持内容：{customType}",
   },
+  // message-bubble.tsx CLI 恢复摘要静音行（2026-11-02）
+  restoreDigest: {
+    label: "CLI 恢复摘要",
+  },
   // message-bubble.tsx loop-guard 三型具名渲染（docs08 2026-10-22 批次任务 2）：
   // 折叠行具名标签（×N 角标由 count>1 条件拼在标签后，不入词条）；
   // 空内容条目展开时的降级占位
@@ -245,6 +249,11 @@ export const chat = {
     menuLabel: "消息操作",
     copy: "复制原文",
     retry: "重试（从此消息重新生成）",
+  },
+  // markdown.tsx 代码块复制钮（小修 B）
+  codeActions: {
+    copyCode: "复制代码",
+    copied: "已复制代码",
   },
   // markdown.tsx 表格行操作（todo 8）
   tableActions: {

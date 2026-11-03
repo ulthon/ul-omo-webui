@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowLeft, FolderPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { PASTE_IMAGE_MODE_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
@@ -489,6 +489,59 @@ export function SidebarSortSection() {
   );
 }
 
+/** 设置页"站点名"分区（小修 A）：覆盖服务端 env 注入的站点名（UL_OMO_WEBUI_SITE_NAME
+ * 降为部署默认）。存 meta_kv ui.siteName（走既有 PUT /api/settings，跨设备一致）；
+ * 留空保存即清除覆盖（消费端 resolveSiteName 退回 env 注入默认）。改后顶栏小字/标签页
+ * 标题即时生效（顶栏响应式订阅 store），登录页副标题因 kv 登录前不可达仍用 env 值。 */
+function SiteNameSection() {
+  const siteName = useUiStore((s) => s.siteName);
+  const [name, setName] = useState(siteName ?? "");
+  const [saving, setSaving] = useState(false);
+  const t = useT();
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (saving) return;
+    const next = name.trim();
+    if (next === (siteName ?? "")) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [SITE_NAME_KV]: next });
+      useUiStore.getState().setSiteName(next || null);
+      useUiStore.getState().showToast(t("login.settingsPage.saved"), "info");
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.saveFailed"), "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <form onSubmit={submit} className="space-y-1.5">
+        <label htmlFor="settings-site-name" className="text-sm font-medium">
+          {t("login.topbar.siteNameHeading")}
+        </label>
+        <Input
+          id="settings-site-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("login.topbar.siteNamePlaceholder")}
+          data-testid="site-name-input"
+        />
+        <p className="text-xs text-muted-foreground">{t("login.topbar.siteNameNote")}</p>
+        <div className="flex justify-end">
+          <Button type="submit" disabled={saving} data-testid="site-name-save">
+            {saving ? t("login.topbar.saving") : t("common.save")}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /** 设置页"标签"分区（docs08-r7 任务 20）：标签展示模式二档单选（文字/色格）。
  * 档位存 meta_kv tags.displayMode（走既有 PUT /api/settings，跨设备一致，不落
  * localStorage）；改档即存即生效（TagBadges 从 ui store 读档渲染，行级标签 display
@@ -822,6 +875,7 @@ export function SettingsPage() {
             {t("login.settingsPage.globalGroup")}
           </h2>
           <ExternalLinksSection />
+          <SiteNameSection />
           <SidebarSortSection />
           <TagDisplaySection />
           <PasteImageModeSection />

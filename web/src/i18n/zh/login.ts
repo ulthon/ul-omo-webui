@@ -181,6 +181,10 @@ export const login = {
     pasteImageInline: "总是内联",
     pasteImageNote: "控制粘贴截图时的发送方式：自动分流与总是内联将图片随消息内联发送（视觉模型可见）；总是附件将图片上传后以附件引用路径发送。粘贴后的预览图上会标注实际去向。",
     pasteImageSaveFailed: "保存粘贴图片设置失败",
+    // 站点名分区（小修 A：kv 覆盖 env 部署默认，留空回退）
+    siteNameHeading: "站点名",
+    siteNamePlaceholder: "留空则使用部署默认（环境变量注入值）",
+    siteNameNote: "覆盖浏览器标签页标题、顶栏小字与登录页副标题的站点名；留空保存即回退部署默认值。保存后顶栏与标签页标题即时生效。",
     // 语言分区（标签用各语言自我称谓，两种语言档下同值）
     langSaveFailed: "保存语言设置失败",
     languageHeading: "语言",

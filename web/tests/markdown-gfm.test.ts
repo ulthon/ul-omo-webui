@@ -1,40 +1,39 @@
 // GFM 表格渲染回归（2026-10-15：用户实测模型回复的 markdown 表格未渲染成表格，
 // 根因 = W5 重写渲染管线时未接 remark-gfm，remarkParse 默认 CommonMark 不含表格）。
-// 结构断言：renderMarkdownCached 输出的 React 元素树应含 table/thead/th/td。
+// 结构断言：renderMarkdownCached 输出渲染为静态 HTML 后应含 table/thead/th/td 宿主标签
+// （2026-11-03 小修 C 起 table 由函数组件覆盖承载相对定位容器，元素树静态遍历不再
+ // 直见宿主标签，改为对渲染产物断言，回归意图不变：表格必须真实渲染为 table）。
 import { describe, expect, test } from "vitest";
-import { isValidElement, type ReactNode } from "react";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { renderMarkdownCached } from "@/components/chat/markdown";
 
-function collectTags(node: ReactNode, out: Set<string>): void {
-  if (Array.isArray(node)) {
-    for (const child of node) collectTags(child, out);
-    return;
-  }
-  if (!isValidElement(node)) return;
-  if (typeof node.type === "string") out.add(node.type);
-  const children = (node.props as { children?: ReactNode }).children;
-  if (children !== undefined) collectTags(children, out);
+function renderedTags(html: string, out: Set<string>): void {
+  for (const match of html.matchAll(/<(\w+)[\s>]/g)) out.add(match[1]);
 }
 
 describe("markdown GFM 表格", () => {
   test("GFM 表格渲染为 table 元素（th/td 齐全）", () => {
     const text = "| 名称 | 数值 |\n| --- | --- |\n| 甲 | 1 |\n| 乙 | 2 |";
+    const html = renderToStaticMarkup(createElement("div", null, renderMarkdownCached(text)));
     const tags = new Set<string>();
-    collectTags(renderMarkdownCached(text), tags);
+    renderedTags(html, tags);
     expect(tags.has("table")).toBe(true);
     expect(tags.has("th")).toBe(true);
     expect(tags.has("td")).toBe(true);
   });
 
   test("GFM 删除线渲染为 del 元素", () => {
+    const html = renderToStaticMarkup(createElement("div", null, renderMarkdownCached("~~已废弃~~ 后续方案")));
     const tags = new Set<string>();
-    collectTags(renderMarkdownCached("~~已废弃~~ 后续方案"), tags);
+    renderedTags(html, tags);
     expect(tags.has("del")).toBe(true);
   });
 
   test("无 GFM 语法干扰既有 CommonMark 渲染（标题/段落照常）", () => {
+    const html = renderToStaticMarkup(createElement("div", null, renderMarkdownCached("## 标题\n\n段落文本")));
     const tags = new Set<string>();
-    collectTags(renderMarkdownCached("## 标题\n\n段落文本"), tags);
+    renderedTags(html, tags);
     expect(tags.has("h2")).toBe(true);
     expect(tags.has("p")).toBe(true);
   });

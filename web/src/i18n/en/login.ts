@@ -179,6 +179,10 @@ export const login = {
     pasteImageInline: "Always inline",
     pasteImageNote: "Controls how pasted screenshots are sent: Auto and Always inline send images inline with the message (visible to vision models); Always attach uploads the image and sends it as an attachment reference path. The preview chip shows the actual destination.",
     pasteImageSaveFailed: "Failed to save paste image settings",
+    // 站点名分区（小修 A：kv 覆盖 env 部署默认，留空回退）
+    siteNameHeading: "Site name",
+    siteNamePlaceholder: "Leave empty to use the deployment default (env-injected value)",
+    siteNameNote: "Overrides the site name shown in the browser tab title, topbar subtitle, and login page. Save with an empty value to fall back to the deployment default. The topbar and tab title update immediately after saving.",
     // 语言分区（标签用各语言自我称谓，两种语言档下同值）
     langSaveFailed: "Failed to save language setting",
     languageHeading: "Language",

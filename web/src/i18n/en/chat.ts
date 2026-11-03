@@ -54,6 +54,10 @@ export const chat = {
   customMessage: {
     unsupported: "Unsupported content: {customType}",
   },
+  // message-bubble.tsx CLI restore digest muted line (2026-11-02)
+  restoreDigest: {
+    label: "CLI restore digest",
+  },
   // message-bubble.tsx loop-guard named rendering (docs08 2026-10-22 batch task 2):
   // collapsed row label (the ×N badge is appended conditionally, not part of the string);
   // fallback for entries with empty content when expanded
@@ -244,6 +248,11 @@ export const chat = {
     menuLabel: "Message actions",
     copy: "Copy original text",
     retry: "Retry (regenerate from this message)",
+  },
+  // markdown.tsx 代码块复制钮（小修 B）
+  codeActions: {
+    copyCode: "Copy code",
+    copied: "Code copied",
   },
   // markdown.tsx 表格行操作（todo 8）
   tableActions: {

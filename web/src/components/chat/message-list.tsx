@@ -14,7 +14,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
-import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, StreamingBubble } from "./message-bubble";
+import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
 import { NavRail } from "./nav-rail";
@@ -229,6 +229,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
   if (item.kind === "customMessage") return <CustomMessageBubble sessionId={sessionId} entryId={item.entryId} />;
+  if (item.kind === "restoreDigest") return <RestoreDigestLine digest={item.digest} />;
   if (item.kind === "loopGuardGroup")
     return <LoopGuardGroupBubble sessionId={sessionId} loopGuardKind={item.loopGuardKind} entryIds={item.entryIds} />;
   if (item.kind === "compactionMarker") return <CompactionMarkerBlock marker={item.marker} />;

@@ -197,6 +197,38 @@ export function resolveTimelineModels(
   return out;
 }
 
+/** CLI 恢复摘要（2026-11-02 用户反馈：另一机器长会话 CLI/UI 交替使用，恢复摘要
+ *  custom_message 条目堆积「未支持内容」卡）：引擎终端扩展每次 CLI 重启/接管会话时
+ *  写入 senpi-terminal:restore-digest（restore-digest.js 实证：content 为一句
+ *  "Terminal state after restart: ..." 状态句，display=true）。CLI 有注册渲染器当
+ *  一次性提示；web 侧同构为静音信息行，且同型只保留最末一条（旧摘要描述彼次重启
+ *  后的状态，天然过期；与 noticeCard 同口径，数据不动纯展示收敛）。 */
+export interface RestoreDigestNotice {
+  entryId: string;
+  content: string;
+}
+
+const RESTORE_DIGEST_CUSTOM_TYPE = "senpi-terminal:restore-digest";
+
+/** 例行摘要隐藏判定（2026-11-02）：句式可识别（引擎 restore-digest.js 固定前缀）
+ *  且不含 lost/orphan/still running 任一关注词时视为例行（nothing to restore 或全部
+ *  restored/muted/exited 类，无行动价值）；认不出的句式一律显示（宁多勿漏，
+ *  引擎未来改词只会遇仙 fail-open 回显）。 */
+export function isRoutineRestoreDigest(content: string): boolean {
+  if (!content.includes("Terminal state after restart")) return false;
+  return !/(lost|orphan|still running)/.test(content);
+}
+
+/** 窄化：仅精确名命中；content 非字符串回落空串（时间缺失不阻断渲染，同 parked 口径） */
+export function restoreDigestOf(entry: WireEntry & { id: string }): RestoreDigestNotice | null {
+  if (entry.type !== "custom_message" || entry.customType !== RESTORE_DIGEST_CUSTOM_TYPE) return null;
+  const content = (entry as { content?: unknown }).content;
+  return {
+    entryId: entry.id,
+    content: typeof content === "string" ? content : "",
+  };
+}
+
 /** items 数组判别联合：entry=定格条目气泡；streaming=流式气泡；
  *  memoryMarker=记忆标记块（docs08-r4 任务 13，白名单 memory 条目派生）；
  *  customMessage=display=true 的 custom_message 占位行（docs08-r6 任务 10 ③，
@@ -257,6 +289,7 @@ export type ChatListItem =
   | { key: string; kind: "compactionMarker"; marker: CompactionMarker }
   | { key: string; kind: "memoryMarkerCluster"; markers: MemoryMarker[] }
   | { key: string; kind: "noticeCard"; notice: ReflectionParkedNotice }
+  | { key: string; kind: "restoreDigest"; digest: RestoreDigestNotice }
   | { key: string; kind: "sessionEvent"; line: SessionEventLine }
   | { key: string; kind: "questionCard"; request: QuestionRequest; position: number; total: number }
   | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary }
@@ -506,6 +539,15 @@ export function buildMessageItems(
         // （非相邻同型不聚合；kind 边界重置）。
         // 非三型 customType 回落通用占位行（r6 任务 10 ③ 兜底不动）；display=false
         // 仍按既有口径一律不入列（引擎明示不展示，聚合组亦不得绕过）。
+        // 恢复摘要（2026-11-02）：先于 loop-guard/兜底占位行命中；例行摘要（无事
+        // 发生）不入列，仅 lost/orphan/后台仍在跑的关注句渲染静音信息行
+        const digest = restoreDigestOf(e);
+        if (digest !== null) {
+          if (!isRoutineRestoreDigest(digest.content)) {
+            list.push({ key: `digest-${e.id}`, kind: "restoreDigest", digest });
+          }
+          continue;
+        }
         const kind = loopGuardKindOf(e.customType);
         const last = list[list.length - 1];
         if (kind !== null) {
@@ -557,6 +599,17 @@ export function buildMessageItems(
       for (let i = list.length - 1; i >= 0; i--) {
         if (list[i].kind === "noticeCard" && i !== lastNoticeIdx) list.splice(i, 1);
       }
+    }
+  }
+  // 恢复摘要同类收敛（2026-11-02）：每条描述彼次 CLI 重启后的状态，旧的天然过期，
+  // 只保留最末一条（位置在最末条目处）——同 noticeCard 口径，数据不动。
+  let lastDigestIdx = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].kind === "restoreDigest") lastDigestIdx = i;
+  }
+  if (lastDigestIdx >= 0) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].kind === "restoreDigest" && i !== lastDigestIdx) list.splice(i, 1);
     }
   }
     if (opts.hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });

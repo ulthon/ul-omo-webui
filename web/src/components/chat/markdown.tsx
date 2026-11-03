@@ -23,14 +23,12 @@ import { unified } from "unified";
 import { VFile } from "vfile";
 import type { Element, Nodes, Parents } from "hast";
 import { Copy, Download } from "lucide-react";
-import { cn } from "cn";
 import { highlight } from "@/lib/highlight-client";
 import { copyText } from "@/lib/clipboard";
 import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import {
-  ROW_ACTIONS_CELL_CLASS,
   downloadTableCsv,
   tableDataFromDom,
   tableToCsv,
@@ -79,8 +77,16 @@ const CODE_HIGHLIGHT_MAX_CHARS = 10_000;
 
 /** 代码块：等待 worker 高亮期间先渲染纯文本（流式增长也在纯文本态，返回后整体换入） */
 function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  const t = useT();
+  const showToast = useUiStore((s) => s.showToast);
   const highlightable = lang !== "" && lang !== "text" && lang !== "plain" && code.length <= CODE_HIGHLIGHT_MAX_CHARS;
   const [html, setHtml] = useState<string | null>(null);
+
+  // 复制按钮（小修 B）：复用 messageActions 的 copyText + toast 反馈链路
+  const onCopy = async () => {
+    const ok = await copyText(code);
+    showToast(ok ? t("chat.codeActions.copied") : t("chat.messageActions.copyFailed"), ok ? undefined : "error");
+  };
 
   useEffect(() => {
     if (!highlightable) return;
@@ -101,8 +107,20 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const showHtml = highlightable && html !== null;
   return (
     <div className="my-2 overflow-hidden rounded-lg border">
-      <div className="border-b bg-muted/50 px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
-        {lang || "text"}
+      {/* 块头部：语言标签 + 复制钮（小修 B）；复制代码块原文 */}
+      <div className="flex items-center justify-between gap-2 border-b bg-muted/50 px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
+        <span>{lang || "text"}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-5 text-muted-foreground"
+          aria-label={t("chat.codeActions.copyCode")}
+          title={t("chat.codeActions.copyCode")}
+          data-testid="code-block-copy"
+          onClick={() => void onCopy()}
+        >
+          <Copy className="size-3" />
+        </Button>
       </div>
       {showHtml ? (
         // Shiki 输出为自产 HTML（代码内容已转义），安全；主题切换样式见 index.css
@@ -116,51 +134,53 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   );
 }
 
-// ---- 表格行操作（todo 8）----
-// 行悬停操作条：复制表格（TSV 到剪贴板）+ 下载 CSV（全表）。移动端常显小钮、桌面悬停显
-// （与 message-actions 同款 lg:group-hover 惯用法；命名组 group/row 隔离消息气泡外层 group
-// 的悬停）。按钮 aria-label + title 双通道。仅追加行尾操作单元格，不改表格本体渲染；
+// ---- 表格操作（todo 8 建行尾操作列；小修 C 收敛为表级 hover 浮钮组）----
+// 常驻整列已去除：表格包在 group/table 相对定位容器内，右上角浮出按钮组（复制表格
+// TSV + 下载 CSV），hover（触屏首点即 hover，可接受退化）或 focus-within 时显现。
 // 点击时经 closest 从真实 DOM 读当前表数据，无需覆写 table 或引入 context。
 
-/** 行尾操作单元格：两个常显/悬显小钮（复制表格、下载 CSV） */
-function TableRowActionsCell({ tag: Tag }: { tag: "th" | "td" }) {
+/** 表级浮钮组：右上角 hover/focus 显现（复制表格、下载 CSV） */
+function TableFloatActions() {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const tableOf = (button: HTMLElement): HTMLTableElement | null =>
+    button.closest("[data-md-table-wrap]")?.querySelector("table") ?? null;
   const onCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    const table = event.currentTarget.closest("table");
+    const table = tableOf(event.currentTarget);
     if (!table) return;
     const ok = await copyText(tableToTsv(tableDataFromDom(table)));
     showToast(ok ? t("chat.tableActions.copied") : t("chat.messageActions.copyFailed"), ok ? undefined : "error");
   };
   const onDownload = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const table = event.currentTarget.closest("table");
+    const table = tableOf(event.currentTarget);
     if (table) downloadTableCsv(tableToCsv(tableDataFromDom(table)));
   };
   return (
-    <Tag className={ROW_ACTIONS_CELL_CLASS}>
-      <div className="flex items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 lg:opacity-0 lg:group-hover/row:opacity-100">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6 text-muted-foreground"
-          aria-label={t("chat.tableActions.copyTable")}
-          title={t("chat.tableActions.copyTable")}
-          onClick={onCopy}
-        >
-          <Copy className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6 text-muted-foreground"
-          aria-label={t("chat.tableActions.downloadCsv")}
-          title={t("chat.tableActions.downloadCsv")}
-          onClick={onDownload}
-        >
-          <Download className="size-3.5" />
-        </Button>
-      </div>
-    </Tag>
+    <div
+      className="absolute right-1 top-1 z-10 flex items-center gap-0.5 rounded-md border bg-background/90 p-0.5 opacity-0 shadow-sm backdrop-blur transition-opacity focus-within:opacity-100 group-hover/table:opacity-100"
+      data-testid="table-float-actions"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6 text-muted-foreground"
+        aria-label={t("chat.tableActions.copyTable")}
+        title={t("chat.tableActions.copyTable")}
+        onClick={(e) => void onCopy(e)}
+      >
+        <Copy className="size-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6 text-muted-foreground"
+        aria-label={t("chat.tableActions.downloadCsv")}
+        title={t("chat.tableActions.downloadCsv")}
+        onClick={onDownload}
+      >
+        <Download className="size-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -179,20 +199,14 @@ const markdownComponents: ToJsxOptions["components"] = {
       {children}
     </a>
   ),
-  tr: ({ node, children, ...rest }) => {
-    if (!node) return <tr {...rest}>{children}</tr>;
-    return (
-      <tr
-        {...rest}
-        className={cn("group/row", typeof rest.className === "string" ? rest.className : undefined)}
-      >
-        {children}
-        <TableRowActionsCell
-          tag={node.children.some((c: Nodes) => c.type === "element" && c.tagName === "th") ? "th" : "td"}
-        />
-      </tr>
-    );
-  },
+  table: ({ children }) => (
+    // 小修 C：表格包相对定位容器（命名组 group/table 隔离外层悬停），右上角浮钮组；
+    // 覆盖 table 组件后 <table> 本体由这里自渲染（否则被 div 替换，DOM 读数链路断）
+    <div data-md-table-wrap className="group/table relative">
+      <table>{children}</table>
+      <TableFloatActions />
+    </div>
+  ),
 };
 
 // ---- 渲染管线（react-markdown v10 同步路径复刻）----

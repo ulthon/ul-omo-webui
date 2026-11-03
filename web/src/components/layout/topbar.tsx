@@ -13,7 +13,7 @@ import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { loadProjectModels, openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { scheduleModelPreferencePersist } from "@/lib/preferences";
-import { useUiStore } from "@/stores/ui";
+import { resolveSiteName, useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
@@ -44,9 +44,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-/** 站点名（engine-upgrade 2026-10-30 批次 todo3）：服务端注入 window.__SITE_NAME__，
- * 未设置/非字符串/空串 → null 不渲染（零新增 i18n 键，直用配置值）；登录页同型读取。 */
-function readSiteName(): string | null {
+/** 站点名（engine-upgrade 2026-10-30 批次 todo3）：服务端注入 window.__SITE_NAME__（env 部署默认），
+ * 未设置/非字符串/空串 → null；小修 A 起 kv（ui.siteName）覆盖优先，见 resolveSiteName。 */
+function readInjectedSiteName(): string | null {
   const v = (window as { __SITE_NAME__?: unknown }).__SITE_NAME__;
   return typeof v === "string" && v.length > 0 ? v : null;
 }
@@ -287,8 +287,12 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   }, [models]);
 
   const t = useT();
-  // 站点名（todo3）：标题区小字，桌面/手机档同显；身份钮纵向内边距随三行行高压缩
-  const siteName = readSiteName();
+  // 站点名（todo3 + 小修 A）：kv 覆盖 > env 注入默认，store 响应式订阅（设置页改后即时生效）；
+  // 标签页标题同源联动（服务端仅注入 env 值，kv 覆盖后由前端接管）
+  const siteName = useUiStore((s) => resolveSiteName(s.siteName, readInjectedSiteName()));
+  useEffect(() => {
+    if (siteName) document.title = siteName;
+  }, [siteName]);
   const identityPad = siteName ? "py-0.5" : "py-1";
   const noModels = modelsLoaded && models.length === 0;
   const modelLabel = noModels
