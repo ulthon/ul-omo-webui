@@ -54,16 +54,22 @@ function collectEngineCopies(dir: string, depth: number, acc: string[]): void {
   }
 }
 
+/** 版本归一化：去核心各段前导零（上游 5.1.58 声明 senpi 为 2026.11.02-1，senpi
+ *  自身版本字段为 2026.11.2-1——semver 同版、字符串不等，官配断言按归一化比较） */
+function normVer(v: string): string {
+  return v.replace(/(^|\.)0+(\d)/g, "$1$2");
+}
+
 describe("引擎官配守护（engine-upgrade 2026-10-30 todo 7）", () => {
   test("双 package.json 声明版本 === 实装树版本（omo-ai 与 @code-yeongyu/senpi）", () => {
-    expect(omoPkg.version).toBe(rootPkg.dependencies["omo-ai"]);
-    expect(omoPkg.version).toBe(serverPkg.dependencies["omo-ai"]);
-    expect(senpiPkg.version).toBe(rootPkg.dependencies["@code-yeongyu/senpi"]);
-    expect(senpiPkg.version).toBe(serverPkg.dependencies["@code-yeongyu/senpi"]);
+    expect(normVer(omoPkg.version)).toBe(normVer(rootPkg.dependencies["omo-ai"]));
+    expect(normVer(omoPkg.version)).toBe(normVer(serverPkg.dependencies["omo-ai"]));
+    expect(normVer(senpiPkg.version)).toBe(normVer(rootPkg.dependencies["@code-yeongyu/senpi"]));
+    expect(normVer(senpiPkg.version)).toBe(normVer(serverPkg.dependencies["@code-yeongyu/senpi"]));
   });
 
   test("官配对：omo-ai 依赖声明的 senpi 版本 === 顶层实装 senpi 版本", () => {
-    expect(omoPkg.dependencies["@code-yeongyu/senpi"]).toBe(senpiPkg.version);
+    expect(normVer(omoPkg.dependencies["@code-yeongyu/senpi"])).toBe(normVer(senpiPkg.version));
   });
 
   test("无陈旧嵌套副本：实装树内双包各恰好一份（2026-10-25 事故形态守卫）", () => {
