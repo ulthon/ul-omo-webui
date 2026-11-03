@@ -297,6 +297,8 @@ export class SenpiAdapter implements EngineAdapter {
   private client: SenpiRpcClient | null = null
   private active: EngineOpenSessionResult | null = null
   private starting: Promise<void> | null = null
+  /** unknown_session 兜底的 in-flight 重开去重：并发失败共享同一次 open_session（防重开风暴） */
+  private reopening: Promise<EngineOpenSessionResult> | null = null
 
   constructor(options: SenpiAdapterOptions) {
     if (!options.projectDir) throw new EngineAdapterError("bad_options", "projectDir 必填")
@@ -353,6 +355,38 @@ export class SenpiAdapter implements EngineAdapter {
         msg: (err instanceof Error ? err.message : String(err)).slice(0, 200),
       })
       throw err
+    }
+  }
+
+  /** 精确匹配引擎 unknown_session（RpcSessionRegistryError("unknown_session") 经 stdio
+   *  反序列化为 message=unknown_session 的 Error；errorCode 同名时亦认）。不宽匹配其它错误。 */
+  private isUnknownSessionError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false
+    if (err.message === "unknown_session") return true
+    return (err as { errorCode?: unknown }).errorCode === "unknown_session"
+  }
+
+  /** 按当前活跃绑定的 sessionPath 重新 open_session 重建引擎侧绑定（路由 handle 会更新）。
+   *  in-flight 去重：同 adapter 并发失败共享同一次重开，重开完成或失败后清槽。 */
+  private reopenActiveSession(): Promise<EngineOpenSessionResult> {
+    this.reopening ??= this.openSession({ sessionPath: this.requireActive().sessionPath }).finally(() => {
+      this.reopening = null
+    })
+    return this.reopening
+  }
+
+  /** 引擎重启（watchdog 自退出后网关重拉）后 adapter 残留旧会话绑定，op 裸透
+   *  unknown_session。兜底：捕获该错误 → 自动重开 → 原 op 恰好重试一次；重试仍失败或
+   *  重开失败才按原行为抛出。只兜 unknown_session，不吞其它错误；重试不改变请求语义。
+   *  全部会话 op 统一走此包装（不只 prompt）。 */
+  private async rpcOp<T>(op: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!this.isUnknownSessionError(err)) throw err
+      log.warn("adapter", "unknown_session 自动重开会话并重试", { op, sessionId: this.active?.sessionId ?? "" })
+      await this.reopenActiveSession()
+      return fn()
     }
   }
 
@@ -460,14 +494,14 @@ export class SenpiAdapter implements EngineAdapter {
   async messages(cursor?: string): Promise<EngineMessagesPage> {
     this.requireActive()
     try {
-      const page = await this.tracedRpc("get_entries", () => this.rpc().getEntries(cursor))
+      const page = await this.rpcOp("get_entries", () => this.rpc().getEntries(cursor))
       // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
       return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
     } catch (err) {
       // 引擎对未知 since 报 "Entry not found: <id>"——游标失效（如引擎重启后会话态
       // 重建）属异常路径，降级全量让客户端按条目 id 幂等收敛，历史完整性优先
       if (err instanceof Error && err.message.includes("Entry not found")) {
-        const page = await this.tracedRpc("get_entries_full", () => this.rpc().getEntries())
+        const page = await this.rpcOp("get_entries_full", () => this.rpc().getEntries())
         return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
       }
       throw err
@@ -478,7 +512,7 @@ export class SenpiAdapter implements EngineAdapter {
     this.requireActive()
     // spike 铁律（task-2-spike (b)-8 实测）：排队 prompt 不得携带 thinkingLevel，
     // 引擎直接拒绝（"Cannot set thinkingLevel on a queued prompt…"）——边界处剥除
-    const res = await this.tracedRpc("prompt", () =>
+    const res = await this.rpcOp("prompt", () =>
       this.rpc().prompt(input.text, {
         thinkingLevel: input.streamingBehavior ? undefined : input.thinkingLevel,
         images: input.images,
@@ -493,19 +527,22 @@ export class SenpiAdapter implements EngineAdapter {
   /** 排队对账（spike 指引 2）：两查询只回挂起文本数组（steering/followUp 分列），无 enqueueOrder */
   async queueList(): Promise<EngineQueueSnapshot> {
     this.requireActive()
-    const [steering, followUp] = await Promise.all([this.rpc().getSteeringMessages(), this.rpc().getFollowUpMessages()])
-    return normalizeQueueSnapshot({ steering, followUp, ordered: [] })
+    const snapshot = await this.rpcOp("queue_get", async () => {
+      const [steering, followUp] = await Promise.all([this.rpc().getSteeringMessages(), this.rpc().getFollowUpMessages()])
+      return { steering, followUp, ordered: [] }
+    })
+    return normalizeQueueSnapshot(snapshot)
   }
 
   /** 整队清空（spike 实测撤单干净：不落盘、不起回合），返回被撤项（ordered 含 enqueueOrder） */
   async queueClear(): Promise<EngineQueueSnapshot> {
     this.requireActive()
-    return normalizeQueueSnapshot(await this.rpc().clearQueue())
+    return normalizeQueueSnapshot(await this.rpcOp("queue_clear", () => this.rpc().clearQueue()))
   }
 
   async abort(): Promise<void> {
     this.requireActive()
-    await this.tracedRpc("abort", () => this.rpc().abort())
+    await this.rpcOp("abort", () => this.rpc().abort())
   }
 
   events(listener: (event: EngineEvent) => void): EngineEventSubscription {
@@ -515,14 +552,14 @@ export class SenpiAdapter implements EngineAdapter {
 
   async permissionRespond(requestId: string, reply: EnginePermissionReply): Promise<void> {
     // 请求必须从事件流接收（extension_ui_request）；prompt 响应不是同步点（verification/02）
-    await this.rpc().sendExtensionUIResponse(buildPermissionResponse(requestId, reply))
+    await this.rpcOp("extension_ui_response", () => this.rpc().sendExtensionUIResponse(buildPermissionResponse(requestId, reply)))
   }
 
   /** 未决提问快照（get_state.pendingQuestions，q1 对账：REST 拉取口径同 queue）。
    *  引擎从宽甄别：仅收窄为 question 帧（method=question + string id），异形跳过。 */
   async pendingQuestions(): Promise<EngineQuestionFrame[]> {
     this.requireActive()
-    const state = await this.rpc().getState()
+    const state = await this.rpcOp("get_state", () => this.rpc().getState())
     const raw = (state as { pendingQuestions?: unknown }).pendingQuestions
     if (!Array.isArray(raw)) return []
     return raw.filter(
@@ -551,7 +588,7 @@ export class SenpiAdapter implements EngineAdapter {
     // 活跃会话硬约束：multi-session 下 open_session 前调用被拒 missing_session_id
     // （docs/verification/06 实证），与 usage/todoState 同款 requireActive 前置
     this.requireActive()
-    const rows = await this.rpc().getCommands()
+    const rows = await this.rpcOp("get_commands", () => this.rpc().getCommands())
     const out: EngineCommandInfo[] = []
     for (const row of rows) {
       const mapped = mapCommandInfo(row)
@@ -562,14 +599,14 @@ export class SenpiAdapter implements EngineAdapter {
 
   async todoState(): Promise<EngineTodoState | null> {
     this.requireActive()
-    const page = await this.rpc().getEntries()
+    const page = await this.rpcOp("get_entries", () => this.rpc().getEntries())
     const last = [...page.entries].reverse().find((e) => e.customType === "senpi.todo-state")
     return parseTodoState(last)
   }
 
   async usage(): Promise<EngineUsageStats> {
     this.requireActive()
-    return mapUsageStats(await this.rpc().getSessionStats())
+    return mapUsageStats(await this.rpcOp("get_session_stats", () => this.rpc().getSessionStats()))
   }
 
   async compactSession(): Promise<EngineCompactResult> {
@@ -577,13 +614,13 @@ export class SenpiAdapter implements EngineAdapter {
     // 协议面 compact（connection-handler case "compact" -> session.compact()）。
     // 引擎侧失败形态（spike 实证）：无更多可压缩内容时 RpcCommandError（"Already
     // compacted" / "Nothing to compact (session too small)"），由运行时层映射业务码。
-    return mapCompactResult(await this.rpc().compact())
+    return mapCompactResult(await this.rpcOp("compact", () => this.rpc().compact()))
   }
 
   async readImagePart(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }> {
     this.requireActive()
     try {
-      return await this.rpc().getMedia(toolCallId, contentIndex)
+      return await this.rpcOp("get_media", () => this.rpc().getMedia(toolCallId, contentIndex))
     } catch (e) {
       // media_not_found 等（image_ref 占位缺失）——按占位降级，由上层决定渲染
       const message = e instanceof Error ? e.message : String(e)

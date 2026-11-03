@@ -481,3 +481,91 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(fake.calls.some((c) => c.method === "get_commands")).toBe(true)
   })
 })
+
+/** 引擎重启后残留旧绑定的 unknown_session 兜底（2026-11-03 实录）：
+ *  op 报 unknown_session → 按 sessionPath 自动重开 → 重试恰好一次；
+ *  只兜 unknown_session，其它错误原样透传。 */
+describe("SenpiAdapter unknown_session 自动重开重试", () => {
+  /** prompt 可编程失败的 fake（unknown_session 用引擎 RpcSessionRegistryError 的
+   *  实录形态：message="unknown_session" 的普通 Error） */
+  class FlakyPromptClient extends FakeRpcClient {
+    failWith: Error | null = null
+    failTimes = 0
+    reopenError: Error | null = null
+    /** 从第几次 open_session 调用开始失败（setup 的初始打开不算重开） */
+    reopenFailFromCall = Number.POSITIVE_INFINITY
+    openCallCount = 0
+    promptAttempts = 0
+    override async prompt(): Promise<unknown> {
+      this.promptAttempts++
+      if (this.failTimes > 0) {
+        this.failTimes--
+        throw this.failWith
+      }
+      return "started"
+    }
+    override async openSession(options: { sessionPath?: string }): Promise<{ sessionId: string; state: { sessionId?: string; sessionFile?: string } }> {
+      this.openCallCount++
+      if (this.reopenError && this.openCallCount >= this.reopenFailFromCall) {
+        const err = this.reopenError
+        this.reopenError = null
+        throw err
+      }
+      return super.openSession(options)
+    }
+  }
+
+  async function setup(fake: FlakyPromptClient) {
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({})
+    return adapter
+  }
+
+  test("unknown_session → 重开 → 重试成功返回正常结果", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = new Error("unknown_session")
+    fake.failTimes = 1
+    const adapter = await setup(fake)
+    const openCallsBefore = fake.calls.filter((c) => c.method === "open_session").length
+    const receipt = await adapter.prompt({ text: "重试后应成功" })
+    expect(receipt.disposition).toBe("started")
+    // 兜底重开了一次 open_session，prompt 恰好重试一次（首次失败 + 重试成功）
+    expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(openCallsBefore + 1)
+    expect(fake.promptAttempts).toBe(2)
+  })
+
+  test("重开仍失败 → 原样报错（不无限重试）", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = new Error("unknown_session")
+    fake.failTimes = 2 // 首次失败 + 重试仍失败
+    fake.reopenError = new Error("unknown_session")
+    fake.reopenFailFromCall = 2 // 第 2 次 open_session（即兑底重开）失败；第 1 次是 setup 初始打开
+    const adapter = await setup(fake)
+    await expect(adapter.prompt({ text: "x" })).rejects.toThrow("unknown_session")
+    expect(fake.promptAttempts).toBe(1) // 重开失败：不重试
+  })
+
+  test("非 unknown_session 错误不触发重开重试", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = new Error("provider_overloaded")
+    fake.failTimes = 1
+    const adapter = await setup(fake)
+    const openCallsBefore = fake.calls.filter((c) => c.method === "open_session").length
+    await expect(adapter.prompt({ text: "x" })).rejects.toThrow("provider_overloaded")
+    expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(openCallsBefore)
+    expect(fake.promptAttempts).toBe(1)
+  })
+
+  test("并发失败共享同一次重开（in-flight 去重）", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = new Error("unknown_session")
+    fake.failTimes = 2
+    const adapter = await setup(fake)
+    const [a, b] = await Promise.all([adapter.prompt({ text: "a" }), adapter.prompt({ text: "b" })])
+    expect(a.disposition).toBe("started")
+    expect(b.disposition).toBe("started")
+    // 两次并发失败只触发一次 open_session 重开
+    expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(2) // 初始 + 一次重开
+  })
+})
