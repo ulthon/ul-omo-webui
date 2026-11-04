@@ -120,4 +120,6 @@ export const errors = {
   invalidSessionIds: "sessionIds 必须为非空字符串 id 的数组",
   oldStoreNotFound: "旧目录下没有会话库",
   rebindConflict: "当前项目已存在同名会话文件",
+  // 引擎进程管理（2026-11-04 批次 routes-engines stop 新增码）
+  unknownProject: "未注册的项目",
 } as const;

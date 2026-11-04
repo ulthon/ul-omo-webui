@@ -1450,13 +1450,29 @@ class ProjectRuntime {
   }
 
   async commandsList(): Promise<EngineCommandInfo[] | null> {
-    // 命令面无文件直读降级通道（枚举以 get_commands 为权威源，docs/verification/06）：
-    // 引擎未就绪（不为此触发 spawn）或无活跃会话（missing_session_id 硬约束）一律
-    // 返回 null 由端点降级，调用方（前端下拉）按空列表处理不渲染命令段。
-    if (!this.isReady()) return null;
-    const adapter = this.requireAdapter();
-    if (!adapter.getActiveSession()) return null;
-    return adapter.commands();
+    // 2026-11-04 用户定版（命令面与发送同等待遇）：引擎未起即 ensure 拉起（不再
+    // 「不为此触发 spawn」）；无活跃会话（missing_session_id 硬约束）时静默开本项目
+    // 最新会话垫路由——webui 发送恒按显式 id 解析切换，此垫绑定随用随换，不改用户
+    // 可见态；项目无会话可垫或任一步失败仍按旧口径降级 null，端点不 5xx。
+    try {
+      // 无条件 ensure（幂等）：会话列表直读会挂上未连引擎的盘读 adapter，isReady 的
+      // adapter!==null 会被它骗过（实测 EngineAdapterError 未 start）；ensure 检测
+      // wrappedClient 变更即重建为已连引擎的 adapter，热路径（已连且同 client）零重建
+      await this.ensure();
+      const adapter = this.requireAdapter();
+      if (!adapter.getActiveSession()) {
+        const rows = await this.listStore();
+        if (rows.length === 0) return null;
+        const latest = rows.reduce((a, b) => (b.modified > a.modified ? b : a));
+        const opened = await adapter.openSession({ sessionPath: latest.path });
+        this.activeId = latest.id;
+        this.rememberHandle(opened.routingId, latest.id);
+      }
+      // 注意 await：oxc 降级编译下 try 内裸 return promise 会绕开 catch（实测）
+      return await adapter.commands();
+    } catch {
+      return null;
+    }
   }
 
   async deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }> {

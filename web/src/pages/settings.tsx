@@ -22,6 +22,7 @@ import { AuthSection } from "@/components/settings/auth-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { TipsSection } from "@/components/layout/tips-section";
 import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
+import { EngineSection } from "@/components/settings/engine-section";
 import { UpdateSection } from "@/components/settings/update-section";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
@@ -879,6 +880,7 @@ export function SettingsPage() {
           <SidebarSortSection />
           <TagDisplaySection />
           <PasteImageModeSection />
+          <EngineSection />
           <TrafficSection />
           <AuthSection />
           <ExtensionsSection />

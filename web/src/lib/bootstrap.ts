@@ -66,10 +66,10 @@ export function resolveModelFallback(
 export async function loadProjectModels(path: string): Promise<void> {
   const token = ++modelsLoadSeq;
   try {
-    const { models, favorites, defaults } = await api.listModels(path);
+    const { models, favorites, defaults, promptPresets } = await api.listModels(path);
     if (token !== modelsLoadSeq) return; // 迟到响应直接丢弃（竞态守卫）
     const cur = useUiStore.getState();
-    cur.setModels(models);
+    cur.setModels(models, promptPresets);
     cur.setFavoriteModels(favorites ?? []);
     if (!cur.selectedModel) {
       const fallback = resolveModelFallback(defaults, models);

@@ -4,6 +4,7 @@ import { Hono, type Context } from "hono";
 import { agentDir } from "../config";
 import { ApiError, parseJsonBody, route } from "./http";
 import { discoverProviderModels, listDiscoverableProviders } from "./models-discover";
+import { promptPresetMap } from "./prompt-presets";
 import type { ApiDeps } from "./deps";
 
 /** 输入历史/设置的 project 键规范化：与 /api/projects 的 realpath 键保持一致前缀形态。
@@ -37,7 +38,10 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
     // docs08-r5 任务 2）：同为 agent 级设置，测试 fake 未实现可选面时降级 null——
     // 前端回退链跳过引擎默认档，与旧服务端未下发字段同口径。
     const defaults = deps.engines.defaultModel?.() ?? null;
-    return c.json({ project, capabilities: { modelsList: true }, models, favorites, defaults });
+    // 专属提示词映射（"provider/model" → preset 名，未命中 null）：引擎会话侧
+    // prompt-preset 扩展的只读镜像，web 端输入框模型区徽标消费。
+    const promptPresets = promptPresetMap(models);
+    return c.json({ project, capabilities: { modelsList: true }, models, favorites, defaults, promptPresets });
   }));
 
   // 模型发现：provider 清单（GET）与发现/导入（POST，docs08-2026-10-22 批次任务 23）。
@@ -104,6 +108,8 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
     for (const [key, value] of entries) {
       deps.meta.setKv(key, value as string);
     }
+    // 2026-11-04：设置写入后回调（引擎空闲时长等运行时生效项；缺省无操作，测试装配兼容）
+    deps.onSettingsChanged?.(entries.map(([key]) => key));
     return c.json({ ok: true, settings: deps.meta.listKv() });
   }));
 

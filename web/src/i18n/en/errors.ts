@@ -117,4 +117,6 @@ export const errors = {
   invalidSessionIds: "sessionIds must be an array of non-empty string ids",
   oldStoreNotFound: "No session store found under the old directory",
   rebindConflict: "A session file with the same name already exists in this project",
+  // Engine process admin (2026-11-04 batch, routes-engines stop)
+  unknownProject: "Unknown project",
 } as const;

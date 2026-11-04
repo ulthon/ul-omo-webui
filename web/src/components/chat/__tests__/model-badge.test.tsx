@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const { lastModelChangeOf } = await import("../message-items");
 const { pendingModelBadgeVisible, alignSelectionToApplied } = await import("../../composer/model-pending");
-const { CapsuleModelTag } = await import("../../composer/chips");
+const { ComposerModelInfo } = await import("../../composer/model-info");
 const { useMessagesStore } = await import("@/stores/messages");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
@@ -135,14 +135,61 @@ describe("待生效徽标判定（27b/27c）", () => {
   });
 });
 
-describe("CapsuleModelTag 渲染（SSR 烟测）", () => {
-  test("pendingEffect=true 渲染待生效黄标", () => {
-    const html = renderToStaticMarkup(createElement(CapsuleModelTag, { pendingEffect: true }));
-    expect(html).toContain("capsule-model-pending");
+describe("ComposerModelInfo 底栏模型区渲染（SSR 烟测；2026-11-03 二稿：内联文本控件，无胶囊盒子，断言只挂机器消费的 testid 与短名/档位文本）", () => {
+  test("三要素：模型短名 + 思考档词 + 专属提示词图标（命中时）；双按钮 testid 在场", () => {
+    const ui = useUiStore.getState();
+    ui.setModels(
+      [{ provider: "zai-coding-cn", id: "glm-5.3", contextWindow: 1, reasoning: true, supportedThinkingLevels: ["low", "high", "max"] }],
+      { "zai-coding-cn/glm-5.3": "glm-5.3" },
+    );
+    ui.setSelectedModel("zai-coding-cn/glm-5.3");
+    ui.setSelectedThinkingLevel("high");
+    try {
+      const html = renderToStaticMarkup(createElement(ComposerModelInfo, { pendingEffect: false }));
+      // 模型钮与思考钮两个并列内联按钮（2026-11-03 三稿）
+      expect(html).toContain("composer-model-info");
+      expect(html).toContain("composer-level");
+      expect(html).toContain("composer-model-level");
+      expect(html).toContain("high");
+      // preset 提示已迁总览（2026-11-03 四稿）：composer 不再渲染任何 preset 标记
+      expect(html).not.toContain("composer-model-preset");
+      expect(html).toContain("glm-5.3");
+      // 未命中映射同样不渲染
+      const ui2 = useUiStore.getState();
+      ui2.setModels([{ provider: "zai-coding-cn", id: "glm-5.3", contextWindow: 1, reasoning: true }], {});
+      const html2 = renderToStaticMarkup(createElement(ComposerModelInfo, { pendingEffect: false }));
+      expect(html2).not.toContain("composer-model-preset");
+    } finally {
+      const cur = useUiStore.getState();
+      cur.resetModels();
+      cur.setSelectedModel(null);
+      cur.setSelectedThinkingLevel(null);
+    }
   });
 
-  test("pendingEffect=false 不渲染黄标（水合后无待生效选择 → 无徽标）", () => {
-    const html = renderToStaticMarkup(createElement(CapsuleModelTag, { pendingEffect: false }));
-    expect(html).not.toContain("capsule-model-pending");
+  test("pendingEffect=true 渲染待生效黄标；false 不渲染（水合后无待生效选择 → 无徽标）", () => {
+    const ui = useUiStore.getState();
+    ui.setModels([{ provider: "zai-coding-cn", id: "glm-5.3", contextWindow: 1, reasoning: true }], {});
+    ui.setSelectedModel("zai-coding-cn/glm-5.3");
+    try {
+      // 无 supportedThinkingLevels → 思考钮不渲染（隐藏口径与退役的 ThinkingChip 一致）
+      const noLevel = renderToStaticMarkup(createElement(ComposerModelInfo, { pendingEffect: false }));
+      expect(noLevel).not.toContain("composer-level");
+      const withPending = renderToStaticMarkup(createElement(ComposerModelInfo, { pendingEffect: true }));
+      expect(withPending).toContain("composer-model-pending");
+      const withoutPending = renderToStaticMarkup(createElement(ComposerModelInfo, { pendingEffect: false }));
+      expect(withoutPending).not.toContain("composer-model-pending");
+    } finally {
+      const cur = useUiStore.getState();
+      cur.resetModels();
+      cur.setSelectedModel(null);
+    }
+  });
+
+  test("右上角模型胶囊已退役：chips 模块不再导出 CapsuleModelTag", async () => {
+    const chips = await import("../../composer/chips");
+    expect((chips as Record<string, unknown>).CapsuleModelTag).toBeUndefined();
+    const modelInfo = await import("../../composer/model-info");
+    expect((modelInfo as Record<string, unknown>).CapsuleModelTag).toBeUndefined();
   });
 });

@@ -4,6 +4,8 @@
 // 有非空快照才渲染（首帧出现、后续帧推进、空快照消失，三态皆帧驱动）；
 // 点标题行展开/收起任务列表（仅列运行中，限高滚动；已完成折为尾部计数行）。
 // r11 todo 3：展开列表 max-h-64 仅列进行中，已完成折计数；折叠主数字为运行中数。
+// 收敛（2026-11-03）：running===0 时整条隐藏——活动条只承载“有活干”的常驻提示，
+// 全部完成的历史由右栏总览「后台任务」区全量承接，此处不再挂空条。
 import { useState } from "react";
 import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
 import { useTasksStore } from "@/stores/tasks";
@@ -18,6 +20,8 @@ export function ActivityBar({ sessionId }: { sessionId: string }) {
   const runningList = list.filter((task) => task.status === "running");
   const running = runningList.length;
   const done = list.length - running;
+  // 无进行中任务整条隐藏（已完成历史由右栏后台任务区承接）
+  if (running === 0) return null;
 
   return (
     <div data-testid="activity-bar" className="rounded-lg border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">

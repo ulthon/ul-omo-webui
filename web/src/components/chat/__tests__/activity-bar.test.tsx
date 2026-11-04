@@ -16,10 +16,6 @@ const { useTasksStore } = await import("@/stores/tasks");
 
 const SID = "dur-activity-bar";
 
-function task(id, status, summary) {
-  return { id, status, label: summary ?? `task ${id}` };
-}
-
 function mount() {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -104,17 +100,13 @@ describe("ActivityBar（r10 todo 11）", () => {
     expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 5");
   });
 
-  test("r11 todo3：全部完成快照活动条仍渲染，展开零运行中行 + 已完成计数", () => {
+  test("2026-11-03 收敛：全部完成快照（running=0）整条隐藏不渲染", () => {
     setTasks(SID, [
       { task_id: "t1", status: "completed", task_summary: "A" },
       { task_id: "t2", status: "completed", task_summary: "B" },
     ]);
     const { container } = mount();
-    expect(q(container, '[data-testid="activity-bar"]')).toBeTruthy();
-    expect(q(container, '[data-testid="activity-bar-toggle"]').textContent).toContain("后台任务 · 进行中 0");
-    click(q(container, '[data-testid="activity-bar-toggle"]'));
-    expect(container.querySelectorAll('[data-testid="activity-task"]')).toHaveLength(0);
-    expect(q(container, '[data-testid="activity-done-count"]').textContent).toContain("已完成 2");
+    expect(container.querySelector('[data-testid="activity-bar"]')).toBeNull();
   });
 
   test("消失：空快照后活动条不渲染无残留", () => {

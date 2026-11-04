@@ -144,7 +144,11 @@ export type WarmupHook = (projectPath: string, client: RpcClient) => void | Prom
 const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor", "question"])
 
 const DEFAULTS = {
-  idleTimeoutMs: 30 * 60 * 1000,
+  // 2026-11-04 用户定版：对齐 openchamber 常驻理念（它不回收引擎进程）。旧值 30 分钟
+  // 曾误杀安静后台长任务（诊断实锤：另一机器 ai-chuangzuo 后台任务跑 3h53m 后被
+  // idle_timeout 回收连根杀）。默认 7 天，可经 meta_kv engine.idleTimeoutMinutes 配置，
+  // "never"（=0）永不回收；设置页改档即时生效（setIdleTimeoutMs）。
+  idleTimeoutMs: 7 * 24 * 60 * 60 * 1000,
   backoffBaseMs: 1000,
   backoffMaxMs: 60 * 1000,
   maxConsecutiveFailures: 5,
@@ -343,6 +347,14 @@ export class EngineProcessManager {
 
   getAllStatus(): EngineStatusSnapshot[] {
     return [...this.engines.values()].map((e) => this.snapshot(e))
+  }
+
+  /** 运行时调整空闲回收时长（2026-11-04 设置页引擎分区）：ms<=0 为永不回收；
+   * 已拉起引擎的既有定时器按新值重排（非空闲引擎无定时器，下次转空闲时自然用新值）。 */
+  setIdleTimeoutMs(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return
+    this.opts.idleTimeoutMs = Math.floor(ms)
+    for (const engine of this.engines.values()) this.rescheduleIdleCheck(engine)
   }
 
   /** 主连接（生产恒为官方 RpcClient；供 adapter 驾驶会话）。ready 前为 undefined。 */
@@ -905,6 +917,7 @@ export class EngineProcessManager {
     }
     if (engine.state !== "ready") return
     if (!this.isIdle(engine)) return
+    if (this.opts.idleTimeoutMs <= 0) return // "never"：永不回收（仅清既有定时器）
     const elapsed = this.now() - engine.lastActivityAt
     const remaining = Math.max(this.opts.idleTimeoutMs - elapsed, 0)
     engine.idleTimer = setTimeout(() => {

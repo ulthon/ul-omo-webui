@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
+import { useTasksStore, type BackgroundTask } from "@/stores/tasks";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
@@ -64,6 +65,83 @@ function OverviewTasks({ sessionId }: { sessionId: string | null }) {
           </div>
         ) : (
           <OverviewEmpty text={sessionId == null ? t("login.rightRail.overview.tasksNoSession") : t("login.rightRail.overview.tasksEmpty")} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+// —— 后台任务块：omo.task.updated 全量快照（tasks store，与活动条同源），进行中/已完成
+//    分组全量展示；状态文案复用 chat.activity 词条，时间取 wire updated_at（本地时分） ——
+/** 行尾时间列：ISO 串转本地 HH:mm，缺席/畸形落 "—"（不引入日期依赖） */
+function formatBgTaskTime(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function BgTaskRow({ task }: { task: BackgroundTask }) {
+  const t = useT();
+  const running = task.status === "running";
+  return (
+    <li
+      data-testid="overview-bg-task"
+      className="flex min-w-0 items-baseline gap-2 text-sm leading-relaxed"
+    >
+      <span
+        className={`shrink-0 text-xs ${running ? "font-medium text-primary" : "text-muted-foreground"}`}
+      >
+        {running ? t("chat.activity.statusRunning") : t("chat.activity.statusDone")}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-foreground" title={task.label}>
+        {task.label}
+      </span>
+      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+        {formatBgTaskTime(task.updatedAt)}
+      </span>
+    </li>
+  );
+}
+
+function OverviewBackgroundTasks({ sessionId }: { sessionId: string | null }) {
+  const t = useT();
+  const tasks = useTasksStore((s) => (sessionId ? s.bySession[sessionId] : undefined));
+  const list = tasks ?? [];
+  const runningList = list.filter((task) => task.status === "running");
+  const doneList = list.filter((task) => task.status !== "running");
+  return (
+    <section data-testid="overview-bg-tasks" className={OVERVIEW_SECTION_CLASS}>
+      <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.bgTasksTitle")}</h3>
+      <div className={OVERVIEW_BODY_CLASS}>
+        {list.length === 0 ? (
+          <OverviewEmpty text={sessionId == null ? t("login.rightRail.overview.bgTasksNoSession") : t("login.rightRail.overview.bgTasksEmpty")} />
+        ) : (
+          <div className="space-y-1.5">
+            {runningList.length > 0 && (
+              <div>
+                <div className="text-[11px] font-medium tracking-wide text-muted-foreground/80">
+                  {t("login.rightRail.overview.bgTasksRunning", { n: runningList.length })}
+                </div>
+                <ul>
+                  {runningList.map((task) => (
+                    <BgTaskRow key={task.id} task={task} />
+                  ))}
+                </ul>
+              </div>
+            )}
+            {doneList.length > 0 && (
+              <div>
+                <div className="text-[11px] font-medium tracking-wide text-muted-foreground/80">
+                  {t("login.rightRail.overview.bgTasksDone", { n: doneList.length })}
+                </div>
+                <ul>
+                  {doneList.map((task) => (
+                    <BgTaskRow key={task.id} task={task} />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </section>
@@ -180,6 +258,13 @@ function OverviewStats({ sessionId }: { sessionId: string | null }) {
   const t = useT();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [failed, setFailed] = useState(false);
+  // 专属提示词提示行（2026-11-03 用户定版：从 composer 迁来）——当前选中模型命中
+  // prompt-preset 时显示，未命中不占行
+  const models = useUiStore((s) => s.models);
+  const promptPresets = useUiStore((s) => s.promptPresets);
+  const selectedModel = useUiStore((s) => s.selectedModel);
+  const fullModel = selectedModel ?? (models.length > 0 ? `${models[0]!.provider}/${models[0]!.id}` : null);
+  const preset = fullModel !== null ? (promptPresets[fullModel] ?? null) : null;
 
   useEffect(() => {
     if (!sessionId) return;
@@ -215,6 +300,12 @@ function OverviewStats({ sessionId }: { sessionId: string | null }) {
           />
         ) : (
           <ul className="space-y-0.5 text-sm">
+            {preset !== null && (
+              <li data-testid="overview-preset" className="flex items-baseline justify-between gap-2">
+                <span className="text-muted-foreground">{t("login.rightRail.overview.promptPreset")}</span>
+                <span className="truncate">{preset}</span>
+              </li>
+            )}
             <li data-testid="overview-stats-tokens" className="flex items-baseline justify-between gap-2">
               <span className="text-muted-foreground">{t("login.rightRail.overview.statsTokens")}</span>
               <span className="tabular-nums">{stats.tokens.total.toLocaleString()}</span>
@@ -290,6 +381,7 @@ export function OverviewPanel({ sessionId }: { sessionId: string | null }) {
     <div data-testid="overview-panel" className="h-full overflow-y-auto">
       <OverviewPlan sessionId={sessionId} />
       <OverviewTasks sessionId={sessionId} />
+      <OverviewBackgroundTasks sessionId={sessionId} />
       <OverviewNotes />
       <OverviewStats sessionId={sessionId} />
       <OverviewAgents sessionId={sessionId} />

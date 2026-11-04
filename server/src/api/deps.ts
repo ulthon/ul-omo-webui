@@ -41,4 +41,9 @@ export interface ApiDeps {
    * 临时目录，绝不触碰真实 omo 会话库。
    */
   agentDir?: string;
+  /**
+   * 设置写入后回调（2026-11-04 引擎空闲时长即时生效）：PUT /api/settings 落库后
+   * 以被写键名列表调用。缺省无操作（测试装配兼容）。
+   */
+  onSettingsChanged?: (keys: string[]) => void;
 }

@@ -323,6 +323,9 @@ export interface ModelsResponse {
   /** 引擎 native 默认模型（新会话回退链中位：项目偏好 > defaults > 列表首项）；
    * 旧服务端未下发或引擎未配置时缺省（undefined/null → 跳过该档） */
   defaults?: EngineDefaultModel | null;
+  /** 专属提示词映射（"provider/model" → preset 名，未命中 null）：引擎 prompt-preset
+   *  扩展只读镜像；旧服务端未下发时缺省（undefined → 无徽标） */
+  promptPresets?: Record<string, string | null>;
 }
 
 export interface InputHistoryItem {
@@ -334,6 +337,16 @@ export interface InputHistoryItem {
 
 /** 用法提示条目（docs08-2026-10-22 批次任务 25）：GET /api/tips 返回项，契约同引擎
  *  omo --list-tips（requiresCommand 为关联命令名/布尔，原样透传不过滤，对拍口径 GET=CLI）。 */
+/** 引擎进程管理行（2026-11-04；与诊断 engines 摘要同形） */
+export interface EngineAdminRow {
+  projectPath: string;
+  state: string;
+  pid?: number;
+  restarts: number;
+  runningSessions: number;
+  lastActivityAt: number | null;
+}
+
 export interface TipItem {
   id: string;
   text: string;
@@ -911,6 +924,14 @@ export const api = {
   },
   async putSettings(kv: Record<string, string>): Promise<{ ok: boolean; settings: Record<string, string> }> {
     return request("/api/settings", jsonInit("PUT", kv));
+  },
+
+  // ---- 引擎进程管理（2026-11-04 设置页进程管理分区）----
+  async listEngines(): Promise<{ engines: EngineAdminRow[] }> {
+    return request("/api/engines");
+  },
+  async stopEngine(project: string): Promise<{ ok: boolean }> {
+    return request("/api/engines/stop", jsonInit("POST", { project }));
   },
 
   // ---- 用法提示（docs08-2026-10-22 批次任务 25）----

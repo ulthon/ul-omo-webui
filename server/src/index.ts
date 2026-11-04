@@ -31,6 +31,7 @@ import {
 } from "./api/background-task-ledger";
 import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
 import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
+import { createEngineAdminRoutes } from "./api/routes-engines";
 import { createUpdateRoutes } from "./api/routes-update";
 import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
@@ -78,6 +79,20 @@ const manager = new EngineProcessManager({
     ...toolsSpawnArgsFromConfig(projectConfigs, meta, projectPath),
   ],
 });
+// 2026-11-04：空闲回收时长配置化（meta_kv engine.idleTimeoutMinutes：分钟数或 "never"；
+// 缺省 7 天见 process-manager DEFAULTS）。启动时读一次，设置页改档经
+// onSettingsChanged 钩子即时生效（下方 deps 装配处回调）。
+const applyIdleTimeoutFromKv = (): void => {
+  const raw = meta.getKv("engine.idleTimeoutMinutes");
+  if (raw === null) return;
+  if (raw === "never") {
+    manager.setIdleTimeoutMs(0);
+    return;
+  }
+  const minutes = Number(raw);
+  if (Number.isFinite(minutes) && minutes > 0) manager.setIdleTimeoutMs(minutes * 60_000);
+};
+applyIdleTimeoutFromKv();
 // 标题生成服务（W2 todo 8）：jsonl 直读取数 + 独立 HTTP 调模型，零引擎会话污染。
 // resolveSessionRow 不触发引擎 spawn（活跃态/store 直查/别名三级，纯读）。
 const titleGen = new TitleGenService({
@@ -241,6 +256,10 @@ const deps = {
   configs,
   projectConfigs,
   titleGen,
+  // 设置写入后回调：引擎空闲时长改档即时生效（不重启）
+  onSettingsChanged: (keys: string[]) => {
+    if (keys.includes("engine.idleTimeoutMinutes")) applyIdleTimeoutFromKv();
+  },
   // 会话删除 → 该会话 pending 定时任务标 invalid（abandoned 语义，任务 21c）
   schedule: {
     onSessionDeleted: (sessionId: string) =>
@@ -269,22 +288,24 @@ app.route("/", createTipsRoutes(tipsDeps));
 app.route("/", createExtensionsRoutes({ agentDir: agentDir(), engineCli: resolveEngineCli(resolveEnginePaths().pluginDir) }));
 app.route("/", createTrafficRoutes({ meter: trafficMeter }));
 // 诊断面（采集增强批）：日志查询/运行快照/前端日志上报；随 /api/* 鉴权中间件保护
+// 2026-11-04：engines 摘要与进程管理路由共用同一 rows 构造器（单一来源）
+const engineAdminRows = () =>
+  meta.listProjectMeta().map((p) => {
+    const st = manager.getStatus(p.projectPath);
+    return {
+      projectPath: p.projectPath,
+      state: st?.state ?? "inactive",
+      pid: st?.pid ?? undefined,
+      restarts: st?.consecutiveRestarts ?? 0,
+      runningSessions: st?.runningSessions.length ?? 0,
+      lastActivityAt: st?.lastActivityAt ?? null,
+    };
+  });
 app.route(
   "/",
   createDiagnosticsRoutes({
     logger: log,
-    engines: () =>
-      meta.listProjectMeta().map((p) => {
-        const st = manager.getStatus(p.projectPath);
-        return {
-          projectPath: p.projectPath,
-          state: st?.state ?? "inactive",
-          pid: st?.pid ?? undefined,
-          restarts: st?.consecutiveRestarts ?? 0,
-          runningSessions: st?.runningSessions.length ?? 0,
-          lastActivityAt: st?.lastActivityAt ?? null,
-        };
-      }),
+    engines: engineAdminRows,
     sseConnections: () => sseConnectionCount(),
     bootInfo: () => ({
       node: process.version,
@@ -297,6 +318,15 @@ app.route(
 // 更新面（2026-10-31 update 批）：check + install；shutdown 注入——安装成功由路由
 // 响应后延迟触发本文件的优雅关停路径（引擎子进程/元库同收口），路由不碰 process.exit
 app.route("/", createUpdateRoutes({ shutdown: () => void shutdown() }));
+// 引擎进程管理面（2026-11-04）：列表 + 手动停；与诊断摘要同源
+app.route(
+  "/",
+  createEngineAdminRoutes({
+    listEngines: engineAdminRows,
+    stopEngine: (projectPath) => manager.stop(projectPath),
+    isKnownProject: (projectPath) => meta.listProjectMeta().some((p) => p.projectPath === projectPath),
+  }),
+);
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，

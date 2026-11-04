@@ -397,6 +397,37 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     }
   })
 
+  test("setIdleTimeoutMs(0)=永不：已拉起引擎不再被回收（2026-11-04 用户定版）", async () => {
+    const h = makeHarness()
+    try {
+      await h.manager.ensureRunning(PROJ)
+      h.manager.setIdleTimeoutMs(0)
+      // 覆盖数倍原 80ms 超时窗口：必须保持 ready
+      await holdInvariant(() => h.manager.getStatus(PROJ)?.state === "ready", 300)
+      expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
+      expect(h.events.some((e) => e.type === "engine_reclaimed")).toBe(false)
+    } finally {
+      h.manager.setIdleTimeoutMs(80)
+      cleanup(h)
+    }
+  })
+
+  test("运行时改档即时生效：拉长阻断回收，改回短档恢复回收", async () => {
+    const h = makeHarness()
+    try {
+      await h.manager.ensureRunning(PROJ)
+      h.manager.setIdleTimeoutMs(60_000)
+      await holdInvariant(() => h.manager.getStatus(PROJ)?.state === "ready", 300)
+      expect(h.manager.getStatus(PROJ)?.state).toBe("ready")
+
+      h.manager.setIdleTimeoutMs(60)
+      await waitFor(() => h.manager.getStatus(PROJ)?.state === "stopped")
+      expect(h.events.some((e) => e.type === "engine_reclaimed")).toBe(true)
+    } finally {
+      cleanup(h)
+    }
+  })
+
   test("运行中会话视为忙；agent_settled 解除后回收；显式上报优先", async () => {
     const h = makeHarness()
     try {

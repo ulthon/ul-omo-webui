@@ -1,5 +1,6 @@
 /**
- * 输入区模型 / 思考 chip 组件测试（W2 todo 8）。
+ * 输入区模型 chip 与底栏思考档组件测试（W2 todo 8；2026-11-03 三稿 ThinkingChip 退役，
+ * 思考档用例迁 ComposerModelInfo 底栏内联按钮，模型 chip 用例不变）。
  * radix Popover 原语 mock 为受控透传（open 上下文门控内容渲染）；chips 逻辑层
  * （store / 偏好防抖）为真实实现，防抖计时在 preferences.test 单独覆盖，此处
  * afterEach 取消未落定写入防跨用例泄漏。
@@ -37,7 +38,8 @@ vi.mock("@/components/ui/popover", () => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
-const { ModelChip, ThinkingChip } = await import("@/components/composer/chips");
+const { ModelChip } = await import("@/components/composer/chips");
+const { ComposerModelInfo } = await import("@/components/composer/model-info");
 const { useUiStore } = await import("@/stores/ui");
 const { cancelPendingPreferencePersist } = await import("@/lib/preferences");
 
@@ -99,15 +101,15 @@ afterEach(async () => {
   document.body.innerHTML = "";
 });
 
-describe("思考 chip", () => {
-  test("模型未下发 supportedThinkingLevels → 整体不渲染（缺席即隐藏，非禁用）", async () => {
+describe("底栏思考档按钮（2026-11-03 三稿：ThinkingChip 退役，档位入口迁 ComposerModelInfo）", () => {
+  test("模型未下发 supportedThinkingLevels → 档位钮不渲染（缺席即隐藏，非禁用）", async () => {
     useUiStore.setState({
       models: [model()],
       modelsLoaded: true,
       selectedModel: "zai-coding-cn/glm-5.3-flash",
     });
-    const { container, unmount } = await render(createElement(ThinkingChip));
-    expect(el(container, "thinking-chip")).toBeNull();
+    const { container, unmount } = await render(createElement(ComposerModelInfo));
+    expect(el(container, "composer-level")).toBeNull();
     await unmount();
   });
 
@@ -118,27 +120,27 @@ describe("思考 chip", () => {
       selectedModel: "zai-coding-cn/glm-5.3-flash",
       selectedThinkingLevel: "high",
     });
-    const { container, unmount } = await render(createElement(ThinkingChip));
-    const chip = el(container, "thinking-chip");
-    expect(chip).not.toBeNull();
-    expect(el(container, "thinking-chip-label")?.textContent).toBe("high");
-    const values = [...container.querySelectorAll("[data-testid=thinking-chip-item]")].map((n) =>
+    const { container, unmount } = await render(createElement(ComposerModelInfo));
+    const trigger = el(container, "composer-level");
+    expect(trigger).not.toBeNull();
+    expect(el(container, "composer-model-level")?.textContent).toBe("high");
+    const values = [...container.querySelectorAll("[data-testid=thinking-level-item]")].map((n) =>
       n.getAttribute("data-value"),
     );
     expect(values).toEqual(["low", "high", "max"]);
     // 44px 触控目标
-    expect(chip?.className).toContain("min-h-11");
+    expect(trigger?.className).toContain("min-h-11");
     await unmount();
   });
 
-  test("过滤后为空（仅 off）→ 整体不渲染", async () => {
+  test("过滤后为空（仅 off）→ 档位钮不渲染", async () => {
     useUiStore.setState({
       models: [model({ supportedThinkingLevels: ["off"] })],
       modelsLoaded: true,
       selectedModel: "zai-coding-cn/glm-5.3-flash",
     });
-    const { container, unmount } = await render(createElement(ThinkingChip));
-    expect(el(container, "thinking-chip")).toBeNull();
+    const { container, unmount } = await render(createElement(ComposerModelInfo));
+    expect(el(container, "composer-level")).toBeNull();
     await unmount();
   });
 
@@ -148,13 +150,13 @@ describe("思考 chip", () => {
       modelsLoaded: true,
       selectedModel: "zai-coding-cn/glm-5.3-flash",
     });
-    const { container, unmount } = await render(createElement(ThinkingChip));
-    const item = container.querySelector('[data-testid=thinking-chip-item][data-value="max"]') as HTMLButtonElement;
+    const { container, unmount } = await render(createElement(ComposerModelInfo));
+    const item = container.querySelector('[data-testid=thinking-level-item][data-value="max"]') as HTMLButtonElement;
     await act(async () => {
       item.click();
     });
     expect(useUiStore.getState().selectedThinkingLevel).toBe("max");
-    expect(el(container, "thinking-chip-label")?.textContent).toBe("max");
+    expect(el(container, "composer-model-level")?.textContent).toBe("max");
     await unmount();
   });
 
@@ -165,8 +167,8 @@ describe("思考 chip", () => {
       selectedModel: "zai-coding-cn/glm-5.3-flash",
       selectedThinkingLevel: null,
     });
-    const { container, unmount } = await render(createElement(ThinkingChip));
-    expect(el(container, "thinking-chip-label")?.textContent).toBe("默认");
+    const { container, unmount } = await render(createElement(ComposerModelInfo));
+    expect(el(container, "composer-model-level")?.textContent).toBe("默认");
     await unmount();
   });
 });

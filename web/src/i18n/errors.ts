@@ -86,6 +86,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   plan_not_bound: "errors.planNotBound",
   project_not_found: "errors.projectNotFound",
   project_not_registered: "errors.projectNotRegistered",
+  // 引擎进程管理（2026-11-04 批次 routes-engines stop 新增 1 码）
+  unknown_project: "errors.unknownProject",
   purge_requires_deleted: "errors.purgeRequiresDeleted",
   rebind_conflict: "errors.rebindConflict",
   schedule_limit: "errors.scheduleLimit",

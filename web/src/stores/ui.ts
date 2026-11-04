@@ -87,6 +87,9 @@ interface UiState {
   /** CLI 收藏（GET /api/models favorites，"provider/model" 归一）；
    * 模型弹层顶部收藏组数据源（webui 侧收藏管理暂缺，只读展示 CLI 侧收藏）。 */
   favoriteModels: string[];
+  /** 专属提示词映射（GET /api/models promptPresets，"provider/model" → preset 名）：
+   * 输入框模型区专属提示词徽标数据源；旧服务端未下发时为空对象（无徽标）。 */
+  promptPresets: Record<string, string | null>;
   /** 当前选中模型 "provider/model"（项目切换时应用该项目 preferred_model 偏好） */
   selectedModel: string | null;
   /** 当前选中思考档（W2 todo 8）：项目切换时应用该项目 preferredThinkingLevel 偏好；
@@ -132,7 +135,7 @@ interface UiState {
   toggleDrawer(): void;
   setProjects(projects: ProjectMeta[]): void;
   setCurrentProject(path: string | null): void;
-  setModels(models: ModelInfo[]): void;
+  setModels(models: ModelInfo[], promptPresets?: Record<string, string | null>): void;
   setFavoriteModels(models: string[]): void;
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
   resetModels(): void;
@@ -180,6 +183,7 @@ export const useUiStore = create<UiState>()((set) => ({
   projects: [],
   models: [],
   modelsLoaded: false,
+  promptPresets: {},
   favoriteModels: [],
   selectedModel: null,
   selectedThinkingLevel: null,
@@ -202,9 +206,9 @@ export const useUiStore = create<UiState>()((set) => ({
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
   setProjects: (projects) => set({ projects }),
   setCurrentProject: (path) => set({ currentProject: path }),
-  setModels: (models) => set({ models, modelsLoaded: true }),
+  setModels: (models, promptPresets = {}) => set({ models, modelsLoaded: true, promptPresets }),
   setFavoriteModels: (favoriteModels) => set({ favoriteModels }),
-  resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [] }),
+  resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [], promptPresets: {} }),
   setSelectedModel: (model) => set({ selectedModel: model }),
   setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),

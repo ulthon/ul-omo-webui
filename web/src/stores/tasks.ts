@@ -13,6 +13,9 @@ export interface BackgroundTask {
   status: string;
   /** 展示标签：wire 无 title/activity 字段（spike 表格核实），用 task_summary，缺席回退 name/task_id */
   label: string;
+  /** wire created_at/updated_at（ISO 串，缺席为空串）：右栏后台任务区时间列展示 */
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 /** wire tasks[] 条目窄化：id/status 缺失的畸形条目跳过，全空数组如实透出（空快照 = 活动条消失语义） */
@@ -30,6 +33,8 @@ function narrowTasks(raw: unknown): BackgroundTask[] {
       id,
       status: typeof t.status === "string" ? t.status : "",
       label: summary || name || id,
+      createdAt: typeof t.created_at === "string" ? t.created_at : "",
+      updatedAt: typeof t.updated_at === "string" ? t.updated_at : "",
     });
   }
   return out;

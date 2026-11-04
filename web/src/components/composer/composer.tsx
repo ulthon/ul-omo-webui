@@ -35,7 +35,7 @@ import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
 import { SlashHints } from "@/components/composer/slash-hints";
-import { CapsuleModelTag, ModelChip, ThinkingChip } from "@/components/composer/chips";
+import { ComposerModelInfo } from "@/components/composer/model-info";
 import { alignSelectionToApplied, pendingModelBadgeVisible } from "@/components/composer/model-pending";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
 import { insertMention } from "@/components/file-tree/file-tree-logic";
@@ -1392,23 +1392,17 @@ export function Composer({
         {toolsOpen && (
           <div className="flex flex-wrap items-center gap-1" data-testid="composer-tools-row">
             {toolButtons}
-            <div className="ml-auto flex items-center gap-1">
-              <ThinkingChip />
-            </div>
+            {/* 手机档思考档选择已并入底栏中间模型区（2026-11-03 三稿双内联按钮），工具行不再挂 */}
           </div>
         )}
         {/* 斜杠提示（任务 7）与常用语下拉（任务 9）均为 inline 档：输入区上方条区流内渲染 */}
         {slashHintsNode}
         {snippetDropdownNode}
         {/* 上行：textarea 整行宽（testid 沿用 composer-capsule，等待提示/中断口等既有断言不随重排漂移）；
-            模型浮签保持右上角常驻（待生效徽标语义不变） */}
+            右上角模型胶囊已退役（2026-11-03：模型信息迁底栏中间模型区） */}
         <div
           data-testid="composer-capsule"
-          className="relative"
         >
-          <div className="absolute -top-2.5 right-2 z-10">
-            <CapsuleModelTag pendingEffect={modelPendingEffect} />
-          </div>
           <textarea
             ref={textareaRefCb}
             data-testid="composer-input"
@@ -1423,7 +1417,6 @@ export function Composer({
             className="max-h-48 min-h-9 w-full resize-none overflow-y-auto rounded-xl border border-input bg-background px-2.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/50 disabled:opacity-50"
           />
         </div>
-        {/* 下行：常用语一步直达 + 低频工具收纳靠左；排队切换/停止/发送靠右 */}
         <div className="flex items-center gap-1">
           {snippetButtonSm}
           <button
@@ -1439,6 +1432,11 @@ export function Composer({
           >
             <Plus className="size-5" />
           </button>
+          {/* 底栏中间模型区（openchamber 同款）：模型短名 + 思考深度展示 + 专属提示词徽标，
+              点击开模型选择弹层（切换入口保留）；flex-1 居中夹在左右钮组之间 */}
+          <div className="flex min-w-0 flex-1 justify-center">
+            <ComposerModelInfo pendingEffect={modelPendingEffect} />
+          </div>
           <div className="ml-auto flex items-center gap-1">
             {queueModeToggleSm}
             {stopButtonSm}
@@ -1493,11 +1491,13 @@ export function Composer({
           {/* 常用语钮仍居工具行末位（docs08-r5 任务 9：仅手机档迁出，桌面零改动） */}
           {snippetButtonMd}
         </div>
-        {/* 模型 / 思考 chip（W2 todo 8）：第二模型选择面 + 思考档选择，右侧组随发送钮对齐。
-            流式态（docs08-r4 任务 11）：停止钮与排队模式切换钮插队发送钮左侧，发送变排队语义 */}
+        {/* 模型区居中（openchamber 同款底栏布局）：模型短名/思考档并列双内联按钮
+            （2026-11-03 三稿，ThinkingChip 退役）；流式态（docs08-r4 任务 11）：停止钮与排队
+            模式切换钮插队发送钮左侧，发送变排队语义 */}
+        <div className="flex min-w-0 flex-1 justify-center">
+          <ComposerModelInfo pendingEffect={modelPendingEffect} />
+        </div>
         <div className="ml-auto flex min-w-0 items-center gap-1">
-          <ThinkingChip />
-          <ModelChip />
           {stopButtonMd}
           {queueModeToggleMd}
           {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
