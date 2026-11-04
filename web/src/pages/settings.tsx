@@ -1,15 +1,17 @@
 // 设置独立全屏页（r9 2026-10-26 批次任务 9）：顶栏设置弹层退役，全部现有设置项迁入
-// 本页，分组收拢——项目区（权限预设+引擎重启、项目管理、发现模型）与全局区（外链
-// 地址、侧栏排序、标签展示、流量统计、扩展凭证、定时任务、对话、提示、语言）。
+// 本页。settings-page-nav 批次（2026-11-04）：页体改五组导航单组渲染——
+// SETTINGS_GROUPS 注册表表达归组，一次只渲染当前组（ui store settingsGroup，
+// 关开不重置）；导航单套 DOM：lg 以下页头下 sticky 横滑 chips，lg 以上左侧竖排。
 // 页面由 shell 依据 ui store settingsPageOpen 条件渲染（fixed 全屏覆盖层，shell 本体
 // 保持挂载：SSE 连接与引导状态不因进设置页中断），返回按钮回原视图。
 // 各分区实现自 topbar.tsx 原样迁移（含确认对话框与既有 data-testid），行为不变。
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowLeft, FolderPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
+import type { SettingsGroupId } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore } from "@/stores/sessions";
 import { PROJECT_SORT_KV, type ProjectSortMode } from "@/components/session-list/global-list-data";
@@ -835,13 +837,60 @@ function ExternalLinksSection() {
   );
 }
 
+/** 设置页五组归组表（settings-page-nav）：组内顺序与改造前页面顺序一致，
+ * 分区组件零改动（含内联分区），注册表只表达渲染单元的组织方式。 */
+const SETTINGS_GROUPS: ReadonlyArray<{
+  id: SettingsGroupId;
+  labelKey: MessageKey;
+  sections: ReadonlyArray<React.ComponentType>;
+}> = [
+  {
+    id: "project",
+    labelKey: "login.settingsPage.group.project",
+    sections: [ProjectPermissionSection, ToolsSection, ProjectManagementSection, RebindSection],
+  },
+  {
+    id: "model",
+    labelKey: "login.settingsPage.group.model",
+    sections: [ModelsDiscoverSection, EngineSection],
+  },
+  {
+    id: "appearance",
+    labelKey: "login.settingsPage.group.appearance",
+    sections: [SiteNameSection, SidebarSortSection, TagDisplaySection, PasteImageModeSection, ConversationSection, TipsSection, LanguageSection],
+  },
+  {
+    id: "integration",
+    labelKey: "login.settingsPage.group.integration",
+    sections: [ExternalLinksSection, AuthSection, ExtensionsSection, ScheduleSection],
+  },
+  {
+    id: "system",
+    labelKey: "login.settingsPage.group.system",
+    sections: [TrafficSection, DiagnosticsSection, UpdateSection],
+  },
+];
+
 /** 设置独立全屏页：fixed 覆盖层（shell 本体保持挂载，SSE 不中断），头部返回钮 +
- * 标题，正文按项目区/全局区分组收拢全部设置项。 */
+ * 标题，五组导航单组渲染（settings-page-nav）：lg 以下导航为页头下 sticky 横滑
+ * chips，lg 以上利用 max-w-2xl 左侧空白竖排；切组正文滚动归顶。 */
 export function SettingsPage() {
   const t = useT();
   const setSettingsPageOpen = useUiStore((s) => s.setSettingsPageOpen);
+  const settingsGroup = useUiStore((s) => s.settingsGroup);
+  const setSettingsGroup = useUiStore((s) => s.setSettingsGroup);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current = SETTINGS_GROUPS.find((g) => g.id === settingsGroup) ?? SETTINGS_GROUPS[0];
+
+  // 切组滚动归顶：滚动容器是覆盖层根 div（overflow-y-auto），组切换即归零
+  useEffect(() => {
+    const el = rootRef.current;
+    if (el) el.scrollTop = 0;
+  }, [settingsGroup]);
+
   return (
     <div
+      ref={rootRef}
       data-testid="settings-page"
       data-presentation="fullscreen-page"
       className="fixed inset-0 z-50 flex flex-col overflow-y-auto overscroll-contain bg-background"
@@ -860,37 +909,42 @@ export function SettingsPage() {
         </Button>
         <h1 className="text-base font-semibold">{t("login.topbar.settings")}</h1>
       </header>
-      <div className="mx-auto w-full max-w-2xl px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-4">
-        <section aria-labelledby="settings-project-group">
-          <h2 id="settings-project-group" className="pb-2 text-sm font-semibold text-muted-foreground">
-            {t("login.settingsPage.projectGroup")}
-          </h2>
-          <ProjectPermissionSection />
-          <ToolsSection />
-          <ProjectManagementSection />
-          <RebindSection />
-          <ModelsDiscoverSection />
-        </section>
-        <section aria-labelledby="settings-global-group" className="mt-6">
-          <h2 id="settings-global-group" className="pb-2 text-sm font-semibold text-muted-foreground">
-            {t("login.settingsPage.globalGroup")}
-          </h2>
-          <ExternalLinksSection />
-          <SiteNameSection />
-          <SidebarSortSection />
-          <TagDisplaySection />
-          <PasteImageModeSection />
-          <EngineSection />
-          <TrafficSection />
-          <AuthSection />
-          <ExtensionsSection />
-          <ScheduleSection />
-          <ConversationSection />
-          <TipsSection />
-          <DiagnosticsSection />
-          <UpdateSection />
-          <LanguageSection />
-        </section>
+      <div className="relative mx-auto w-full max-w-2xl px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-4">
+        {/* 导航单套 DOM：lg 以下 sticky 横滑 chips，lg 以上左侧竖排（断点类切换，
+            无桌面/手机两棵子树）；aria 口径照 project-visibility-filter 先例。 */}
+        <nav
+          aria-label={t("login.settingsPage.groupNav")}
+          className="sticky top-14 z-10 -mx-4 bg-background px-4 pb-2 lg:absolute lg:right-[calc(100%+1rem)] lg:top-4 lg:ml-0 lg:w-44 lg:bg-transparent lg:px-0 lg:pb-0"
+        >
+          <div
+            role="tablist"
+            aria-label={t("login.settingsPage.groupNav")}
+            className="flex gap-1 overflow-x-auto whitespace-nowrap lg:flex-col lg:gap-0.5 lg:overflow-visible"
+          >
+            {SETTINGS_GROUPS.map((group) => {
+              const selected = group.id === current.id;
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  role="tab"
+                  id={`settings-group-tab-${group.id}`}
+                  aria-selected={selected}
+                  data-testid={`settings-group-tab-${group.id}`}
+                  className={`min-h-7 shrink-0 rounded px-2 text-left text-xs lg:w-full ${selected ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setSettingsGroup(group.id)}
+                >
+                  {t(group.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+        <div role="tabpanel" aria-labelledby={`settings-group-tab-${current.id}`}>
+          {current.sections.map((Section, i) => (
+            <Section key={i} />
+          ))}
+        </div>
       </div>
     </div>
   );

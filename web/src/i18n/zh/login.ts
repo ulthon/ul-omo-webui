@@ -231,8 +231,14 @@ export const login = {
   settingsPage: {
     back: "返回",
     saved: "设置已保存",
-    projectGroup: "项目区",
-    globalGroup: "全局区",
+    group: {
+      project: "项目",
+      model: "模型与引擎",
+      appearance: "外观与偏好",
+      integration: "集成与服务",
+      system: "系统与维护",
+    },
+    groupNav: "设置分组导航",
     // —— 引擎分区（2026-11-04：空闲回收档位 + 进程管理）——
     engineIdleHeading: "引擎空闲回收",
     engineIdleNote: "项目引擎无运行中回合且无挂起权限请求持续此时长后回收（手动停可用下方进程管理）；改档即时生效免重启",

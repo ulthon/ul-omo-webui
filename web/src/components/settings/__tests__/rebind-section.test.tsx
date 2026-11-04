@@ -100,7 +100,7 @@ const SCAN_FIXTURE = {
 
 describe("设置页入口（r10 todo 18）", () => {
   test("(a) SettingsPage 渲染含「导入旧目录会话」入口（输入框 + 扫描钮）", () => {
-    useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ settingsGroup: "project", currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
     const html = renderToStaticMarkup(createElement(SettingsPage));
     expect(html).toContain('data-testid="rebind-old-path-input"');
     expect(html).toContain('data-testid="rebind-scan-button"');

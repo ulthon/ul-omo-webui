@@ -16,6 +16,11 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
+// BubbleShell/StreamingBubble 于文件装载期一次导入：用例内动态导入在全量并行负载下
+// 曾被模块求值饥饿拖过 20s 用例超时（assistant 头部例 20493ms），超时用例的残留续体
+// 又与同文件后续用例的 act 交错致渲染未提交（header 为 null 的三例连锁快速失败）。
+// 装载期导入不受用例超时约束，断言与被测行为不变。
+const { BubbleShell, StreamingBubble } = await import("@/components/chat/message-bubble");
 
 import { messageModel, shortModelName } from "@/lib/api";
 import type { WireEntry, WireMessage } from "@/lib/api";
@@ -92,7 +97,6 @@ describe("buildMessageItems（分隔线退役后）", () => {
 
 describe("BubbleShell 助手头部模型短名（DOM 断言）", () => {
   test("assistant 头部行渲染模型短名；user 气泡无模型行", async () => {
-    const { BubbleShell } = await import("@/components/chat/message-bubble");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -129,7 +133,6 @@ describe("BubbleShell 助手头部模型短名（DOM 断言）", () => {
 // 无 model 字段（老数据/裸流）不误报。streamingModelOf 整链用 store 种子 + StreamingBubble 真渲染断言。
 describe("流式头部模型短名（docs08-r5 任务 12）", () => {
   test("BubbleShell live 态：头部显示 正在回复 + 模型短名，脉冲点保留", async () => {
-    const { BubbleShell } = await import("@/components/chat/message-bubble");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -154,7 +157,6 @@ describe("流式头部模型短名（docs08-r5 任务 12）", () => {
   });
 
   test("settle 态回归：标签 助手 + 短名保留，无脉冲点", async () => {
-    const { BubbleShell } = await import("@/components/chat/message-bubble");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -202,7 +204,6 @@ describe("流式头部模型短名（docs08-r5 任务 12）", () => {
 
   test("store 种子 → StreamingBubble：live 头部透出短名（streamingModelOf 整链）", async () => {
     const store = await seedStreaming("s-t12", "zai-coding-cn/glm-5.3-4k");
-    const { StreamingBubble } = await import("@/components/chat/message-bubble");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -221,7 +222,6 @@ describe("流式头部模型短名（docs08-r5 任务 12）", () => {
 
   test("无 model 流：StreamingBubble 渲染无报错无占位（老数据/裸流）", async () => {
     const store = await seedStreaming("s-t12-nomodel");
-    const { StreamingBubble } = await import("@/components/chat/message-bubble");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

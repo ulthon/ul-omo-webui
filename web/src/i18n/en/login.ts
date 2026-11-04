@@ -229,8 +229,14 @@ export const login = {
   settingsPage: {
     back: "Back",
     saved: "Settings saved",
-    projectGroup: "Project",
-    globalGroup: "Global",
+    group: {
+      project: "Project",
+      model: "Models & Engines",
+      appearance: "Appearance & Preferences",
+      integration: "Integrations",
+      system: "System & Maintenance",
+    },
+    groupNav: "Settings group navigation",
     engineIdleHeading: "Engine idle reclaim",
     engineIdleNote: "A project engine is reclaimed after this much idle time (no running turns, no pending permissions). Applies immediately, no restart needed",
     engineIdle30m: "30 min",

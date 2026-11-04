@@ -11,6 +11,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ToolCard 于文件装载期一次导入（同 model-visibility 根因：用例内动态导入在全量
+// 并行负载下被模块求值饥饿拖过 20s 用例超时；装载期导入不受用例超时约束，断言不变）
+const { ToolCard } = await import("@/components/chat/tool-card");
+
 type Catalog = Record<string, unknown>;
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -149,7 +153,6 @@ describe("i18n 目录完整性（任务3 五断言）", () => {
     // Wave 2 接线前组件仍渲染硬编码中文：本断言只锁"en 档渲染通路不抛错、非空"，
     // 不锁渲染语言内容；接线后由后续任务强化为内容断言。
     useLocaleStore.setState({ locale: "en" });
-    const { ToolCard } = await import("@/components/chat/tool-card");
     const html = renderToStaticMarkup(
       createElement(ToolCard, {
         sessionId: "s-smoke",

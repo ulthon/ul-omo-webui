@@ -103,6 +103,8 @@ beforeEach(() => {
     projects: [project("/p1", { permissionPreset: null })],
     currentProject: "/p1",
     settingsPageOpen: false,
+    // settings-page-nav：显式归位默认组（zustand 单例跨用例，前例切组不污染）
+    settingsGroup: "project",
     toast: null,
     projectSort: "activity",
   });
@@ -143,9 +145,13 @@ describe("设置独立全屏页（弹层退役）", () => {
     const page = container.querySelector('[data-testid="settings-page"]');
     expect(page).not.toBeNull();
     expect(useUiStore.getState().settingsPageOpen).toBe(true);
-    // 分组收拢：项目区/全局区两个分区标题在页上
-    expect(page.textContent).toContain("项目区");
-    expect(page.textContent).toContain("全局区");
+    // 五组导航（settings-page-nav）：五个组页签在场、默认 project 组选中、单组渲染
+    // （旧「项目区/全局区」双分组已退役；appearance 组内容不在默认页）
+    for (const id of ["project", "model", "appearance", "integration", "system"] as const) {
+      expect(page.querySelector(`[data-testid="settings-group-tab-${id}"]`)).not.toBeNull();
+    }
+    expect(page.querySelector('[data-testid="settings-group-tab-project"]')?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="tag-display-mode-option-grid"]')).toBeNull();
     // (3) 设置页打开态仍无任何 dialog（弹层退役；确认类弹层仅在动作时挂载）
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0);
 
@@ -163,6 +169,10 @@ describe("设置独立全屏页（弹层退役）", () => {
     expect(useUiStore.getState().projects[0].permissionPreset).toBe("workspace");
 
     // (2b) 侧栏排序档位切换：PUT /api/settings + store 同步
+    // （settings-page-nav：排序分区归 appearance 组，先切组再操作）
+    await act(async () => {
+      (container.querySelector('[data-testid="settings-group-tab-appearance"]') as HTMLButtonElement).click();
+    });
     const sortLabel = container.querySelector('[data-testid="project-sort-option-added"]') as HTMLLabelElement;
     expect(sortLabel).not.toBeNull();
     await act(async () => {
@@ -207,6 +217,10 @@ describe("设置独立全屏页（弹层退役）", () => {
     await openPage();
 
     // 标签展示档（第二轮打开仍可用）：切到色格
+    // （settings-page-nav：标签展示分区归 appearance 组，先切组再操作）
+    await act(async () => {
+      (container.querySelector('[data-testid="settings-group-tab-appearance"]') as HTMLButtonElement).click();
+    });
     const gridOption = container.querySelector('[data-testid="tag-display-mode-option-grid"]') as HTMLLabelElement;
     expect(gridOption).not.toBeNull();
     await act(async () => {

@@ -6,6 +6,9 @@ import type { TagDisplayMode } from "@/components/session-list/tag-data";
 
 export type ConnectionStatus = "online" | "reconnecting";
 
+/** 设置页分组标识（settings-page-nav 任务 1） */
+export type SettingsGroupId = "project" | "model" | "appearance" | "integration" | "system";
+
 export interface Toast {
   id: number;
   kind: "info" | "error";
@@ -105,6 +108,9 @@ interface UiState {
   /** 设置全屏页开关（r9 2026-10-26 批次任务 9）：顶栏设置钮与设置页返回钮共用，
    * 跨组件状态落 store（同 shortcutsHelpOpen 款）；全屏页由 shell 条件渲染。 */
   settingsPageOpen: boolean;
+  /** 设置页当前分组（settings-page-nav 任务 1）：分组导航选中态，
+   * 跨组件状态落 store（同 settingsPageOpen 款）；不持久化，打开页缺省 project。 */
+  settingsGroup: SettingsGroupId;
   /** 外链入口配置（bootstrap 读 GET /api/settings 填充；设置弹层 PUT 更新） */
   externalLinks: ExternalLinks;
   /** 侧栏项目排序档位（C16 todo 9）：meta_kv sidebar.projectSort 持久（缺省 activity），
@@ -144,6 +150,7 @@ interface UiState {
   setModelPickerOpen(open: boolean): void;
   setShortcutsHelpOpen(open: boolean): void;
   setSettingsPageOpen(open: boolean): void;
+  setSettingsGroup(group: SettingsGroupId): void;
   /** 文件管理全屏页开关（builtin-file-management 任务 1）：同 settingsPageOpen 款，
    *  顶栏入口钮与页面返回钮共用，跨组件状态落 store；全屏页由 shell 条件渲染。 */
   filesPageOpen: boolean;
@@ -190,6 +197,7 @@ export const useUiStore = create<UiState>()((set) => ({
   modelPickerOpen: false,
   shortcutsHelpOpen: false,
   settingsPageOpen: false,
+  settingsGroup: "project",
   filesPageOpen: false,
   externalLinks: { gitUrl: null, filesUrl: null },
   projectSort: "activity",
@@ -214,6 +222,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),
   setSettingsPageOpen: (open) => set({ settingsPageOpen: open }),
+  setSettingsGroup: (group) => set({ settingsGroup: group }),
   setFilesPageOpen: (open) => set({ filesPageOpen: open }),
   setExternalLinks: (links) => set({ externalLinks: links }),
   setProjectSort: (sort) => set({ projectSort: sort }),
