@@ -297,14 +297,31 @@ export const CustomMessageBubble = memo(function CustomMessageBubble({
  *  不是未知类型。数据已由 buildMessageItems 同类收敛（只留最末一条）。 */
 export const RestoreDigestLine = memo(function RestoreDigestLine({ digest }: { digest: RestoreDigestNotice }) {
   const t = useT();
+  // 2026-11-05 #11：内容长时单行截断看不全——点行展开全文、再点收起（title 悬停保留）
+  const [expanded, setExpanded] = useState(false);
   return (
     <div
       data-testid="restore-digest-line"
+      data-expanded={expanded}
       title={digest.content}
-      className="my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      onClick={() => setExpanded((v) => !v)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setExpanded((v) => !v);
+        }
+      }}
+      className="my-0.5 inline-flex max-w-full cursor-pointer items-start gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"
     >
       <span className="shrink-0 opacity-70">{t("chat.restoreDigest.label")}</span>
-      <span className="truncate">{digest.content}</span>
+      {expanded ? (
+        <span data-testid="restore-digest-full" className="whitespace-pre-wrap break-all">{digest.content}</span>
+      ) : (
+        <span className="truncate">{digest.content}</span>
+      )}
     </div>
   );
 });

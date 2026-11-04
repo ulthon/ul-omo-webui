@@ -239,6 +239,12 @@ export const login = {
       system: "系统与维护",
     },
     groupNav: "设置分组导航",
+    // —— 通知记录分区（2026-11-05 #10：toast 历史回看）——
+    notificationsHeading: "通知记录",
+    notificationsEmpty: "暂无通知记录",
+    notificationsClear: "清空",
+    notificationsKindInfo: "提示",
+    notificationsKindError: "错误",
     // —— 引擎分区（2026-11-04：空闲回收档位 + 进程管理）——
     engineIdleHeading: "引擎空闲回收",
     engineIdleNote: "项目引擎无运行中回合且无挂起权限请求持续此时长后回收（手动停可用下方进程管理）；改档即时生效免重启",

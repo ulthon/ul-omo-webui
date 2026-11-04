@@ -41,13 +41,13 @@ describe("showToast 栈行为", () => {
     expect(console.warn).toHaveBeenCalledWith("[toast] cap 3 exceeded, dropped oldest:", "a");
   });
 
-  test("info 3.2s 各自自动消失（多条独立计时）", () => {
+  test("info 8s 各自自动消失（多条独立计时；2026-11-05 #10 加长）", () => {
     const s = useUiStore.getState();
     s.showToast("i1", "info");
     vi.advanceTimersByTime(1000);
     s.showToast("i2", "info");
     expect(texts()).toEqual(["i1", "i2"]);
-    vi.advanceTimersByTime(2200); // i1 满 3.2s；i2 才 2.2s
+    vi.advanceTimersByTime(7000); // i1 满 8s；i2 才 7s
     expect(texts()).toEqual(["i2"]);
     vi.advanceTimersByTime(1000);
     expect(texts()).toEqual([]);
@@ -69,6 +69,51 @@ describe("showToast 栈行为", () => {
     expect(texts()).toEqual(["e2", "e3", "e4"]);
     vi.advanceTimersByTime(5000);
     expect(texts()).toEqual(["e2", "e3", "e4"]); // 若 timer 未清也不会多删，但至少无害
+  });
+});
+
+describe("notifications 通知历史（2026-11-05 #10）", () => {
+  beforeEach(() => {
+    useUiStore.setState({ toasts: [], notifications: [] });
+  });
+
+  test("info 与 error 都入历史，带时间戳", () => {
+    const s = useUiStore.getState();
+    s.showToast("n1", "info");
+    s.showToast("n2", "error");
+    const ns = useUiStore.getState().notifications;
+    expect(ns.map((n) => n.text)).toEqual(["n1", "n2"]);
+    expect(ns[0]).toMatchObject({ kind: "info", text: "n1" });
+    expect(ns[1]).toMatchObject({ kind: "error", text: "n2" });
+    expect(typeof ns[0]!.ts).toBe("number");
+  });
+
+  test("toast 自动消失/手动关/超限丢最旧都不影响历史", () => {
+    const s = useUiStore.getState();
+    s.showToast("i1", "info");
+    vi.advanceTimersByTime(9000); // 栈里已消失
+    s.showToast("e1", "error");
+    const id = useUiStore.getState().toasts[0]!.id;
+    useUiStore.getState().dismissToast(id); // 手动关
+    expect(useUiStore.getState().toasts).toEqual([]);
+    expect(useUiStore.getState().notifications.map((n) => n.text)).toEqual(["i1", "e1"]);
+  });
+
+  test("环形缓冲 200 条，超出丢最旧", () => {
+    const s = useUiStore.getState();
+    for (let i = 1; i <= 202; i++) s.showToast(`m${i}`, "info");
+    const ns = useUiStore.getState().notifications;
+    expect(ns).toHaveLength(200);
+    expect(ns[0]!.text).toBe("m3"); // m1/m2 被挤出
+    expect(ns[199]!.text).toBe("m202");
+  });
+
+  test("clearNotifications 清空历史（不动 toast 栈）", () => {
+    const s = useUiStore.getState();
+    s.showToast("keep", "error");
+    useUiStore.getState().clearNotifications();
+    expect(useUiStore.getState().notifications).toEqual([]);
+    expect(texts()).toEqual(["keep"]);
   });
 });
 

@@ -15,6 +15,15 @@ export interface Toast {
   text: string;
 }
 
+/** 通知历史记录（2026-11-05 #10）：toast 弹出同时入环形缓冲，设置页「通知记录」可回看。
+ * 内存态不落库（刷新即清）；info 与 error 都入（error 关闭后也可找回）。 */
+export interface ToastNotification {
+  id: number;
+  kind: "info" | "error";
+  text: string;
+  ts: number;
+}
+
 /** 外链入口（todo 26）：服务端 kv 配置（键 external-git-url / external-files-url），
  * 未配置为 null 时对应入口隐藏——"未提交变更"页签是核心自有功能不受影响。 */
 export interface ExternalLinks {
@@ -135,6 +144,7 @@ interface UiState {
    * 顶栏小字/标签页标题与设置页共同消费（resolveSiteName 取值）。 */
   siteName: string | null;
   toasts: Toast[];
+  notifications: ToastNotification[];
 
   setConnection(status: ConnectionStatus): void;
   setDrawerOpen(open: boolean): void;
@@ -165,13 +175,17 @@ interface UiState {
   setSiteName(name: string | null): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
+  clearNotifications(): void;
 }
 
 // 轻提示栈（docs08 2026-10-25 用户反馈）：底部同列堆叠至多 MAX_TOASTS 条，各自独立关闭，
 // 文字可选中可复制（点文字本体不触发任何动作）。info 各自计时自动消失（timer 按 id 归档）；
 // error 常驻直到显式关闭（遗漏错误比多看一眼代价高）。超限丢最旧并 console.warn 留痕。
 const MAX_TOASTS = 3;
-const INFO_TOAST_MS = 3200;
+// 2026-11-05 #10：3.2s→8s——黑框提示经常没来得及看就消失；历史记录同步兑底（丢失可回看）
+const INFO_TOAST_MS = 8000;
+// 环形缓冲：超出丢最旧（与 toast 栈的丢最旧同语义，但历史层无需 console.warn——本身就可回看容量边界）
+const MAX_NOTIFICATIONS = 200;
 const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
 let toastSeq = 0;
 
@@ -208,6 +222,7 @@ export const useUiStore = create<UiState>()((set) => ({
   pasteImageMode: "auto",
   siteName: null,
   toasts: [],
+  notifications: [],
 
   setConnection: (status) => set({ connection: status }),
   setDrawerOpen: (open) => set({ drawerOpen: open }),
@@ -244,7 +259,10 @@ export const useUiStore = create<UiState>()((set) => ({
         }
         rest = rest.slice(rest.length - MAX_TOASTS + 1);
       }
-      return { toasts: [...rest, { id, kind, text }] };
+      return {
+        toasts: [...rest, { id, kind, text }],
+        notifications: [...s.notifications, { id, kind, text, ts: Date.now() }].slice(-MAX_NOTIFICATIONS),
+      };
     });
     // 仅 info 自动消失；error 常驻展示直到用户点关闭钮（遗漏错误比多看一眼代价高）
     if (kind === "info") {
@@ -261,4 +279,5 @@ export const useUiStore = create<UiState>()((set) => ({
     clearToastTimer(id);
     set((s) => ({ toasts: s.toasts.filter((it) => it.id !== id) }));
   },
+  clearNotifications: () => set({ notifications: [] }),
 }));

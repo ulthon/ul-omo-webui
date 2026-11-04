@@ -24,6 +24,7 @@ import { AuthSection } from "@/components/settings/auth-section";
 import { ScheduleSection } from "@/components/schedule/schedule-section";
 import { TipsSection } from "@/components/layout/tips-section";
 import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
+import { NotificationsSection } from "@/components/settings/notifications-section";
 import { EngineSection } from "@/components/settings/engine-section";
 import { UpdateSection } from "@/components/settings/update-section";
 import { AddProjectDialog } from "@/components/layout/add-project-dialog";
@@ -867,7 +868,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{
   {
     id: "system",
     labelKey: "login.settingsPage.group.system",
-    sections: [TrafficSection, DiagnosticsSection, UpdateSection],
+    sections: [TrafficSection, DiagnosticsSection, NotificationsSection, UpdateSection],
   },
 ];
 
