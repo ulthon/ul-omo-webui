@@ -296,6 +296,8 @@ export class SenpiAdapter implements EngineAdapter {
   private readonly options: SenpiAdapterOptions
   private client: SenpiRpcClient | null = null
   private active: EngineOpenSessionResult | null = null
+  /** 最近一次成功 open 的 sessionPath（2026-11-06：no_active_session 兕底重开用，绑定丢失后仍可恢复） */
+  private lastSessionPath: string | undefined = undefined
   private starting: Promise<void> | null = null
   /** unknown_session 兜底的 in-flight 重开去重：并发失败共享同一次 open_session（防重开风暴） */
   private reopening: Promise<EngineOpenSessionResult> | null = null
@@ -360,16 +362,28 @@ export class SenpiAdapter implements EngineAdapter {
 
   /** 精确匹配引擎 unknown_session（RpcSessionRegistryError("unknown_session") 经 stdio
    *  反序列化为 message=unknown_session 的 Error；errorCode 同名时亦认）。不宽匹配其它错误。 */
-  private isUnknownSessionError(err: unknown): boolean {
-    if (!(err instanceof Error)) return false
-    if (err.message === "unknown_session") return true
-    return (err as { errorCode?: unknown }).errorCode === "unknown_session"
+  /** 可重开兜底判据（2026-11-06 扩）：unknown_session（引擎重启后残留旧绑定）
+   *  或 session_closing（引擎侧 session worker 单条输出超 16MB 硬限被隔离，
+   *  深查 st_01a1ae48 实证 session_worker_output_limit——隔离后该会话非白名单
+   *  命令全部报 session_closing；重开 = 换新 worker 恢复会话，落盘 jsonl 不受损）。 */
+  private isSessionReopenableError(err: unknown): boolean {
+    // 鸭子判定（2026-11-06 修）：网关/线程层可能抛非 Error 实例的普通对象，
+    // instanceof 门会静默绕过兕底（01:13:04 实录 15ms 直 5xx）；只看 message/errorCode 字段。
+    // no_active_session（01:57:21 实录：隔离/重启后绑定丢失，prompt 撞 requireActive）
+    // 亦纳入：有 lastSessionPath 即可自动重开恢复。
+    const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
+    const reopenable = new Set(["unknown_session", "session_closing", "no_active_session"])
+    const hit = (v: unknown): boolean => typeof v === "string" && reopenable.has(v)
+    if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
+    return [e.message, e.errorCode, e.code].some(hit)
   }
 
   /** 按当前活跃绑定的 sessionPath 重新 open_session 重建引擎侧绑定（路由 handle 会更新）。
    *  in-flight 去重：同 adapter 并发失败共享同一次重开，重开完成或失败后清槽。 */
   private reopenActiveSession(): Promise<EngineOpenSessionResult> {
-    this.reopening ??= this.openSession({ sessionPath: this.requireActive().sessionPath }).finally(() => {
+    const sessionPath = this.active?.sessionPath ?? this.lastSessionPath
+    if (!sessionPath) return Promise.reject(new EngineAdapterError("no_active_session", "无活跃会话且无历史路径可重开"))
+    this.reopening ??= this.openSession({ sessionPath }).finally(() => {
       this.reopening = null
     })
     return this.reopening
@@ -377,14 +391,15 @@ export class SenpiAdapter implements EngineAdapter {
 
   /** 引擎重启（watchdog 自退出后网关重拉）后 adapter 残留旧会话绑定，op 裸透
    *  unknown_session。兜底：捕获该错误 → 自动重开 → 原 op 恰好重试一次；重试仍失败或
-   *  重开失败才按原行为抛出。只兜 unknown_session，不吞其它错误；重试不改变请求语义。
+   *  重开失败才按原行为抛出。只兜 unknown_session 与 session_closing（worker 隔离），不吞其它错误；重试不改变请求语义。
    *  全部会话 op 统一走此包装（不只 prompt）。 */
   private async rpcOp<T>(op: string, fn: () => Promise<T>): Promise<T> {
     try {
       return await fn()
     } catch (err) {
-      if (!this.isUnknownSessionError(err)) throw err
-      log.warn("adapter", "unknown_session 自动重开会话并重试", { op, sessionId: this.active?.sessionId ?? "" })
+      if (!this.isSessionReopenableError(err)) throw err
+      const reason = err instanceof Error ? err.message : "unknown_session"
+      log.warn("adapter", "会话可重开错误，自动重开并重试一次", { op, reason, sessionId: this.active?.sessionId ?? "" })
       await this.reopenActiveSession()
       return fn()
     }
@@ -478,6 +493,7 @@ export class SenpiAdapter implements EngineAdapter {
       throw new EngineAdapterError("open_failed", `open_session 响应缺 state.sessionId/sessionFile: ${JSON.stringify(res).slice(0, 200)}`)
     }
     this.active = { sessionId, sessionPath, routingId: res.sessionId }
+    this.lastSessionPath = sessionPath
     return this.active
   }
 
@@ -487,6 +503,8 @@ export class SenpiAdapter implements EngineAdapter {
 
   async closeSession(): Promise<void> {
     this.requireActive()
+    // 2026-11-06 排查插针：会话中断归因（UI 侧 vs 引擎侧）——每次引擎侧会话关闭必须在 journal 可见
+    log.info("adapter", "close_session", { sessionId: this.active?.sessionId ?? "" })
     await this.rpc().closeSession()
     this.active = null
   }

@@ -535,6 +535,28 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(fake.promptAttempts).toBe(2)
   })
 
+  test("session_closing（worker 隔离，2026-11-06 扩）→ 同兕底重开重试成功", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = new Error("session_closing")
+    fake.failTimes = 1
+    const adapter = await setup(fake)
+    const openCallsBefore = fake.calls.filter((c) => c.method === "open_session").length
+    const receipt = await adapter.prompt({ text: "隔离后应自动重开" })
+    expect(receipt.disposition).toBe("started")
+    expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(openCallsBefore + 1)
+    expect(fake.promptAttempts).toBe(2)
+  })
+
+  test("非 Error 实例的普通对象错误（网关层实录形态，2026-11-06 修）→ 兕底仍生效", async () => {
+    const fake = new FlakyPromptClient()
+    fake.failWith = { message: "unknown_session", code: "internal" } as unknown as Error
+    fake.failTimes = 1
+    const adapter = await setup(fake)
+    const receipt = await adapter.prompt({ text: "普通对象错误也重开" })
+    expect(receipt.disposition).toBe("started")
+    expect(fake.promptAttempts).toBe(2)
+  })
+
   test("重开仍失败 → 原样报错（不无限重试）", async () => {
     const fake = new FlakyPromptClient()
     fake.failWith = new Error("unknown_session")
