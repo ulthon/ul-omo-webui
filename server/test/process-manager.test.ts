@@ -131,6 +131,53 @@ describe("spawn 规范（verification/01、03 实证）", () => {
     }
   })
 
+  test("会话级逐出档 env 注入：max(idleTimeoutMs,30min)、永不档 MAX_SAFE_INTEGER、改档仅影响新 spawn", async () => {
+    // engine-open-read-batch 任务 3：env 名 SENPI_RPC_SESSION_IDLE_EVICTION_MS 实证见
+    // @code-yeongyu/senpi dist/modes/rpc/host-idle-policy.js；档位对齐口径见注入点注释。
+    const h = makeHarness() // makeHarness 默认 idleTimeoutMs=80ms（< 30min 默认）
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      // 低档：引擎逐出不低于引擎默认 30min，由本管理器先回收
+      expect(h.fakes[0].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(30 * 60_000))
+
+      // 改档上调 → 逐 spawn 现算：旧引擎（第一个 fake）env 不变，新 spawn 取新档
+      h.manager.setIdleTimeoutMs(60 * 60_000)
+      await h.manager.stop(SESS_A1)
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      expect(h.fakes.length).toBe(2)
+      expect(h.fakes[0].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(30 * 60_000))
+      expect(h.fakes[1].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(60 * 60_000))
+    } finally {
+      await h.manager.stopAll()
+      cleanup(h)
+    }
+
+    // 永不回收档（<=0）：不能注入 0（引擎侧 parseIdleExitMs 遇 0/非法回落默认 30min），
+    // 用 MAX_SAFE_INTEGER 表达永不
+    const never = new EngineProcessManager({
+      registryPath: `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`,
+      idleTimeoutMs: 0,
+      backoffBaseMs: 20,
+      backoffMaxMs: 100,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      stopGraceMs: 60,
+      probe: h.probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        h.fakes.push(fake)
+        return wireProbe(fake, h.probe)
+      },
+    })
+    try {
+      await never.ensureRunning(SESS_A1, PROJ)
+      expect(h.fakes[2].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(Number.MAX_SAFE_INTEGER))
+    } finally {
+      await never.stopAll()
+      cleanup({ manager: never, fakes: h.fakes, probe: h.probe, events: h.events, registryPath: "/tmp/nonexistent" })
+    }
+  })
+
   test("默认 provider/model 成对传入，缺一不传（RpcClient 单 --provider 是 CLI 错误）", async () => {
     const fakes: FakeRpcClient[] = []
     const probe = new MemProbe()

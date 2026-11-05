@@ -173,6 +173,15 @@ export type WarmupHook = (projectPath: string, client: RpcClient) => void | Prom
  * 引擎侧超时/取消走 question_resolved 事件（trackWireEvent 清除）。 */
 const DIALOG_UI_METHODS = new Set(["select", "confirm", "input", "editor", "question"])
 
+/**
+ * 引擎宿主会话级 idle 逐出默认档。实证：@code-yeongyu/senpi
+ * dist/modes/rpc/host-idle-policy.js 的 DEFAULT_SESSION_IDLE_EVICTION_MS = 30min，
+ * 可经 env SENPI_RPC_SESSION_IDLE_EVICTION_MS（同文件 RPC_SESSION_IDLE_EVICTION_MS_ENV）
+ * 覆盖，引擎在 rpc 启动时 resolveHostIdlePolicy 读一次。该常量与 env 名常量均未从包根
+ * 导出，此处本地对齐副本（改引擎版本时需同步核对）。
+ */
+const ENGINE_SESSION_IDLE_EVICTION_DEFAULT_MS = 30 * 60_000
+
 const DEFAULTS = {
   // 2026-11-04 用户定版：对齐 openchamber 常驻理念（它不回收引擎进程）。旧值 30 分钟
   // 曾误杀安静后台长任务（诊断实锤：另一机器 ai-chuangzuo 后台任务跑 3h53m 后被
@@ -578,6 +587,22 @@ export class EngineProcessManager {
       ...(this.opts.idleTimeoutMs > 0
         ? { SENPI_RPC_HOST_IDLE_EXIT_MS: String(this.opts.idleTimeoutMs) }
         : { SENPI_RPC_HOST_COLD_START: "persistent" }),
+      // 会话级逐出对齐（engine-open-read-batch 任务 3）：引擎宿主对单个会话另有默认
+      // 30min 逐出（见 ENGINE_SESSION_IDLE_EVICTION_DEFAULT_MS）。注入档位取
+      // max(idleTimeoutMs, 引擎默认 30min)：引擎逐出恒不早于本管理器回收档，由本
+      // 管理器先回收（有 engine_reclaimed 日志/账本），引擎侧只作兜底；档位上调
+      // （如 7 天默认）时引擎侧同步放宽，避免引擎 30min 逐出先杀绑定（GAP-1 源头
+      // 减频）。"永不回收"档（idleTimeoutMs<=0）注入 MAX_SAFE_INTEGER：引擎侧
+      // parseIdleExitMs 只接受正整数，0/非法值会回落默认 30min，不能用 0 表达永不。
+      // env 每次 spawn 现算（buildSpawnOptions），改档只影响后续 spawn，运行中引擎
+      // 不受影响（由本管理器回收兜底）。
+      ...(this.opts.idleTimeoutMs > 0
+        ? {
+            SENPI_RPC_SESSION_IDLE_EVICTION_MS: String(
+              Math.max(this.opts.idleTimeoutMs, ENGINE_SESSION_IDLE_EVICTION_DEFAULT_MS),
+            ),
+          }
+        : { SENPI_RPC_SESSION_IDLE_EVICTION_MS: String(Number.MAX_SAFE_INTEGER) }),
     }
     const args = ["--extension", pluginDir, "--multi-session"]
     // 按项目附加参数（权限预设等 meta_kv 派生；缺省无附加）
