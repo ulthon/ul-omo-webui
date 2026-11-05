@@ -203,3 +203,63 @@ export async function readAllEntries(sessionPath: string): Promise<FullReadResul
     await fh.close();
   }
 }
+
+/** 前向增量读结果（任务 13 / F4 IS-2 切回校准磁盘优先）：entries 为 afterId 之后
+ *  的条目（文件序）；cursor 为响应游标——读尽时即文件末条目 id（afterId 之后无新
+ *  条目时即 afterId 本身，对齐引擎 getEntries(since) 增量 0 条回 leafId 的语义），
+ *  字节截停时为最后交付条目 id。 */
+export interface AfterReadResult {
+  entries: EngineEntry[];
+  cursor: string;
+}
+
+/**
+ * 前向增量直读（任务 13 / F4 IS-2）：?cursor= 前向增量不再经引擎冷 spawn，改服务
+ * 端正向分块扫描会话文件，收集 afterId 之后的全部条目。语义对齐引擎 getEntries(since)。
+ * afterId 不在文件中（compaction 重写/换代）抛 CursorInvalidError（路由转 409，客户端
+ * 升级 full=1）；字节上限 WINDOW_BYTE_CAP 与尾窗同源：累计 ≥8MiB 截停（至少保 1 条），
+ * cursor 回退最后交付条目 id（senpi-adapter 分页预算截停同语义——前端 setCursor 后
+ * 下次校准续读，不丢数据）。header 行与损坏行跳过、末尾无换行残行丢弃，均与
+ * readAllEntries 同约定。
+ */
+export async function readEntriesAfter(sessionPath: string, afterId: string): Promise<AfterReadResult> {
+  const fh = await open(sessionPath, "r");
+  try {
+    const size = (await fh.stat()).size;
+    const entries: EngineEntry[] = [];
+    let pos = 0;
+    let carry = "";
+    let anchorSeen = false;
+    let collectedBytes = 0;
+    while (pos < size) {
+      const step = Math.min(CHUNK_BYTES, size - pos);
+      const buf = Buffer.alloc(step);
+      const { bytesRead: read } = await fh.read(buf, 0, step, pos);
+      if (read <= 0) break;
+      pos += read;
+      const text = carry + buf.toString("utf8", 0, read);
+      const parts = text.split("\n");
+      carry = parts.pop() ?? "";
+      for (const part of parts) {
+        const entry = parseEntryLine(part);
+        if (!entry) continue;
+        if (!anchorSeen) {
+          if (entry.id !== afterId) continue;
+          anchorSeen = true;
+          continue;
+        }
+        entries.push(entry);
+        collectedBytes += Buffer.byteLength(part);
+        if (collectedBytes >= WINDOW_BYTE_CAP) {
+          // 字节截停（检查在 push 后，至少保 1 条）：cursor 回退最后交付条目
+          return { entries, cursor: entries[entries.length - 1]!.id };
+        }
+      }
+    }
+    if (!anchorSeen) throw new CursorInvalidError();
+    // 读尽：cursor 为文件末条目 id（增量 0 条时即 afterId，对齐引擎 since=leafId 语义）
+    return { entries, cursor: entries[entries.length - 1]?.id ?? afterId };
+  } finally {
+    await fh.close();
+  }
+}

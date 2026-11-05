@@ -118,8 +118,9 @@ async function setup(): Promise<Harness> {
     markUserActivity: (_sessionPath: string): void => {},
   } as unknown as EngineProcessManager
   const registry = new EngineRuntimeRegistry(fakeManager, { listProjects: () => [PROJECT], agentDir })
-  // 首次 usage：ensure() 建 adapter 挂事件回调 + switchTo 回填 handle→durable 映射
-  await registry.usage(DURABLE_ID)
+  // 首次 messages：ensure() 建 adapter 挂事件回调 + 扇出回填 handle→durable 映射
+  //（usage 自任务 13 起冷态中性快照不再 ensure，读面回归见 runtime-usage-neutral）
+  await registry.messages(DURABLE_ID)
   return { registry, rpc, cleanup: () => rmSync(root, { recursive: true, force: true }) }
 }
 
@@ -248,10 +249,12 @@ describe("A5 回合速度环（engine-runtime message_start/end 挂点）", () =
       rpc.emit({ type: "message_start", id: "m-lingering", sessionId: rpc.lastHandle, message: { role: "assistant" } })
       const handleBefore = rpc.lastHandle
       await registry.stopAll()
-      // stopAll 后先走一次 usage：switchTo 重新 open → 新 routing handle + 映射重建
+      // stopAll 后先走一次 messages：ensure 重新 open → 新 routing handle + 映射重建
+      //（任务 13：usage 冷态不再 ensure，重建用真驾驶读面；usage 只作快照读）
+      await registry.messages(DURABLE_ID)
+      expect(rpc.lastHandle).not.toBe(handleBefore)
       const cleared = await registry.usage(DURABLE_ID)
       expect(cleared.turnSpeed?.turns.length).toBe(0)
-      expect(rpc.lastHandle).not.toBe(handleBefore)
       await feedPair(rpc, 100)
       const usage = await registry.usage(DURABLE_ID)
       expect(usage.turnSpeed?.turns.length).toBe(1)

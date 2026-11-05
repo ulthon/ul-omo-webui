@@ -1658,6 +1658,38 @@ class ProjectRuntime {
   }
 
   async usage(sessionId: string): Promise<EngineUsageStats> {
+    // 任务 13（F4 IS-2 纯看免拉起）：会话无活跃引擎绑定时返回中性快照（零值 + 速度环
+    // 最近值），不经 runTraced/ensureForSession——该链冷态即 openLane→manager.
+    // ensureRunning spawn 引擎（status-bar/use-context-usage 会话打开必发
+    // GET /api/usage，是「纯看拉引擎」主入口）。判定同 commandsList 先例：绑定态在
+    // 表 + 存活档（ready/starting）+ getActiveSession 非空；探活窗回收（任务 7）删
+    // 绑定态后自然命中中性档。有活跃绑定时照旧 RPC（语义不变）。
+    const row = await this.resolveSession(sessionId);
+    const state = this.engines.get(row.path);
+    const alive = this.manager.getStatus(row.path)?.state;
+    if (!state || (alive !== "ready" && alive !== "starting") || !state.adapter.getActiveSession()) {
+      const neutral: EngineUsageStats = {
+        sessionId,
+        sessionFile: row.path,
+        userMessages: 0,
+        assistantMessages: 0,
+        toolCalls: 0,
+        toolResults: 0,
+        totalMessages: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        cost: 0,
+        contextUsage: { tokens: 0, contextWindow: 0, percent: 0 },
+      };
+      // 最近值：进程停/绑定丢失但绑定态仍在（02:53 形态）时带内存速度环最近样本；
+      // 直查映射表面不触发 handle 刷新 RPC（中性档零引擎面）；零样本前端按
+      //「暂无数据」降级（toUsageStats 容错缺字段）。
+      const durable = state
+        ? state.knownDurable.has(sessionId)
+          ? sessionId
+          : state.handleToDurable.get(sessionId)
+        : undefined;
+      return state && durable ? { ...neutral, turnSpeed: this.turnSpeedSnapshot(state, durable) } : neutral;
+    }
     return this.runTraced("usage", sessionId, async (span, state) => {
       const tRpc = performance.now();
       const stats = await state.adapter.usage();

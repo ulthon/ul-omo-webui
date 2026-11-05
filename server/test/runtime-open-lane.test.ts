@@ -4,7 +4,8 @@
  * 1. 落表后置（02:53 病灶真身，webui-2026-11-06.log seq 0239-0326）：open 失败 →
  *    engines 表无落败条目 + 车道槽清空 + 后续 op 自愈——对抗 misleading_success_output：
  *    逐项断言表净（size 0 + 条目 undefined），非「不抛即过」；
- * 2. 五路并发（messages/usage/queue/questions/prompt，02:52:50 seq 0190-0194 形态）
+ * 2. 五路并发（messages×2/queue/questions/prompt，02:52:50 seq 0190-0194 形态；
+ *    usage 自任务 13 起冷态中性快照不再入车道，另有 runtime-usage-neutral 专项回归）
  *    共享单次建 adapter+open——fake 内置引擎侧 in-flight 守卫（并发同路径 open 直接
  *    拒 session_path_in_use，t9 诊断的引擎面语义），单车道下守卫零触发（无
  *    already-in-flight 风暴、无 path 撞路）；
@@ -23,7 +24,7 @@ import { dirname, join } from "node:path"
 import type { EngineProcessManager } from "../src/engine/process-manager"
 import { EngineRuntimeRegistry } from "../src/api/engine-runtime"
 import { encodeCwdToSessionDirName } from "../src/adapter/senpi-adapter"
-import type { EngineMessagesPage, EngineQuestionFrame, EngineQueueSnapshot, EngineUsageStats } from "../src/adapter/engine-adapter"
+import type { EngineMessagesPage, EngineQuestionFrame, EngineQueueSnapshot } from "../src/adapter/engine-adapter"
 
 const PROJECT = "/tmp/opencode/rt-open-lane-proj"
 const DURABLE_ID = "01c44444-0000-7000-8000-000000000011"
@@ -251,19 +252,19 @@ describe("落表后置（任务 6：02:53 病灶真身——落败 adapter 不�
 })
 
 describe("五路并发共享单次建引擎+开（02:52:50 形态 + t9 session_path_in_use 增补）", () => {
-  test("messages/usage/queue/questions/prompt 并发 → 单 adapter 单 open，in-flight 守卫零触发", async () => {
+  test("messages×2/queue/questions/prompt 并发 → 单 adapter 单 open，in-flight 守卫零触发", async () => {
     const { root, rpc, manager, registry } = setup()
     try {
       rpc.holdSetClientInfo = true // 确定性就绪窗口：adapter.start() 委派面持锁
       const ops: [
         Promise<EngineMessagesPage>,
-        Promise<EngineUsageStats>,
+        Promise<EngineMessagesPage>,
         Promise<EngineQueueSnapshot>,
         Promise<EngineQuestionFrame[]>,
         Promise<{ disposition: string }>,
       ] = [
         registry.messages(DURABLE_ID),
-        registry.usage(DURABLE_ID),
+        registry.messages(DURABLE_ID),
         registry.queueList(DURABLE_ID),
         registry.questionsList(DURABLE_ID),
         registry.prompt(DURABLE_ID, { text: "hi" }),
@@ -274,10 +275,10 @@ describe("五路并发共享单次建引擎+开（02:52:50 形态 + t9 session_p
       // 且五路 open 撞 in-flight 守卫（pathInUseRejections>0），本用例即红
       await new Promise((r) => setTimeout(r, 50))
       rpc.releaseSetClientInfo()
-      const [page, usage, queue, questions, receipt] = await Promise.all(ops)
+      const [page1, page2, queue, questions, receipt] = await Promise.all(ops)
       // 五路各自成功（非仅不抛：逐路断言业务结果）
-      expect(page.entries).toEqual([])
-      expect(usage.sessionId).toBe("")
+      expect(page1.entries).toEqual([])
+      expect(page2.entries).toEqual([])
       expect(queue.ordered).toEqual([])
       expect(questions).toEqual([])
       expect(["started", "handled", "queued"]).toContain(receipt.disposition)
