@@ -2,6 +2,8 @@
 // 契约（与 http.ts route() 注释一致）：
 //   [slow] <method> <path> ms=<n> status=<s>   —— 耗时 > 阈值（默认 1000ms，UL_OMO_WEBUI_SLOW_MS 可调）
 //   [5xx]  <method> <path> status=<s> code=<code> message=<message>
+// P1b（2026-11-05）：5xx 另落一行结构化镜像（[http] 5xx m/path/st/code/msg）进环形
+// 缓冲/诊断包（详情自含，免跨机取 journal）；镜像同走 stderr，断言按前缀过滤。
 // 四态（慢/快/5xx/2xx）全部走假时钟（vi.useFakeTimers 推进 Date.now，零真实等待）+
 // 捕获 process.stderr.write；[slow] 与 [5xx] 独立判定（慢且 5xx = 两行）。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -80,7 +82,7 @@ describe("route() 观测日志四态（假时钟 + stderr 捕获）", () => {
     expect(lines).toEqual([]);
   });
 
-  test("5xx（抛 ApiError）：恰一行，含 code 与 message", async () => {
+  test("5xx（抛 ApiError）：恰一行，含 code 与 message；另有结构化镜像行", async () => {
     vi.useFakeTimers();
     const { lines } = captureStderr();
     const app = appWith("/api/obs/boom", async () => {
@@ -88,7 +90,20 @@ describe("route() 观测日志四态（假时钟 + stderr 捕获）", () => {
     });
     const res = await app.request("/api/obs/boom");
     expect(res.status).toBe(500);
-    expect(lines).toEqual(["[5xx] GET /api/obs/boom status=500 code=engine_down message=引擎不可用\n"]);
+    expect(lines.filter((l) => l.startsWith("["))).toEqual([
+      "[5xx] GET /api/obs/boom status=500 code=engine_down message=引擎不可用\n",
+    ]);
+    // P1b：镜像行同落 stderr（t/seq 动态，按字段断言），进环形缓冲/诊断包
+    expect(
+      lines.some(
+        (l) =>
+          l.includes("[http] 5xx") &&
+          l.includes("m=GET") &&
+          l.includes("st=500") &&
+          l.includes("code=engine_down") &&
+          l.includes("msg=引擎不可用"),
+      ),
+    ).toBe(true);
   });
 
   test("5xx（抛 EngineAdapterError → 503）：恰一行，adapter code 直出", async () => {
@@ -99,7 +114,9 @@ describe("route() 观测日志四态（假时钟 + stderr 捕获）", () => {
     });
     const res = await app.request("/api/obs/adapter");
     expect(res.status).toBe(503);
-    expect(lines).toEqual(["[5xx] GET /api/obs/adapter status=503 code=engine_not_ready message=引擎未就绪\n"]);
+    expect(lines.filter((l) => l.startsWith("["))).toEqual([
+      "[5xx] GET /api/obs/adapter status=503 code=engine_not_ready message=引擎未就绪\n",
+    ]);
   });
 
   test("5xx（handler 直返 Response）：JSON 体提取 code/message；非 JSON 体不读、code 兜底 internal", async () => {
@@ -113,7 +130,7 @@ describe("route() 观测日志四态（假时钟 + stderr 捕获）", () => {
     const res2 = await app.request("/api/obs/ret502");
     expect(res1.status).toBe(500);
     expect(res2.status).toBe(502);
-    expect(lines).toEqual([
+    expect(lines.filter((l) => l.startsWith("["))).toEqual([
       "[5xx] GET /api/obs/ret500 status=500 code=internal message=event bus not configured: call setEventBus() first\n",
       "[5xx] GET /api/obs/ret502 status=502 code=internal message=\n",
     ]);
@@ -128,7 +145,7 @@ describe("route() 观测日志四态（假时钟 + stderr 捕获）", () => {
     });
     const res = await app.request("/api/obs/slow-boom");
     expect(res.status).toBe(503);
-    expect(lines).toEqual([
+    expect(lines.filter((l) => l.startsWith("["))).toEqual([
       "[slow] GET /api/obs/slow-boom ms=1200 status=503\n",
       "[5xx] GET /api/obs/slow-boom status=503 code=engine_not_ready message=引擎未就绪\n",
     ]);

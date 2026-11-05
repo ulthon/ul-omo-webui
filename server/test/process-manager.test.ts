@@ -294,6 +294,52 @@ describe("状态机：崩溃与重启退避", () => {
     }
   })
 
+  test("ready 后子进程 exit 事件 → crash 带死因 code/signal/uptime（P1a：exit 事件主检测）", async () => {
+    const fakes: FakeRpcClient[] = []
+    const exitCbs: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+    const probe = new MemProbe()
+    const m = new EngineProcessManager({
+      registryPath: `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`,
+      backoffBaseMs: 10,
+      backoffMaxMs: 30,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 2,
+      probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        // 真实 RpcClient 的 process 是 ChildProcess 自带 on("exit")；给 fake 挂同型挂点
+        const proc = fake.process as unknown as {
+          on: (ev: string, cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void
+          removeListener: (ev: string, cb: unknown) => void
+        }
+        proc.on = (ev, cb) => {
+          if (ev === "exit") exitCbs.push(cb)
+        }
+        proc.removeListener = () => {}
+        fakes.push(fake)
+        return wireProbe(fake, probe)
+      },
+    })
+    const events: EngineManagerEvent[] = []
+    m.onEvent((e) => events.push(e))
+    try {
+      await m.ensureRunning(PROJ)
+      expect(m.getStatus(PROJ)?.state).toBe("ready")
+      expect(exitCbs.length).toBe(1) // 挂点已接
+      exitCbs[0](0, null) // code=0 干净自退（对机 2026-11-05 实测形态）
+      await waitFor(() => m.getStatus(PROJ)?.state === "backoff")
+      const crashed = events.find(
+        (e): e is Extract<EngineManagerEvent, { type: "process_crashed" }> => e.type === "process_crashed",
+      )
+      expect(crashed?.exit).toMatchObject({ code: 0, signal: null })
+      expect(crashed?.exit?.uptimeMs).toBeGreaterThanOrEqual(0)
+      await waitFor(() => fakes.length === 2 && m.getStatus(PROJ)?.state === "ready")
+      expect(m.getStatus(PROJ)?.consecutiveRestarts).toBe(0)
+    } finally {
+      await m.stopAll().catch(() => {})
+    }
+  })
+
   test("连续失败达上限 → unavailable，停止自动重启（不死循环），recover 可恢复", async () => {
     const fakes: FakeRpcClient[] = []
     const probe = new MemProbe()

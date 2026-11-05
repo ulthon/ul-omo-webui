@@ -130,7 +130,14 @@ export type EngineManagerEvent =
   | { type: "state_changed"; projectPath: string; from: EngineState; to: EngineState }
   /** 引擎 wire 事件透传（todo 10 事件桥汇聚用）。 */
   | { type: "engine_event"; projectPath: string; event: RpcClientEvent }
-  | { type: "process_crashed"; projectPath: string; pid: number | undefined; consecutiveRestarts: number }
+  | {
+      type: "process_crashed"
+      projectPath: string
+      pid: number | undefined
+      consecutiveRestarts: number
+      /** P1a：exit 事件可用时携带退出码/信号/存活时长（轮询检测路径缺省） */
+      exit?: { code: number | null; signal: NodeJS.Signals | null; uptimeMs: number }
+    }
   | { type: "engine_unavailable"; projectPath: string; reason: string }
   | { type: "engine_reclaimed"; projectPath: string; reason: "idle_timeout" }
 
@@ -176,6 +183,10 @@ interface ProjectEngine {
   backoffTimer: ReturnType<typeof setTimeout> | null
   supervisorTimer: ReturnType<typeof setInterval> | null
   unsubEvent: (() => void) | null
+  /** P1a（2026-11-05）：子进程 exit 事件退订；null = 无挂点（RpcClient 未暴露句柄等） */
+  unsubExit: (() => void) | null
+  /** P1a：最近一次 exit 事件携带的死因（code/signal/uptime）；轮询检测路径无此信息 */
+  lastExit: { code: number | null; signal: NodeJS.Signals | null; uptimeMs: number } | null
 }
 
 /**
@@ -380,7 +391,16 @@ export class EngineProcessManager {
         log.info("engine", "state", { proj: event.projectPath, from: event.from, to: event.to })
         break
       case "process_crashed":
-        log.warn("engine", "crash", { proj: event.projectPath, pid: event.pid, restarts: event.consecutiveRestarts })
+        // P1a（2026-11-05）：死因入日志——此前 pid 轮询只能记“消失”，
+        // code/signal 需跨机取证才能定性（2026-11-05 排障实锤）
+        log.warn("engine", "crash", {
+          proj: event.projectPath,
+          pid: event.pid,
+          restarts: event.consecutiveRestarts,
+          code: event.exit?.code ?? "-",
+          signal: event.exit?.signal ?? "-",
+          uptimeMs: event.exit?.uptimeMs ?? "-",
+        })
         break
       case "engine_unavailable":
         log.error("engine", "unavailable", { proj: event.projectPath, reason: event.reason })
@@ -488,6 +508,8 @@ export class EngineProcessManager {
       backoffTimer: null,
       supervisorTimer: null,
       unsubEvent: null,
+      unsubExit: null,
+      lastExit: null,
     }
     this.engines.set(projectPath, engine)
     return engine
@@ -507,6 +529,14 @@ export class EngineProcessManager {
       // stdio 下 set_client_info 的能力面是静默空操作，env 缺失即提问卡片降级。
       // 单一来源见 ./rpc-capabilities.ts（与 senpi-adapter 自建 RpcClient 共用）。
       ...RPC_CLIENT_CAPABILITIES_ENV,
+      // P0（2026-11-05）：宿主监督器空闲自退对齐本管理器回收档位。引擎 rpc 宿主自带
+      // idleExit（默认 15 分钟），且其活动统计不含本网关的 stdio 流量（对接盲区，
+      // 2026-11-05 对机实测 45 分钟周期自退）；本管理器已有带日志的空闲回收，
+      // 引擎侧自退对齐同一档位即可（改档仅影响后续 spawn，运行中引擎由本管理器回收兜底）。
+      // “永不回收”档（idleTimeoutMs<=0）用 persistent 冷启动表达（引擎侧此时 idleExit 视为无穷）。
+      ...(this.opts.idleTimeoutMs > 0
+        ? { SENPI_RPC_HOST_IDLE_EXIT_MS: String(this.opts.idleTimeoutMs) }
+        : { SENPI_RPC_HOST_COLD_START: "persistent" }),
     }
     const args = ["--extension", pluginDir, "--multi-session"]
     // 按项目附加参数（权限预设等 meta_kv 派生；缺省无附加）
@@ -538,6 +568,11 @@ export class EngineProcessManager {
       // spawn + launcher 握手约 2-5s（verification/01）
       await client.start()
       engine.pid = extractPid(client)
+      // P1a：exit 事件先于轮询拿到死因（轮询保留为句柄缺失时的兜底）；
+      // lastExit 随换代清零，防陈旧死因携带到下个周期
+      engine.lastExit = null
+      engine.unsubExit?.()
+      engine.unsubExit = this.attachExitWatcher(engine, client)
       // 注册表 projectPath 校验（docs08-2026-10-23-24-batch 任务 6）：10-24 事发现场
       // 曾出现 "/" 项目（slug 形态 ----）污染注册表——文件系统根目录不是合法项目，
       // 拒绝登记（清扫仅按登记表判定，脏行只会误导 orphan-reaper）。引擎本身照常运行。
@@ -742,6 +777,8 @@ export class EngineProcessManager {
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
+    engine.unsubExit?.()
+    engine.unsubExit = null
     if (pid !== undefined) this.registry.remove(pid)
     if (!client) return
     try {
@@ -761,10 +798,42 @@ export class EngineProcessManager {
   private handleDisconnect(engine: ProjectEngine, error: unknown): void {
     // 实测（senpi 2026.10.10 rpc-client.js）：stdio 进程路径崩溃只设 exitError，
     // 不回调 onDisconnect（socket 路径才回调）。此回调当前到不了；保留作为官方
-    // 未来实现进程路径回调时的兼容挂点。主检测路径是 startSupervisor 的存活轮询。
+    // 未来实现进程路径回调时的兼容挂点。进程退出主检测是 attachExitWatcher 的
+    // exit 事件（P1a，带死因），存活轮询兜底（句柄缺失时）。
     if (engine.state !== "ready") return
     engine.lastError = error instanceof Error ? error.message : String(error)
     void this.handleCrash(engine)
+  }
+
+  /**
+   * P1a（2026-11-05）：子进程 exit 事件挂点——比存活轮询早拿到死因（code/signal）。
+   * RpcClient 未公开进程句柄；内部 this.process 与 extractPid 同源（字段升级需复核，
+   * 同一告诫）。句柄无 on（mock/旧版客户端）时返回 null，轮询路径照旧。
+   */
+  private attachExitWatcher(engine: ProjectEngine, client: EngineClientLike): (() => void) | null {
+    const proc = (client as { process?: { on?: unknown; removeListener?: unknown } }).process
+    if (typeof proc?.on !== "function") return null
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      // stopping/unavailable 下的退出是预期内路径（回收/手动停/关服），不计崩溃
+      if (engine.state !== "ready") return
+      const startedAt = engine.startedAt
+      engine.lastExit = {
+        code,
+        signal,
+        uptimeMs: startedAt !== undefined ? this.now() - startedAt : 0,
+      }
+      engine.lastError = `引擎子进程退出（pid=${engine.pid ?? "?"} code=${code ?? "null"} signal=${signal ?? "null"}，exit 事件检测）`
+      void this.handleCrash(engine)
+    }
+    ;(
+      proc as {
+        on: (ev: "exit", cb: (code: number | null, signal: NodeJS.Signals | null) => void) => unknown
+      }
+    ).on("exit", onExit)
+    return () => {
+      const rm = (proc as { removeListener?: (ev: "exit", cb: unknown) => unknown }).removeListener
+      if (typeof rm === "function") rm.call(proc, "exit", onExit)
+    }
   }
 
   /** 崩溃监督：ready 状态下按 pid 存活轮询（crashPollMs），进程消失即走重启流程。 */
@@ -792,17 +861,21 @@ export class EngineProcessManager {
     const pid = engine.pid
     if (pid !== undefined) this.registry.remove(pid)
     this.clearTimers(engine)
+    const exit = engine.lastExit
     engine.client = null
     engine.pid = undefined
     engine.runningSessions.clear()
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
+    engine.unsubExit?.()
+    engine.unsubExit = null
     this.emit({
       type: "process_crashed",
       projectPath: engine.projectPath,
       pid,
       consecutiveRestarts: engine.consecutiveRestarts + 1,
+      ...(exit ? { exit } : {}),
     })
     this.scheduleRestart(engine)
   }
@@ -867,6 +940,8 @@ export class EngineProcessManager {
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
+    engine.unsubExit?.()
+    engine.unsubExit = null
     if (pid !== undefined) this.registry.remove(pid)
     if (!client) return
     try {

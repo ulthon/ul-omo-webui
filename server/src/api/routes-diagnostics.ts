@@ -59,14 +59,21 @@ interface LogsQuery {
 
 /** 合并环形缓冲与文件行：按 seq 去重（缓冲条目带结构化字段优先），seq 升序 */
 export function mergeLogSources(buffer: LogEntry[], fileLines: string[]): Array<LogEntry | ParsedLogEntry> {
-  const bySeq = new Map<number, LogEntry | ParsedLogEntry>();
+  // P1c（2026-11-05）：seq 是进程内计数，跨实例撞号——旧实例文件行 seq 远大于新实例缓冲，
+  // 若按 seq 排序，新实例（最新）条目被排到旧文件行之前，端点 slice(-limit) 取尾部时
+  // 恰好丢掉当前实例现场（2026-11-05 排障实锤：导出只含重启前历史）。改为 t|seq
+  // 复合键去重（同实例文件行与缓冲同 t 同 seq，缓冲结构化条目优先），排序键改
+  // 时间戳 t（ISO 字符串序），seq 仅作同秒内稳定序。
+  const byKey = new Map<string, LogEntry | ParsedLogEntry>();
   for (const line of fileLines) {
     const parsed = parseLogLine(line);
-    if (parsed) bySeq.set(parsed.seq, parsed);
+    if (parsed) byKey.set(`${parsed.t}|${parsed.seq}`, parsed);
   }
-  // 缓冲条目覆盖同 seq 文件行（结构化 f 字段更全）
-  for (const e of buffer) bySeq.set(e.seq, e);
-  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  // 缓冲条目覆盖同键文件行（结构化 f 字段更全）
+  for (const e of buffer) byKey.set(`${e.t}|${e.seq}`, e);
+  return [...byKey.values()].sort((a, b) =>
+    a.t === b.t ? (a as { seq: number }).seq - (b as { seq: number }).seq : a.t < b.t ? -1 : 1,
+  );
 }
 
 /** 过滤器：级别下限 / 模块前缀 / 行文本包含（不区分大小写）/ 起始时间（ISO 字符串序） */

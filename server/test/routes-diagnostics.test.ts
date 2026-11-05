@@ -44,7 +44,7 @@ describe("parseLogLine", () => {
 });
 
 describe("mergeLogSources", () => {
-  test("文件行与缓冲去重（缓冲条目优先）、seq 升序", () => {
+  test("文件行与缓冲去重（同 t 同 seq 缓冲条目优先）、时间戳升序", () => {
     const buffer: LogEntry[] = [
       {
         t: "2026-10-31T10:00:01.000Z",
@@ -65,6 +65,41 @@ describe("mergeLogSources", () => {
     expect(merged.map((e) => e.seq)).toEqual([1, 2, 3]);
     // seq=2 缓冲条目胜出（带结构化 f）；联合类型收窄到 LogEntry（缓冲源才带 f）
     expect((merged[1] as LogEntry).f).toEqual({ op: "prompt" });
+  });
+
+  test("跨实例 seq 撞号：按时间戳排序，新实例缓冲（最新）不被旧实例文件行挤掉（P1c，2026-11-05 排障实锤）", () => {
+    // 旧实例文件行：seq 高位（15352 起）、时间戳早一天
+    const oldFileLines = [
+      "2026-11-04T13:08:08.000Z I seq=15352 [gw] resolve.miss rows=3",
+      "2026-11-04T14:00:00.000Z W seq=16000 [engine] crash pid=1",
+    ];
+    // 新实例缓冲：seq 低位（1 起）但时间戳最新
+    const buffer: LogEntry[] = [
+      {
+        t: "2026-11-05T00:05:00.000Z",
+        lvl: "info",
+        seq: 1,
+        mod: "gw",
+        ev: "op",
+        f: { op: "messages" },
+        line: "... [gw] op op=messages",
+      },
+      {
+        t: "2026-11-05T00:05:40.000Z",
+        lvl: "warn",
+        seq: 2,
+        mod: "http",
+        ev: "5xx",
+        f: { st: 500, msg: "session_closing" },
+        line: "... [http] 5xx",
+      },
+    ];
+    const merged = mergeLogSources(buffer, oldFileLines);
+    // 时间升序：旧文件行在前，新实例缓冲在后——端点 slice(-limit) 取尾部即保现场
+    expect(merged.map((e) => e.seq)).toEqual([15352, 16000, 1, 2]);
+    expect(merged[merged.length - 1].t).toBe("2026-11-05T00:05:40.000Z");
+    // 同 t 同 seq 才去重：新实例 seq=1 与旧文件 seq=15352 互不干扰
+    expect(merged.filter((e) => e.mod === "gw").length).toBe(2);
   });
 });
 

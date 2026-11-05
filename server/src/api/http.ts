@@ -94,6 +94,15 @@ async function logRouteObservation(c: Context, res: Response, ms: number, err: u
   process.stderr.write(
     `[5xx] ${method} ${path} status=${res.status} code=${code} message=${message.replace(/[\r\n]+/g, " ")}\n`,
   );
+  // P1b（2026-11-05）：同一份 code/message 落结构化缓冲——stderr 行不经 ObsLogger，
+  // 诊断包导出里 5xx 只剩 err=internal，排障需跨机取 journal（2026-11-05 排障实锤）
+  log.warn("http", "5xx", {
+    m: method,
+    path,
+    st: res.status,
+    code,
+    msg: message.replace(/[\r\n]+/g, " ").slice(0, 200),
+  });
 }
 
 /**
