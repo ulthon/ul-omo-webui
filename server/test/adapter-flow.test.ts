@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "vitest"
 import { readFileSync } from "node:fs"
-import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
+import { SenpiAdapter, isSessionReopenableError, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
 
@@ -598,5 +598,30 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(b.disposition).toBe("started")
     // 两次并发失败只触发一次 open_session 重开
     expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(2) // 初始 + 一次重开
+  })
+})
+
+describe("isSessionReopenableError 三码全等精确匹配（2026-11-06 task-1）", () => {
+  test("三码经 message/errorCode/code 任一字段命中", () => {
+    expect(isSessionReopenableError(new Error("unknown_session"))).toBe(true)
+    expect(isSessionReopenableError(Object.assign(new Error("x"), { errorCode: "session_closing" }))).toBe(true)
+    expect(isSessionReopenableError(Object.assign(new Error("x"), { code: "no_active_session" }))).toBe(true)
+    expect(isSessionReopenableError("no_active_session")).toBe(true)
+  })
+
+  test("非三码与非全等形态一律不命中（含子串/未知码/非错误对象）", () => {
+    // 子串宽匹配禁令：非全等不命中
+    expect(isSessionReopenableError(new Error("prefix unknown_session suffix"))).toBe(false)
+    expect(isSessionReopenableError("no_active_session_extra")).toBe(false)
+    expect(isSessionReopenableError({ code: "xunknown_session" })).toBe(false)
+    // 拒绝码不扩集
+    expect(isSessionReopenableError({ code: "timeout" })).toBe(false)
+    expect(isSessionReopenableError({ code: "open_failed" })).toBe(false)
+    expect(isSessionReopenableError({ errorCode: "session_path_in_use" })).toBe(false)
+    // 鸭子判定边界：null/undefined/空对象/普通值
+    expect(isSessionReopenableError(null)).toBe(false)
+    expect(isSessionReopenableError(undefined)).toBe(false)
+    expect(isSessionReopenableError({})).toBe(false)
+    expect(isSessionReopenableError(42)).toBe(false)
   })
 })
