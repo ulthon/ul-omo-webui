@@ -809,6 +809,9 @@ describe("SenpiAdapter 重开撞 session_path_in_use 有界退避（任务 10）
       vi.useRealTimers()
     }
 
+  })
+})
+
 /** todoState 磁盘直读（任务 5 / A-2）：按窗反扫命中 senpi.todo-state 即停，
  *  纯看不占引擎；会话文件不在（未落盘/别名）回退引擎分页读（旧语义等价）。 */
 describe("SenpiAdapter todoState 磁盘直读", () => {
