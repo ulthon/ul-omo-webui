@@ -1558,6 +1558,18 @@ class ProjectRuntime {
 
   /** 排队对账快照（断线重连/初次渲染各拉一次；增量走 queue_update wire 事件透传） */
   async queueList(sessionId: string): Promise<EngineQueueSnapshot> {
+    // 任务 14（F4 二轮 IS-2 残留：打开会话 reconcilePendingState 的 queue 对账冷
+    // spawn）：无活跃绑定返回中性空快照，不经 runTraced/ensure 链。判定同 usage
+    // （任务 13）/commandsList 先例：绑定态在表 + 存活档（ready/starting）+
+    // getActiveSession 非空；探活窗回收后自然命中中性档。中性体 {steering:[],
+    // followUp:[], ordered:[]} 与 adapter.queueList 空队列回执（normalizeQueueSnapshot
+    // 从宽甄别后的形态）同构，前端零改动。有活跃绑定时照旧 RPC（语义不变）。
+    const row = await this.resolveSession(sessionId);
+    const state = this.engines.get(row.path);
+    const alive = this.manager.getStatus(row.path)?.state;
+    if (!state || (alive !== "ready" && alive !== "starting") || !state.adapter.getActiveSession()) {
+      return { steering: [], followUp: [], ordered: [] };
+    }
     return this.runTraced("queueList", sessionId, async (span, state) => {
       const tRpc = performance.now();
       const snapshot = await state.adapter.queueList();
@@ -1576,6 +1588,15 @@ class ProjectRuntime {
   /** 未决提问对账快照（q1 提问卡片；同 queue 口径——前端会话打开时拉一次，
    *  增量走 SSE 的 question 帧透传；get_state 快照无 sessionId，此处注入本会话 id） */
   async questionsList(sessionId: string): Promise<EngineQuestionFrame[]> {
+    // 任务 14（F4 二轮 IS-2 残留）：同 queueList 免拉起门——无活跃绑定返回中性空列表
+    // （与 adapter.pendingQuestions 无未决提问回执同构，且快照帧本就需注入 sessionId，
+    // 空列表无从注入，前端零改动）；有活跃绑定时照旧 RPC（语义不变）。
+    const row = await this.resolveSession(sessionId);
+    const state = this.engines.get(row.path);
+    const alive = this.manager.getStatus(row.path)?.state;
+    if (!state || (alive !== "ready" && alive !== "starting") || !state.adapter.getActiveSession()) {
+      return [];
+    }
     return this.runTraced("questionsList", sessionId, async (span, state) => {
       const tRpc = performance.now();
       const frames = await state.adapter.pendingQuestions();
