@@ -107,6 +107,7 @@ function fakeManagerWith(rpc: FakeEngineRpc | null): EngineProcessManager {
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
     stopAll: async () => {},
+    reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
   } as unknown as EngineProcessManager
 }
 
@@ -129,6 +130,7 @@ describe("模型切换可观测（docs08-r6 任务 8）", () => {
         onEvent: (_listener: (event: unknown) => void) => () => {},
         stop: async () => {},
         stopAll: async () => {},
+        reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
       } as unknown as EngineProcessManager
       const registry = new EngineRuntimeRegistry(fakeManager, {
         listProjects: () => [PROJECT],

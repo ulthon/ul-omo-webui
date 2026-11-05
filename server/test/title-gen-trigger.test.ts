@@ -517,6 +517,8 @@ class FakeManager {
   async stop(): Promise<void> {}
   async stopAll(): Promise<void> {}
   reportPermissionAnswered(): void {}
+  /** 任务 6 扇出点亮面（真管理器上报口；本套件不断言其副作用，空实现即可） */
+  reportSessionActive(_sessionPath: string, _sessionId: string): void {}
 }
 
 interface RegistryHarness {

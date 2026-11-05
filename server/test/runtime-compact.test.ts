@@ -127,6 +127,7 @@ function makeRegistry(rpc: FakeEngineRpc, agentDir: string): EngineRuntimeRegist
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
     stopAll: async () => {},
+    reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
   } as unknown as EngineProcessManager
   return new EngineRuntimeRegistry(fakeManager, {
     listProjects: () => [PROJECT],

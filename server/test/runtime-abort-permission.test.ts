@@ -178,6 +178,8 @@ class FakeManager {
     this.answered.push({ sessionPath, requestId })
     this.pendingPermissions = this.pendingPermissions.filter((id) => id !== requestId)
   }
+  /** 任务 6 扇出点亮面（真管理器上报口；本套件不断言其副作用，空实现即可） */
+  reportSessionActive = (_sessionPath: string, _sessionId: string): void => {}
   onEvent = (_listener: (event: unknown) => void): (() => void) => () => {}
   stop = async (): Promise<void> => {}
   stopAll = async (): Promise<void> => {}

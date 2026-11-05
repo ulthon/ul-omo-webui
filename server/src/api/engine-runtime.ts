@@ -20,7 +20,7 @@
 // 引擎生命周期归 EngineProcessManager（todo 8）：spawn/崩溃重启/退避/空闲回收/
 // 孤儿清扫都在管理器内。adapter 通过 clientFactory 挂到管理器已 spawn 的连接上，
 // 生命周期钩子（start/stop）为 no-op——引擎崩溃重启后管理器会造新 client，
-// ensure() 检测到 client 更换即重建 adapter 并清空会话态。
+// 开门车道（openLane，任务 6）检测到 client 更换即重建 adapter 并清空会话态。
 import type { RpcClient } from "@code-yeongyu/senpi";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs";
@@ -569,6 +569,27 @@ interface TurnRow {
   graceTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/** 开门车道请求（任务 6，C3 单车道）：open = createSession 显式参数（provider/model/
+ *  thinkingLevel，随车道直达首开——替代旧序「ensure 裸开 + 二次同路径参数 open 覆盖」
+ *  两连发，attach 幂等语义不变）；durableHint = 调用方已知的 API 会话 id（store 行
+ *  解析值），开门成功后点亮 activeId；forceOpen = 绑定态已在也要真实重开（runTraced
+ *  撞 no_active_session 的兑底重开 / forkSession 的绑定还原开），快路径不复用。 */
+interface OpenLaneRequest {
+  open?: { provider?: string; modelId?: string; thinkingLevel?: EngineThinkingLevel };
+  durableHint?: string;
+  forceOpen?: boolean;
+}
+
+/** 车道产物：state = 开门成功的绑定态；id/durable/sessionPath = 扇出 durable 解析
+ *  结果（createSession 返回值供源——引擎认领路径与 durable 判定都在扇出内完成；
+ *  快路径产物仅 state 面有意义，解析字段无创建者）。 */
+interface OpenLaneOutcome {
+  state: SessionEngine;
+  id: string;
+  durable: boolean;
+  sessionPath: string;
+}
+
 /** 单项目运行时（multi-session-parallel T3）：项目内全部会话引擎绑定态挂管 + 每会话
  * 回合表。引擎即会话（T1 键迁移），驾驶操作经 ensureForSession 解析目标会话专属引擎
  * 直驱；项目级互斥链/切换链/单槽（chain-runExclusive/switchTo/streamingId-streamingPath/
@@ -613,39 +634,41 @@ class ProjectRuntime {
   }
 
   /**
-   * 确保目标会话路径的专属引擎就绪并返回绑定态。管理器崩溃自动重启后会造新 client，
-   * 检测到 client 更换即弃置旧绑定态重建（旧 adapter 挂着死连接）。
-   * T3（multi-session-parallel）：引擎即会话——ensure 返回的绑定态 adapter 已对本
-   * 会话完成绑定 open（管理器健康检查后的裸 open 不进 adapter 态，此处补 attach
-   * open，同路径 open 为 attach 幂等；provider/model 不传沿用会话自身存档），后续
-   * 驾驶操作直接用该 adapter，无切换 RPC。
+   * 开门单车道（任务 6，C3；ensuring Map 推广）：同 sessionPath 的一切 open——首开
+   *  （ensureForSession）、参数开（createSession）、兑底重开（runTraced 撞
+   *  no_active_session）、还原开（forkSession）——合并在途车道共享同一次建
+   *  adapter+open_session。02:52:50 实录（webui-2026-11-06.log seq 0190-0194）引擎
+   *  就绪瞬间五个并发网关 op 各自建 adapter 五路 open_session，引擎 in-flight 守卫
+   *  全数拒绝（5×500）+ t9 诊断的 session_path_in_use 撞路，都在车道层消弭：引擎
+   *  一次只见一路 open。合并等待者完成后各自套用自身 durableHint（与快路径同
+   *  语义）。adapter 层 opening/reopening 在途合并保留为安全网（车道之下的第二道
+   *  闸，不拆）。
+   *  管理器崩溃自动重启后会造新 client：车道检测到 client 更换即弃置旧绑定态重建
+   *  （旧 adapter 挂着死连接；回合在途先 crashSettleSession 合成收尾）。
    */
-  /** 在途 ensure 合并（2026-11-06 02:52:50 实录，webui-2026-11-06.log seq 0190-0194）：
-   *  引擎就绪瞬间五个并发网关 op（usage×2/queueList/questionsList/prompt）各自走完
-   *  ensure——adapter.start() 的 get_protocol_info 真实往返期间 engines 未置，后到者
-   *  existing 判空落空，五个 adapter 五路 open_session，引擎 in-flight 守卫全数拒绝
-   *  （5×500），落败 adapter 反占 engines 表（active=null 永不自愈）→ 02:53 连环
-   *  no_active_session 33 秒（seq 0239-0326）。按 sessionPath 合并在途 ensure：并发
-   *  调用共享同一次建 adapter+open，从源头消除多路开门；合并等待者完成后各自套用
-   *  自身 durableHint（与既有态快路径同语义）。 */
-  private readonly ensuring = new Map<string, Promise<SessionEngine>>();
+  private readonly openLanes = new Map<string, Promise<OpenLaneOutcome>>();
 
-  private ensure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
-    const inFlight = this.ensuring.get(sessionPath);
+  private openLaneResolved(sessionPath: string, request: OpenLaneRequest = {}): Promise<OpenLaneOutcome> {
+    const inFlight = this.openLanes.get(sessionPath);
     if (inFlight) {
-      return inFlight.then((state) => {
-        if (durableHint !== undefined) state.activeId = durableHint;
-        return state;
+      return inFlight.then((outcome) => {
+        if (request.durableHint !== undefined) outcome.state.activeId = request.durableHint;
+        return outcome;
       });
     }
-    const run = this.doEnsure(sessionPath, durableHint).finally(() => {
-      if (this.ensuring.get(sessionPath) === run) this.ensuring.delete(sessionPath);
+    const run = this.runOpenLane(sessionPath, request).finally(() => {
+      if (this.openLanes.get(sessionPath) === run) this.openLanes.delete(sessionPath);
     });
-    this.ensuring.set(sessionPath, run);
+    this.openLanes.set(sessionPath, run);
     return run;
   }
 
-  private async doEnsure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
+  /** 状态面入口（ensureForSession/runTraced 兑底重开/forkSession 还原开用）：只要绑定态 */
+  private openLane(sessionPath: string, request: OpenLaneRequest = {}): Promise<SessionEngine> {
+    return this.openLaneResolved(sessionPath, request).then((outcome) => outcome.state);
+  }
+
+  private async runOpenLane(sessionPath: string, request: OpenLaneRequest): Promise<OpenLaneOutcome> {
     await this.manager.ensureRunning(sessionPath, this.projectPath);
     // 有界等待就绪（冷启动窗口竞态修复）：ensureRunning 返回时可能仍在 starting，
     // 立即 503 迫使用户手动重试三四次；改为等待握手完成（上限 15s，250ms 轮询）
@@ -659,16 +682,47 @@ class ProjectRuntime {
       client = this.manager.getClient(sessionPath);
     }
     const existing = this.engines.get(sessionPath);
-    if (existing && existing.client === client) {
-      if (durableHint !== undefined) existing.activeId = durableHint;
-      return existing;
+    if (existing && existing.client === client && !request.forceOpen) {
+      // 快路径：绑定态在且 client 未换（落表后置不变量：表内条目的 open 必已成功）
+      if (request.durableHint !== undefined) existing.activeId = request.durableHint;
+      return { state: existing, id: existing.activeId ?? sessionPath, durable: false, sessionPath };
     }
-    if (existing) {
+    if (existing && existing.client !== client) {
       // client 更换（崩溃重启）：旧绑定态作废。回合若仍在途走 crashSettleSession
       // 合成收尾（幂等：进程崩溃事件已结算则此处空转）——不再沿用旧 ensure 的静默
       // 清位，静默清位会让前端流式态挂死（restartProject 注释同一缺陷形态）。
       this.crashSettleSession(sessionPath);
     }
+    // 复用判定：forceOpen（绑定丢失重开/还原开）复用既有绑定态与 adapter——open 会
+    // 刷新 adapter.active；首开/client 更换则新造（adapter.start 就绪探测期间车道
+    // 在途，并发调用共享同一次建 adapter+探测，不再五路竞门）
+    const state =
+      existing && existing.client === client
+        ? existing
+        : await this.buildEngine(sessionPath, client);
+    try {
+      // 绑定 open（attach 幂等）：首开/重开不携 provider/model（沿用会话自身存档，
+      // 与 T1 管理器裸 open 同形态，process-manager session bind 不携 provider/model）；
+      // createSession 的参数开随车道直达
+      const opened = await state.adapter.openSession({ sessionPath, ...request.open });
+      // 落表后置（02:53 病灶真身）：open 成功才落表——旧序先 set 后 open，落败
+      //  adapter 占住 engines 表（active=null 永不自愈）→ 连环 no_active_session
+      //  33 秒（webui-2026-11-06.log seq 0239-0326）；失败路径车道槽 finally 清空、
+      //  条目不落，后续 op 重走车道自愈
+      this.engines.set(sessionPath, state);
+      const resolution = await this.fanOutAfterOpen(state, opened, request.durableHint);
+      return { state, ...resolution };
+    } catch (err) {
+      // 新造绑定态未落表即失败：退订 wire 监听防悬挂；已落表的 forceOpen 重开失败
+      // 不清表（条目保留，后续 op 重走车道自愈——与旧 runTraced 兑底语义一致）
+      if (state !== existing) state.detachEvents();
+      throw err;
+    }
+  }
+
+  /** 建 adapter + 绑定态（首开/client 更换）：wire 事件监听先于 open 挂接——open
+   *  窗口内到达的事件也有归属面；车道失败路径 detachEvents 防悬挂。 */
+  private async buildEngine(sessionPath: string, client: RpcClient): Promise<SessionEngine> {
     const adapter: SenpiAdapter = new SenpiAdapter({
       projectDir: this.projectPath,
       agentDir: this.opts.agentDir ?? defaultAgentDir(),
@@ -676,18 +730,66 @@ class ProjectRuntime {
     });
     await adapter.start();
     const state = new SessionEngine(sessionPath, adapter, client);
-    this.engines.set(sessionPath, state);
     // 回合结束信号：abort 与正常收尾都会发 agent_end / agent_settled
     // （docs/verification/01 abort 实证），清单驱动标记与收尾监视。
     state.attachEvents((event) => this.onEngineEvent(state, event));
-    // 绑定 open（attach 幂等）：provider/model 不传——沿用会话自身存档（与 T1 管理器
-    // 裸 open 同形态，process-manager session bind 不携 provider/model）。
-    const opened = await adapter.openSession({ sessionPath });
-    if (durableHint !== undefined) state.activeId = durableHint;
-    // wire 事件的 sessionId 就是这个 routing handle（open_session 响应顶层的
-    // sessionId）；store 行解析出的 id（非别名）即可作为 durable 映射记录
-    this.rememberHandleFor(state, opened.routingId, durableHint);
     return state;
+  }
+
+  /** 开门成功后的固定扇出清单（任务 6，C3）：车道收编四处 open 调用点（首开/
+   *  createSession 参数开/runTraced 兑底重开/forkSession 还原开）后，开门后的状态
+   *  传播收敛为本函数一处（此前散落在 doEnsure/createSession/forkSession 各写各的）。
+   *  固定清单四项：
+   *  ① activeId ← durableHint（缺省用 open 响应会话 id——新会话未落盘时为 holder
+   *     别名，仅内存态禁止持久化）；
+   *  ② handleToDurable 映射回填：open 响应顶层 sessionId（routing handle，wire 事件
+   *     同源）→ durable 即时记 + activeSessions 行回填（权威来源，
+   *     docs/verification/05 P1-1：list_sessions 行含 durableSessionId）；
+   *  ③ 管理器点亮：reportSessionActive（runningSessions 收录 routingId +
+   *     lastActivityAt 重置——刚开门的引擎不落「开完即闲置」窗口；回合结束的
+   *     agent_end/session_closed wire 事件按同 handle 摘除，忙判定口径归管理器）；
+   *  ④ durable 升级：活跃行命中 durableSessionId → 认领即采信为会话身份，durable
+   *     判定以磁盘为准（existsSync 复核，t1 铁律：口头认领不可信）——文件在：
+   *     activeId 升级磁盘真身 id + 解除 unpersistedClaims；文件不在：登记
+   *     unpersistedClaims（resolveSession 报结构化 session_not_persisted 而非 404）。
+   *     aliases 保留（在途旧 id 请求仍需解析，不随升级清）。
+   *  返回 durable 解析结果（id/durable/引擎认领 sessionPath——createSession 返回值
+   *  供源）。
+   *  不碰清单（do-NOT-touch，任务 6 固化）：runningTurns 回合表生命周期、PidRegistry、
+   *  引擎侧两套注册态（process-manager 的 runningSessions/待答权限记账）只经
+   *  reportSessionActive 等既有上报口触及，不越界直写；PM probe 段（试写门禁/
+   *  绑定开 = 车道第一相位）留在 process-manager 不并入 adapter、probe 裸 send 语义
+   *  不改；adapter 层 opening/reopening 保留为安全网不拆。 */
+  private async fanOutAfterOpen(
+    state: SessionEngine,
+    opened: EngineOpenSessionResult,
+    durableHint: string | undefined,
+  ): Promise<{ id: string; durable: boolean; sessionPath: string }> {
+    state.activeId = durableHint ?? opened.sessionId;
+    this.rememberHandleFor(state, opened.routingId, durableHint);
+    let id = state.activeId;
+    let durable = false;
+    try {
+      const rows = await state.adapter.activeSessions();
+      this.rememberHandleRows(state, rows);
+      const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
+      if (row?.durableSessionId) {
+        id = row.durableSessionId;
+        durable = existsSync(opened.sessionPath);
+        state.activeId = row.durableSessionId;
+        this.rememberHandleFor(state, opened.routingId, row.durableSessionId);
+        if (durable) {
+          this.unpersistedClaims.delete(row.durableSessionId);
+        } else {
+          this.unpersistedClaims.set(row.durableSessionId, opened.sessionPath);
+        }
+      }
+    } catch {
+      // 活跃行查询失败不影响开门主链路（降级：activeId=durableHint/别名态）
+    }
+    // 管理器点亮（③）：放 try 外——扇出异常不应反噬已成功的 open
+    this.manager.reportSessionActive(state.sessionPath, opened.routingId);
+    return { id, durable, sessionPath: opened.sessionPath };
   }
 
   /** 单引擎 wire 事件（T3：监听器绑定具体会话引擎，结算作用域=本引擎唯一会话的回合行） */
@@ -750,7 +852,7 @@ class ProjectRuntime {
    * 引擎即会话，无切换 RPC）。未知会话按 resolveSession 原语义 404。 */
   private async ensureForSession(sessionId: string): Promise<SessionEngine> {
     const row = await this.resolveSession(sessionId);
-    return this.ensure(row.path, row.id);
+    return this.openLane(row.path, { durableHint: row.id });
   }
 
   /** assistant 消息条目落地 → unread+1；按 entry id 幂等（同一 entry 只计一次）。
@@ -1248,7 +1350,7 @@ class ProjectRuntime {
     //  messages/usage/queueList 连环 no_active_session 33 秒（02:53:00.511→02:53:33.760）
     //  直到用户刷新——adapter 层 rpcOp 兜底只包 RPC 调用，requireActive() 在其之外抛出
     //  即被旁路，错误直达本层只落 logGw 无自愈。此处单点兜底：鸭子判定命中 → 同路径
-    //  adapter.openSession 重开一次（并发失败共享 adapter 层 in-flight 合并，不开重开风暴）
+    //  （openLane forceOpen，任务 6）同路径重开一次（并发失败共享同一次重开，不开重开风暴）
     //  → body 恰好重试一次；重试仍败按原样抛，不吞其它错误、不改变请求语义。
     const runBody = async (span: PerfSpan, state: SessionEngine): Promise<T> => {
       try {
@@ -1261,7 +1363,10 @@ class ProjectRuntime {
           proj: projHash8(this.projectPath),
           rid: currentRid(),
         });
-        await state.adapter.openSession({ sessionPath: state.sessionPath });
+        // 车道收编（任务 6）：兑底重开走同 sessionPath 单车道（forceOpen）——并发
+        // 失败共享同一次重开（车道 + adapter 层 reopening 双层合并），不开重开风暴；
+        // 扇出（handle 映射回填/管理器点亮）由 fanOutAfterOpen 统一承担
+        await this.openLane(state.sessionPath, { forceOpen: true, durableHint: sessionId });
         return body(span, state);
       }
     };
@@ -1315,52 +1420,29 @@ class ProjectRuntime {
   }): Promise<{ id: string; sessionPath: string; durable: boolean }> {
     // T3 收口（原 T1 过渡语义定版）：新会话路径由运行时预生成（uuid 文件名落项目会话
     // 库目录，编码与引擎同算法；引擎接受任意文件名的既有实证 = probe gate 试写探针）。
-    // ensure 即建该会话专属引擎并绑定 open 路径，「每引擎只绑死自己会话」的键不变量
-    // 从建会话起成立；随后的显式参数 open 同路径 attach 覆盖 provider/model（F5：
-    // open_session 逐会话覆盖）。路径权威永久归运行时。
+    // 车道即建该会话专属引擎并绑定 open 路径，「每引擎只绑死自己会话」的键不变量
+    // 从建会话起成立；显式参数（provider/model/thinkingLevel）随车道首开直达
+    // （F5：open_session 逐会话覆盖）。路径权威永久归运行时。
     const sessionPath = join(
       this.opts.agentDir ?? defaultAgentDir(),
       "sessions",
       encodeCwdToSessionDirName(this.projectPath),
       `${randomUUID()}.jsonl`,
     );
-    const state = await this.ensure(sessionPath);
-    const opened: EngineOpenSessionResult = await state.adapter.openSession({
-      sessionPath,
-      provider: opts.provider,
-      modelId: opts.modelId,
-      thinkingLevel: opts.thinkingLevel,
+    // 车道收编（任务 6）：显式参数随车道直达首开（provider/model/thinkingLevel 一次
+    // open 生效，替代旧「ensure 裸开 + 二次同路径参数 open 覆盖」两连发，attach 幂等
+    // 语义不变）；durable 解析/别名登记/unpersistedClaims/管理器点亮收敛在
+    // fanOutAfterOpen 固定清单（活跃行命中即采信 durable 身份；磁盘复核/别名退化为
+    // 仅内存 holder 别名）
+    const lane = await this.openLaneResolved(sessionPath, {
+      open: { provider: opts.provider, modelId: opts.modelId, thinkingLevel: opts.thinkingLevel },
     });
-    // durable id 解析：活跃会话行的 durableSessionId 是引擎侧磁盘 header id
-    // （docs/verification/05 P1-1：list_sessions 行含 durableSessionId）。
-    // 新会话未落盘时行可能缺失 durableSessionId，退化为 holder 别名（仅内存）。
-    let id = opened.sessionId;
-    let durable = false;
-    let claimed = false;
-    try {
-      const rows = await state.adapter.activeSessions();
-      this.rememberHandleRows(state, rows);
-      const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
-      if (row?.durableSessionId) {
-        id = row.durableSessionId;
-        claimed = true;
-        // durable 判定以磁盘为准（t1 根因：旧版引擎 list_sessions 行带 durableSessionId
-        // 但会话 JSONL 从未写盘——口头认领不可信）。文件不存在时降级为别名并登记
-        // 未落盘认领，resolveSession 据此报结构化 session_not_persisted 而非 404。
-        durable = existsSync(opened.sessionPath);
-      }
-    } catch {
-      // 活跃行查询失败不影响建会话，退化为别名
+    if (!lane.durable) {
+      // 未落盘：id 为引擎认领的会话身份（未落盘时仅在内存别名表可解析）；引擎口头
+      // 认领 durable id 但文件未写盘的形态，扇出已登记 unpersistedClaims
+      this.aliases.set(lane.id, lane.sessionPath);
     }
-    if (!durable) {
-      this.aliases.set(id, opened.sessionPath);
-      if (claimed) this.unpersistedClaims.set(id, opened.sessionPath);
-    } else {
-      // open_session 响应顶层 sessionId 即 routing handle（wire 事件同源）
-      this.rememberHandleFor(state, opened.routingId, id);
-    }
-    state.activeId = id;
-    return { id, sessionPath: opened.sessionPath, durable };
+    return { id: lane.id, sessionPath: lane.sessionPath, durable: lane.durable };
   }
 
   async messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage> {
@@ -1759,9 +1841,9 @@ class ProjectRuntime {
     // fork 新会话不在此绑定——用户驱动它时 ensureForSession 按其路径懒起专属引擎，
     // 与 CLI「新会话新进程」同构。adapter.active 只有 openSession 会更新，显式重开
     // 对齐（历史走查教训：active 与引擎活跃错位时按 id 的操作会落到错误会话文件）。
-    const restored = await bound.adapter.openSession({ sessionPath: bound.sessionPath });
-    bound.activeId = sessionId;
-    if (durable) this.rememberHandleFor(bound, restored.routingId, sessionId);
+    // 车道收编（任务 6）：还原开走单车道（forceOpen），routingId→源会话 durable 映射
+    // 回填/activeId 点亮/管理器点亮由 fanOutAfterOpen 固定清单统一承担
+    await this.openLane(bound.sessionPath, { forceOpen: true, durableHint: sessionId });
     return { id, sessionPath: forkPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
   }
 }
