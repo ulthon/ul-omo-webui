@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { DATA_DIR } from "../src/config";
 import { Hono } from "hono";
 import {
@@ -1612,6 +1612,10 @@ class FakeEngineClient implements EngineClientLike {
   stateCalls = 0;
   /** stop() 时的旁路钩子（测试模拟进程随 stop 退出：从探针摘除 pid）。 */
   onStop?: () => void;
+  /** T3 新契约：引擎侧当前活跃会话路径（open_session 绑定/attach open 即改写；
+   * list_sessions 行回报该路径——createSession 的 durable 解析按 activeSessions 行
+   * sessionPath 与 opened 路径匹配，固定路径回充不了预生成 uuid 路径）。 */
+  private currentSessionPath: string | undefined;
 
   constructor(opts: RpcClientOptions) {
     this.spawnOpts = opts;
@@ -1632,10 +1636,16 @@ class FakeEngineClient implements EngineClientLike {
   getStderr(): string {
     return "";
   }
-  async send(
-    // oxlint-disable-next-line no-unused-vars -- fake 实现按 EngineClientLike 签名收参：fake 不消费 payload
-    message: unknown,
-  ): Promise<{ success: boolean; data: unknown }> {
+  async send(message: unknown): Promise<{ success: boolean; data: unknown }> {
+    const wire = message as { type?: string; sessionPath?: string };
+    // T3 新契约：管理器会话绑定 open（openBoundSession 协议帧）——响应须 success 且
+    // state 认领绑定路径（sessionFile 与绑定路径一致，防误导性成功）；同路径 attach
+    // 幂等（ensure 的 adapter attach open 复用同一实现）。其余帧（get_protocol_info
+    // 健康 ping / adapter 就绪探测）原样应答成功。
+    if (wire.type === "open_session") {
+      return { success: true, data: this.openAt(wire.sessionPath ?? "") };
+    }
+    if (wire.type === "close_session") return { success: true, data: {} };
     return { success: true, data: { engineVersion: "fake" } };
   }
   emit(event: Record<string, unknown>): void {
@@ -1643,17 +1653,23 @@ class FakeEngineClient implements EngineClientLike {
     for (const l of [...this.listeners]) l(event as RpcClientEvent);
   }
   async setClientInfo(): Promise<void> {}
-  async openSession(options: { sessionPath?: string }): Promise<{
+  /** T3 新契约 fixture：路径感知 open——认领传入路径（管理器绑定 open 与 adapter
+   * attach open 同路同实现），durableSessionId 在位即同步写盘 header（健康 durable
+   * 契约，docs08 任务 6；只认领不写盘属 t1 事故形态，见 runtime-session-persist
+   * .test.ts）。真实引擎 open_session 会预建会话目录，fixture 同样补齐父目录。 */
+  private openAt(sessionPath: string): {
     sessionId: string;
     state: { sessionId: string; sessionFile?: string };
-  }> {
-    const sessionFile = options.sessionPath ?? `${this.spawnOpts.cwd}/sessions/2026_new.jsonl`;
-    // 健康 durable 契约（docs08 任务 6）：引擎认领 durableSessionId 即同步写盘 header，
-    // 只认领不写盘属于 t1 事故形态（见 runtime-session-persist.test.ts）
+  } {
+    const sessionFile = sessionPath || `${this.spawnOpts.cwd}/sessions/2026_new.jsonl`;
+    this.currentSessionPath = sessionFile;
     if (this.durableSessionId !== undefined) {
+      mkdirSync(dirname(sessionFile), { recursive: true });
+      // header 携带 timestamp（真实磁盘格式；store 扫描解析无 timestamp 的 header 会
+      // 得 Invalid Date，mapSessionSummary 抛 Invalid time value）
       writeFileSync(
         sessionFile,
-        `${JSON.stringify({ type: "session", version: 3, id: this.durableSessionId, cwd: this.spawnOpts.cwd })}\n`,
+        `${JSON.stringify({ type: "session", version: 3, id: this.durableSessionId, cwd: this.spawnOpts.cwd, timestamp: new Date().toISOString() })}\n`,
       );
     }
     return {
@@ -1661,11 +1677,19 @@ class FakeEngineClient implements EngineClientLike {
       state: { sessionId: "holder-1", sessionFile },
     };
   }
+
+  async openSession(options: { sessionPath?: string }): Promise<{
+    sessionId: string;
+    state: { sessionId: string; sessionFile?: string };
+  }> {
+    return this.openAt(options.sessionPath ?? "");
+  }
   async closeSession(): Promise<void> {
     this.closed++;
   }
   async listSessions(): Promise<Array<Record<string, unknown>>> {
-    const sessionPath = `${this.spawnOpts.cwd}/sessions/2026_new.jsonl`;
+    // T3 新契约：回报当前 open 的会话路径（路径感知），不再固定旧缺省文件名
+    const sessionPath = this.currentSessionPath ?? `${this.spawnOpts.cwd}/sessions/2026_new.jsonl`;
     const row: Record<string, unknown> = {
       sessionId: "routing-1",
       sessionPath,
@@ -1757,6 +1781,11 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     client.durableSessionId = durableSessionId;
     // 默认流式中：收尾监视见到 isStreaming=true 不合成（需要空闲的测试显式置 false）
     client.fakeStreaming = true;
+    // stop 即进程退出（探针摘除 pid）：T3 后 deleteSession/restartProject 经
+    // manager.stop 等进程消失，不摘则走 SIGTERM/SIGKILL 兑底空等停机宽限
+    client.onStop = () => {
+      probe.pids.delete(client.process.pid);
+    };
     probe = new StaticProbe();
     probe.pids.add(client.process.pid);
     syntheticEvents = [];
@@ -1792,8 +1821,11 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
   test("createSession 解析 durable id；回合中重复 prompt 409；agent_end 解除", async () => {
     setup("durable-1");
     const created = await registry.createSession(proj, {});
-    // createSession 走 open_session 新会话路径，sessionFile 为 fake 的缺省新路径
-    expect(created.sessionPath).toContain("2026_new.jsonl");
+    // T3 新契约：新会话路径由运行时预生成（uuid 文件名落 agentDir 会话库编码目录），
+    // ensure 即对该路径绑定 open（fake 认领并落盘 header，durable 判定以磁盘为准）
+    expect(created.sessionPath.startsWith(join(proj, "sessions", "--"))).toBe(true);
+    expect(basename(created.sessionPath)).toMatch(/^[0-9a-f-]{36}\.jsonl$/);
+    expect(existsSync(created.sessionPath)).toBe(true);
     expect(created.durable).toBe(true);
     // handle→durable 映射：wire 事件 sessionId（routing-1）可解析为磁盘 header id
     expect(registry.durableSessionIdFor(proj, "routing-1")).toBe("durable-1");
@@ -1973,8 +2005,10 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     expect(event.synthetic).toBe(true);
     expect(event.reason).toBe("engine_crash");
     expect(event.sessionId).toBe(created.id);
-    // active 清位（重启窗口期 peek 引擎未就绪返回 null 也属预期语义）
-    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
+    // active 清位：T3 懒起语义下崩溃引擎退避/重启窗口期 peek 返回 null（未就绪），
+    // 重启完成则空表——两形态同证「无回合行」清位语义（不作时序押注）
+    const activeAfterCrash = await registry.peekActiveSessionPaths(proj);
+    expect(activeAfterCrash === null || activeAfterCrash.length === 0).toBe(true);
     // 真实场景会话已落盘：写最小 jsonl（header id=durable-1）供 store 扫描重解析
     //（invalidate 清空了内存索引，durable id 靠磁盘 jsonl 找回）
     const encode = (cwd: string) => `--${cwd.replace(/^\//, "").replaceAll("/", "-")}--`;
@@ -2022,7 +2056,7 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     expect(unreadCalls).toHaveLength(2);
   });
 
-  test("(restart) 重建项目引擎：会话态失效、引擎重回 ready、可继续建会话", async () => {
+  test("(restart) 重建项目引擎：会话态失效、停机懒起（restartProject=stopProject 语义）、可继续建会话", async () => {
     setup("durable-1");
     // oxlint-disable-next-line no-unused-vars -- 存量：仅需触发建会话副作用，会话身份经 durableSessionIdFor 断言
     const created = await registry.createSession(proj, {});
@@ -2030,9 +2064,10 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     await registry.restartProject(proj);
     // 会话态失效（handle→durable 映射清空；旧 handle 属于已死进程）
     expect(registry.durableSessionIdFor(proj, "routing-1")).toBeUndefined();
-    // 引擎重回 ready 且空闲
-    expect(await registry.peekActiveSessionPaths(proj)).toEqual([]);
-    // 后续建会话正常
+    // restartProject = stopProject + 逐会话合成收尾：项目引擎停机不重拉（下次访问
+    // 懒起）——peek 无就绪引擎返回 null（不触发 spawn），非旧契约的「原地重回 ready」
+    expect(await registry.peekActiveSessionPaths(proj)).toBeNull();
+    // 后续建会话正常（懒起重拉新引擎，新路径绑定 open 后同 durable 行解析）
     const again = await registry.createSession(proj, {});
     expect(again.id).toBe("durable-1");
   });
@@ -2068,8 +2103,8 @@ describe("EngineRuntimeRegistry 单驱动与 durable id", () => {
     const withoutPreset = mk(projWithout, extra);
     try {
       writeFileSync(join(projWith, ".ul-omo-webui.json"), JSON.stringify({ version: 1, permissionPreset: "read-only" }));
-      await withPreset.m.ensureRunning(projWith);
-      await withoutPreset.m.ensureRunning(projWithout);
+      await withPreset.m.ensureRunning(join(projWith, "s.jsonl"), projWith);
+      await withoutPreset.m.ensureRunning(join(projWithout, "s.jsonl"), projWithout);
       expect(withPreset.client.spawnOpts.args).toContain("--permission-preset");
       expect(withPreset.client.spawnOpts.args).toContain("read-only");
       expect(withoutPreset.client.spawnOpts.args).not.toContain("--permission-preset");

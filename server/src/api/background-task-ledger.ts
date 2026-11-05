@@ -14,6 +14,7 @@
 //   完全同构（服务端独立实现，不跨包 import web 模块）。
 import type { BridgeEvent } from "../engine/events";
 import { invalidateBackgroundStateOnEngineDeath } from "./background-tasks";
+import { closeSync, openSync, readSync } from "node:fs";
 
 /** 启动态词表：与 background-tasks.ts STARTUP_STATUSES 同词表（宁漏勿错） */
 const RUNNING_STATUSES = new Set(["running", "pending"]);
@@ -95,25 +96,42 @@ export function ledgerRunningSessionIds(project: string): string[] {
   return out;
 }
 
-/** 清空该项目全部快照（引擎死亡 / 空闲回收 / 显式停止时调用） */
-export function clearBackgroundTaskLedger(project: string): void {
-  const prefix = `${project}\n`;
-  for (const key of [...snapshots.keys()]) {
-    if (key.startsWith(prefix)) snapshots.delete(key);
+/** 清空该单会话键的快照（multi-session-parallel：引擎死亡按会话粒度失效，兄弟会话不动） */
+export function clearBackgroundTaskLedger(project: string, sessionId: string): void {
+  snapshots.delete(ledgerKey(project, sessionId));
+}
+
+/** 会话 jsonl 首行 header 的 durable id（磁盘权威，引擎绑定 open 认领同源）；缺失/损坏 → undefined */
+function sessionDurableId(sessionPath: string): string | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(sessionPath, "r");
+    const head = Buffer.alloc(8192);
+    const n = readSync(fd, head, 0, head.length, 0);
+    const header = JSON.parse(head.toString("utf8", 0, n).split("\n")[0] ?? "") as { id?: unknown };
+    return typeof header.id === "string" && header.id !== "" ? header.id : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
 /**
- * 引擎死亡失效（spike §3.3 + §5.2 第二缺陷）：引擎进程死亡（崩溃 / 空闲回收 / 显式
- * 停止）经 owner-fd 看门狗在 ≤2s 内杀死全部任务子会话（spike §4 实证），此刻账本
- * 快照与 jsonl 推导的启动态回执都是「可证明已死」的陈旧状态：
- * - 账本：直接清项目快照；
+ * 引擎死亡失效（spike §3.3 + §5.2 第二缺陷；multi-session-parallel 收缩为会话粒度）：
+ * 死亡引擎（sessionPath 键，每会话一引擎）经 owner-fd 看门狗在 ≤2s 内杀死其全部
+ * 任务子会话（spike §4 实证），此刻该会话的账本快照与 jsonl 推导的启动态回执都是
+ * 「可证明已死」的陈旧状态（兄弟会话引擎存活如常，不纳入失效面）：
+ * - 账本：按会话键清快照（durable id 取自磁盘 header，读不到则无键可清）；
  * - jsonl 推导：回执已落盘时纯重算仍为 true（假阳性永不自愈），须冻结磁盘状态——
  *   invalidateBackgroundStateOnEngineDeath 记录死亡时刻的文件指纹，推导面据此抑制，
  *   文件再有增长（死亡后新活动）即解除抑制恢复常态推导。
  */
 export function handleProjectEngineDeath(project: string, sessionPaths: string[]): void {
-  clearBackgroundTaskLedger(project);
+  for (const sessionPath of sessionPaths) {
+    const durable = sessionDurableId(sessionPath);
+    if (durable !== undefined) clearBackgroundTaskLedger(project, durable);
+  }
   invalidateBackgroundStateOnEngineDeath(sessionPaths);
 }
 

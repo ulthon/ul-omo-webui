@@ -4,8 +4,8 @@
 // invalid_permission_preset；编排口径 59 与实测差 1，以本清单与扫描测试为准）。
 // 故意不入映射（未命中一律回退 err.message 原文，绝不显示键名）：
 // - EngineAdapterError 直达码（http.ts toErrorResponse 原样序列化 code）：
-//   bad_options / export_failed / media_not_found / no_active_session / open_failed /
-//   timeout / unsupported
+//   bad_options / export_failed / media_not_found / no_active_session / not_started /
+//   open_failed / timeout / unsupported
 // - 客户端自造码（lib/api.ts）：network / unauthorized / unknown；服务端兜底码 internal
 import { t } from "./i18n";
 import type { MessageKey } from "./i18n";
@@ -78,7 +78,6 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   not_a_git_repo: "errors.notAGitRepo",
   not_found: "errors.notFound",
   not_registered: "errors.notRegistered",
-  not_started: "errors.notStarted",
   note_not_found: "errors.noteNotFound",
   nothing_to_compact: "errors.nothingToCompact",
   old_store_not_found: "errors.oldStoreNotFound",
@@ -88,6 +87,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   project_not_registered: "errors.projectNotRegistered",
   // 引擎进程管理（2026-11-04 批次 routes-engines stop 新增 1 码）
   unknown_project: "errors.unknownProject",
+  // 多会话并行批次（T5 定向停单会话引擎网关新增 1 码）
+  unknown_session: "errors.unknownSession",
   purge_requires_deleted: "errors.purgeRequiresDeleted",
   rebind_conflict: "errors.rebindConflict",
   schedule_limit: "errors.scheduleLimit",

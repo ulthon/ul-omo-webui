@@ -37,7 +37,11 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // old_store_not_found/rebind_conflict，合计 103。r10 2026-10-27 批次任务 13（认证 UI）
 // 追加 2 码：cli_missing/invalid_api_key，合计 105。2026-10-31 批次（计划暂停/恢复控制面，
 // routes-plans pause/resume）追加 1 码：plan_not_bound，合计 106。2026-11-04 批次（引擎
-// 进程管理 routes-engines stop）追加 1 码：unknown_project，合计 107。
+// 进程管理 routes-engines stop）追加 1 码：unknown_project，合计 107。多会话并行批次
+// （T5 定向停单会话引擎网关，routes-engines stop 按 sessionPath 校验）追加 1 码：
+// unknown_session；同批移除 not_started 的 ApiError 构造点（requireAdapter 守卫随重构
+// 移除，not_started 降为 EngineAdapterError 直达码，按约定不入映射，见 i18n/errors.ts
+// 头部排除清单），合计仍 107。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -119,7 +123,6 @@ const SCANNED_CODES = [
   "not_a_git_repo",
   "not_found",
   "not_registered",
-  "not_started",
   "note_not_found",
   "nothing_to_compact",
   "old_store_not_found",
@@ -144,6 +147,7 @@ const SCANNED_CODES = [
   "title_gen_unavailable",
   "unauthorized",
   "unknown_project",
+  "unknown_session",
   "upload_too_large",
   "version_not_found",
 ];

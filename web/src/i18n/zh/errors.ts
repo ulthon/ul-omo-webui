@@ -1,11 +1,11 @@
 // errors 域词条（zh-CN）：server ApiError code 命中映射后的客户端改写文案（任务11）。
 // 简短自然中文，语义对齐 server 各构造点的原 message；服务端原文不经此域——
 // 未命中映射的 code 一律回退 err.message 原文透传（见 ../errors.ts 的 apiErrorMessage）。
-// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（86 个，tests/i18n-errors.test.ts 锁定）。
+// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（107 个，tests/i18n-errors.test.ts 锁定）。
 export const errors = {
   // 引擎与回合状态
   engineNotReady: "引擎未就绪，请稍后重试",
-  notStarted: "项目运行时未初始化",
+  unknownSession: "该会话没有对应的引擎进程",
   alreadyProcessing: "会话回合进行中，请等待或先中断",
   alreadyCompacted: "上下文已压缩过，无新的可压缩内容",
   nothingToCompact: "会话上下文还很小，暂无需压缩",

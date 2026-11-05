@@ -1,18 +1,19 @@
 /**
  * 模型切换可观测（docs08-r6 任务 8 ①②）运行时层单测：
- * - ① switchModel 显式取 client：引擎未挂（wrappedClient null，ensure 前的天然初态）
- *   必抛 ApiError(503, "engine_not_ready")——原可选链写法会静默跳过，模型切换无声
- *   失效而 prompt 照发旧模型。断言走生产 switchModel（ProjectRuntime 私有方法经
- *   runtimeFor 构造的真实实例直调，非测试专用分支），forkSession 同款范式。
+ * - ① 引擎未挂：503 engine_not_ready 前置到 ensure「有界等待就绪」绑定环（T3 新
+ *   语义：switchModel 只在 ensure 成功后可达，绑定环走满硬截止显式拒绝）——带
+ *   model 的 prompt 整体被拒、setModel 零调用，模型切换不得无声失效。fake timers
+ *   异步推进绑定环走完 deadline，零真实等待。
  * - ② prompt 携带 model：setModel 成功回模型行（SDK 契约 {provider,id}）→ 回执
  *   appliedModel = "provider/model" 归一；经 registry 公共面全链（switchTo → setModel
  *   → adapter.prompt → 回执合并），FakeEngineRpc 记录 setModel 调用参数。
  */
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { EngineProcessManager } from "../src/engine/process-manager"
+import { ApiError } from "../src/api/http"
 import { EngineRuntimeRegistry } from "../src/api/engine-runtime"
 
 const PROJECT = "/tmp/opencode/rt-model-switch-proj"
@@ -100,7 +101,8 @@ class FakeEngineRpc {
 function fakeManagerWith(rpc: FakeEngineRpc | null): EngineProcessManager {
   return {
     ensureRunning: async () => {},
-    getClient: (_project: string) => rpc,
+    // 真实管理器无引擎时 getClient 回 undefined（ensure 绑定环按 undefined 判定）
+    getClient: (_project: string) => rpc ?? undefined,
     getStatus: () => ({ state: "ready" }),
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
@@ -109,28 +111,55 @@ function fakeManagerWith(rpc: FakeEngineRpc | null): EngineProcessManager {
 }
 
 describe("模型切换可观测（docs08-r6 任务 8）", () => {
-  test("① switchModel 引擎未挂：503 engine_not_ready（显式拒绝，非静默跳过）", async () => {
+  test("① 引擎未挂：ensure 绑定环 503 engine_not_ready（显式拒绝，setModel 零调用）", async () => {
     const root = mkdtempSync(join(tmpdir(), "rt-model-503-"))
     try {
       const agentDir = join(root, "agent")
       mkdirSync(join(root, "proj"), { recursive: true })
+      sessionFile(agentDir, MAIN_ID)
 
-      const registry = new EngineRuntimeRegistry(fakeManagerWith(new FakeEngineRpc()), {
+      // 真实定时器预热：先带引擎完成一次绑定（会话解析/活跃行 fs 全部落在 fake
+      // 窗口外——Bun 下 fake timers 与异步 fs 派发互斥，探针实证）
+      let activeClient: FakeEngineRpc | undefined = new FakeEngineRpc()
+      const rpc = activeClient
+      const fakeManager = {
+        ensureRunning: async () => {},
+        getClient: () => activeClient,
+        getStatus: () => ({ state: "ready" }),
+        onEvent: (_listener: (event: unknown) => void) => () => {},
+        stop: async () => {},
+        stopAll: async () => {},
+      } as unknown as EngineProcessManager
+      const registry = new EngineRuntimeRegistry(fakeManager, {
         listProjects: () => [PROJECT],
         agentDir,
       })
-      // 生产 runtimeFor 构造真实 ProjectRuntime（未 ensure 的天然初态：wrappedClient null），
-      // 直调生产 switchModel——503 必须来自该方法本体，而非测试专用分支
-      const rt = (
-        registry as unknown as {
-          runtimeFor: (project: string) => { switchModel(model: string): Promise<{ provider: string; id: string }> };
-        }
-      ).runtimeFor(PROJECT)
+      await registry.prompt(MAIN_ID, { text: "warm" })
 
-      await expect(rt.switchModel("zai-coding-cn/glm-4.7")).rejects.toMatchObject({
-        status: 503,
-        code: "engine_not_ready",
-      })
+      // 引擎消失（getClient 缺位，不注入崩溃事件）：再次 prompt 先经既有绑定态
+      // 的活跃行解析（零 fs），ensure 检出 client 更换弃置旧绑定态后进入
+      // 「有界等待就绪」绑定环——T3 新语义下 503 在此处产生，switchModel 只在
+      // ensure 成功后可达。fake timers 只 fake setTimeout/Date（绑定环全部依赖），
+      // 小步推进保证 deadline 必被穿越，零真实等待。
+      activeClient = undefined
+      vi.useFakeTimers({ toFake: ["setTimeout", "Date"] })
+      let settled = false
+      const pending = registry
+        .prompt(MAIN_ID, { text: "hi", model: "zai-coding-cn/glm-4.7" })
+        .then(
+          () => null,
+          (e: unknown) => {
+            settled = true
+            return e
+          },
+        )
+      for (let i = 0; i < 100 && !settled; i++) await vi.advanceTimersByTimeAsync(250)
+      const err = await pending
+      vi.useRealTimers()
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).status).toBe(503)
+      expect((err as ApiError).code).toBe("engine_not_ready")
+      expect(rpc.setModelCalls).toEqual([])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

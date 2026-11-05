@@ -337,9 +337,11 @@ export interface InputHistoryItem {
 
 /** 用法提示条目（docs08-2026-10-22 批次任务 25）：GET /api/tips 返回项，契约同引擎
  *  omo --list-tips（requiresCommand 为关联命令名/布尔，原样透传不过滤，对拍口径 GET=CLI）。 */
-/** 引擎进程管理行（2026-11-04；与诊断 engines 摘要同形） */
+/** 引擎进程管理行（2026-11-05 multi-session-parallel T5/T6：每会话引擎一行，与诊断 engines 摘要同形） */
 export interface EngineAdminRow {
   projectPath: string;
+  /** 引擎键=会话文件路径；无引擎已知项目的 inactive 行为 null */
+  sessionPath: string | null;
   state: string;
   pid?: number;
   restarts: number;
@@ -930,8 +932,9 @@ export const api = {
   async listEngines(): Promise<{ engines: EngineAdminRow[] }> {
     return request("/api/engines");
   },
-  async stopEngine(project: string): Promise<{ ok: boolean }> {
-    return request("/api/engines/stop", jsonInit("POST", { project }));
+  /** 停止引擎（T6 双形态）：{sessionPath} 定向停单会话引擎；{project} 停该项目全部会话引擎。 */
+  async stopEngine(target: { sessionPath: string } | { project: string }): Promise<{ ok: boolean }> {
+    return request("/api/engines/stop", jsonInit("POST", target));
   },
 
   // ---- 用法提示（docs08-2026-10-22 批次任务 25）----

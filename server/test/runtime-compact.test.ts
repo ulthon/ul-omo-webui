@@ -3,7 +3,7 @@
  * SenpiAdapter → 协议面 compact）。覆盖：
  * 1. happy：压缩回执（tokensBefore/estimatedTokensAfter）+ 同锁内压缩后 usage 快照；
  * 2. 流式守卫：回合中 compact 409 already_processing（引擎 manual compact 会先中止
- *    当前回合，webui 语义下拒绝而非隐式中断）；
+ *    当前回合，webui 语义下拒绝而非隐式中断；T3 后仅目标会话在途才拒）；
  * 3. 引擎失败形态映射："Already compacted" → 409 already_compacted；
  *    "Nothing to compact (session too small)" → 409 nothing_to_compact（spike 实证错误面）。
  * 路由层参数校验由 routes 层测试覆盖；本文件走真实 ProjectRuntime。
@@ -122,8 +122,8 @@ class FakeEngineRpc {
 function makeRegistry(rpc: FakeEngineRpc, agentDir: string): EngineRuntimeRegistry {
   const fakeManager = {
     ensureRunning: async () => {},
-    getClient: (_project: string) => rpc,
-    getStatus: () => ({ state: "ready" }),
+    getClient: (_sessionPath: string) => rpc,
+    getStatus: () => ({ state: "ready", pendingPermissions: [] }),
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
     stopAll: async () => {},
@@ -131,11 +131,13 @@ function makeRegistry(rpc: FakeEngineRpc, agentDir: string): EngineRuntimeRegist
   return new EngineRuntimeRegistry(fakeManager, {
     listProjects: () => [PROJECT],
     agentDir,
+    // 收尾监视轮询远长于测试生命期：流式守卫测试不依赖真实时序
+    settlePollMs: 3_600_000,
   })
 }
 
 describe("手动压缩运行时链路（docs08-r5 任务 8）", () => {
-  test("happy：压缩回执 + 同锁内压缩后 usage 快照", async () => {
+  test("happy：压缩回执 + 同引擎顺序压缩后 usage 快照（multi-session-parallel T3 后无互斥锁，快照顺序保持）", async () => {
     const root = mkdtempSync(join(tmpdir(), "rt-compact-test-"))
     try {
       const agentDir = join(root, "agent")

@@ -12,13 +12,22 @@ import { dirname } from "node:path"
 export interface EngineProcessRecord {
   pid: number
   projectPath: string
+  /** 引擎键定的会话文件路径（multi-session-parallel T1：记录对 projectPath+sessionPath，
+   * 重启恢复/孤儿清扫读对，不做 sessionPath 反推解码）。严格校验：旧版（键迁移前）
+   * 落盘的无 sessionPath 行在 load 时被滤除，其进程由 orphan-reaper 判定 2
+   * （管辖项目 cwd+argv 扫描）兜底清理。 */
+  sessionPath: string
   startedAt: number
 }
 
 function isRecord(v: unknown): v is EngineProcessRecord {
   if (typeof v !== "object" || v === null) return false
   const r = v as Record<string, unknown>
-  return typeof r.pid === "number" && typeof r.projectPath === "string"
+  return (
+    typeof r.pid === "number" &&
+    typeof r.projectPath === "string" &&
+    typeof r.sessionPath === "string"
+  )
 }
 
 export class PidRegistry {

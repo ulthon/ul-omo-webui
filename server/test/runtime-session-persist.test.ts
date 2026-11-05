@@ -12,7 +12,7 @@
 import { describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import type { EngineProcessManager } from "../src/engine/process-manager"
 import { EngineRuntimeRegistry } from "../src/api/engine-runtime"
 import { ApiError } from "../src/api/http"
@@ -20,13 +20,19 @@ import { ApiError } from "../src/api/http"
 const PROJECT = "/tmp/opencode/rt-persist-proj"
 const DURABLE_ID = "01c22222-0000-7000-8000-000000000006"
 
-/** fake 引擎 RPC：open_session 认领 sessionFile；list_sessions 可编程切换
- * 是否携带 durableSessionId（模拟 t1 形态：认领成功但从不写盘）。 */
+/** fake 引擎 RPC：open 按路径 echo（新契约 attach 幂等，运行时预生成路径运行期才
+ * 可知，list_sessions 行回最近 open 的路径）；claimDurable 可编程切换是否携带
+ * durableSessionId（模拟 t1 形态：认领成功但从不写盘）；persistOnOpen 模拟真实
+ * 引擎 open 即写会话头（落盘对照用）。 */
 class FakeEngineRpc {
   /** 当前 list_sessions 行是否携带 durableSessionId */
   claimDurable = false
+  /** open_session 是否落盘（真实引擎 open 即写盘；false = t1 认领不写盘形态） */
+  persistOnOpen = false
   promptCalls = 0
   private routing = 1
+  /** 最近一次 open 的目标路径 */
+  private lastOpenPath = ""
 
   constructor(readonly sessionPath: string) {}
 
@@ -42,7 +48,13 @@ class FakeEngineRpc {
     state: { sessionId: string; sessionFile?: string }
   }> {
     const handle = `rpc-${this.routing++}`
-    return { sessionId: handle, state: { sessionId: DURABLE_ID, sessionFile: options.sessionPath ?? this.sessionPath } }
+    const path = options.sessionPath ?? this.sessionPath
+    this.lastOpenPath = path
+    if (this.persistOnOpen) {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, `${JSON.stringify({ type: "session", version: 3, id: DURABLE_ID, cwd: PROJECT })}\n`)
+    }
+    return { sessionId: handle, state: { sessionId: DURABLE_ID, sessionFile: path } }
   }
 
   async closeSession(): Promise<void> {}
@@ -50,7 +62,7 @@ class FakeEngineRpc {
   async listSessions(): Promise<Array<Record<string, unknown>>> {
     const row: Record<string, unknown> = {
       sessionId: "rpc-1",
-      sessionPath: this.sessionPath,
+      sessionPath: this.lastOpenPath || this.sessionPath,
       cwd: PROJECT,
       status: "open",
     }
@@ -138,9 +150,9 @@ describe("durable 落盘判定与消静默（docs08 任务 6，t1 根因）", ()
     const h = setup()
     try {
       h.rpc.claimDurable = true
-      await h.registry.createSession(PROJECT, {})
-      // 引擎此后补写了文件（活跃态快捷路径仍可解析）
-      writeFileSync(h.sessionPath, `${JSON.stringify({ type: "session", version: 3, id: DURABLE_ID, cwd: PROJECT })}\n`)
+      const created = await h.registry.createSession(PROJECT, {})
+      // 引擎此后补写了文件（认领的预生成路径由 createSession 回带）
+      writeFileSync(created.sessionPath, `${JSON.stringify({ type: "session", version: 3, id: DURABLE_ID, cwd: PROJECT })}\n`)
       const row = await h.registry.resolveSessionRow(DURABLE_ID)
       expect(row?.id).toBe(DURABLE_ID)
     } finally {
@@ -173,7 +185,7 @@ describe("durable 落盘判定与消静默（docs08 任务 6，t1 根因）", ()
     const h = setup()
     try {
       h.rpc.claimDurable = true
-      writeFileSync(h.sessionPath, `${JSON.stringify({ type: "session", version: 3, id: DURABLE_ID, cwd: PROJECT })}\n`)
+      h.rpc.persistOnOpen = true // 引擎 open 即落盘 → durable 存在性复核通过
       const created = await h.registry.createSession(PROJECT, {})
       expect(created.durable).toBe(true)
       const row = await h.registry.resolveSessionRow(created.id)

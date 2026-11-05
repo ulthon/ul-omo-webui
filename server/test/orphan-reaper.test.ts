@@ -21,9 +21,9 @@ describe("PidRegistry", () => {
     const reg = mkRegistry()
     try {
       expect(reg.load()).toEqual([])
-      reg.upsert({ pid: 1, projectPath: "/a", startedAt: 10 })
-      reg.upsert({ pid: 2, projectPath: "/b", startedAt: 20 })
-      reg.upsert({ pid: 1, projectPath: "/a", startedAt: 30 }) // 同 PID 覆盖
+      reg.upsert({ pid: 1, projectPath: "/a", sessionPath: "/a/s1.jsonl", startedAt: 10 })
+      reg.upsert({ pid: 2, projectPath: "/b", sessionPath: "/b/s2.jsonl", startedAt: 20 })
+      reg.upsert({ pid: 1, projectPath: "/a", sessionPath: "/a/s1.jsonl", startedAt: 30 }) // 同 PID 覆盖
       expect(reg.load()).toHaveLength(2)
       expect(reg.load().find((r) => r.pid === 1)?.startedAt).toBe(30)
       reg.remove(1)
@@ -41,7 +41,7 @@ describe("reapOrphanEngines 判定 1：登记表记录", () => {
     const reg = mkRegistry()
     const probe = new MemProbe()
     try {
-      reg.upsert({ pid: 111, projectPath: "/proj-a", startedAt: 1 })
+      reg.upsert({ pid: 111, projectPath: "/proj-a", sessionPath: "/proj-a/s111.jsonl", startedAt: 1 })
       const result = await reapOrphanEngines({ probe, registry: reg, engineCliPath: CLI })
       expect(result.deadRecords).toEqual([111])
       expect(result.killed).toEqual([])
@@ -56,10 +56,13 @@ describe("reapOrphanEngines 判定 1：登记表记录", () => {
     const reg = mkRegistry()
     const probe = new MemProbe()
     try {
-      reg.upsert({ pid: 222, projectPath: "/proj-a", startedAt: 1 })
+      reg.upsert({ pid: 222, projectPath: "/proj-a", sessionPath: "/proj-a/s222.jsonl", startedAt: 1 })
       probe.add(222, { cwd: "/proj-a", argv: ["node", CLI, "--extension", "/omo/plugin", "--mode", "rpc"] })
       const result = await reapOrphanEngines({ probe, registry: reg, engineCliPath: CLI, graceMs: 50 })
-      expect(result.killed).toEqual([{ pid: 222, source: "registry", projectPath: "/proj-a" }])
+      // T4 会话粒度观测：registry 判定击杀携带登记记录对（sessionPath）
+      expect(result.killed).toEqual([
+        { pid: 222, source: "registry", projectPath: "/proj-a", sessionPath: "/proj-a/s222.jsonl" },
+      ])
       expect(probe.signals[0]).toEqual({ pid: 222, sig: "SIGTERM" })
       expect(reg.load()).toEqual([])
     } finally {
@@ -71,7 +74,7 @@ describe("reapOrphanEngines 判定 1：登记表记录", () => {
     const reg = mkRegistry()
     const probe = new MemProbe()
     try {
-      reg.upsert({ pid: 333, projectPath: "/proj-a", startedAt: 1 })
+      reg.upsert({ pid: 333, projectPath: "/proj-a", sessionPath: "/proj-a/s333.jsonl", startedAt: 1 })
       probe.add(333, { cwd: "/somewhere-else", argv: ["node", CLI] })
       const result = await reapOrphanEngines({ probe, registry: reg, engineCliPath: CLI })
       expect(result.killed).toEqual([])
@@ -86,7 +89,7 @@ describe("reapOrphanEngines 判定 1：登记表记录", () => {
     const reg = mkRegistry()
     const probe = new MemProbe()
     try {
-      reg.upsert({ pid: 444, projectPath: "/proj-a", startedAt: 1 })
+      reg.upsert({ pid: 444, projectPath: "/proj-a", sessionPath: "/proj-a/s444.jsonl", startedAt: 1 })
       probe.add(444, { cwd: "/proj-a", argv: ["vim", "notes.txt"] })
       const result = await reapOrphanEngines({ probe, registry: reg, engineCliPath: CLI })
       expect(result.killed).toEqual([])
@@ -101,10 +104,12 @@ describe("reapOrphanEngines 判定 1：登记表记录", () => {
     const reg = mkRegistry()
     const probe = new MemProbe()
     try {
-      reg.upsert({ pid: 555, projectPath: "/proj-a", startedAt: 1 })
+      reg.upsert({ pid: 555, projectPath: "/proj-a", sessionPath: "/proj-a/s555.jsonl", startedAt: 1 })
       probe.add(555, { cwd: "/proj-a", argv: ["node", "未知路径/cli.js"] })
       const result = await reapOrphanEngines({ probe, registry: reg, graceMs: 50 })
-      expect(result.killed).toEqual([{ pid: 555, source: "registry", projectPath: "/proj-a" }])
+      expect(result.killed).toEqual([
+        { pid: 555, source: "registry", projectPath: "/proj-a", sessionPath: "/proj-a/s555.jsonl" },
+      ])
     } finally {
       rmSync(TMP, { force: true })
     }
@@ -124,6 +129,7 @@ describe("reapOrphanEngines 判定 2：管辖目录扫描（cwd+argv 双因子�
         engineCliPath: CLI,
         graceMs: 50,
       })
+      // T4 会话粒度观测：scan 判定按项目 cwd 扫描无会话归属，不携 sessionPath
       expect(result.killed).toEqual([{ pid: 777, source: "scan", projectPath: "/proj-b" }])
     } finally {
       rmSync(TMP, { force: true })

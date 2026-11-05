@@ -1,8 +1,9 @@
 // 后台任务内存账本单测（orphan-ledger 2026-10-31，spike §3 设计）：
 // - 账本生命周期：spawn（pending→running）/ 终局快照 / 空快照删键 / 畸形条目窄化；
 // - 推导合并：GET /api/sessions 第四态 jsonl-only / ledger-only / both / neither；
-// - 引擎死亡失效：账本清项目 + jsonl 假阳性修复（回执已落盘 + 引擎死亡 →
-//   background_running 清除；死亡后文件有新活动 → 解除冻结恢复常态推导）。
+// - 引擎死亡失效：账本清会话键（multi-session-parallel 会话粒度，兄弟不受扰）+
+//   jsonl 假阳性修复（回执已落盘 + 引擎死亡 → background_running 清除；死亡后
+//   文件有新活动 → 解除冻结恢复常态推导）。
 // 全部确定性：帧直接经 EventBus.publish 注入（真实扇出路径），无 sleep / 轮询。
 import { describe, expect, test, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
@@ -109,14 +110,16 @@ describe("后台任务账本（omo.task.updated 快照整包替换）", () => {
     expect(ledgerHasRunning("/proj-a", "sess-1")).toBe(false); // st_9 无 status
   });
 
-  test("clearProject / ledgerRunningSessionIds / handleProjectEngineDeath 清项目", () => {
+  test("clearBackgroundTaskLedger 单会话键 / ledgerRunningSessionIds（兄弟键不动）", () => {
     const bus = setup();
     feed(bus, "/proj-a", "s1", [{ task_id: "st_1", status: "running", task_summary: "x", updated_at: "t" }]);
     feed(bus, "/proj-a", "s2", [{ task_id: "st_2", status: "pending", task_summary: "y", updated_at: "t" }]);
     feed(bus, "/proj-b", "s3", [{ task_id: "st_3", status: "running", task_summary: "z", updated_at: "t" }]);
     expect(ledgerRunningSessionIds("/proj-a").sort()).toEqual(["s1", "s2"]);
-    clearBackgroundTaskLedger("/proj-a");
+    clearBackgroundTaskLedger("/proj-a", "s1");
     expect(ledgerHasRunning("/proj-a", "s1")).toBe(false);
+    // 会话粒度：同项目兄弟键 s2 与跨项目 s3 均不受扰
+    expect(ledgerHasRunning("/proj-a", "s2")).toBe(true);
     expect(ledgerHasRunning("/proj-b", "s3")).toBe(true);
   });
 
@@ -199,6 +202,11 @@ function toolResultLine(toolCallId: string, details: Record<string, unknown>): s
   return JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId, content: [], details } });
 }
 
+/** 会话文件首行 header（durable id 承载者：handleProjectEngineDeath 按它解析账本键） */
+function sessionHeader(id: string): string {
+  return `${JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-11-01T00:00:00.000Z" })}\n`;
+}
+
 function buildApp(engines: EngineGateway): Hono {
   const app = new Hono();
   const metaDir = mkdtempSync(join(tmpdir(), "ledger-meta-"));
@@ -275,7 +283,7 @@ describe("GET /api/sessions 第四态 jsonl OR 账本合并", () => {
 
 // ---------------------------------------------------------------- 引擎死亡失效（含假阳性修复）
 
-describe("引擎死亡失效：账本清项目 + jsonl 假阳性冻结", () => {
+describe("引擎死亡失效：账本清会话键 + jsonl 假阳性冻结", () => {
   test("假阳性场景：回执已落盘 + 引擎死亡 → background_running 清除（第二缺陷修复）", () => {
     const dir = mkdtempSync(join(tmpdir(), "ledger-death-"));
     cleanup.push(dir);
@@ -305,19 +313,27 @@ describe("引擎死亡失效：账本清项目 + jsonl 假阳性冻结", () => {
     expect(sessionBackgroundRunning(path)).toBe(true);
   });
 
-  test("handleProjectEngineDeath：账本项目快照清除 + 冻结 jsonl 推导（组合入口）", () => {
+  test("handleProjectEngineDeath：该会话账本键清除 + 冻结 jsonl 推导（组合入口，兄弟不受扰）", () => {
     const dir = mkdtempSync(join(tmpdir(), "ledger-death-"));
     cleanup.push(dir);
     const path = join(dir, "s.jsonl");
-    writeFileSync(path, toolResultLine("c1", { run_in_background: true, status: "running", task_id: "st_1" }));
+    writeFileSync(path, sessionHeader("s") + toolResultLine("c1", { run_in_background: true, status: "running", task_id: "st_1" }));
+    const siblingPath = join(dir, "s2.jsonl");
+    writeFileSync(siblingPath, sessionHeader("s2") + toolResultLine("c2", { run_in_background: true, status: "running", task_id: "st_2" }));
     const bus = new EventBus({ capacity: 100 });
     attachBackgroundTaskLedger(bus);
     feed(bus, dir, "s", [{ task_id: "st_1", status: "running", task_summary: "x", updated_at: "t" }]);
+    feed(bus, dir, "s2", [{ task_id: "st_2", status: "running", task_summary: "y", updated_at: "t" }]);
     expect(ledgerHasRunning(dir, "s")).toBe(true);
+    expect(ledgerHasRunning(dir, "s2")).toBe(true);
     expect(sessionBackgroundRunning(path)).toBe(true);
+    expect(sessionBackgroundRunning(siblingPath)).toBe(true);
 
     handleProjectEngineDeath(dir, [path]);
     expect(ledgerHasRunning(dir, "s")).toBe(false);
     expect(sessionBackgroundRunning(path)).toBe(false);
+    // 会话粒度：兄弟会话双源均不受扰（按项目清/冻的旧口径会误伤兄弟）
+    expect(ledgerHasRunning(dir, "s2")).toBe(true);
+    expect(sessionBackgroundRunning(siblingPath)).toBe(true);
   });
 });

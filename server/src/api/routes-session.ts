@@ -342,7 +342,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
 
   // 会话消息分页：cursor = 上页 leafId，传回取增量（verification/01 游标语义）。
   // 任务 16（GAP-6 修复）：无 cursor 首载改服务端尾窗直读（resolveSession 取
-  // sessionPath，SDK 直读不 spawn 引擎不进 runExclusive 不 switchTo；读不到会话
+  // sessionPath，SDK 直读不 spawn 引擎；multi-session-parallel T3 后运行时亦无
+  // 互斥链/切换链可占——直读与引擎全量两路径零耦合）；读不到会话
   // 文件的新会话/别名回退引擎全量）；?before= 上一窗（无效 409 cursor_invalid）；
   // ?cursor= 前向增量与 ?full=1 全量（SSE gap 重连对账依赖）走引擎不变。
   // Fix0 HTTP 计时（docs08 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关零输出）。

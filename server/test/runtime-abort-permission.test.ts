@@ -13,10 +13,11 @@
  * 2. wire 帧形态：{type:"extension_ui_response", id, cancelled:true}（复用既有
  *    应答通道，非新造协议）；
  * 3. 解忙：每帧后 reportPermissionAnswered，挂起清单清零（deny 后不残留挂起）；
- * 4. 回合收尾可达：deny 后引擎回 agent_end（fake 经 onEvent 注入）→ streamingId
- *    清位 → peekRunStates 由 waiting 转空（服务端 runState 权威源回落）；
+ * 4. 回合收尾可达：deny 后引擎回 agent_end（fake 经 onEvent 注入）→ 回合行清位
+ *    → peekRunStates 由 waiting 转空（服务端 runState 权威源回落）；
  * 5. 回归：无挂起权限时零 deny 帧纯 abort（流式路径零变化）；非本回合会话
- *    abort 不误拒（streamingId 守卫）。
+ *    abort 不误拒（回合行 sessionPath 键守卫，multi-session-parallel T3 后
+ *    仅目标会话在途才消费挂起权限）。
  */
 import { describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -60,7 +61,7 @@ class FakeEngineRpc {
   private readonly listeners: Array<(event: unknown) => void> = []
   private routing = 1
 
-  constructor(private readonly sessionPath: string) {}
+  constructor(readonly sessionPath: string) {}
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -158,22 +159,23 @@ class FakeEngineRpc {
 }
 
 /** fake 管理器：pendingPermissions 可编程（模拟引擎权限挂起快照），应答解忙
- *  模拟真实 reportPermissionAnswered 的清账语义（process-manager pendingPermissions.delete） */
+ *  模拟真实 reportPermissionAnswered 的清账语义（process-manager pendingPermissions.delete）。
+ *  T3 后首参为引擎键 sessionPath（按会话引擎记账），测试按路径断言。 */
 class FakeManager {
   pendingPermissions: string[] = []
-  /** reportPermissionAnswered 收到 (project, requestId) 按序记录 */
-  readonly answered: Array<{ project: string; requestId: string }> = []
+  /** reportPermissionAnswered 收到 (sessionPath, requestId) 按序记录 */
+  readonly answered: Array<{ sessionPath: string; requestId: string }> = []
 
   constructor(private readonly rpc: FakeEngineRpc) {}
 
   ensureRunning = async (): Promise<void> => {}
-  getClient = (_project: string) => this.rpc
+  getClient = (_sessionPath: string) => this.rpc
   getStatus = (): { state: "ready"; pendingPermissions: string[] } => ({
     state: "ready",
     pendingPermissions: [...this.pendingPermissions],
   })
-  reportPermissionAnswered = (project: string, requestId: string): void => {
-    this.answered.push({ project, requestId })
+  reportPermissionAnswered = (sessionPath: string, requestId: string): void => {
+    this.answered.push({ sessionPath, requestId })
     this.pendingPermissions = this.pendingPermissions.filter((id) => id !== requestId)
   }
   onEvent = (_listener: (event: unknown) => void): (() => void) => () => {}
@@ -185,6 +187,8 @@ function makeRegistry(rpc: FakeEngineRpc, manager: FakeManager, agentDir: string
   return new EngineRuntimeRegistry(manager as unknown as EngineProcessManager, {
     listProjects: () => [PROJECT],
     agentDir,
+    // 收尾监视轮询远长于测试生命期：用例结算一律走事件回声，不依赖真实时序
+    settlePollMs: 3_600_000,
   })
 }
 
@@ -216,10 +220,10 @@ describe("权限等待态中止前置 Deny（r11 todo 11，spike 定向）", () 
         { type: "extension_ui_response", id: "perm-1", cancelled: true },
         { type: "extension_ui_response", id: "perm-2", cancelled: true },
       ])
-      // 解忙：逐个 reportPermissionAnswered（项目级记账清账）
+      // 解忙：逐个 reportPermissionAnswered（按目标会话引擎键记账清账，T3 后首参为 sessionPath）
       expect(manager.answered).toEqual([
-        { project: PROJECT, requestId: "perm-1" },
-        { project: PROJECT, requestId: "perm-2" },
+        { sessionPath: rpc.sessionPath, requestId: "perm-1" },
+        { sessionPath: rpc.sessionPath, requestId: "perm-2" },
       ])
       // deny 后挂起清单不残留（stale-state 防护）
       expect(manager.pendingPermissions).toEqual([])
@@ -245,7 +249,7 @@ describe("权限等待态中止前置 Deny（r11 todo 11，spike 定向）", () 
       // 引擎回声：deny 解权限门 → 挂起工具取消返回 → agent_end（wire handle 归属）
       rpc.emit({ type: "agent_end", sessionId: rpc.handles[0] })
 
-      // 回合收尾：streamingId 清位 → active 路径清空 → runState 不再报 waiting
+      // 回合收尾：回合行清位 → active 路径清空 → runState 不再报 waiting
       const after = await registry.peekRunStates(PROJECT)
       expect(after).not.toBeNull()
       expect(after!.size).toBe(0)
@@ -279,7 +283,8 @@ describe("权限等待态中止前置 Deny（r11 todo 11，spike 定向）", () 
 
       await registry.abort(OTHER_SESSION_ID)
 
-      // B 的 abort 不得消费 A 的权限挂起（跨会话误拒防护）；仅常规 abort
+      // B 的 abort 不得消费 A 的权限挂起（跨会话误拒防护；A 的回合行在 A 路径下，
+      // B 的 abort 走自己的引擎键）；仅常规 abort
       expect(rpc.journal).toEqual(["abort"])
       expect(rpc.sentResponses).toEqual([])
       expect(manager.answered).toEqual([])

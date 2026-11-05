@@ -348,9 +348,11 @@ export const chat = {
     memoryReflectionPausedProbe: "Next automatic probe at {time}",
     memoryReflectionPausedRetry: "Run /reflect to retry now",
   },
-  /** In-stream error card (send failure lands in stream, CLI parity) */
+  /** In-stream error card (send failure lands in stream, CLI parity); sessionBusy =
+   *  collision-409 persistent card fallback (multi-session-parallel T7) */
   streamError: {
     dismiss: "Dismiss",
     sendFailed: "Failed to send",
+    sessionBusy: "This session is occupied by another engine turn; wait for it to settle or interrupt it from the CLI before sending",
   },
 } as const;

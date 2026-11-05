@@ -7,11 +7,16 @@
  *
  * SSE 契约（W3 todo 14 前端按此解析）：
  *   - event 行 = 引擎 wire 事件 type（如 message_update / agent_end / gap）；
- *   - data 行 = JSON `{projectPath, event, durableSessionId?}`，event 为 wire 原样
- *     对象（sessionId 是 routing handle，见 engine/events.ts 注释）；
- *     `durableSessionId` 为可选加法字段（todo 9 后续修复）：能映射到磁盘 header id
- *     时由 durableLookup 注入，映射不明时缺席——前端 messages store 以 durable id
- *     为键，路由流式更新时优先取该字段，缺席回退 wire sessionId；
+ *   - data 行 = JSON `{projectPath, sessionPath?, event, durableSessionId?}`，event 为
+ *     wire 原样对象（sessionId 是 routing handle，见 engine/events.ts 注释）；
+ *     `sessionPath` 为加法字段（A→B 串显修复 2026-11-06）：桥直附的源引擎绑定
+ *     （multi-session-parallel T1 引擎键），帧归属以此为准；无绑定归属的桥级帧
+ *     （心跳 / 墓碑）缺席；
+ *     `durableSessionId` 为可选加法字段：durableLookup 收到 sessionPath 后仅在该
+ *     引擎绑定态内解析（双键归属口径，跨引擎查表已退役为兼容/诊断），映射不明时
+ *     缺席——前端 messages store 以 durable id 为键，路由流式更新时优先取该字段，
+ *     缺席回退 wire sessionId；引擎来源帧的 MISS / MISMATCH 生产常开 info 低频采样
+ *     （见 dataPayload）；
  *   - id 行 = 事件桥全局游标（自增，不侵入 wire 事件体）；
  *   - 断点续传：客户端（原生 EventSource）重连自动带 Last-Event-ID 头，服务端
  *     从游标之后续发，不丢不重；
@@ -25,10 +30,12 @@
  *     先发一条 `event: gap`（data `{from, to}`，id = 当前续发基点）再从最旧
  *     可用事件续发——客户端收到 gap 必须对活动会话做全量重取（todo 14）；
  *   - 重放过滤（W1 #4）：断线重连的续发序列里，陈旧的 extension_ui_request
- *     权限请求帧被丢弃（三条件：其后无同项目收尾帧 / 无同项目
- *     engine_permissions_invalidated 墓碑 / 项目引擎进程运行中；会话身份经
+ *     权限请求帧被丢弃（三条件：其后无同会话收尾帧 / 无可杀死本请求的
+ *     同项目 engine_permissions_invalidated 墓碑 / 项目引擎进程运行中；会话身份经
  *     durableLookup 归一后比对）——旧进程的挂起请求永不会被应答，重放会让
- *     前端输入区永久锁死。实时扇出路径不受影响；
+ *     前端输入区永久锁死。实时扇出路径不受影响。T4（multi-session-parallel）
+ *     起墓碑条件会话粒度化（同项目墓碑 × 会话身份可解析性），见
+ *     filterStaleUiRequests 注释；
  *   - `?session=` 过滤：wire sessionId（routing handle）或 durableSessionId
  *     任一匹配即放行（durable 匹配是加法兼容：REST 侧只发 durable id）；
  *     心跳 hb 帧无会话身份，无条件放行（被滤掉会让该连接的客户端看门狗失活）；
@@ -63,6 +70,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, type BridgeEvent } from "../engine/events"
 import { debugSseOn } from "../conf/diagnostics-flags"
 import { log } from "../obs/logger"
+import { projHash8 } from "./perf"
 
 /** D18 诊断日志（UL_OMO_WEBUI_DEBUG_SSE 开关，默认关）：连接/帧/durableLookup 观测，
  * 关闭时零输出、生产行为零改动。 */
@@ -99,8 +107,11 @@ interface SseOptions {
   /** 心跳间隔毫秒（默认 15s；生产装配 8s，见头注释）。 */
   heartbeatMs?: number
   /** wire sessionId（routing handle）→ durable id 查询（组合根注入 engine-runtime 的映射）。
-   * 返回 undefined 表示映射不明，data 帧不注入 durableSessionId（如实透传）。 */
-  durableLookup?: (projectPath: string, handle: string) => string | undefined
+   * sessionPath = 桥附源引擎绑定（engine_event 帧级携带）：提供时只在该引擎绑定态内
+   * 解析（(绑定, handle) 双键归属口径）；缺席走兼容/诊断查表（组合根直发的合成帧
+   * sessionId 本身是 durable id，knownDurable 直认无撞值）。返回 undefined 表示映射
+   * 不明，data 帧不注入 durableSessionId（如实透传）。 */
+  durableLookup?: (projectPath: string, handle: string, sessionPath?: string) => string | undefined
   /** 项目引擎进程是否运行中（组合根注入 process-manager 状态，state === "ready"）。
    * 重放过滤条件 (c) 用：不在运行的引擎的挂起权限请求永无法被应答。
    * 缺省视为恒运行（不过滤，保守不误杀）。 */
@@ -158,12 +169,48 @@ function wireSessionId(e: BridgeEvent): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined
 }
 
-/** data 帧载荷：映射可得时注入 durableSessionId（可选加法字段），否则保持原两字段。
- * 诊断开着时输出帧级 durable 命中/miss 观测（miss = 信封不注入 durableSessionId，
- * 前端回退 wire sessionId 建 store 键——键错配嫌疑的直接信号）。 */
+/** 帧级归属观测采样节流（A→B 串显修复 2026-11-06）：MISS / MISMATCH info 生产常开，
+ * 同种 10s 至多一条防刷屏；debug 门控 dlog 仍全量。 */
+const ATTRIBUTION_SAMPLE_MS = 10_000
+let lastMissSampleAt = 0
+let lastMismatchSampleAt = 0
+
+function sampleAttribution(
+  kind: "MISS" | "MISMATCH",
+  e: BridgeEvent,
+  handle: string,
+  durable: string | undefined,
+  compat: string | undefined,
+): void {
+  const now = Date.now()
+  if (kind === "MISS") {
+    if (now - lastMissSampleAt < ATTRIBUTION_SAMPLE_MS) return
+    lastMissSampleAt = now
+  } else {
+    if (now - lastMismatchSampleAt < ATTRIBUTION_SAMPLE_MS) return
+    lastMismatchSampleAt = now
+  }
+  log.info("sse", "attribution", {
+    kind,
+    id: e.id,
+    type: wireType(e),
+    wire: handle.slice(0, 16),
+    sp: e.sessionPath,
+    durable,
+    compat,
+    proj: projHash8(e.projectPath),
+  })
+}
+
+/** data 帧载荷：帧归属以源引擎绑定为准——durableLookup 收到桥附 sessionPath 后仅在该
+ * 引擎绑定态内解析（双键口径），信封携 sessionPath 原样透传；映射不明时不注入
+ * durableSessionId（前端回退 wire sessionId，不猜）。引擎来源帧（带 wire handle 与
+ * 桥附绑定，extension_event 除外——其 wire sessionId 是连接 handle 必然 miss）的
+ * MISS（绑定解析缺席）与 MISMATCH（兼容查表与绑定解析不一致 = 旧跨引擎 first-hit
+ * 串显信号）生产常开 info 低频采样；debug 门控 dlog 照旧全量。 */
 function dataPayload(e: BridgeEvent, durableLookup: SseRuntime["durableLookup"]): string {
   const handle = wireSessionId(e)
-  const durable = handle !== undefined ? durableLookup?.(e.projectPath, handle) : undefined
+  const durable = handle !== undefined ? durableLookup?.(e.projectPath, handle, e.sessionPath) : undefined
   if (debugSseOn()) {
     const type = wireType(e)
     if (handle === undefined) {
@@ -174,10 +221,28 @@ function dataPayload(e: BridgeEvent, durableLookup: SseRuntime["durableLookup"])
       dlog(`frame id=${e.id} type=${type} wire=${handle} durable=${durable}`)
     }
   }
-  if (durable === undefined) {
-    return JSON.stringify({ projectPath: e.projectPath, event: e.event })
+  const type = wireType(e)
+  if (
+    handle !== undefined &&
+    e.sessionPath !== undefined &&
+    durableLookup !== undefined &&
+    type !== "extension_event"
+  ) {
+    const compat = durableLookup(e.projectPath, handle)
+    if (durable === undefined) {
+      sampleAttribution("MISS", e, handle, undefined, compat)
+    } else if (compat !== undefined && compat !== durable) {
+      sampleAttribution("MISMATCH", e, handle, durable, compat)
+    }
   }
-  return JSON.stringify({ projectPath: e.projectPath, event: e.event, durableSessionId: durable })
+  const envelope =
+    e.sessionPath !== undefined
+      ? { projectPath: e.projectPath, sessionPath: e.sessionPath, event: e.event }
+      : { projectPath: e.projectPath, event: e.event }
+  if (durable === undefined) {
+    return JSON.stringify(envelope)
+  }
+  return JSON.stringify({ ...envelope, durableSessionId: durable })
 }
 
 /** wire 事件 type 作为 SSE event 行（客户端按类型路由或收 gap 标记）。 */
@@ -209,6 +274,21 @@ function rawKey(projectPath: string, sessionId: string): string {
   return `${projectPath}\n${sessionId}`
 }
 
+/** 请求帧的会话身份在重放时刻是否可解析（T4 multi-session-parallel 会话粒度）：
+ * handle 经 durableLookup 归一命中即「可解析」。handle→durable 映射挂在各会话
+ * 引擎绑定态上（engine-runtime SessionEngine.handleToDurable），invalidateEngine
+ * 弃置即消失；映射仍在 = 绑定仍活（兄弟会话引擎或懒清窗口）。handle 缺席视为
+ * 不可解析（无法证明存活，同项目墓碑照旧可杀，与旧项目粒度口径一致）。 */
+function sessionResolvable(
+  projectPath: string,
+  handle: string | undefined,
+  durableLookup: SseRuntime["durableLookup"],
+  sessionPath?: string,
+): boolean {
+  if (handle === undefined) return false
+  return durableLookup?.(projectPath, handle, sessionPath) !== undefined
+}
+
 /**
  * 重放路径专用过滤：丢弃陈旧的 extension_ui_request 请求帧。请求帧保留当且
  * 仅当以下全过（任一不过即陈旧——旧进程的挂起请求永不会被应答，重放它们会让
@@ -217,9 +297,17 @@ function rawKey(projectPath: string, sessionId: string): string {
  *       agent_settled 含 synthetic / session_closed）——question 型例外：
  *       waitForAnswer=false 的提问跨回合存活（回合落定后问题仍开着等答案），
  *       settle 不杀它，只有 question_resolved 墓碑才杀；
- *   (b) 其后没有同项目的权限失效墓碑（engine_permissions_invalidated，
+ *   (b) 其后没有「可杀死本请求」的同项目权限失效墓碑（engine_permissions_invalidated，
  *       崩溃 / 空闲回收 / 显式停止时由组合根发布；引擎重启后提问随之死亡，
- *       ask-user 注册表跨进程不恢复）；
+ *       ask-user 注册表跨进程不恢复）。T4（multi-session-parallel）会话粒度：
+ *       墓碑帧只携 projectPath（生产者链 events.ts/index.ts 不动，帧级
+ *       sessionPath 无法与请求帧联接），杀者判据加会话身份可解析性门槛——
+ *       请求帧 handle 经 durableLookup 归一命中（映射挂在各会话引擎绑定态上，
+ *       invalidateEngine 弃置即消失）则视为兄弟会话绑定仍在，同项目墓碑不杀；
+ *       映射消失（绑定弃置）才被同项目墓碑杀。已知窗口：manager.stop / 空闲
+ *       回收路径的绑定清理是懒式（下次 ensure 检测 client 更换才弃置），窗口内
+ *       lookup 命中仍放行（退回收尾/(c) 运行态判定），窗口下界由 (c) 兜住——
+ *       项目内再无 ready 引擎时全部请求帧照旧被杀；
  *   (c) 重放时刻该项目引擎进程在运行（不在运行的引擎应答不了任何请求）；
  *   (d) question 型：其后没有 question_resolved 落定同 id（引擎侧超时/取消/
  *       异端应答的广播帧，id 为全局 uuid 无需会话限定）。
@@ -267,7 +355,7 @@ function filterStaleUiRequests(
     if (isSettleFrame(e)) {
       const sid = wireSessionId(e)
       if (sid !== undefined) {
-        const durable = durableLookup?.(e.projectPath, sid)
+        const durable = durableLookup?.(e.projectPath, sid, e.sessionPath)
         if (durable !== undefined) settledDurables.add(rawKey(e.projectPath, durable))
         settledRaw.add(rawKey(e.projectPath, sid))
       }
@@ -276,11 +364,20 @@ function filterStaleUiRequests(
     }
     if (isUiRequestFrame(e)) {
       const handle = wireSessionId(e)
-      const reqDurable = handle !== undefined ? durableLookup?.(e.projectPath, handle) : undefined
+      const reqDurable = handle !== undefined ? durableLookup?.(e.projectPath, handle, e.sessionPath) : undefined
       const settled =
         handle !== undefined &&
         ((reqDurable !== undefined && settledDurables.has(rawKey(e.projectPath, reqDurable))) ||
           settledRaw.has(rawKey(e.projectPath, handle)))
+      // T4 会话粒度墓碑杀者范围（multi-session-parallel）：墓碑帧只携 projectPath
+      // （生产者链不动，帧级 sessionPath 无法与请求帧联接），杀者判据加「会话身份
+      // 可解析性」门槛——绑定弃置的旧 handle 映射已消失（T3 invalidateEngine 自证），
+      // 同项目墓碑据此只杀死者的请求帧；兄弟会话绑定仍在（lookup 命中）不被
+      // 同项目墓碑误清。已知窗口：manager.stop / 空闲回收路径的绑定清理是懒式，
+      // 此窗口内 lookup 命中仍放行（陈旧性退回收尾/(c) 运行态其余条件判定），
+      // 窗口下界由 (c) 兜住：项目内再无 ready 引擎时全部请求帧照旧被杀。
+      const tombstoned =
+        tombstonedProjects.has(e.projectPath) && !sessionResolvable(e.projectPath, handle, durableLookup, e.sessionPath)
       if (isQuestionFrame(e)) {
         // waitForAnswer=false 跨回合存活：settle 不杀；只有墓碑/停机/已落定才陈旧
         const waitForAnswer = (e.event as { waitForAnswer?: unknown }).waitForAnswer
@@ -288,13 +385,13 @@ function filterStaleUiRequests(
         const resolved = typeof qid === "string" && resolvedQuestions.has(qid)
         const stale =
           !engineRunning(e.projectPath) ||
-          tombstonedProjects.has(e.projectPath) ||
+          tombstoned ||
           resolved ||
           (waitForAnswer !== false && settled)
         if (!stale) kept.push(e)
         continue
       }
-      const stale = !engineRunning(e.projectPath) || tombstonedProjects.has(e.projectPath) || settled
+      const stale = !engineRunning(e.projectPath) || tombstoned || settled
       if (!stale) kept.push(e)
       continue
     }
@@ -373,9 +470,11 @@ sseRoutes.get("/events", (c) => {
     if (ev.type === "extension_event") {
       return typeof ev.data?.parent_session_id === "string" && ev.data.parent_session_id === sessionFilter
     }
-    // durable id 匹配（加法兼容）：REST 侧只发 durable id，前端用它过滤
+    // durable id 匹配（加法兼容）：REST 侧只发 durable id，前端用它过滤；
+    // 解析按桥附绑定作用域（双键口径，与 dataPayload 同源，见 engine-runtime
+    // durableSessionIdFor）——绑定弃置的帧解析缺席即不放行（宁缺毋串）。
     const handle = wireSessionId(e)
-    return handle !== undefined && durableLookup?.(e.projectPath, handle) === sessionFilter
+    return handle !== undefined && durableLookup?.(e.projectPath, handle, e.sessionPath) === sessionFilter
   }
 
   return streamSSE(c, async (stream) => {
@@ -387,13 +486,13 @@ sseRoutes.get("/events", (c) => {
     let closeResolve: (() => void) | null = null
     dlog(`open afterId=${afterId} filter=${sessionFilter ?? "-"} heartbeatMs=${heartbeatMs}`)
     openSseConnections++
-    log.debug("sse", "open", { afterId, filter: sessionFilter ?? "-", hb: heartbeatMs })
+    log.info("sse", "open", { afterId, filter: sessionFilter ?? "-", hb: heartbeatMs })
 
     const cleanup = (): void => {
       if (cleaned) return
       cleaned = true
       openSseConnections = Math.max(0, openSseConnections - 1)
-      log.debug("sse", "close", { lastSentId: conn.lastSentId, queue: conn.queue.length })
+      log.info("sse", "close", { lastSentId: conn.lastSentId, queue: conn.queue.length })
       conn.closed = true
       unsubscribe?.()
       unsubscribe = null

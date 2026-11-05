@@ -7,12 +7,14 @@
 
 import { describe, expect, test } from "vitest"
 import { Hono } from "hono"
-import { EventBus, attachEventBus } from "../src/engine/events"
+import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, attachEventBus } from "../src/engine/events"
 import { SSE_HEARTBEAT_TYPE, sseRoutes, setEventBus } from "../src/api/sse"
 import { EngineProcessManager } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
 
 const PROJ = "/tmp/opencode/w2-sse-test/proj-a"
+// T1 键迁移：引擎键 = sessionPath（ensure 两参形态）；engine_event 仍携 projectPath
+const SESS = "/tmp/opencode/w2-sse-test/proj-a/s1.jsonl"
 
 // ---- SSE 流读取辅助 ----
 
@@ -71,10 +73,22 @@ function parseBlock(block: string): ParsedFrame {
   return out
 }
 
-/** 每用例独立 bus + 挂载好的 app（默认心跳 60s，不影响测试时长）。 */
-function makeApp(opts: { capacity?: number; heartbeatMs?: number } = {}) {
+/** 每用例独立 bus + 挂载好的 app（默认心跳 60s，不影响测试时长）。
+ * durableLookup/isEngineRunning 为 T4 墓碑会话粒度用例的注入面（同 setEventBus 装配形态）。 */
+function makeApp(
+  opts: {
+    capacity?: number
+    heartbeatMs?: number
+    durableLookup?: (projectPath: string, handle: string) => string | undefined
+    isEngineRunning?: (projectPath: string) => boolean
+  } = {},
+) {
   const bus = new EventBus({ capacity: opts.capacity })
-  setEventBus(bus, { heartbeatMs: opts.heartbeatMs })
+  setEventBus(bus, {
+    heartbeatMs: opts.heartbeatMs,
+    durableLookup: opts.durableLookup,
+    isEngineRunning: opts.isEngineRunning,
+  })
   const app = new Hono()
   app.route("/api", sseRoutes)
   return { bus, app }
@@ -195,7 +209,7 @@ describe("attachEventBus", () => {
       },
     })
     const detach = attachEventBus(manager, bus)
-    await manager.ensureRunning(PROJ)
+    await manager.ensureRunning(SESS, PROJ)
     fakes[0].emit({ type: "message_update", sessionId: "s1", seq: 1 } as never)
     fakes[0].emit({ type: "agent_end", sessionId: "s1" } as never)
     const replayed = bus.replay(0)
@@ -206,7 +220,7 @@ describe("attachEventBus", () => {
     detach()
     fakes[0].emit({ type: "message_update", sessionId: "s1", seq: 2 } as never)
     expect(bus.latestId).toBe(2)
-    await manager.stop(PROJ)
+    await manager.stop(SESS)
   })
 })
 
@@ -451,3 +465,72 @@ async function readSseBlocksAfterIdle(
   reader.releaseLock()
   return blocks
 }
+
+// ---- T4 墓碑会话粒度（multi-session-parallel）----
+
+/** 挂起权限请求帧（四型对话框；sessionId 为 routing handle）。 */
+function permRequest(sessionId: string, id: string) {
+  return { type: "extension_ui_request", sessionId, method: "confirm", id, title: "允许执行？" } as never
+}
+
+describe("GET /api/events 墓碑会话粒度（multi-session-parallel T4）", () => {
+  test("停其一（绑定弃置）：同项目墓碑半清——死者请求帧被杀，兄弟会话 replay 请求保留", async () => {
+    // 会话引擎绑定态模拟（engine-runtime SessionEngine.handleToDurable）：A 引擎停用
+    // 且绑定弃置（invalidateEngine）→ handle-a 映射消失；兄弟 B 绑定仍在。
+    // isEngineRunning 为 T5 装配口径：项目内任一会话引擎 ready 即 true（B ready）。
+    const bindings = new Map([
+      ["handle-a", "dur-a"],
+      ["handle-b", "dur-b"],
+    ])
+    const { bus, app } = makeApp({
+      durableLookup: (_projectPath, handle) => bindings.get(handle),
+      isEngineRunning: () => true,
+    })
+    // 重放序列（id 升序）：A/B 各一条挂起请求 → 停 A 发布墓碑（墓碑在请求之后，方向性成立）
+    bus.publish(PROJ, permRequest("handle-a", "req-a")) // id 1
+    bus.publish(PROJ, permRequest("handle-b", "req-b")) // id 2
+    bus.publish(PROJ, { type: ENGINE_PERMISSIONS_INVALIDATED, projectPath: PROJ } as never) // id 3
+    // 停 A 且绑定弃置（T3 invalidateEngine 语义）：旧 handle-a 映射消失；
+    // 兄弟 B 的 handle-b 映射不受同项目墓碑影响
+    bindings.delete("handle-a")
+    // 断点续传口径重连（Last-Event-ID: 0 = 全量回放，非新连接尾窗收敛）
+    const res = await app.request("/api/events", { headers: { "Last-Event-ID": "0" } })
+    // 半清结果：[begin][req-b][墓碑][done]——A 的请求帧（id 1）不在
+    const blocks = await readSseBlocks(res.body!, 4)
+    expect(parseBlock(blocks[0]).event).toBe("replay_begin")
+    const frames = blocks.slice(1, 3).map(parseBlock)
+    expect(frames.map((f) => f.id)).toEqual(["2", "3"])
+    // 兄弟会话条目真在流上（防误导性成功输出：断言实际收到的 replay 条目内容）
+    expect(frames[0].event).toBe("extension_ui_request")
+    const sibling = JSON.parse(frames[0].data!)
+    expect(sibling.projectPath).toBe(PROJ)
+    expect(sibling.event.id).toBe("req-b")
+    expect(sibling.event.sessionId).toBe("handle-b")
+    expect(frames[1].event).toBe(ENGINE_PERMISSIONS_INVALIDATED)
+    await res.body!.cancel()
+  })
+
+  test("manager.stop/空闲回收懒清窗口：lookup 命中仍放行（sse.ts 注释言明的已知欠杀窗口）", async () => {
+    // 绑定清理懒式未发生（下次 ensure 检测 client 更换才弃置）：死者的 handle 映射
+    // 仍在 → 同项目墓碑不杀，陈旧性退回收尾/(c) 运行态其余条件判定——本窗口欠杀
+    // 是定稿方案明示的已知窗口，此处 pin 死防「半清」误报回归。
+    const bindings = new Map([
+      ["handle-a", "dur-a"],
+      ["handle-b", "dur-b"],
+    ])
+    const { bus, app } = makeApp({
+      durableLookup: (_projectPath, handle) => bindings.get(handle),
+      isEngineRunning: () => true,
+    })
+    bus.publish(PROJ, permRequest("handle-a", "req-a")) // id 1
+    bus.publish(PROJ, permRequest("handle-b", "req-b")) // id 2
+    bus.publish(PROJ, { type: ENGINE_PERMISSIONS_INVALIDATED, projectPath: PROJ } as never) // id 3
+    const res = await app.request("/api/events", { headers: { "Last-Event-ID": "0" } })
+    // 欠杀窗口：两条请求帧 + 墓碑全部重放 [begin][1][2][3][done]
+    const blocks = await readSseBlocks(res.body!, 5)
+    expect(parseBlock(blocks[0]).event).toBe("replay_begin")
+    expect(blocks.slice(1, 4).map((b) => parseBlock(b).id)).toEqual(["1", "2", "3"])
+    expect(parseBlock(blocks[4]).event).toBe("replay_done")
+    await res.body!.cancel()
+  })
+})

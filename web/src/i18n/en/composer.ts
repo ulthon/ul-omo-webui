@@ -2,7 +2,6 @@
 // 插值参数名与 zh 逐键对齐（{n}/{kept}/{size}/{model}/{level}/{name}/{preview}）。
 export const composer = {
   compactNoArgs: "/compact does not accept arguments: send /compact directly",
-  sessionBusy: "This session is being handled in another window; wait for it to finish before sending",
   interruptFailed: "Failed to interrupt",
   attachmentSaveFailed: "Failed to save attachment",
   attachmentCleanupFailed: "Failed to clean up attachment (auto-cleaned after 48h)",

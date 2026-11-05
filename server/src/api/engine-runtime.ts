@@ -1,16 +1,16 @@
 // 组合根运行时（todo 9）：引擎子进程管理器单例 + 按项目懒加载的 adapter。
 //
-// 单驱动纪律（docs/verification/05 P2-11 结论）：引擎无跨进程排他锁——两个驱动方
-// open 同一 sessionPath 都会成功且写入交错进同一 JSONL，"already processing" 守卫
-// 只在单进程内生效。webui 必须自律单驱动：
-// - 每个项目运行时跟踪 streamingSessionId（当前处于 webui 驱动回合中的会话 durable id），
-//   对它在回合中的再次 prompt 直接返回 409 already_processing（不等引擎守卫报错）；
+// 单驱动纪律（docs/verification/05 P2-11 结论；multi-session-parallel T3 会话路由重建）：
+// 引擎无跨进程排他锁——两个驱动方 open 同一 sessionPath 都会成功且写入交错进同一
+// JSONL，"already processing" 守卫只在单进程内生效。webui 的自律单位自 T3 起从「项目」
+// 收缩为「会话」：
+// - 引擎按 sessionPath 键每会话一台（T1），运行时按会话跟踪在途回合（runningTurn 表）；
+//   对在途回合会话的再次 prompt 直接返回 409 already_processing（不等引擎守卫报错；
+//   携带 streamingBehavior 时放行入队，回执 queued——与 CLI 同构的会话内单回合排队）；
 //   即使外部因素绕过（事件丢失/外部驱动），引擎 "already processing" 错误也映射为 409。
-// - 会话切换（openSession）走 per-project 互斥队列串行化：prompt 的「切换+发送」
-//   原子化，防止并发请求把 prompt 路由到错误会话（RpcClient prompt 路由到最近 open
-//   的会话，docs/verification/01 结论 4）。回合流式期间互斥已释放（prompt 在接受时
-//   返回），读操作不长时间阻塞；/命令 prompt 的 RPC 会拖到对话框落定（verification/02
-//   结论 4），期间该项目的会话操作排队等待——单用户产品可接受，已注释。
+// - 旧 per-project 互斥队列（chain/runExclusive）与会话切换链（switchTo）退役：引擎即
+//   会话（绑定 open 唯一会话文件），「切换+发送」的原子化问题失去载体；跨会话回合
+//   互不排队互不打断，同会话操作由回合表 409 + 引擎单进程守卫双层兜底。
 //
 // 会话身份（todo 8 实证约束）：一律用 durable id（磁盘 header id，重启后 open
 // sessionPath 不变）。open_session 响应里的 state.sessionId 是 host 侧 holder UUID
@@ -44,7 +44,7 @@ import {
   type EngineTurnSpeed,
   type EngineUsageStats,
 } from "../adapter/engine-adapter";
-import { SenpiAdapter, type SenpiRpcClient } from "../adapter/senpi-adapter";
+import { SenpiAdapter, encodeCwdToSessionDirName, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 import { debugPerfOn } from "../conf/diagnostics-flags";
@@ -149,10 +149,13 @@ export interface EngineGateway {
    * （路由层降级 null——前端回退链跳过引擎默认档，与旧服务端未下发字段同口径）。 */
   defaultModel?(): { provider: string; model: string; thinkingLevel: string | null } | null;
   /**
-   * 斜杠命令三段枚举（docs08-r3 任务 19）：引擎就绪且有活跃会话时返回按 source
-   * 分组的命令行（extension/skill/prompt）；引擎未就绪（不为此触发 spawn）或无
-   * 活跃会话（open_session 前 RPC 报 missing_session_id，docs/verification/06 实证）
-   * 返回 null——调用方降级（端点 available=false），绝不崩。
+   * 斜杠命令三段枚举（docs08-r3 任务 19）：项目内存在就绪且绑定会话已 open 的引擎时
+   * 返回按 source 分组的命令行（extension/skill/prompt；命令集按项目 scope，任一
+   * 会话引擎同值，multi-session-parallel T3 取首个就绪引擎）；无就绪引擎（不为此
+   * 触发 spawn）或全部无活跃会话（open_session 前 RPC 报 missing_session_id，
+   * docs/verification/06 实证）返回 null——调用方降级（端点 available=false），绝不崩。
+   * 2026-11-04 的「未起即 ensure 拉起 + 垫最新会话路由」随 T3 会话路由重建一并退役
+   * （D11）：项目级「当前会话」单槽已不存在，命令面回归本契约原文。
    */
   commandsList(project: string): Promise<EngineCommandInfo[] | null>;
   /**
@@ -176,18 +179,20 @@ export interface EngineGateway {
     position?: "before" | "at",
   ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }>;
   /**
-   * 引擎就绪时返回**回合进行中**（webui 驱动的流式回合）会话路径列表；
-   * 未就绪返回 null（不触发 spawn），就绪且空闲返回 []。
+   * 引擎就绪时返回**回合进行中**（webui 驱动的流式回合）会话路径列表（项目内全部
+   * 会话引擎的并集，可多行——multi-session-parallel T3）；无就绪引擎返回 null
+   * （不触发 spawn），就绪且空闲返回 []。
    * 语义注意：不是引擎 open 会话全集——open 态在回合结束后仍保留，
    * 前端 `active` 字段语义 = 回合进行中（todo 15 实证修复）。
    */
   peekActiveSessionPaths(project: string): Promise<string[] | null>;
   /**
    * 引擎就绪时的运行态三态快照（docs08-r6 任务 11，GET /api/sessions 行 runState 供源）：
-   * sessionPath → running|waiting|idle，仅回合进行中会话入表（单驱动至多一条），
-   * 就绪且空闲返回空表（未入表 = idle），未就绪返回 null（不触发 spawn，与
-   * peekActiveSessionPaths 同口径）。可选面（favoriteModels 同例）：真实注册表实现之；
-   * 旧 fake 缺席时路由退回 peekActiveSessionPaths（active 照发，runState 恒 null）。
+   * sessionPath → running|waiting|idle，仅回合进行中会话入表（每会话一引擎后可多行，
+   * multi-session-parallel T3），就绪且空闲返回空表（未入表 = idle），无就绪引擎返回
+   * null（不触发 spawn，与 peekActiveSessionPaths 同口径）。可选面（favoriteModels
+   * 同例）：真实注册表实现之；旧 fake 缺席时路由退回 peekActiveSessionPaths
+   * （active 照发，runState 恒 null）。
    */
   peekRunStates?(project: string): Promise<Map<string, ServerSessionRunState> | null>;
   /**
@@ -499,53 +504,88 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
   return wrapped as unknown as SenpiRpcClient;
 }
 
-/** 单项目运行时：adapter 挂管 + 会话态 + 操作互斥 */
-class ProjectRuntime {
-  private adapter: EngineAdapter | null = null;
-  private wrappedClient: RpcClient | null = null;
-  /** API 世界的活跃会话 id（durable id 或未落盘别名） */
-  private activeId: string | null = null;
-  /** 当前处于 webui 驱动回合中的会话 id（单驱动 409 依据） */
-  private streamingId: string | null = null;
+/** 单会话引擎绑定态（multi-session-parallel T3）：一个 sessionPath ↔ 一台引擎 ↔ 一个
+ * adapter。引擎由管理器按 sessionPath 键注册（T1）且绑死唯一会话；wire 事件监听、
+ * 句柄映射、速度环、在途消息起点均归属本态——旧 ProjectRuntime 的项目级单槽
+ * （adapter/wrappedClient/activeId/streamingId/streamingPath）随会话路由重建退役。 */
+class SessionEngine {
+  /** API 世界的活跃会话 id（durable id 或未落盘别名）——本引擎唯一绑定的会话 */
+  activeId: string | null = null;
   /** wire sessionId（routing handle）→ durable id 映射（SSE 信封注入用）：
    * 只记录 store 验证过的 durable id（open_session 响应 handle + activeSessions 行），
-   * 查不到的 handle 如实透传不猜。引擎重启 handle 全换，invalidate 时清空。 */
-  private readonly handleToDurable = new Map<string, string>();
+   * 查不到的 handle 如实透传不猜。引擎重启 handle 全换，绑定态弃置时随之清空。 */
+  readonly handleToDurable = new Map<string, string>();
+  /** 已验证的 durable id 集合（合成事件 sessionId 直接是 durable id，信封 durableLookup 直认） */
+  readonly knownDurable = new Set<string>();
   /** 防抖：handle 查询 miss 时至多一个在途的 activeSessions 刷新 */
-  private refreshInFlight = false;
-  /** 已验证的 durable id 集合（合成事件 sessionId 直接是 durable id，
-   * 信封 durableLookup 需要能识别它以注入 durableSessionId）。 */
-  private readonly knownDurable = new Set<string>();
-  /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化） */
-  private readonly aliases = new Map<string, string>();
-  /** 引擎已认领 durable id 但会话文件从未落盘（docs08-2026-10-23-24-batch 任务 6，
-   * t1 根因形态：RpcClient × 旧版引擎 open_session 认领 sessionFile 却不写盘）。
-   * id → 认领的 sessionPath；resolveSession 对这类 id 报结构化 session_not_persisted
-   * 而非笼统 404，落盘补齐（prompt 回执复核）后解除。 */
-  private readonly unpersistedClaims = new Map<string, string>();
-  /** 操作互斥链：串行化「切换活跃会话 + 作用于活跃会话」的关键区 */
-  private chain: Promise<unknown> = Promise.resolve();
-  /** 回合进行中会话的 sessionPath（GET /api/sessions 的 active 字段依据，todo 15 修复） */
-  private streamingPath: string | null = null;
-  /** 回合序号：每次 prompt 接受自增；收尾监视的过期判定用 */
-  private roundSeq = 0;
-  /** 收尾监视定时器（仅回合进行中运行，严禁常态化轮询） */
-  private settleTimer: ReturnType<typeof setInterval> | null = null;
-  private graceTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 已计过未读的 assistant 消息 id（幂等去重；封顶防泄漏） */
-  private readonly countedMessages = new Set<string>();
-  /** A5 速度环容量：每会话保留最近 N 条 assistant 消息 tok/s 样本（endedAt 序滑动） */
-  private static readonly TURN_RING_CAPACITY = 20;
-  /** 速度环在途起点封顶（end 缺席如引擎崩溃时不无限积累，同 countedMessages 处置） */
-  private static readonly TURN_START_CAP = 200;
-  /** A5 回合速度环：durable id → 最近 N 条 tok/s 样本（内存态，invalidate 清空，不落库） */
-  private readonly turnSpeedByDurable = new Map<string, EngineTurnSample[]>();
+  refreshInFlight = false;
+  /** A5 回合速度环：durable id → 最近 N 条 tok/s 样本（内存态，弃置随绑定态，不落库） */
+  readonly turnSpeedByDurable = new Map<string, EngineTurnSample[]>();
   /** 在途 assistant 消息起点：wire sessionId（routing handle）→ { 起始时刻, durable 解析快照 }。
    * 真实 wire 的 message_start/end 无消息 id 字段（QA SSE 实证 2026-10-13：帧形态
    * {type,message,sessionId}；前端 fixtures 的 id 形态是落盘条目合成物）——配对依赖
    * 同会话 assistant 消息流式串行不重叠的计划假设（同一 handle 同时至多一条 assistant
    * 在途；间插的 user start/end 不触碰本表，随后被本会话下一条 assistant start 覆盖）。 */
-  private readonly messageStartAt = new Map<string, { at: number; durable: string | undefined }>();
+  readonly messageStartAt = new Map<string, { at: number; durable: string | undefined }>();
+  /** adapter 事件退订（弃置绑定态时防悬挂监听） */
+  private offEvent: (() => void) | null = null;
+
+  constructor(
+    readonly sessionPath: string,
+    readonly adapter: EngineAdapter,
+    readonly client: RpcClient,
+  ) {}
+
+  /** 挂接 wire 事件监听（重建时旧监听先退订） */
+  attachEvents(listener: Parameters<EngineAdapter["events"]>[0]): void {
+    this.detachEvents();
+    this.offEvent = this.adapter.events(listener).unsubscribe;
+  }
+
+  detachEvents(): void {
+    this.offEvent?.();
+    this.offEvent = null;
+  }
+}
+
+/** 单会话在途回合行（runningTurn 表值）：sessionPath 键——别名 id 与 durable id 同文件
+ * 同路，409 判定/收尾结算按路径天然同判（multi-session-parallel T3）。sessionId 记接受
+ * 回合时的 API id（别名回合落盘复核后原地升级 durable）。 */
+interface TurnRow {
+  sessionPath: string;
+  sessionId: string;
+  /** 收尾监视定时器（仅本回合进行中运行，严禁常态化轮询） */
+  settleTimer: ReturnType<typeof setInterval> | null;
+  graceTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** 单项目运行时（multi-session-parallel T3）：项目内全部会话引擎绑定态挂管 + 每会话
+ * 回合表。引擎即会话（T1 键迁移），驾驶操作经 ensureForSession 解析目标会话专属引擎
+ * 直驱；项目级互斥链/切换链/单槽（chain-runExclusive/switchTo/streamingId-streamingPath/
+ * commandsList 垫路由）已退役。 */
+class ProjectRuntime {
+  /** 会话引擎绑定态表：sessionPath → 绑定态（每会话一台引擎，T1 键迁移） */
+  private readonly engines = new Map<string, SessionEngine>();
+  /** 每会话在途回合表：sessionPath → 回合行（跨会话并行，可 N 行 running） */
+  private readonly runningTurns = new Map<string, TurnRow>();
+  /** wire sessionId → durable id 映射 miss 刷新防抖（跨引擎共享一轮） */
+  private refreshInFlight = false;
+  /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化）。恒稳直查：
+   * 别名是会话文件级事实（fork 别名指向的路径与源引擎绑定无关），不随单引擎崩溃清空。 */
+  private readonly aliases = new Map<string, string>();
+  /** 引擎已认领 durable id 但会话文件从未落盘（docs08-2026-10-23-24-batch 任务 6，
+   * t1 根因形态：RpcClient × 旧版引擎 open_session 认领 sessionFile 却不写盘）。
+   * id → 认领的 sessionPath；resolveSession 对这类 id 报结构化 session_not_persisted
+   * 而非笼统 404，落盘补齐（prompt 回执复核）后解除。会话文件级机制与引擎数无关，
+   * 不随单引擎绑定态弃置清空（保留不得删，删则 session_not_persisted 退化 404）。 */
+  private readonly unpersistedClaims = new Map<string, string>();
+  /** 已计过未读的 assistant 消息 id（幂等去重；封顶防泄漏）。条目 id 全局唯一，
+   * 跨会话引擎共享不去重面（单引擎弃置不清——磁盘条目仍在，重读不重复计数）。 */
+  private readonly countedMessages = new Set<string>();
+  /** A5 速度环容量：每会话保留最近 N 条 assistant 消息 tok/s 样本（endedAt 序滑动） */
+  private static readonly TURN_RING_CAPACITY = 20;
+  /** 速度环在途起点封顶（end 缺席如引擎崩溃时不无限积累，同 countedMessages 处置） */
+  private static readonly TURN_START_CAP = 200;
 
   constructor(
     private readonly manager: EngineProcessManager,
@@ -553,103 +593,141 @@ class ProjectRuntime {
     private readonly opts: EngineRuntimeOptions,
   ) {}
 
-  /** 引擎进程是否已就绪（不触发 spawn） */
-  isReady(): boolean {
-    return this.manager.getStatus(this.projectPath)?.state === "ready" && this.adapter !== null;
+  /** 项目内就绪会话引擎集合（读态/探询/命令面的项目级「就绪」判定基准；每会话一引擎） */
+  private readyEngines(): SessionEngine[] {
+    const out: SessionEngine[] = [];
+    for (const state of this.engines.values()) {
+      if (this.manager.getStatus(state.sessionPath)?.state === "ready") out.push(state);
+    }
+    return out;
   }
 
   /**
-   * 确保引擎进程就绪且 adapter 可用。管理器崩溃自动重启后会造新 client，
-   * 检测到 client 更换即重建 adapter（旧 adapter 挂着死连接）并清空会话态。
+   * 确保目标会话路径的专属引擎就绪并返回绑定态。管理器崩溃自动重启后会造新 client，
+   * 检测到 client 更换即弃置旧绑定态重建（旧 adapter 挂着死连接）。
+   * T3（multi-session-parallel）：引擎即会话——ensure 返回的绑定态 adapter 已对本
+   * 会话完成绑定 open（管理器健康检查后的裸 open 不进 adapter 态，此处补 attach
+   * open，同路径 open 为 attach 幂等；provider/model 不传沿用会话自身存档），后续
+   * 驾驶操作直接用该 adapter，无切换 RPC。
    */
-  async ensure(): Promise<void> {
-    await this.manager.ensureRunning(this.projectPath);
+  private async ensure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
+    await this.manager.ensureRunning(sessionPath, this.projectPath);
     // 有界等待就绪（冷启动窗口竞态修复）：ensureRunning 返回时可能仍在 starting，
     // 立即 503 迫使用户手动重试三四次；改为等待握手完成（上限 15s，250ms 轮询）
     const deadline = Date.now() + 15_000;
-    let client = this.manager.getClient(this.projectPath);
-    while (client === undefined || this.manager.getStatus(this.projectPath)?.state !== "ready") {
+    let client = this.manager.getClient(sessionPath);
+    while (client === undefined || this.manager.getStatus(sessionPath)?.state !== "ready") {
       if (Date.now() >= deadline) {
         throw new ApiError(503, "engine_not_ready", `项目引擎未就绪：${this.projectPath}`);
       }
       await new Promise((r) => setTimeout(r, 250));
-      client = this.manager.getClient(this.projectPath);
+      client = this.manager.getClient(sessionPath);
     }
-    if (!this.adapter || this.wrappedClient !== client) {
-      this.wrappedClient = client;
-      this.activeId = null;
-      this.streamingId = null;
-      this.streamingPath = null;
-      this.aliases.clear();
-      this.unpersistedClaims.clear();
-      this.handleToDurable.clear();
-      this.knownDurable.clear();
-      this.stopSettleWatch();
-      const adapter: SenpiAdapter = new SenpiAdapter({
-        projectDir: this.projectPath,
-        agentDir: this.opts.agentDir ?? defaultAgentDir(),
-        clientFactory: () => wrapLifecycleClient(client),
-      });
-      await adapter.start();
-      this.adapter = adapter;
-      // 回合结束信号：abort 与正常收尾都会发 agent_end / agent_settled
-      // （docs/verification/01 abort 实证），清单驱动标记与收尾监视。
-      adapter.events((event) => {
-        const wire = event as {
-          type?: string;
-          sessionId?: unknown;
-          id?: unknown;
-          entry?: { type?: unknown; id?: unknown; message?: { role?: unknown } };
-          message?: { role?: unknown; usage?: unknown };
-        };
-        const type = wire.type;
-        if (type === "agent_end" || type === "agent_settled" || type === "agent_idle") {
-          // 事件归属校验（决策 9a）：wire sessionId（routing handle）解析出的 durable
-          // id 必须等于 streamingId 才算本回合收尾；不一致（同项目并发另一回合的
-          // 收尾事件）只清位不触发。解析不出（holder 别名回合的 handle 无 durable
-          // 映射）同样视为归属未证明只清位——别名回合由 settle watchdog 合成路径兜底。
-          const settleInfo =
-            typeof wire.sessionId === "string"
-              ? this.captureSettleInfo(this.durableSessionIdFor(wire.sessionId))
-              : null;
-          this.settleRound();
-          if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, type);
-          return;
-        }
-        // A5 回合速度环挂点：assistant 消息 message_start 记起点、message_end 取
-        // message.usage.output 配对（05 P1-4：消息级 usage 落在 message_end 上）。
-        // user 消息同样产生两事件但无 usage 实证（05 P1-4），一律忽略。
-        if (type === "message_start" || type === "message_end") {
-          this.recordTurnSpeedEvent(wire, type);
-          return;
-        }
-        // 未读计数接线（todo 15 发现刷新归零）：assistant 消息条目落地即 unread+1。
-        // 事件源取 entry_appended（entry.type==="message" 且 role=assistant）——
-        // entry.id 是磁盘条目 id，天然满足「按 entryId 幂等」；message_end 的
-        // message 体无 id 字段（实证），不作未读源。
-        // 设计取舍：主动查看中的会话同样递增——前端在回合落定时对当前选中会话
-        // 补发 POST /:id/read（清零+last_read），服务端不做「正在看」判定。
-        if (type === "entry_appended" && wire.entry && wire.entry.type === "message") {
-          const role = wire.entry.message?.role;
-          const entryId = typeof wire.entry.id === "string" ? wire.entry.id : undefined;
-          const handle = typeof wire.sessionId === "string" ? wire.sessionId : undefined;
-          if (role === "assistant" && entryId && handle) {
-            this.recordUnreadFor(handle, entryId);
-          }
-        }
-      });
+    const existing = this.engines.get(sessionPath);
+    if (existing && existing.client === client) {
+      if (durableHint !== undefined) existing.activeId = durableHint;
+      return existing;
+    }
+    if (existing) {
+      // client 更换（崩溃重启）：旧绑定态作废。回合若仍在途走 crashSettleSession
+      // 合成收尾（幂等：进程崩溃事件已结算则此处空转）——不再沿用旧 ensure 的静默
+      // 清位，静默清位会让前端流式态挂死（restartProject 注释同一缺陷形态）。
+      this.crashSettleSession(sessionPath);
+    }
+    const adapter: SenpiAdapter = new SenpiAdapter({
+      projectDir: this.projectPath,
+      agentDir: this.opts.agentDir ?? defaultAgentDir(),
+      clientFactory: () => wrapLifecycleClient(client),
+    });
+    await adapter.start();
+    const state = new SessionEngine(sessionPath, adapter, client);
+    this.engines.set(sessionPath, state);
+    // 回合结束信号：abort 与正常收尾都会发 agent_end / agent_settled
+    // （docs/verification/01 abort 实证），清单驱动标记与收尾监视。
+    state.attachEvents((event) => this.onEngineEvent(state, event));
+    // 绑定 open（attach 幂等）：provider/model 不传——沿用会话自身存档（与 T1 管理器
+    // 裸 open 同形态，process-manager session bind 不携 provider/model）。
+    const opened = await adapter.openSession({ sessionPath });
+    if (durableHint !== undefined) state.activeId = durableHint;
+    // wire 事件的 sessionId 就是这个 routing handle（open_session 响应顶层的
+    // sessionId）；store 行解析出的 id（非别名）即可作为 durable 映射记录
+    this.rememberHandleFor(state, opened.routingId, durableHint);
+    return state;
+  }
+
+  /** 单引擎 wire 事件（T3：监听器绑定具体会话引擎，结算作用域=本引擎唯一会话的回合行） */
+  private onEngineEvent(state: SessionEngine, event: unknown): void {
+    const wire = event as {
+      type?: string;
+      sessionId?: unknown;
+      id?: unknown;
+      entry?: { type?: unknown; id?: unknown; message?: { role?: unknown } };
+      message?: { role?: unknown; usage?: unknown };
+    };
+    const type = wire.type;
+    if (type === "agent_end" || type === "agent_settled" || type === "agent_idle") {
+      // 事件归属校验（决策 9a 原语义保留，作用域收缩为本引擎；2026-11-06 A→B 双键
+      // 口径补丁）：wire sessionId（routing handle）先按源引擎绑定态解析 durable，
+      // 解析命中须等于回合行 sessionId 才触发 onRoundSettled——不等 = 兄弟会话错触
+      // （与 2026-11-05 A→B 串显同源：跨引擎同槽别名撞值），只清位不触发；绑定态
+      // 解析 miss 回退裸 handle 等值判定（见下方语句内注释）：别名回合自身 handle
+      // 即身份证明放行，错触的兄弟 handle 归属未证明同样只清位不触发（宁漏触发，
+      // 由 settle watchdog 合成路径兜底）。兄弟会话回合挂在各自引擎监听器下互不受
+      // 扰（T3 必修面：旧项目级单监听按 projectPath 结算会误清兄弟回合）。
+      const turn = this.runningTurns.get(state.sessionPath);
+      const settleInfo =
+        turn && typeof wire.sessionId === "string"
+          ? this.captureSettleInfo(
+              turn,
+              // 绑定态解析 miss 回退裸 handle 等值：别名回合（回合行 sessionId 即
+              // wire handle）由此放行；错触的兄弟 handle 与本会话身份不等 → null。
+              this.durableSessionIdFor(wire.sessionId, state.sessionPath) ?? wire.sessionId,
+            )
+          : null;
+      if (turn) this.settleTurn(turn);
+      if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, type);
+      return;
+    }
+    // A5 回合速度环挂点：assistant 消息 message_start 记起点、message_end 取
+    // message.usage.output 配对（05 P1-4：消息级 usage 落在 message_end 上）。
+    // user 消息同样产生两事件但无 usage 实证（05 P1-4），一律忽略。
+    if (type === "message_start" || type === "message_end") {
+      this.recordTurnSpeedEvent(state, wire, type);
+      return;
+    }
+    // 未读计数接线（todo 15 发现刷新归零）：assistant 消息条目落地即 unread+1。
+    // 事件源取 entry_appended（entry.type==="message" 且 role=assistant）——
+    // entry.id 是磁盘条目 id，天然满足「按 entryId 幂等」；message_end 的
+    // message 体无 id 字段（实证），不作未读源。
+    // 设计取舍：主动查看中的会话同样递增——前端在回合落定时对当前选中会话
+    // 补发 POST /:id/read（清零+last_read），服务端不做「正在看」判定。
+    if (type === "entry_appended" && wire.entry && wire.entry.type === "message") {
+      const role = wire.entry.message?.role;
+      const entryId = typeof wire.entry.id === "string" ? wire.entry.id : undefined;
+      const handle = typeof wire.sessionId === "string" ? wire.sessionId : undefined;
+      if (role === "assistant" && entryId && handle) {
+        this.recordUnreadFor(handle, entryId, state.sessionPath);
+      }
     }
   }
 
-  /** assistant 消息条目落地 → unread+1；按 entry id 幂等（同一 entry 只计一次）。 */
-  private recordUnreadFor(handle: string, entryId: string): void {
+  /** 驾驶操作路由：解析目标会话 → 确保其专属引擎就绪并返回绑定态（T3 会话路由：
+   * 引擎即会话，无切换 RPC）。未知会话按 resolveSession 原语义 404。 */
+  private async ensureForSession(sessionId: string): Promise<SessionEngine> {
+    const row = await this.resolveSession(sessionId);
+    return this.ensure(row.path, row.id);
+  }
+
+  /** assistant 消息条目落地 → unread+1；按 entry id 幂等（同一 entry 只计一次）。
+   * durable 解析按源引擎绑定作用域（双键口径，与 SSE 信封注入同源）。 */
+  private recordUnreadFor(handle: string, entryId: string, sessionPath: string): void {
     if (this.countedMessages.has(entryId)) return;
     this.countedMessages.add(entryId);
     if (this.countedMessages.size > 2000) {
       // Set 保持插入序，裁掉最早的半量，防长驻进程缓慢泄漏
       for (const key of [...this.countedMessages].slice(0, 1000)) this.countedMessages.delete(key);
     }
-    const durable = this.durableSessionIdFor(handle);
+    const durable = this.durableSessionIdFor(handle, sessionPath);
     if (durable) this.opts.recordUnread?.(this.projectPath, durable);
   }
 
@@ -660,6 +738,7 @@ class ProjectRuntime {
    * durable 解析用回调作用域内现成的 durableSessionIdFor（prompt 回执已回填映射，
    * assistant 事件到达时正常命中）；miss 时起点快照存 undefined，end 再解析一次。 */
   private recordTurnSpeedEvent(
+    state: SessionEngine,
     wire: { sessionId?: unknown; message?: { role?: unknown; usage?: unknown } },
     phase: "message_start" | "message_end",
   ): void {
@@ -667,36 +746,37 @@ class ProjectRuntime {
     const handle = typeof wire.sessionId === "string" ? wire.sessionId : undefined;
     if (handle === undefined) return;
     if (phase === "message_start") {
-      if (this.messageStartAt.size >= ProjectRuntime.TURN_START_CAP) {
+      if (state.messageStartAt.size >= ProjectRuntime.TURN_START_CAP) {
         // Map 保持插入序，裁掉最早半量残留（end 缺席样本不再积累）
-        for (const key of [...this.messageStartAt.keys()].slice(0, ProjectRuntime.TURN_START_CAP / 2)) {
-          this.messageStartAt.delete(key);
+        for (const key of [...state.messageStartAt.keys()].slice(0, ProjectRuntime.TURN_START_CAP / 2)) {
+          state.messageStartAt.delete(key);
         }
       }
-      this.messageStartAt.set(handle, {
+      state.messageStartAt.set(handle, {
         at: Date.now(),
-        durable: this.durableSessionIdFor(handle),
+        durable: this.durableSessionIdFor(handle, state.sessionPath),
       });
       return;
     }
-    const start = this.messageStartAt.get(handle);
-    this.messageStartAt.delete(handle);
+    const start = state.messageStartAt.get(handle);
+    state.messageStartAt.delete(handle);
     if (!start) return;
     const usage = (wire.message.usage ?? null) as Record<string, unknown> | null;
     const output = usage && typeof usage === "object" ? Number(usage.output) : NaN;
     const elapsedMs = Date.now() - start.at;
     if (!Number.isFinite(output) || output <= 0 || !Number.isFinite(elapsedMs) || elapsedMs <= 0) return;
-    const durable = start.durable ?? this.durableSessionIdFor(handle);
+    const durable = start.durable ?? this.durableSessionIdFor(handle, state.sessionPath);
     if (!durable) return;
-    const ring = this.turnSpeedByDurable.get(durable) ?? [];
+    const ring = state.turnSpeedByDurable.get(durable) ?? [];
     ring.push({ tokPerSec: output / (elapsedMs / 1000), endedAt: new Date().toISOString() });
     if (ring.length > ProjectRuntime.TURN_RING_CAPACITY) ring.shift();
-    this.turnSpeedByDurable.set(durable, ring);
+    state.turnSpeedByDurable.set(durable, ring);
   }
 
-  /** A5 速度环只读快照（turns 为拷贝防外泄内部数组；空环 averageTokPerSec=0） */
-  private turnSpeedSnapshot(durable: string): EngineTurnSpeed {
-    const ring = this.turnSpeedByDurable.get(durable) ?? [];
+  /** A5 速度环只读快照（turns 为拷贝防外泄内部数组；空环 averageTokPerSec=0；
+   * 样本归属目标会话引擎的环） */
+  private turnSpeedSnapshot(state: SessionEngine, durable: string): EngineTurnSpeed {
+    const ring = state.turnSpeedByDurable.get(durable) ?? [];
     const turns = ring.map((t) => ({ ...t }));
     const averageTokPerSec =
       turns.length > 0 ? turns.reduce((sum, t) => sum + t.tokPerSec, 0) / turns.length : 0;
@@ -709,75 +789,77 @@ class ProjectRuntime {
   //（synthetic:true）进事件流，保证下游「回合结束」语义完整。仅在回合
   // 进行中运行，回合正常收尾即停；消息内容补全靠前端 GET messages 兜底。
 
-  /** prompt 接受后启动收尾监视（幂等；同一时刻只有一个回合在驱动的项目级单例） */
-  private startSettleWatch(): void {
-    if (this.settleTimer) return;
+  /** 回合接受后启动收尾监视（幂等；每回合一个轮询，仅回合进行中运行，严禁常态化轮询） */
+  private startSettleWatch(turn: TurnRow): void {
+    if (turn.settleTimer) return;
     const pollMs = this.opts.settlePollMs ?? 2000;
-    this.settleTimer = setInterval(() => {
-      void this.checkSettle().catch(() => undefined);
+    turn.settleTimer = setInterval(() => {
+      void this.checkSettle(turn).catch(() => undefined);
     }, pollMs);
-    this.settleTimer.unref?.();
+    turn.settleTimer.unref?.();
   }
 
-  private stopSettleWatch(): void {
-    if (this.settleTimer) {
-      clearInterval(this.settleTimer);
-      this.settleTimer = null;
+  private stopTurnWatch(turn: TurnRow): void {
+    if (turn.settleTimer) {
+      clearInterval(turn.settleTimer);
+      turn.settleTimer = null;
     }
-    if (this.graceTimer) {
-      clearTimeout(this.graceTimer);
-      this.graceTimer = null;
+    if (turn.graceTimer) {
+      clearTimeout(turn.graceTimer);
+      turn.graceTimer = null;
     }
   }
 
-  private async checkSettle(): Promise<void> {
-    if (this.streamingId === null || !this.adapter) {
-      this.stopSettleWatch();
+  private async checkSettle(turn: TurnRow): Promise<void> {
+    // 回合已被结算/替换：停本轮询（行身份判定，替代旧 roundSeq 过期判定）
+    if (this.runningTurns.get(turn.sessionPath) !== turn) {
+      this.stopTurnWatch(turn);
       return;
     }
-    const seq = this.roundSeq;
-    const client = this.wrappedClient;
-    if (!client) return;
+    const state = this.engines.get(turn.sessionPath);
+    const client = state?.client;
+    if (!state || !client) {
+      this.stopTurnWatch(turn);
+      return;
+    }
     let isStreaming: unknown;
     try {
-      const state = await (client as unknown as { getState: () => Promise<{ isStreaming?: unknown }> }).getState();
-      isStreaming = state.isStreaming;
+      const resp = await (client as unknown as { getState: () => Promise<{ isStreaming?: unknown }> }).getState();
+      isStreaming = resp.isStreaming;
     } catch {
       return; // get_state 偶发失败不判收尾，下一轮再查
     }
-    if (isStreaming !== false || this.streamingId === null || seq !== this.roundSeq) return;
+    if (isStreaming !== false || this.runningTurns.get(turn.sessionPath) !== turn) return;
     // 引擎已空闲但真实收尾事件未到：宽限一次（真实事件迟到则落定后跳过）
-    if (this.graceTimer) return;
-    this.graceTimer = setTimeout(() => {
-      this.graceTimer = null;
-      if (this.streamingId === null || seq !== this.roundSeq) return;
-      this.synthesizeSettled(seq);
+    if (turn.graceTimer) return;
+    turn.graceTimer = setTimeout(() => {
+      turn.graceTimer = null;
+      if (this.runningTurns.get(turn.sessionPath) !== turn) return;
+      this.synthesizeSettled(turn);
     }, this.opts.settleGraceMs ?? 5000);
-    this.graceTimer.unref?.();
+    turn.graceTimer.unref?.();
   }
 
-  /** 清位前捕获回合收尾信息（streamingId/streamingPath 仍在时才有效）。
+  /** 清位前捕获回合收尾信息（同会话配对校验，决策 9a 原语义保留）。
    * resolvedDurable 为 wire sessionId 的 durable 解析结果：非 undefined 时必须
-   * 等于 streamingId（归属证明），不一致返回 null（并发错触防护，决策 9a）。 */
+   * 等于回合行 sessionId（归属证明），不一致返回 null（并发错触防护）。 */
   private captureSettleInfo(
+    turn: TurnRow,
     resolvedDurable: string | undefined,
   ): { sessionId: string; sessionPath: string } | null {
-    if (this.streamingId === null || this.streamingPath === null) return null;
-    if (resolvedDurable !== undefined && resolvedDurable !== this.streamingId) return null;
-    return { sessionId: this.streamingId, sessionPath: this.streamingPath };
+    if (resolvedDurable !== undefined && resolvedDurable !== turn.sessionId) return null;
+    return { sessionId: turn.sessionId, sessionPath: turn.sessionPath };
   }
 
-  /** 合成 agent_settled：带 synthetic 标记；sessionId 直接用 durable id
-   *（流式中的会话必已 open，identity 已知），前端信封回退路径可直接路由。 */
-  private synthesizeSettled(seq: number): void {
-    if (this.streamingId === null || seq !== this.roundSeq) return;
-    const sessionId = this.streamingId;
-    // 合成路径 sessionId 即 streamingId（knownDurable 令信封 durableLookup 直认
+  /** 合成 agent_settled：带 synthetic 标记；sessionId 直接用回合行 id（流式中的
+   * 会话必已 open，identity 已知），前端信封回退路径可直接路由。 */
+  private synthesizeSettled(turn: TurnRow): void {
+    const sessionId = turn.sessionId;
+    // 合成路径 sessionId 即回合行 id（knownDurable 令信封 durableLookup 直认
     // durable 形态）；settleInfo 清位前捕获，onRoundSettled reason="settle_watchdog"
-    const settleInfo =
-      this.streamingPath !== null ? { sessionId, sessionPath: this.streamingPath } : null;
-    this.settleRound();
-    if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, "settle_watchdog");
+    const settleInfo = { sessionId, sessionPath: turn.sessionPath };
+    this.settleTurn(turn);
+    this.opts.onRoundSettled?.(this.projectPath, settleInfo, "settle_watchdog");
     this.opts.publishSyntheticEvent?.(this.projectPath, {
       type: "agent_settled",
       synthetic: true,
@@ -786,130 +868,186 @@ class ProjectRuntime {
     });
   }
 
-  /** 回合落定：清流式标记（GET /api/sessions active 随之清位）+ 停监视 */
-  private settleRound(): void {
-    this.streamingId = null;
-    this.streamingPath = null;
-    this.stopSettleWatch();
+  /** 回合落定：清回合行（GET /api/sessions active/runState 随之清位）+ 停该回合监视 */
+  private settleTurn(turn: TurnRow): void {
+    this.stopTurnWatch(turn);
+    if (this.runningTurns.get(turn.sessionPath) === turn) this.runningTurns.delete(turn.sessionPath);
   }
 
-  /** 引擎进程崩溃/不可用：回合进行中则先合成收尾事件（reason:"engine_crash"）——
-   * 前端 agent_settled 驱动 settleStreaming 立即解锁、可继续发新 prompt（消息内容
-   * 缺口靠 GET messages 兜底）；随后 invalidate 清态（active 清位 + handle 映射清空，
-   * adapter 由 ensure() 按 client 更换重建）。不合成则前端流式态挂死至手动刷新。 */
-  crashSettle(): void {
-    if (this.streamingId !== null) {
-      const sessionId = this.streamingId;
-      const seq = this.roundSeq;
-      this.settleRound();
-      if (seq === this.roundSeq) {
-        this.opts.publishSyntheticEvent?.(this.projectPath, {
-          type: "agent_settled",
-          synthetic: true,
-          sessionId,
-          reason: "engine_crash",
-        });
-      }
+  /** 单会话引擎崩溃/不可用（multi-session-parallel T3 必修：事件按 sessionPath 路由
+   * 到本方法，只结算该会话回合——旧按 projectPath 全结会误杀同项目兄弟回合）：
+   * 回合进行中则先合成收尾事件（reason:"engine_crash"）——前端 agent_settled 驱动
+   * settleStreaming 立即解锁、可继续发新 prompt（消息内容缺口靠 GET messages 兜底）；
+   * 随后弃置该引擎绑定态（ensure 按 client 更换重建）。不合成则前端流式态挂死至手动刷新。 */
+  crashSettleSession(sessionPath: string): void {
+    const turn = this.runningTurns.get(sessionPath);
+    if (turn) {
+      const sessionId = turn.sessionId;
+      this.settleTurn(turn);
+      this.opts.publishSyntheticEvent?.(this.projectPath, {
+        type: "agent_settled",
+        synthetic: true,
+        sessionId,
+        reason: "engine_crash",
+      });
     }
-    this.invalidate();
+    this.invalidateEngine(sessionPath);
   }
 
-  /** 崩溃/重启时清空会话态（adapter 留给 ensure() 按 client 更换重建）。
-   * handle→durable 映射一并清空：旧 handle 属于已死进程，保留只会误映射。 */
-  invalidate(): void {
-    this.activeId = null;
-    this.streamingId = null;
-    this.streamingPath = null;
+  /** 项目级结算（restartProject 用）：全部在途回合逐会话合成收尾后弃置全部引擎绑定态
+   * （旧 crashSettle 的项目级入口，T3 后逐会话执行互不误伤）。 */
+  crashSettleAll(): void {
+    for (const path of [...this.runningTurns.keys()]) this.crashSettleSession(path);
+    for (const path of [...this.engines.keys()]) this.invalidateEngine(path);
+  }
+
+  /** 单会话引擎绑定态弃置（崩溃/重启/停用）：事件退订 + 状态整体丢弃，ensure 按
+   * client 更换重建。句柄/速度环随绑定态消失：旧 handle 属于已死进程，保留只会误映射。
+   * 别名表与 unpersistedClaims 是会话文件级机制（跨引擎恒稳），不在单引擎清理面内——
+   * 清了会误伤兄弟会话的在途解析（T3 收编注记）。 */
+  private invalidateEngine(sessionPath: string): void {
+    const state = this.engines.get(sessionPath);
+    if (!state) return;
+    state.detachEvents();
+    this.engines.delete(sessionPath);
+  }
+
+  /** 全停清态（stopAll 原语义：不合成收尾）——回合行清位（停监视定时器）+ 全部引擎
+   * 绑定态弃置；别名/认领一并清（旧 invalidate 全量口径）。 */
+  invalidateAll(): void {
+    for (const turn of [...this.runningTurns.values()]) {
+      this.stopTurnWatch(turn);
+      this.runningTurns.delete(turn.sessionPath);
+    }
+    for (const path of [...this.engines.keys()]) this.invalidateEngine(path);
     this.aliases.clear();
     this.unpersistedClaims.clear();
-    this.handleToDurable.clear();
-    this.knownDurable.clear();
-    this.stopSettleWatch();
-    // A5 速度环同属会话态：崩溃/重启后 handle 全换，内存环清空属预期（自然重建）
-    this.turnSpeedByDurable.clear();
-    this.messageStartAt.clear();
   }
 
-  /** 引擎就绪时的**回合进行中**会话路径（active 字段语义 = 回合进行中，todo 15 修复） */
-  async activeSessionPaths(): Promise<string[]> {
-    if (!this.adapter) return [];
-    // open 态行有副产物价值：顺带回填 handle→durable 映射（权威来源）
-    try {
-      const rows = await this.adapter.activeSessions();
-      this.rememberHandleRows(rows);
-    } catch {
-      // 探询失败不阻塞 active 判定
-    }
-    return this.streamingPath ? [this.streamingPath] : [];
+  /** 引擎就绪时的**回合进行中**会话路径并集（active 字段语义 = 回合进行中，todo 15 修复；
+   * T3 后项目内全部会话引擎并集，可多行）。无就绪引擎返回 null（不触发 spawn）。 */
+  async activeSessionPaths(): Promise<string[] | null> {
+    const rows = await this.probeRunStates();
+    return rows === null ? null : [...rows.keys()];
   }
 
-  /** 运行态三态探询（docs08-r6 任务 11，EngineGateway.peekRunStates 供源）：只读现有
-   *  状态三源推导——streamingId 占用（activeSessionPaths 同源同帧，单驱动至多一条）；
-   *  引擎快照 pendingPermissions 非空（项目级记账，单驱动下 webui 回合至多一个，
-   *  与流式会话归属一致；异端会话的权限无会话归属可用，作用域限流式会话行）；
-   *  流式会话 pendingQuestions 非空（阻塞型提问挂起回合）。仅回合在途才发这一次
-   *  get_state（经 questionsList：ensure 前置 isReady 已就绪不 spawn、switchTo 对
-   *  流式会话幂等），列表刷新零常态 RPC；失败按无未决提问降级不炸列表。
-   *  未就绪返回 null（不触发 spawn，active 同口径）。 */
-  async peekRunStates(): Promise<Map<string, ServerSessionRunState> | null> {
-    if (!this.isReady()) return null;
-    const paths = await this.activeSessionPaths();
+  /** 运行态三态探询（docs08-r6 任务 11，EngineGateway.peekRunStates 供源；T3 后
+   *  每会话一引擎、可 N 行）：只读现有状态三源推导——回合行占用（sessionPath 键）；
+   *  该会话引擎快照 pendingPermissions 非空（引擎粒度记账，随 T3 归位到目标会话）；
+   *  流式会话 pendingQuestions 非空（阻塞型提问挂起回合）。仅回合在途引擎才发 RPC
+   *  （activeSessions 回填 + get_state 探询），空闲引擎零常态 RPC；失败按无未决
+   *  提问降级不炸列表。无就绪引擎返回 null（不触发 spawn，active 同口径）。 */
+  private async probeRunStates(): Promise<Map<string, ServerSessionRunState> | null> {
+    const states = this.readyEngines();
+    if (states.length === 0) return null;
     const out = new Map<string, ServerSessionRunState>();
-    if (paths.length === 0 || this.streamingId === null) return out;
-    const permission = (this.manager.getStatus(this.projectPath)?.pendingPermissions.length ?? 0) > 0;
-    let question = false;
-    try {
-      question = (await this.questionsList(this.streamingId)).length > 0;
-    } catch {
-      // get_state 失败按无未决提问降级：runState 落 running，不因探询失败炸整个列表
+    for (const state of states) {
+      const turn = this.runningTurns.get(state.sessionPath);
+      if (!turn) continue;
+      // open 态行有副产物价值：顺带回填 handle→durable 映射（权威来源）
+      try {
+        const rows = await state.adapter.activeSessions();
+        this.rememberHandleRows(state, rows);
+      } catch {
+        // 探询失败不阻塞 active 判定
+      }
+      const permission =
+        (this.manager.getStatus(state.sessionPath)?.pendingPermissions ?? []).length > 0;
+      let question = false;
+      try {
+        question = (await state.adapter.pendingQuestions()).length > 0;
+      } catch {
+        // get_state 失败按无未决提问降级：runState 落 running，不因探询失败炸整个列表
+      }
+      out.set(state.sessionPath, deriveSessionRunState({ streaming: true, permission, question }));
     }
-    out.set(paths[0], deriveSessionRunState({ streaming: true, permission, question }));
     return out;
   }
 
-  /** 活跃会话行的 handle→durableSessionId 回填（list_sessions 行两个字段都有，权威来源） */
-  private rememberHandleRows(rows: Array<{ sessionId?: string; durableSessionId?: string }>): void {
+  /** 运行态三态探询（EngineGateway.peekRunStates 供源，见 probeRunStates） */
+  async peekRunStates(): Promise<Map<string, ServerSessionRunState> | null> {
+    return this.probeRunStates();
+  }
+
+  /** 活跃会话行的 handle→durableSessionId 回填（list_sessions 行两个字段都有，权威来源；
+   * 行归属其会话引擎的映射表） */
+  private rememberHandleRows(
+    state: SessionEngine,
+    rows: Array<{ sessionId?: string; durableSessionId?: string }>,
+  ): void {
     for (const row of rows) {
       if (row.sessionId && row.durableSessionId) {
-        this.handleToDurable.set(row.sessionId, row.durableSessionId);
-        this.knownDurable.add(row.durableSessionId);
+        state.handleToDurable.set(row.sessionId, row.durableSessionId);
+        state.knownDurable.add(row.durableSessionId);
       }
     }
   }
 
-  /** wire sessionId → durable id：routing handle 查映射；合成事件的 sessionId
-   * 本身就是 durable id（直认）。其余（未知 handle）返回 undefined（透传不猜）。
-   * miss 时异步刷新一次活跃会话行（去重防事件风暴期间 RPC 刷屏）。 */
-  durableSessionIdFor(handle: string): string | undefined {
-    const hit = this.handleToDurable.get(handle);
-    if (hit !== undefined) return hit;
-    if (this.knownDurable.has(handle)) return handle;
-    if (!this.refreshInFlight && this.adapter) {
-      this.refreshInFlight = true;
-      void this.adapter
-        .activeSessions()
-        .then((rows) => this.rememberHandleRows(rows))
-        .catch(() => undefined)
-        .finally(() => {
-          this.refreshInFlight = false;
-        });
+  private rememberHandleFor(state: SessionEngine, handle: string | undefined, durableId: string | undefined): void {
+    if (!handle || !durableId) return;
+    state.handleToDurable.set(handle, durableId);
+    state.knownDurable.add(durableId);
+  }
+
+  /** wire sessionId（routing handle）→ durable id：帧归属以源引擎绑定为准（双键口径）。
+   * sessionPath（引擎键）提供时只查该引擎绑定态——holder 别名（rpc-N）每引擎进程独立
+   * 编号，跨全部引擎 first-hit-wins 会把同槽别名解析到兄弟会话（A→B 输出串显事故
+   * 2026-11-05，排查报告 notes/facts/senpi-webui-ab-stream-crossdisplay-2026-11-05.md）;
+   * 绑定已弃置（引擎死亡/重启）返回 undefined，不跨引擎猜。sessionPath 缺席为
+   * 兼容/诊断路径：knownDurable 直认（durable id 全局唯一无撞值面）+ 项目内仅一台
+   * 绑定引擎时查其 handleToDurable（多引擎下别名歧义宁缺毋串）；合成事件的
+   * sessionId 本身是 durable id，由此直认。miss 时异步刷新绑定引擎活跃会话行
+   * （去重防事件风暴期间 RPC 刷屏）。 */
+  durableSessionIdFor(handle: string, sessionPath?: string): string | undefined {
+    if (sessionPath !== undefined) {
+      const state = this.engines.get(sessionPath);
+      if (state === undefined) return undefined;
+      const hit = state.handleToDurable.get(handle);
+      if (hit !== undefined) return hit;
+      if (state.knownDurable.has(handle)) return handle;
+      this.scheduleHandleRefresh([state]);
+      return undefined;
     }
+    for (const state of this.engines.values()) {
+      if (state.knownDurable.has(handle)) return handle;
+    }
+    if (this.engines.size === 1) {
+      const state = [...this.engines.values()][0]!;
+      const hit = state.handleToDurable.get(handle);
+      if (hit !== undefined) return hit;
+    }
+    this.scheduleHandleRefresh([...this.engines.values()]);
     return undefined;
+  }
+
+  /** 映射 miss 刷新防抖（跨绑定共享一轮；单引擎绑定态只刷自身，零兄弟引擎 RPC） */
+  private scheduleHandleRefresh(states: SessionEngine[]): void {
+    if (this.refreshInFlight || states.length === 0) return;
+    this.refreshInFlight = true;
+    void Promise.allSettled(
+      states.map(async (state) => {
+        try {
+          this.rememberHandleRows(state, await state.adapter.activeSessions());
+        } catch {
+          // 单引擎刷新失败不影响其余
+        }
+      }),
+    ).finally(() => {
+      this.refreshInFlight = false;
+    });
   }
 
   /** 采集增强批：上次 store 扫描指纹（path+modified 汇总哈希 8 位；变化记 info——抓 CLI 跨进程双写/外部改动） */
   private storeFingerprint: string | undefined;
 
-  /** SDK 直读会话库（不依赖引擎进程，sessionsList 不走 rpc） */
+  /** SDK 直读会话库（不依赖引擎进程，sessionsList 不走 rpc；T3 后每次用临时裸
+   * adapter 直读——磁盘读不挂任何引擎绑定态，与运行时引擎零耦合） */
   async listStore(): Promise<EngineSessionSummary[]> {
-    if (!this.adapter) {
-      // 未 start 的 adapter 只有 options + sessionsList 可用（sessionsList 不调 rpc）
-      this.adapter = new SenpiAdapter({
-        projectDir: this.projectPath,
-        agentDir: this.opts.agentDir ?? defaultAgentDir(),
-      });
-    }
-    const rows = await this.adapter.sessionsList(this.projectPath);
+    const adapter = new SenpiAdapter({
+      projectDir: this.projectPath,
+      agentDir: this.opts.agentDir ?? defaultAgentDir(),
+    });
+    const rows = await adapter.sessionsList(this.projectPath);
     this.observeStoreScan(rows);
     return rows;
   }
@@ -966,8 +1104,10 @@ class ProjectRuntime {
       }
     }
     // 活跃会话快捷路径：刚创建未落盘的会话不在 store 行内，活跃态即可定位
-    if (this.activeId === sessionId) {
-      const active = this.adapter?.getActiveSession();
+    // （T3：跨全部会话引擎查活跃行——每引擎唯一会话，命中即其绑定路径）
+    for (const st of this.engines.values()) {
+      if (st.activeId !== sessionId) continue;
+      const active = st.adapter.getActiveSession();
       if (active) {
         hit = "active";
         return {
@@ -1011,7 +1151,7 @@ class ProjectRuntime {
         rows: rowsSeen,
         aliases: this.aliases.size,
         claims: this.unpersistedClaims.size,
-        active: this.activeId ? this.activeId.slice(0, 8) : "-",
+        engines: this.engines.size,
         rid: currentRid(),
         ms: Math.round(performance.now() - tResolve),
       });
@@ -1032,10 +1172,10 @@ class ProjectRuntime {
   }
 
   /** Fix0 性能埋点（docs08-2026-10-22-batch 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关）：
-   * 包一层 ④ensure 计时 + ②runExclusive 排队计时，body 内部自记 ③switchTo/①rpc 段；
-   * 收尾（含失败）统一落一行 [perf] 日志。关闭路径与原实现等价：不建 span、不计时，
-   * 仅 body 写入共享哑对象（无读者）。 */
-  private runTraced<T>(op: string, sessionId: string, body: (span: PerfSpan) => Promise<T>): Promise<T> {
+   * 包一层 ④ensure 计时，body 内部自记 ①rpc 段（T3：②runExclusive 排队与 ③switchTo
+   * 开仓段随互斥链/切换链退役消失）；收尾（含失败）统一落一行 [perf] 日志。关闭路径
+   * 与原实现等价：不建 span、不计时，仅 body 写入共享哑对象（无读者）。 */
+  private runTraced<T>(op: string, sessionId: string, body: (span: PerfSpan, state: SessionEngine) => Promise<T>): Promise<T> {
     // 采集增强批：gateway op 观测行（失败 warn / 慢于 1s info / 其余 debug）。
     //  与 [perf] 行契约并行互不干扰；默认 info 级下只有失败与慢 op 落盘零噪。
     //  非 DEBUG_PERF 路径不读共享哑 span（其段字段是历史写入残留，不可信），仅记总耗时。
@@ -1069,9 +1209,9 @@ class ProjectRuntime {
       }
     };
     if (!debugPerfOn()) {
-      // 关闭路径与原实现等价：ensure() 就绪后再进互斥队列（原方法体逐字语义）
-      return this.ensure()
-        .then(() => this.runExclusive(() => body(INERT_PERF_SPAN)))
+      // 关闭路径与原实现等价：解析目标会话专属引擎（ensure 内联）后直驱
+      return this.ensureForSession(sessionId)
+        .then((state) => body(INERT_PERF_SPAN, state))
         .then(
           (r) => {
             logGw(null);
@@ -1086,19 +1226,15 @@ class ProjectRuntime {
     }
     const span: PerfSpan = { op, proj: projHash8(this.projectPath), session: sessionId };
     const t0 = performance.now();
-    return this.ensure()
+    return this.ensureForSession(sessionId)
       .catch((err) => {
         span.ensureMs = performance.now() - t0;
         span.err = perfErrCode(err);
         throw err;
       })
-      .then(() => {
+      .then((state) => {
         span.ensureMs = performance.now() - t0;
-        const tEnqueue = performance.now();
-        return this.runExclusive(async () => {
-          span.queueWaitMs = performance.now() - tEnqueue;
-          return body(span);
-        });
+        return body(span, state);
       })
       .catch((err) => {
         seenErr = err;
@@ -1111,88 +1247,69 @@ class ProjectRuntime {
       });
   }
 
-  runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.chain.then(fn, fn);
-    this.chain = next.catch(() => undefined);
-    return next;
-  }
-
-  /** 确保目标会话是 adapter 活跃会话（open 切换；同会话幂等） */
-  private async switchTo(sessionId: string): Promise<void> {
-    const adapter = this.requireAdapter();
-    if (this.activeId === sessionId && adapter.getActiveSession()) return;
-    const row = await this.resolveSession(sessionId);
-    const opened = await adapter.openSession({ sessionPath: row.path });
-    this.activeId = sessionId;
-    // wire 事件的 sessionId 就是这个 routing handle（open_session 响应顶层的
-    // sessionId）；store 行解析出的 id（非别名）即可作为 durable 映射记录
-    if (!this.aliases.has(sessionId)) this.rememberHandle(opened.routingId, sessionId);
-  }
-
-  private rememberHandle(handle: string | undefined, durableId: string | undefined): void {
-    if (!handle || !durableId) return;
-    this.handleToDurable.set(handle, durableId);
-    this.knownDurable.add(durableId);
-  }
-
-  requireAdapter(): EngineAdapter {
-    if (!this.adapter) throw new ApiError(409, "not_started", "项目运行时未初始化");
-    return this.adapter;
-  }
+  // T3 退役注记：runExclusive 互斥链/switchTo 切换链/项目级 requireAdapter 单槽取用面
+  // 随会话路由重建移除（引擎即会话，操作经 ensureForSession 取绑定态直驱；句柄回填
+  // 收编为 rememberHandleFor/rememberHandleRows 按绑定态直写）。
 
   async createSession(opts: {
     provider?: string;
     modelId?: string;
     thinkingLevel?: EngineThinkingLevel;
   }): Promise<{ id: string; sessionPath: string; durable: boolean }> {
-    await this.ensure();
-    const adapter = this.requireAdapter();
-    return this.runExclusive(async () => {
-      const opened: EngineOpenSessionResult = await adapter.openSession({
-        provider: opts.provider,
-        modelId: opts.modelId,
-        thinkingLevel: opts.thinkingLevel,
-      });
-      // durable id 解析：活跃会话行的 durableSessionId 是引擎侧磁盘 header id
-      // （docs/verification/05 P1-1：list_sessions 行含 durableSessionId）。
-      // 新会话未落盘时行可能缺失 durableSessionId，退化为 holder 别名（仅内存）。
-      let id = opened.sessionId;
-      let durable = false;
-      let claimed = false;
-      try {
-        const rows = await adapter.activeSessions();
-        this.rememberHandleRows(rows);
-        const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
-        if (row?.durableSessionId) {
-          id = row.durableSessionId;
-          claimed = true;
-          // durable 判定以磁盘为准（t1 根因：旧版引擎 list_sessions 行带 durableSessionId
-          // 但会话 JSONL 从未写盘——口头认领不可信）。文件不存在时降级为别名并登记
-          // 未落盘认领，resolveSession 据此报结构化 session_not_persisted 而非 404。
-          durable = existsSync(opened.sessionPath);
-        }
-      } catch {
-        // 活跃行查询失败不影响建会话，退化为别名
-      }
-      if (!durable) {
-        this.aliases.set(id, opened.sessionPath);
-        if (claimed) this.unpersistedClaims.set(id, opened.sessionPath);
-      } else {
-        // open_session 响应顶层 sessionId 即 routing handle（wire 事件同源）
-        this.rememberHandle(opened.routingId, id);
-      }
-      this.activeId = id;
-      return { id, sessionPath: opened.sessionPath, durable };
+    // T3 收口（原 T1 过渡语义定版）：新会话路径由运行时预生成（uuid 文件名落项目会话
+    // 库目录，编码与引擎同算法；引擎接受任意文件名的既有实证 = probe gate 试写探针）。
+    // ensure 即建该会话专属引擎并绑定 open 路径，「每引擎只绑死自己会话」的键不变量
+    // 从建会话起成立；随后的显式参数 open 同路径 attach 覆盖 provider/model（F5：
+    // open_session 逐会话覆盖）。路径权威永久归运行时。
+    const sessionPath = join(
+      this.opts.agentDir ?? defaultAgentDir(),
+      "sessions",
+      encodeCwdToSessionDirName(this.projectPath),
+      `${randomUUID()}.jsonl`,
+    );
+    const state = await this.ensure(sessionPath);
+    const opened: EngineOpenSessionResult = await state.adapter.openSession({
+      sessionPath,
+      provider: opts.provider,
+      modelId: opts.modelId,
+      thinkingLevel: opts.thinkingLevel,
     });
+    // durable id 解析：活跃会话行的 durableSessionId 是引擎侧磁盘 header id
+    // （docs/verification/05 P1-1：list_sessions 行含 durableSessionId）。
+    // 新会话未落盘时行可能缺失 durableSessionId，退化为 holder 别名（仅内存）。
+    let id = opened.sessionId;
+    let durable = false;
+    let claimed = false;
+    try {
+      const rows = await state.adapter.activeSessions();
+      this.rememberHandleRows(state, rows);
+      const row = rows.find((r) => r.sessionPath === opened.sessionPath && r.durableSessionId);
+      if (row?.durableSessionId) {
+        id = row.durableSessionId;
+        claimed = true;
+        // durable 判定以磁盘为准（t1 根因：旧版引擎 list_sessions 行带 durableSessionId
+        // 但会话 JSONL 从未写盘——口头认领不可信）。文件不存在时降级为别名并登记
+        // 未落盘认领，resolveSession 据此报结构化 session_not_persisted 而非 404。
+        durable = existsSync(opened.sessionPath);
+      }
+    } catch {
+      // 活跃行查询失败不影响建会话，退化为别名
+    }
+    if (!durable) {
+      this.aliases.set(id, opened.sessionPath);
+      if (claimed) this.unpersistedClaims.set(id, opened.sessionPath);
+    } else {
+      // open_session 响应顶层 sessionId 即 routing handle（wire 事件同源）
+      this.rememberHandleFor(state, opened.routingId, id);
+    }
+    state.activeId = id;
+    return { id, sessionPath: opened.sessionPath, durable };
   }
 
   async messages(sessionId: string, cursor?: string): Promise<EngineMessagesPage> {
-    return this.runTraced("messages", sessionId, async (span) => {
-      const tSwitch = performance.now();
-      await this.switchTo(sessionId);
-      span.switchToMs = performance.now() - tSwitch;
+    return this.runTraced("messages", sessionId, async (span, state) => {
       const tRpc = performance.now();
-      const page = await this.requireAdapter().messages(cursor);
+      const page = await state.adapter.messages(cursor);
       span.rpcMs = performance.now() - tRpc;
       span.entries = page.entries.length;
       return page;
@@ -1209,28 +1326,31 @@ class ProjectRuntime {
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
   ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
-    return this.runTraced("prompt", sessionId, async (span) => {
+    return this.runTraced("prompt", sessionId, async (span, state) => {
       // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶。
-      // docs08-r4 任务 11（spike 实证）：携带 streamingBehavior 时放行——prompt 入引擎队列
-      // （回执 "queued"），streamingId 保持占用（排队回合同一 run，run 尾才 settle 一次）。
+      // T3：回合按 sessionPath 键判定——别名 id 与 durable id 同文件同路天然同判。
+      // docs08-r4 任务 11（spike 实证）：携带 streamingBehavior 时放行——prompt 入引擎
+      // 队列（回执 "queued"），回合行保持占用（排队回合同一 run，run 尾才 settle 一次）。
       // 跨窗口 409 落点见下方 catch 的 already processing 映射，语义不变。
-      if (this.streamingId === sessionId && !input.streamingBehavior) {
-        throw new ApiError(409, "already_processing", "该会话已有进行中的回合（单驱动约束，请先 abort 或等待回合结束）");
+      const existingTurn = this.runningTurns.get(state.sessionPath);
+      if (existingTurn && !input.streamingBehavior) {
+        // T7：文案携 sessionPath 占用详情，前端撞车常驻错误卡原样呈现
+        throw new ApiError(
+          409,
+          "already_processing",
+          `该会话已有进行中的回合（单驱动约束）：${state.sessionPath}，请先 abort 或等待回合结束`,
+        );
       }
-      const tSwitch = performance.now();
-      await this.switchTo(sessionId);
-      span.switchToMs = performance.now() - tSwitch;
       const tRpc = performance.now();
       // docs08-r6 任务 8 ②：切换成功的模型行归一 "provider/model" 随回执带回（回执可观测）；
       // 排队请求（streamingBehavior）不走此分支——排队剥模型铁律在 api.ts 注入点，服务端此处不变
       let appliedModel: string | undefined;
       if (input.model) {
-        const row = await this.switchModel(input.model);
+        const row = await this.switchModel(state, input.model);
         appliedModel = `${row.provider}/${row.id}`;
       }
-      const adapter = this.requireAdapter();
       try {
-        const receipt = await adapter.prompt({
+        const receipt = await state.adapter.prompt({
           text: input.text,
           images: input.images,
           thinkingLevel: input.thinkingLevel,
@@ -1239,38 +1359,45 @@ class ProjectRuntime {
         span.rpcMs = performance.now() - tRpc;
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
         if (receipt.disposition !== "handled") {
-          this.streamingId = sessionId;
-          this.streamingPath = adapter.getActiveSession()?.sessionPath ?? null;
-          this.roundSeq += 1;
-          this.startSettleWatch();
+          const turn: TurnRow = {
+            sessionPath: state.sessionPath,
+            sessionId,
+            settleTimer: null,
+            graceTimer: null,
+          };
+          this.runningTurns.set(state.sessionPath, turn);
+          state.activeId = sessionId;
+          this.startSettleWatch(turn);
         }
         // 首条消息落盘回执补全（缺陷修复：新会话首条用户消息不显示）：未落盘别名会话
         // 此刻已被引擎写盘，durable id 就绪。立即回填 handle→durable 映射——本轮后续
         // wire 事件（assistant 流式等）即时携带 durableSessionId，不再依赖 miss 时的
         // 防抖刷新；并把真实 id 随回执带回，前端即时换 key。
-        if (this.aliases.has(sessionId)) {
+        const aliasPath = this.aliases.get(sessionId);
+        if (aliasPath === state.sessionPath) {
           try {
-            const rows = await adapter.activeSessions();
-            this.rememberHandleRows(rows);
-            const sessionPath = this.aliases.get(sessionId);
-            const row = rows.find((r) => r.sessionPath === sessionPath && r.durableSessionId);
-            if (row?.durableSessionId && sessionPath) {
+            const rows = await state.adapter.activeSessions();
+            this.rememberHandleRows(state, rows);
+            const row = rows.find((r) => r.sessionPath === aliasPath && r.durableSessionId);
+            if (row?.durableSessionId) {
               // 落盘复核（任务 6）：引擎此时认领了 durable id 但文件仍不存在，
               // 说明回合结果不会持久化——立即回传结构化错误，绝不静默放行
               // （否则下游 messages/resolve 全部 404「会话不存在」，t1 事发现场形态）。
-              if (!existsSync(sessionPath)) {
-                this.unpersistedClaims.set(row.durableSessionId, sessionPath);
+              if (!existsSync(aliasPath)) {
+                this.unpersistedClaims.set(row.durableSessionId, aliasPath);
                 throw new ApiError(
                   409,
                   "session_not_persisted",
-                  `引擎已认领会话 ${row.durableSessionId} 但会话文件未落盘（${sessionPath}），回合结果无法持久化`,
+                  `引擎已认领会话 ${row.durableSessionId} 但会话文件未落盘（${aliasPath}），回合结果无法持久化`,
                 );
               }
               this.unpersistedClaims.delete(row.durableSessionId);
-              // 别名保留（resolveSession 仍需兜底在途的旧 id 请求）；活跃/流式位切到
-              // 真实 id——单驱动 409 守卫按 id 比较，前端换 key 后以真实 id 再来也拦得住
-              this.activeId = row.durableSessionId;
-              if (this.streamingId === sessionId) this.streamingId = row.durableSessionId;
+              // 别名保留（resolveSession 仍需兜底在途的旧 id 请求）；活跃/回合位切到
+              // 真实 id——单驱动 409 守卫按 sessionPath 比较，前端换 key 后以真实 id
+              // 再来也拦得住
+              state.activeId = row.durableSessionId;
+              const turn = this.runningTurns.get(state.sessionPath);
+              if (turn && turn.sessionId === sessionId) turn.sessionId = row.durableSessionId;
               return { disposition: receipt.disposition, durableSessionId: row.durableSessionId, appliedModel };
             }
           } catch (err) {
@@ -1280,10 +1407,16 @@ class ProjectRuntime {
         }
         return appliedModel !== undefined ? { ...receipt, appliedModel } : receipt;
       } catch (err) {
-        // 外部驱动或事件丢失兜底：引擎进程内守卫的报错映射为同一 409 语义
+        // 外部驱动或事件丢失兜底：引擎进程内守卫的报错映射为同一 409 语义。
+        // T7（IS-4）：外部 CLI 与 webui 同开一会话的撞认领面——文案携被占会话的
+        // sessionPath 与处置指引，前端合成常驻错误卡原样呈现，不再是无路径的泛化文案
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("already processing")) {
-          throw new ApiError(409, "already_processing", "引擎报告会话正在处理中（单驱动约束）");
+          throw new ApiError(
+            409,
+            "already_processing",
+            `会话文件被外部回合占用：${state.sessionPath}（等外部回合落定，或去 CLI 侧中断）`,
+          );
         }
         throw err;
       }
@@ -1292,12 +1425,9 @@ class ProjectRuntime {
 
   /** 排队对账快照（断线重连/初次渲染各拉一次；增量走 queue_update wire 事件透传） */
   async queueList(sessionId: string): Promise<EngineQueueSnapshot> {
-    return this.runTraced("queueList", sessionId, async (span) => {
-      const tSwitch = performance.now();
-      await this.switchTo(sessionId);
-      span.switchToMs = performance.now() - tSwitch;
+    return this.runTraced("queueList", sessionId, async (span, state) => {
       const tRpc = performance.now();
-      const snapshot = await this.requireAdapter().queueList();
+      const snapshot = await state.adapter.queueList();
       span.rpcMs = performance.now() - tRpc;
       span.entries = snapshot.ordered.length;
       return snapshot;
@@ -1306,22 +1436,16 @@ class ProjectRuntime {
 
   /** 整队清空（返回被撤项；单条撤销由前端清空后保留项重新入队实现） */
   async queueClear(sessionId: string): Promise<EngineQueueSnapshot> {
-    await this.ensure();
-    return this.runExclusive(async () => {
-      await this.switchTo(sessionId);
-      return this.requireAdapter().queueClear();
-    });
+    const state = await this.ensureForSession(sessionId);
+    return state.adapter.queueClear();
   }
 
   /** 未决提问对账快照（q1 提问卡片；同 queue 口径——前端会话打开时拉一次，
    *  增量走 SSE 的 question 帧透传；get_state 快照无 sessionId，此处注入本会话 id） */
   async questionsList(sessionId: string): Promise<EngineQuestionFrame[]> {
-    return this.runTraced("questionsList", sessionId, async (span) => {
-      const tSwitch = performance.now();
-      await this.switchTo(sessionId);
-      span.switchToMs = performance.now() - tSwitch;
+    return this.runTraced("questionsList", sessionId, async (span, state) => {
       const tRpc = performance.now();
-      const frames = await this.requireAdapter().pendingQuestions();
+      const frames = await state.adapter.pendingQuestions();
       span.rpcMs = performance.now() - tRpc;
       span.entries = frames.length;
       // 快照帧不带会话归属（引擎侧 per-session 存储，出队即知归属）——注入当前
@@ -1330,71 +1454,61 @@ class ProjectRuntime {
     });
   }
 
-  /** adapter 无模型切换面（接口未含 setModel）；直接走协议命令，仅作用于当前活跃会话。
-   * docs08-r6 任务 8 ①：显式取 client——引擎未挂时明确 503（forkSession 同款范式），
-   * 绝不静默跳过（可选链会让模型切换无声失效，prompt 照发旧模型）；成功回模型行
+  /** adapter 无模型切换面（接口未含 setModel）；直接走协议命令，仅作用于当前活跃会话
+   * （T3 后即目标会话专属引擎的唯一会话）。docs08-r6 任务 8 ①：显式取绑定态 client
+   * （ensure 失败早在上游 503 上抛，此处 client 恒在），绝不静默跳过；成功回模型行
    * （SDK setModel 契约 {provider,id}，connection-handler set_model success 行）供回执取 appliedModel */
-  private async switchModel(model: string): Promise<{ provider: string; id: string }> {
+  private async switchModel(state: SessionEngine, model: string): Promise<{ provider: string; id: string }> {
     const slash = model.indexOf("/");
     if (slash <= 0) {
       throw new ApiError(400, "invalid_model", `model 需为 "provider/model" 形态：${model}`);
     }
     const provider = model.slice(0, slash);
     const modelId = model.slice(slash + 1);
-    const client = this.wrappedClient;
-    if (!client) throw new ApiError(503, "engine_not_ready", "项目引擎未就绪");
-    return client.setModel(provider, modelId);
+    return state.client.setModel(provider, modelId);
   }
 
   async abort(sessionId: string): Promise<void> {
-    await this.ensure();
-    return this.runExclusive(async () => {
-      await this.switchTo(sessionId);
-      // r11 todo 11（task-10 spike §2.2 定向）：权限等待态的中止在引擎面是静默 no-op
-      // ——abort 200/11ms 后零帧、回合悬起 >5min、仅引擎重建可解除（实测取证：
-      // .omo/evidence/r11/task-10-abort-spike.md §2.2）。修法：中止前把本回合挂起
-      // 的权限请求经既有应答通道逐个取消（{cancelled:true}，与前端权限卡「忽略」
-      // 同 wire 形态且对四型请求通用）：挂起工具以取消结果返回 → 回合自然收束 →
-      // agent_end 可达（与提问等待 abort 的 question_resolved 收尾同机制，spike
-      // §2.3 实证 +176ms）。仅当目标会话确为 webui 驱动回合（streamingId 占用）才
-      // 执行，防跨会话误拒；快照在 runExclusive 锁内读取（单驱动下项目级记账至多
-      // 对应本回合）。内联 adapter.permissionRespond + reportPermissionAnswered
-      // （与公开 permissionRespond 同通道）而非复用公开方法——锁内重入 runExclusive
-      // 会把 deny 排到本 abort 之后，破坏「先解权限门、后中止回合」的帧序。
-      const adapter = this.requireAdapter();
-      if (this.streamingId === sessionId) {
-        const pending = this.manager.getStatus(this.projectPath)?.pendingPermissions ?? [];
-        for (const requestId of pending) {
-          await adapter.permissionRespond(requestId, { cancelled: true });
-          this.manager.reportPermissionAnswered(this.projectPath, requestId);
-        }
+    const state = await this.ensureForSession(sessionId);
+    // r11 todo 11（task-10 spike §2.2 定向）：权限等待态的中止在引擎面是静默 no-op
+    // ——abort 200/11ms 后零帧、回合悬起 >5min、仅引擎重建可解除（实测取证：
+    // .omo/evidence/r11/task-10-abort-spike.md §2.2）。修法：中止前把本回合挂起
+    // 的权限请求经既有应答通道逐个取消（{cancelled:true}，与前端权限卡「忽略」
+    // 同 wire 形态且对四型请求通用）：挂起工具以取消结果返回 → 回合自然收束 →
+    // agent_end 可达（与提问等待 abort 的 question_resolved 收尾同机制，spike
+    // §2.3 实证 +176ms）。仅当目标会话确为 webui 驱动回合（回合行占用）才执行，
+    // 防跨会话误拒；快照按目标会话引擎读取（T3：权限记账随引擎粒度归位）。
+    // 内联 adapter.permissionRespond + reportPermissionAnswered（与公开
+    // permissionRespond 同通道）而非复用公开方法，保持「先解权限门、后中止回合」
+    // 的帧序不被并发应答插队。
+    if (this.runningTurns.has(state.sessionPath)) {
+      const pending = this.manager.getStatus(state.sessionPath)?.pendingPermissions ?? [];
+      for (const requestId of pending) {
+        await state.adapter.permissionRespond(requestId, { cancelled: true });
+        this.manager.reportPermissionAnswered(state.sessionPath, requestId);
       }
-      await adapter.abort();
-    });
+    }
+    await state.adapter.abort();
   }
 
   async permissionRespond(sessionId: string, requestId: string, reply: EnginePermissionReply): Promise<void> {
-    await this.ensure();
-    return this.runExclusive(async () => {
-      await this.switchTo(sessionId);
-      await this.requireAdapter().permissionRespond(requestId, reply);
-      // 应答 wire 上无事件回声，必须显式上报解除忙判定（todo 8 空闲回收口径）
-      this.manager.reportPermissionAnswered(this.projectPath, requestId);
-    });
+    const state = await this.ensureForSession(sessionId);
+    await state.adapter.permissionRespond(requestId, reply);
+    // 应答 wire 上无事件回声，必须显式上报解除忙判定（todo 8 空闲回收口径；
+    // T3 后按目标会话引擎键上报）
+    this.manager.reportPermissionAnswered(state.sessionPath, requestId);
   }
 
   async usage(sessionId: string): Promise<EngineUsageStats> {
-    return this.runTraced("usage", sessionId, async (span) => {
-      const tSwitch = performance.now();
-      await this.switchTo(sessionId);
-      span.switchToMs = performance.now() - tSwitch;
+    return this.runTraced("usage", sessionId, async (span, state) => {
       const tRpc = performance.now();
-      const stats = await this.requireAdapter().usage();
+      const stats = await state.adapter.usage();
       span.rpcMs = performance.now() - tRpc;
-      // A5：附加内存速度环快照（durable 键）。别名 id（未落盘窗口）无映射则不下发
-      // turnSpeed，前端按"暂无数据"降级；此时环内也尚无样本（样本归属真实 durable id）。
-      const durable = this.durableSessionIdFor(sessionId);
-      return durable ? { ...stats, turnSpeed: this.turnSpeedSnapshot(durable) } : stats;
+      // A5：附加内存速度环快照（durable 键，样本归属本会话引擎的环）。别名 id（未落盘
+      // 窗口）无映射则不下发 turnSpeed，前端按"暂无数据"降级；此时环内也尚无样本
+      // （样本归属真实 durable id）。
+      const durable = this.durableSessionIdFor(sessionId, state.sessionPath);
+      return durable ? { ...stats, turnSpeed: this.turnSpeedSnapshot(state, durable) } : stats;
     });
   }
 
@@ -1402,32 +1516,30 @@ class ProjectRuntime {
    *  引擎侧失败形态映射（spike 实证）："Already compacted"/"Nothing to compact"
    *  → 409 业务码（前端明示，不静默）；其余原样上抛（route 包装统一 500）。 */
   async compact(sessionId: string): Promise<{ result: EngineCompactResult; usage: EngineUsageStats }> {
-    await this.ensure();
-    return this.runExclusive(async () => {
-      // 单驱动纪律：回合中拒绝——引擎 manual compact 会先 abort 活动回合
-      // （agent-session.compact "Aborts the current agent operation first"），
-      // webui 语义下隐式中断用户回合不可接受，明确 409 与 prompt 同码。
-      if (this.streamingId === sessionId) {
-        throw new ApiError(409, "already_processing", "该会话回合进行中，压缩前请先等待回合结束或中断");
+    const state = await this.ensureForSession(sessionId);
+    // 单驱动纪律：回合中拒绝——引擎 manual compact 会先 abort 活动回合
+    // （agent-session.compact "Aborts the current agent operation first"），
+    // webui 语义下隐式中断用户回合不可接受，明确 409 与 prompt 同码（回合行判定，
+    // T3 后仅目标会话在途才拒，兄弟会话回合不阻断压缩）。
+    if (this.runningTurns.has(state.sessionPath)) {
+      throw new ApiError(409, "already_processing", "该会话回合进行中，压缩前请先等待回合结束或中断");
+    }
+    let result: EngineCompactResult;
+    try {
+      result = await state.adapter.compactSession();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Already compacted")) {
+        throw new ApiError(409, "already_compacted", "上下文已压缩过，无新的可压缩内容");
       }
-      await this.switchTo(sessionId);
-      let result: EngineCompactResult;
-      try {
-        result = await this.requireAdapter().compactSession();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("Already compacted")) {
-          throw new ApiError(409, "already_compacted", "上下文已压缩过，无新的可压缩内容");
-        }
-        if (message.includes("Nothing to compact")) {
-          throw new ApiError(409, "nothing_to_compact", "会话上下文还很小，暂无需压缩");
-        }
-        throw err;
+      if (message.includes("Nothing to compact")) {
+        throw new ApiError(409, "nothing_to_compact", "会话上下文还很小，暂无需压缩");
       }
-      // 压缩后权威水位：同锁内取快照，前端 toast 与水位环直接对比 tokensBefore
-      const stats = await this.requireAdapter().usage();
-      return { result, usage: stats };
-    });
+      throw err;
+    }
+    // 压缩后权威水位：同引擎顺序取快照，前端 toast 与水位环直接对比 tokensBefore
+    const stats = await state.adapter.usage();
+    return { result, usage: stats };
   }
 
   async modelsList(): Promise<EngineModelInfo[]> {
@@ -1436,57 +1548,53 @@ class ProjectRuntime {
     // 自定义模型不依赖引擎拉起即可见，修复"下拉只显示套餐目录"缺陷）。
     // 三路径统一携带 upstreamId（任务 18）：两条降级路径经 readModelsFallback
     // 自定义覆盖自然携带；活跃会话路径由 mergeUpstreamIds 按 provider/id 补齐。
-    if (!this.isReady()) return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
-    const adapter = this.requireAdapter();
-    if (adapter.getActiveSession()) {
-      return mergeUpstreamIds(await adapter.modelsList(), this.opts.agentDir ?? defaultAgentDir());
+    // T3：项目级「活跃会话」= 任一绑定会话已 open 的就绪引擎（每会话一引擎）。
+    const ready = this.readyEngines().find((st) => st.adapter.getActiveSession());
+    if (!ready) {
+      // 无活跃会话时协议面报 missing_session_id（多会话模式命令需会话路由）。
+      // 降级：直读引擎同一份模型目录 models-store.json（W0 实证格式
+      // {provider:{models:[{id,reasoning,cost,contextWindow,thinkingLevelMap,...}]}}）
+      // 并入 models.json 自定义（同 id 覆盖）。
+      // 与协议面的差异：协议面按当前 provider 过滤，此处为全 provider 超集。
+      return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
     }
-    // 无活跃会话时协议面报 missing_session_id（多会话模式命令需会话路由）。
-    // 降级：直读引擎同一份模型目录 models-store.json（W0 实证格式
-    // {provider:{models:[{id,reasoning,cost,contextWindow,thinkingLevelMap,...}]}}）
-    // 并入 models.json 自定义（同 id 覆盖）。
-    // 与协议面的差异：协议面按当前 provider 过滤，此处为全 provider 超集。
-    return readModelsFallback(this.opts.agentDir ?? defaultAgentDir());
+    return mergeUpstreamIds(await ready.adapter.modelsList(), this.opts.agentDir ?? defaultAgentDir());
   }
 
   async commandsList(): Promise<EngineCommandInfo[] | null> {
-    // 2026-11-04 用户定版（命令面与发送同等待遇）：引擎未起即 ensure 拉起（不再
-    // 「不为此触发 spawn」）；无活跃会话（missing_session_id 硬约束）时静默开本项目
-    // 最新会话垫路由——webui 发送恒按显式 id 解析切换，此垫绑定随用随换，不改用户
-    // 可见态；项目无会话可垫或任一步失败仍按旧口径降级 null，端点不 5xx。
-    try {
-      // 无条件 ensure（幂等）：会话列表直读会挂上未连引擎的盘读 adapter，isReady 的
-      // adapter!==null 会被它骗过（实测 EngineAdapterError 未 start）；ensure 检测
-      // wrappedClient 变更即重建为已连引擎的 adapter，热路径（已连且同 client）零重建
-      await this.ensure();
-      const adapter = this.requireAdapter();
-      if (!adapter.getActiveSession()) {
-        const rows = await this.listStore();
-        if (rows.length === 0) return null;
-        const latest = rows.reduce((a, b) => (b.modified > a.modified ? b : a));
-        const opened = await adapter.openSession({ sessionPath: latest.path });
-        this.activeId = latest.id;
-        this.rememberHandle(opened.routingId, latest.id);
+    // T3（D11 退役定版）：项目级「当前会话」单槽不存在后，2026-11-04 的「未起即
+    // ensure 拉起 + 垫最新会话路由」失去载体，命令面回归 EngineGateway 契约原文：
+    // 遍历项目内全部就绪会话引擎，取任一绑定会话已 open 的引擎命令（命令集按项目
+    // scope，任一会话同值，取首个命中）；不 ensure 不 spawn，无就绪引擎/全部无活跃
+    // 会话/引擎异常一律降级 null（端点 available=false），不 5xx。
+    for (const state of this.readyEngines()) {
+      if (!state.adapter.getActiveSession()) continue;
+      try {
+        // 注意 await：oxc 降级编译下 try 内裸 return promise 会绕开 catch（实测）
+        return await state.adapter.commands();
+      } catch {
+        // 单引擎命令面异常继续尝试其余会话引擎；全失败降级 null
       }
-      // 注意 await：oxc 降级编译下 try 内裸 return promise 会绕开 catch（实测）
-      return await adapter.commands();
-    } catch {
-      return null;
     }
+    return null;
   }
 
   async deleteSession(sessionId: string): Promise<{ sessionPath: string; fileExisted: boolean }> {
     const row = await this.resolveSession(sessionId);
-    if (this.adapter) {
-      await this.runExclusive(async () => {
-        if (this.streamingId === sessionId) {
-          await this.requireAdapter().abort().catch(() => undefined);
-        }
-        if (this.activeId === sessionId && this.requireAdapter().getActiveSession()) {
-          await this.requireAdapter().closeSession().catch(() => undefined);
-          this.activeId = null;
-        }
-      });
+    const bound = this.engines.get(row.path);
+    if (bound) {
+      // 目标会话的绑定引擎（T3：引擎即会话）：先撤在途回合（若有）再关会话；会话
+      // 删除后其引擎失去存在意义——停用进程并弃置绑定态（旧项目单引擎不能停，
+      // 会话化后引擎随会话生命周期走）。
+      const turn = this.runningTurns.get(row.path);
+      if (turn) {
+        await bound.adapter.abort().catch(() => undefined);
+        this.settleTurn(turn);
+      }
+      await bound.adapter.closeSession().catch(() => undefined);
+      await this.manager.stop(row.path).catch(() => undefined);
+      bound.detachEvents();
+      this.engines.delete(row.path);
     }
     // 引擎无会话删除协议面（rpc-client 全方法核对）——直接删磁盘会话文件。
     // 打开既有会话会追加扩展 bookkeeping 条目是正常语义，删除同理属文件级操作。
@@ -1518,9 +1626,9 @@ class ProjectRuntime {
     if (!existsSync(row.path)) {
       throw new ApiError(409, "session_not_persisted", "会话尚未落盘（空会话），无法导出");
     }
-    // --export 是 CLI 子命令（spawnSync），不依赖引擎进程活跃；adapter 未建时用裸
-    // SenpiAdapter 携带正确的 agentDir/projectDir 即可（exportHtml 不走 rpc）。
-    const adapter = this.adapter ?? new SenpiAdapter({
+    // --export 是 CLI 子命令（spawnSync），不依赖引擎进程活跃（exportHtml 不走 rpc）；
+    // T3 后一律用裸 SenpiAdapter 携带正确的 agentDir/projectDir，不挂任何绑定态。
+    const adapter = new SenpiAdapter({
       projectDir: this.projectPath,
       agentDir: this.opts.agentDir ?? defaultAgentDir(),
     });
@@ -1538,70 +1646,66 @@ class ProjectRuntime {
     entryId: string,
     position: "before" | "at" = "before",
   ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }> {
-    await this.ensure();
-    return this.runExclusive(async () => {
-      // fork 会让引擎 teardown 当前活跃会话并切换到新会话——项目内存在 webui 驱动
-      // 回合时一律拒绝（单驱动纪律，P2-11），避免把回合中的会话拆掉。
-      if (this.streamingId !== null) {
-        throw new ApiError(409, "already_processing", "该项目有进行中的回合，fork 前请等待回合结束或 abort");
+    const bound = await this.ensureForSession(sessionId);
+    // fork 会让引擎 teardown 当前活跃会话并切换到 fork 新会话——源会话存在 webui
+    // 驱动回合时拒绝（单驱动纪律，P2-11）。D11 放宽：仅源会话在途即拒；兄弟会话的
+    // 回合不再阻断 fork（旧项目级拒绝是单引擎切换链的产物）。
+    if (this.runningTurns.has(bound.sessionPath)) {
+      throw new ApiError(409, "already_processing", "该会话回合进行中，fork 前请等待回合结束或 abort");
+    }
+    let forked: { text: string; cancelled: boolean };
+    try {
+      forked = await bound.client.fork(entryId, { position });
+    } catch (err) {
+      // 引擎侧条目校验：position="before" 仅接受 user 消息条目（agent-session-runtime fork）
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Invalid entry ID")) {
+        throw new ApiError(400, "invalid_entry", `entryId 不能作为 fork 点（${position} 语义不接受该条目）`);
       }
-      await this.switchTo(sessionId);
-      const client = this.wrappedClient;
-      if (!client) throw new ApiError(503, "engine_not_ready", "项目引擎未就绪");
-      let forked: { text: string; cancelled: boolean };
-      try {
-        forked = await client.fork(entryId, { position });
-      } catch (err) {
-        // 引擎侧条目校验：position="before" 仅接受 user 消息条目（agent-session-runtime fork）
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("Invalid entry ID")) {
-          throw new ApiError(400, "invalid_entry", `entryId 不能作为 fork 点（${position} 语义不接受该条目）`);
-        }
-        if (message.includes("has not been saved yet")) {
-          throw new ApiError(409, "session_not_persisted", "会话尚未落盘，无法 fork");
-        }
-        throw err;
+      if (message.includes("has not been saved yet")) {
+        throw new ApiError(409, "session_not_persisted", "会话尚未落盘，无法 fork");
       }
-      if (forked.cancelled) {
-        throw new ApiError(409, "fork_cancelled", "fork 被扩展取消");
+      throw err;
+    }
+    if (forked.cancelled) {
+      throw new ApiError(409, "fork_cancelled", "fork 被扩展取消");
+    }
+    // fork 后引擎活跃会话已切换为新会话（createBranchedSession 即物化落盘并写
+    // parentSession 血缘）；durable id 解析同 createSession：活跃行 sessionPath
+    // 匹配 durableSessionId 为准，退化用 getState().sessionId + 内存别名。
+    const forkedState = await (
+      bound.client as unknown as { getState: () => Promise<{ sessionId?: unknown; sessionFile?: unknown }> }
+    ).getState();
+    const forkPath = typeof forkedState.sessionFile === "string" ? forkedState.sessionFile : "";
+    if (!forkPath) {
+      throw new ApiError(500, "fork_failed", "fork 后未取得新会话文件路径");
+    }
+    let id = typeof forkedState.sessionId === "string" ? forkedState.sessionId : "";
+    let durable = false;
+    try {
+      const rows = await bound.adapter.activeSessions();
+      this.rememberHandleRows(bound, rows);
+      const row = rows.find((r) => r.sessionPath === forkPath && r.durableSessionId);
+      if (row?.durableSessionId) {
+        id = row.durableSessionId;
+        durable = true;
       }
-      // fork 后引擎活跃会话已切换为新会话（createBranchedSession 即物化落盘并写
-      // parentSession 血缘）；durable id 解析同 createSession：活跃行 sessionPath
-      // 匹配 durableSessionId 为准，退化用 getState().sessionId + 内存别名。
-      const state = await (
-        client as unknown as { getState: () => Promise<{ sessionId?: unknown; sessionFile?: unknown }> }
-      ).getState();
-      const sessionPath = typeof state.sessionFile === "string" ? state.sessionFile : "";
-      if (!sessionPath) {
-        throw new ApiError(500, "fork_failed", "fork 后未取得新会话文件路径");
-      }
-      let id = typeof state.sessionId === "string" ? state.sessionId : "";
-      let durable = false;
-      try {
-        const rows = await this.requireAdapter().activeSessions();
-        this.rememberHandleRows(rows);
-        const row = rows.find((r) => r.sessionPath === sessionPath && r.durableSessionId);
-        if (row?.durableSessionId) {
-          id = row.durableSessionId;
-          durable = true;
-        }
-      } catch {
-        // 活跃行查询失败不影响 fork，退化为别名
-      }
-      if (!durable) {
-        if (!id) throw new ApiError(500, "fork_failed", "fork 后未取得新会话 id");
-        this.aliases.set(id, sessionPath);
-      }
-      // fork 已把引擎侧活跃切到新会话，但 adapter.active 仍指 fork 前的旧会话
-      // （只有 openSession 会更新它）。resolveSession/switchTo 的活跃快捷路径信任
-      // adapter.active——不对齐时按 fork id 的 messages/prompt/delete 会全部落到
-      // 旧会话文件（走查实锤：删 fork 行实删了源会话）。显式按新 sessionPath 重开对齐。
-      const realigned = await this.requireAdapter().openSession({ sessionPath });
-      if (durable) this.rememberHandle(realigned.routingId, id);
-      // 引擎活跃已是新会话，API 活跃跟随切换（后续 prompt 直达 fork 会话）
-      this.activeId = id;
-      return { id, sessionPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
-    });
+    } catch {
+      // 活跃行查询失败不影响 fork，退化为别名
+    }
+    if (!durable) {
+      if (!id) throw new ApiError(500, "fork_failed", "fork 后未取得新会话 id");
+      this.aliases.set(id, forkPath);
+    }
+    // 引擎绑定还原（T3 关键差异）：引擎注册表键是源会话路径，绑定必须回到源会话，
+    // 否则源会话的后续驾驶操作会路由进 fork 会话文件（破坏「引擎即会话」不变量）。
+    // fork 新会话不在此绑定——用户驱动它时 ensureForSession 按其路径懒起专属引擎，
+    // 与 CLI「新会话新进程」同构。adapter.active 只有 openSession 会更新，显式重开
+    // 对齐（历史走查教训：active 与引擎活跃错位时按 id 的操作会落到错误会话文件）。
+    const restored = await bound.adapter.openSession({ sessionPath: bound.sessionPath });
+    bound.activeId = sessionId;
+    if (durable) this.rememberHandleFor(bound, restored.routingId, sessionId);
+    return { id, sessionPath: forkPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
   }
 }
 
@@ -1615,12 +1719,23 @@ export class EngineRuntimeRegistry implements EngineGateway {
     private readonly manager: EngineProcessManager,
     private readonly opts: EngineRuntimeOptions,
   ) {
-    // 引擎崩溃/不可用：回合进行中先合成收尾事件（前端解锁），再清会话态
-    //（adapter 由 ensure() 按 client 更换重建）
+    // 引擎崩溃/不可用：按 sessionPath 路由到该会话的 crashSettle（multi-session-
+    // parallel T3 必修：旧按 projectPath 全结会误杀同项目兄弟会话的在途回合）。
+    // 回合进行中先合成收尾事件（前端解锁），再弃置该引擎绑定态（ensure 按 client
+    // 更换重建）。
     manager.onEvent((event) => {
       if (event.type === "process_crashed" || event.type === "engine_unavailable") {
-        const projectPath = (event as { projectPath?: string }).projectPath;
-        if (projectPath) this.runtimes.get(projectPath)?.crashSettle();
+        const { projectPath, sessionPath } = event as { projectPath?: string; sessionPath?: string };
+        const rt = projectPath ? this.runtimes.get(projectPath) : undefined;
+        if (!rt) return;
+        if (sessionPath) {
+          rt.crashSettleSession(sessionPath);
+        } else {
+          // 兜底：事件缺 sessionPath（类型上三事件恒带，理论不可达）——无法定位会话时
+          // 退回旧项目级全结口径：漏结算会让前端流式态挂死（不可自愈），过结算只多一次
+          // 可恢复的合成收尾，取过杀方向安全。
+          rt.crashSettleAll();
+        }
       }
     });
   }
@@ -1788,21 +1903,25 @@ export class EngineRuntimeRegistry implements EngineGateway {
   }
 
   async peekActiveSessionPaths(project: string): Promise<string[] | null> {
+    // T3：项目运行时不存在或无就绪引擎均返回 null（不触发 spawn；就绪并集判据
+    // 收敛在 probeRunStates 内按 readyEngines 判定）
     const rt = this.runtimes.get(project);
-    if (!rt || !rt.isReady()) return null;
+    if (!rt) return null;
     return rt.activeSessionPaths();
   }
 
   async peekRunStates(project: string): Promise<Map<string, ServerSessionRunState> | null> {
     const rt = this.runtimes.get(project);
-    if (!rt || !rt.isReady()) return null;
+    if (!rt) return null;
     return rt.peekRunStates();
   }
 
   /** wire sessionId（routing handle）→ durable id（SSE 信封注入用）。
-   * 不触发引擎 spawn；项目运行时不存在或映射不明返回 undefined（透传不猜）。 */
-  durableSessionIdFor(projectPath: string, handle: string): string | undefined {
-    return this.runtimes.get(projectPath)?.durableSessionIdFor(handle);
+   * sessionPath（桥附源引擎绑定）透传进双键查表：提供时仅解析该绑定，缺席走
+   * 兼容/诊断查表（多引擎下无绑定不猜，宁缺毋串）。不触发引擎 spawn；项目运行时
+   * 不存在或映射不明返回 undefined（透传不猜）。 */
+  durableSessionIdFor(projectPath: string, handle: string, sessionPath?: string): string | undefined {
+    return this.runtimes.get(projectPath)?.durableSessionIdFor(handle, sessionPath);
   }
 
   /** sessionId → 会话 store 行（title-gen 取数：path 供 jsonl 直读、name 供触发
@@ -1821,19 +1940,20 @@ export class EngineRuntimeRegistry implements EngineGateway {
   }
 
   async restartProject(project: string): Promise<void> {
-    // 重建 = 停旧进程 + 立即重新 spawn（新 spawn 参数生效）+ 会话态失效
-    // W1 #4：用 crashSettle 而非裸 invalidate——停进程时回合若在流式中，
-    // 先合成 agent_settled（reason:"engine_crash"）解锁前端流式态，再清态；
-    // 裸 invalidate 不发合成收尾，前端流式标记挂死（与崩溃路径同一缺陷形态）。
+    // 重建 = 停旧进程 + 会话态失效。W1 #4：用 crashSettle 而非裸 invalidate——停进程
+    // 时回合若在流式中，先合成 agent_settled（reason:"engine_crash"）解锁前端流式态，
+    // 再清态；裸 invalidate 不发合成收尾，前端流式标记挂死（与崩溃路径同一缺陷形态）。
     // 重放侧陈旧权限请求由 state_changed(to=stopped) 墓碑 + 本合成收尾双保险滤除。
-    await this.manager.stop(project);
-    this.runtimeFor(project).crashSettle();
-    await this.manager.ensureRunning(project);
+    // T3（multi-session-parallel）：引擎按会话键后项目级重启 = 停该项目全部会话引擎
+    // + 逐会话合成收尾；不再立即重拉——下次访问按需 ensure 即用新 spawn 参数
+    //（懒起语义，EngineGateway 契约原文「下次访问懒加载重建」）。
+    await this.manager.stopProject(project);
+    this.runtimeFor(project).crashSettleAll();
   }
 
   async stopAll(): Promise<void> {
     await this.manager.stopAll();
-    // 引擎全停即会话态全失效：清流式标记并停收尾监视定时器
-    for (const rt of this.runtimes.values()) rt.invalidate();
+    // 引擎全停即会话态全失效：清全部回合行（停收尾监视定时器）+ 弃置全部绑定态
+    for (const rt of this.runtimes.values()) rt.invalidateAll();
   }
 }

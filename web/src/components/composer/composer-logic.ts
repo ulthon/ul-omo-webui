@@ -372,3 +372,12 @@ export function stopIntent(
 ): "abort" | "background-hint" {
   return runState === "background_running" && !queueAvailable ? "background-hint" : "abort";
 }
+
+/** 撞车 409 常驻错误卡文案合成（multi-session-parallel T7）：服务端 message 携带
+ *  占用详情（含 sessionPath）时原样呈现——apiErrorMessage 对已映射码（already_processing
+ *  在 errors.ts 词典内）会丢弃服务端详情，撞车卡不走它；详情缺席才回退调用方传入的
+ *  词典文案（t(fallbackKey) 就地取词）。纯函数，DOM/i18n 无关。 */
+export function collisionCardText(err: unknown, fallbackText: string): string {
+  const detail = err instanceof Error ? err.message.trim() : "";
+  return detail.length > 0 ? detail : fallbackText;
+}

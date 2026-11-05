@@ -57,6 +57,7 @@ import {
   formatPasteKb,
   hasUploadingFileChip,
   historyPreview,
+  collisionCardText,
   pasteExceedsThreshold,
   readFileAsDataUrl,
   resetFileChip,
@@ -577,9 +578,14 @@ export function Composer({
         if (project && trimmed) void api.appendInputHistory(project, trimmed).catch(() => {});
         onSent();
       } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
-          // 兜底文案（spike 指引 4）：正常"发送撞回合"已转排队，409 仅剩外部驱动/状态漂移
-          setError(t("composer.sessionBusy"));
+        if (err instanceof ApiError && err.status === 409 && err.code === "already_processing") {
+          // 撞车常驻错误卡（multi-session-parallel T7，IS-4）：会话被外部引擎回合占用
+          // （外部 CLI 同开一会话/引擎侧守卫）。进会话消息流合成常驻卡（可回看不自动
+          // 消失，对齐 CLI 与既有错误卡形态），非 toast 非瞬时行内；详情含 sessionPath
+          // 原样呈现（collisionCardText），缺席回退词典文案。pushError 同文去重不堆叠。
+          useMessagesStore
+            .getState()
+            .pushError(sessionId, collisionCardText(err, t("chat.streamError.sessionBusy")));
         } else {
           // 发送失败入流（对齐 CLI 信息流）：会话上下文内错误不再瞬时提示，常驻错误卡可回看
           useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, "chat.streamError.sendFailed"));

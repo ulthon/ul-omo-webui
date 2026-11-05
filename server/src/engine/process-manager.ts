@@ -1,11 +1,16 @@
 /**
- * per-project 引擎子进程管理器（计划 todo 8）。
+ * per-session 引擎子进程管理器（计划 todo 8 起步；multi-session-parallel T1 键迁移）。
  *
- * 进程模型（docs/verification/01 结论 4）：每个项目一个 `--multi-session` stdio
- * 子进程承载该项目全部会话。官方 RpcClient 单连接同一时刻只驾驶一个活跃会话
- * （01 结论 4 的限制），并发驾驶需 `--listen` socket 多连接形态——是否切换留待
- * todo 9/10 集成时按实测决策；本管理器把 client 作为"主连接 + 健康检查 + 事件源"
- * 暴露，接口不锁死单连接语义。
+ * 进程模型（multi-session-parallel D1/D14，CLI 同构）：每个活跃会话一个 `--multi-session`
+ * stdio 子进程，注册表键 = sessionPath，spawn 健康检查通过后由管理器完成「会话绑定
+ * open」（open 失败走既有退避→unavailable 路径，引擎换代重拉时随 doStart 重新 open）。
+ * 官方 RpcClient 单连接同一时刻只驾驶一个活跃会话（01 结论 4 的限制），并发驾驶需
+ * `--listen` socket 多连接形态；本管理器把 client 作为"主连接 + 健康检查 + 事件源"
+ * 暴露，接口不锁死单连接语义。键迁移后单连接约束与「每引擎只绑死一个会话」一一对应。
+ * spawn cwd 与权限预设等附加参数仍按 ProjectEngine.projectPath 取值（buildSpawnOptions
+ * 取值面不变）；projectPath 由调用方在 ensureRunning(sessionPath, projectPath) 显式传入，
+ * 存入 ProjectEngine 与 PidRegistry 记录对，重启恢复/孤儿清扫读记录对，不做 sessionPath
+ * 反推解码。
  *
  * 状态机：
  *   stopped --ensureRunning--> starting --健康检查过--> ready
@@ -102,6 +107,14 @@ export interface EngineManagerOptions {
   /** 按项目的 spawn 附加参数（如 meta_kv 权限预设 → ["--permission-preset", 值]）。
    * spawn 参数级：变更后需重启项目引擎进程才生效。 */
   extraSpawnArgs?: (projectPath: string) => string[]
+  /** 会话后台任务探测（multi-session-parallel T2 空闲回收第三判据）：返回 true 视为
+   * 忙不回收——防 2026-11-04 3h53m 误杀事故（安静后台长任务被 idle_timeout 连根杀）
+   * 在多引擎下回归。装配层（index.ts）注入 api/background-tasks 的 sessionBackgroundRunning
+   * （jsonl 探测半边，mtime+size 指纹缓存摊销、读到的是当前落盘态非快照）；内存
+   * backgroundTaskLedger 是 api 层状态，按计划不取。engine 层不 import api 层
+   * （:307 就地复制纪律同源），故回调注入；缺省未注入 = 无第三判据（现状行为）。
+   * 回调异常由 isIdle 有界捕获按 false 降级（不炸状态机）。 */
+  sessionBackgroundRunning?: (sessionPath: string) => boolean
   /** 时钟（测试注入）。 */
   now?: () => number
   /** 进程探针（测试注入；默认 Linux /proc）。 */
@@ -116,6 +129,8 @@ export interface EngineManagerOptions {
 
 export interface EngineStatusSnapshot {
   projectPath: string
+  /** 引擎键：本引擎绑定的会话文件路径（multi-session-parallel T1） */
+  sessionPath: string
   state: EngineState
   pid: number | undefined
   consecutiveRestarts: number
@@ -126,22 +141,30 @@ export interface EngineStatusSnapshot {
   pendingPermissions: string[]
 }
 
+/** 引擎管理器事件。sessionPath = 引擎键（标识哪个引擎）；projectPath = 所属项目
+ * （multi-session-parallel 后定态：消费方均已会话粒度化——SSE 墓碑按会话可解析性
+ * 判杀（T4）、死亡接线/后台任务账本按死亡引擎的 sessionPath 收缩（F2 修复）、
+ * 崩溃路由按事件 sessionPath 结算（T3）；projectPath 仅作记录与项目级查询面）。 */
 export type EngineManagerEvent =
-  | { type: "state_changed"; projectPath: string; from: EngineState; to: EngineState }
+  | { type: "state_changed"; projectPath: string; sessionPath: string; from: EngineState; to: EngineState }
   /** 引擎 wire 事件透传（todo 10 事件桥汇聚用）。 */
-  | { type: "engine_event"; projectPath: string; event: RpcClientEvent }
+  | { type: "engine_event"; projectPath: string; sessionPath: string; event: RpcClientEvent }
   | {
       type: "process_crashed"
       projectPath: string
+      sessionPath: string
       pid: number | undefined
       consecutiveRestarts: number
       /** P1a：exit 事件可用时携带退出码/信号/存活时长（轮询检测路径缺省） */
       exit?: { code: number | null; signal: NodeJS.Signals | null; uptimeMs: number }
     }
-  | { type: "engine_unavailable"; projectPath: string; reason: string }
-  | { type: "engine_reclaimed"; projectPath: string; reason: "idle_timeout" }
+  | { type: "engine_unavailable"; projectPath: string; sessionPath: string; reason: string }
+  | { type: "engine_reclaimed"; projectPath: string; sessionPath: string; reason: "idle_timeout" }
 
-/** 上层在进程 ready 后可注入的会话级预热钩子（如预 open 一个空闲会话）。 */
+/** 上层在进程 ready 后可注入的会话级预热钩子（如预 open 一个空闲会话）。
+ *  T1 冲突注记（multi-session-parallel）：生产装配（index.ts）不注入本钩子；
+ *  多引擎下启用时钩子内 open 必须限定 engine.sessionPath——projectPath 在
+ *  每会话一引擎口径下不再唯一定位引擎，按项目 open 会误认领兄弟会话引擎。 */
 export type WarmupHook = (projectPath: string, client: RpcClient) => void | Promise<void>
 
 /** 四型对话框请求（verification/02）+ question（q1 提问卡片）；
@@ -164,11 +187,17 @@ const DEFAULTS = {
   healthPingTimeoutMs: 3000,
   stopGraceMs: 3000,
   crashPollMs: 1000,
-  probeWriteTimeoutMs: 15000,
+  // 2026-11-05 深夜事故：重负载下引擎冷启 10-26s（F3 实测两次超窗）致 session_bind
+  // probe 超时连续失败 5 次打穿 unavailable（23:28 journal 实证）。窗放宽到 45s 覆盖
+  // 观测最坏值仍有界防挂；读探针周期不变。
+  probeWriteTimeoutMs: 45000,
 } as const
 
 interface ProjectEngine {
+  /** 所属项目（spawn cwd 与权限预设等附加参数取值面；调用方显式传入，不反推） */
   projectPath: string
+  /** 引擎键：本引擎绑定的会话文件路径（multi-session-parallel T1） */
+  sessionPath: string
   state: EngineState
   client: EngineClientLike | null
   pid: number | undefined
@@ -351,8 +380,9 @@ export class EngineProcessManager {
 
   // ---- 查询 ----
 
-  getStatus(projectPath: string): EngineStatusSnapshot | undefined {
-    const engine = this.engines.get(projectPath)
+  /** 按引擎键（sessionPath）查快照。 */
+  getStatus(sessionPath: string): EngineStatusSnapshot | undefined {
+    const engine = this.engines.get(sessionPath)
     return engine ? this.snapshot(engine) : undefined
   }
 
@@ -369,8 +399,8 @@ export class EngineProcessManager {
   }
 
   /** 主连接（生产恒为官方 RpcClient；供 adapter 驾驶会话）。ready 前为 undefined。 */
-  getClient(projectPath: string): RpcClient | undefined {
-    const engine = this.engines.get(projectPath)
+  getClient(sessionPath: string): RpcClient | undefined {
+    const engine = this.engines.get(sessionPath)
     if (!engine || engine.state !== "ready" || !engine.client) return undefined
     return engine.client as unknown as RpcClient
   }
@@ -388,13 +418,14 @@ export class EngineProcessManager {
     // 采集增强批：生命周期事件常开观测（engine_event 帧级在事件桥 publish 侧，不在此重复）
     switch (event.type) {
       case "state_changed":
-        log.info("engine", "state", { proj: event.projectPath, from: event.from, to: event.to })
+        log.info("engine", "state", { proj: event.projectPath, sess: event.sessionPath, from: event.from, to: event.to })
         break
       case "process_crashed":
         // P1a（2026-11-05）：死因入日志——此前 pid 轮询只能记“消失”，
         // code/signal 需跨机取证才能定性（2026-11-05 排障实锤）
         log.warn("engine", "crash", {
           proj: event.projectPath,
+          sess: event.sessionPath,
           pid: event.pid,
           restarts: event.consecutiveRestarts,
           code: event.exit?.code ?? "-",
@@ -403,10 +434,10 @@ export class EngineProcessManager {
         })
         break
       case "engine_unavailable":
-        log.error("engine", "unavailable", { proj: event.projectPath, reason: event.reason })
+        log.error("engine", "unavailable", { proj: event.projectPath, sess: event.sessionPath, reason: event.reason })
         break
       case "engine_reclaimed":
-        log.info("engine", "reclaimed", { proj: event.projectPath, reason: event.reason })
+        log.info("engine", "reclaimed", { proj: event.projectPath, sess: event.sessionPath, reason: event.reason })
         break
       case "engine_event":
         break
@@ -440,9 +471,12 @@ export class EngineProcessManager {
 
   // ---- 生命周期 ----
 
-  /** 确保项目引擎已 spawn 且健康检查通过。并发调用去重；unavailable 时抛错。 */
-  async ensureRunning(projectPath: string): Promise<EngineStatusSnapshot> {
-    const engine = this.engines.get(projectPath) ?? this.createEngine(projectPath)
+  /** 确保会话引擎已 spawn、健康检查通过并完成该会话的绑定 open（multi-session-parallel
+   * T1：ensureRunning(sessionPath, projectPath)，projectPath 由调用方显式传入）。并发调用
+   * 去重；unavailable 时抛错。projectPath 仅作 spawn cwd/附加参数取值面与记录对存储，
+   * 引擎查找一律按 sessionPath 键。 */
+  async ensureRunning(sessionPath: string, projectPath: string): Promise<EngineStatusSnapshot> {
+    const engine = this.engines.get(sessionPath) ?? this.createEngine(sessionPath, projectPath)
     if (engine.state === "ready") {
       // 健康守卫（任务 5）：换引擎前先短超时 RPC ping 现有引擎——健康直接复用
       // （不重拉、不搅动注册表）；ping 失败/超时或 pid 已死按崩溃处理（杀残留
@@ -457,6 +491,7 @@ export class EngineProcessManager {
       this.emit({
         type: "process_crashed",
         projectPath: engine.projectPath,
+        sessionPath: engine.sessionPath,
         pid: deadPid,
         consecutiveRestarts: engine.consecutiveRestarts + 1,
       })
@@ -469,7 +504,7 @@ export class EngineProcessManager {
     }
     if (engine.state === "stopping") {
       // 等关停落定再重启（避免新 client 与旧关停竞争）
-      await this.stop(projectPath)
+      await this.stop(sessionPath)
     }
     if (!engine.startPromise) {
       engine.startPromise = this.doStart(engine).finally(() => {
@@ -481,19 +516,25 @@ export class EngineProcessManager {
   }
 
   /** 从 unavailable 显式恢复（清零失败计数重试；API/SSE 报错后的手动/自动恢复入口）。 */
-  async recover(projectPath: string): Promise<EngineStatusSnapshot> {
-    const engine = this.engines.get(projectPath)
-    if (engine && engine.state === "unavailable") {
+  async recover(sessionPath: string): Promise<EngineStatusSnapshot> {
+    const engine = this.engines.get(sessionPath)
+    if (!engine) {
+      // 键迁移后 projectPath 来自既有引擎记录对：从未 ensure 的键无 projectPath 可取，
+      // 拒绝而非以空 cwd 起引擎（无生产调用方，测试均先 ensure）
+      throw new Error(`recover 目标引擎不存在（从未 ensure）：${sessionPath}`)
+    }
+    if (engine.state === "unavailable") {
       engine.consecutiveRestarts = 0
       engine.lastError = undefined
       this.transition(engine, "stopped")
     }
-    return this.ensureRunning(projectPath)
+    return this.ensureRunning(sessionPath, engine.projectPath)
   }
 
-  private createEngine(projectPath: string): ProjectEngine {
+  private createEngine(sessionPath: string, projectPath: string): ProjectEngine {
     const engine: ProjectEngine = {
       projectPath,
+      sessionPath,
       state: "stopped",
       client: null,
       pid: undefined,
@@ -511,7 +552,7 @@ export class EngineProcessManager {
       unsubExit: null,
       lastExit: null,
     }
-    this.engines.set(projectPath, engine)
+    this.engines.set(sessionPath, engine)
     return engine
   }
 
@@ -585,6 +626,7 @@ export class EngineProcessManager {
           this.registry.upsert({
             pid: engine.pid,
             projectPath: engine.projectPath,
+            sessionPath: engine.sessionPath,
             startedAt: this.now(),
           })
         }
@@ -607,6 +649,7 @@ export class EngineProcessManager {
           this.emit({
             type: "process_crashed",
             projectPath: engine.projectPath,
+            sessionPath: engine.sessionPath,
             pid: engine.pid,
             consecutiveRestarts: engine.consecutiveRestarts + 1,
           })
@@ -615,6 +658,10 @@ export class EngineProcessManager {
           )
         }
       }
+      // 会话绑定 open（multi-session-parallel T1）：健康检查/试写门禁过后立即 open
+      // 本引擎键定的会话——每引擎只驾驶自己会话（D14）。失败抛错走下方既有 catch
+      // （退避→连续失败达上限 unavailable），引擎换代重拉时随 doStart 重新 open。
+      await this.openBoundSession(engine, client)
       engine.startedAt = this.now()
       engine.lastActivityAt = this.now()
       engine.consecutiveRestarts = 0
@@ -703,6 +750,37 @@ export class EngineProcessManager {
       } catch {
         // 尽力清理
       }
+    }
+  }
+
+  /** 会话绑定 open（multi-session-parallel T1）：open 本引擎键定的会话文件。
+   * 不携带 provider/model——与 adapter switchTo 的 open 形态一致，会话沿用自身存档
+   * 驾驶参数（createSession 的显式参数经 adapter 二次同路径 open 覆盖，F5）。
+   * 响应校验与 probe gate 同族：success 帧且引擎认领的 sessionFile 就是绑定路径，
+   * 认领其它路径视为失败（防误导性成功）。有界等待（probeWriteTimeoutMs）防悬挂。
+   * 失败抛错 → doStart 既有 catch → 退避 → 连续失败达上限 unavailable。 */
+  private async openBoundSession(engine: ProjectEngine, client: EngineClientLike): Promise<void> {
+    const send = (client as unknown as { send?: (m: unknown) => Promise<unknown> }).send
+    if (typeof send !== "function") {
+      throw new Error(`[session_bind_failed] 引擎 client 无 send 面，无法绑定会话：${engine.sessionPath}`)
+    }
+    let res: { success?: unknown; data?: { state?: { sessionId?: unknown; sessionFile?: unknown } | null } | null } | null | undefined
+    try {
+      res = (await this.bounded(
+        send.call(client, { type: "open_session", sessionPath: engine.sessionPath }),
+      )) as typeof res
+    } catch (err) {
+      // RPC 级失败（引擎拒绝/超时悬挂有界化）同归结构化码族，与 probe_gate_failed 同约定
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new Error(`[session_bind_failed] 会话绑定 open 调用失败（${engine.sessionPath}）：${detail.slice(0, 200)}`)
+    }
+    const state = res?.success === true && typeof res.data === "object" && res.data !== null ? res.data.state : undefined
+    const claimedPath = typeof state?.sessionFile === "string" ? state.sessionFile : undefined
+    const claimedId = typeof state?.sessionId === "string" ? state.sessionId : undefined
+    if (res?.success !== true || !claimedPath || !claimedId || resolve(claimedPath) !== resolve(engine.sessionPath)) {
+      throw new Error(
+        `[session_bind_failed] 会话绑定 open 未认领绑定路径（${engine.sessionPath}）：${JSON.stringify(res)?.slice(0, 300)}`,
+      )
     }
   }
 
@@ -873,6 +951,7 @@ export class EngineProcessManager {
     this.emit({
       type: "process_crashed",
       projectPath: engine.projectPath,
+      sessionPath: engine.sessionPath,
       pid,
       consecutiveRestarts: engine.consecutiveRestarts + 1,
       ...(exit ? { exit } : {}),
@@ -889,6 +968,7 @@ export class EngineProcessManager {
       this.emit({
         type: "engine_unavailable",
         projectPath: engine.projectPath,
+        sessionPath: engine.sessionPath,
         reason: engine.lastError ?? `连续失败 ${engine.consecutiveRestarts} 次`,
       })
       return
@@ -901,14 +981,14 @@ export class EngineProcessManager {
     engine.backoffTimer = setTimeout(() => {
       engine.backoffTimer = null
       // 失败已被 doStart 记录并继续调度退避；这里只兜住未预期的同步异常
-      void this.ensureRunning(engine.projectPath).catch(() => {})
+      void this.ensureRunning(engine.sessionPath, engine.projectPath).catch(() => {})
     }, delay)
   }
 
   /** 优雅关停：优先进程内 client.stop()（内建 SIGTERM→1s→SIGKILL，verification/04），
    * 兜底按 PID SIGTERM→超时→SIGKILL。 */
-  async stop(projectPath: string): Promise<void> {
-    const engine = this.engines.get(projectPath)
+  async stop(sessionPath: string): Promise<void> {
+    const engine = this.engines.get(sessionPath)
     if (!engine) return
     if (engine.state === "stopped") return
     if (engine.state === "starting" && engine.startPromise) {
@@ -929,6 +1009,15 @@ export class EngineProcessManager {
   async stopAll(): Promise<void> {
     const paths = [...this.engines.keys()]
     await Promise.all(paths.map((p) => this.stop(p)))
+  }
+
+  /** 项目级停：停该项目全部会话引擎（供 restartProject 与进程管理项目级 stop；
+   * 管理行已会话化，行内定向单停走 stop(sessionPath)——multi-session-parallel T5/T6 定态）。 */
+  async stopProject(projectPath: string): Promise<void> {
+    const keys = [...this.engines.values()]
+      .filter((e) => e.projectPath === projectPath)
+      .map((e) => e.sessionPath)
+    await Promise.all(keys.map((k) => this.stop(k)))
   }
 
   private async shutdownProcess(engine: ProjectEngine): Promise<void> {
@@ -980,9 +1069,24 @@ export class EngineProcessManager {
 
   // ---- 空闲回收 ----
 
-  /** 空闲 = 无运行中会话 且 无挂起未应答权限请求（P0-2 实证约束）。 */
+  /** 空闲 = 无运行中会话 且 无挂起未应答权限请求（P0-2 实证约束）
+   * 且 非后台运行中（multi-session-parallel T2 第三判据，防 3h53m 误杀回归）。
+   * 前两判据任一非空即忙短路（现状保持）；后台探测仅在前两者空时才查——探测有
+   * mtime/size 指纹缓存摊销，常态零额外磁盘读。 */
   private isIdle(engine: ProjectEngine): boolean {
-    return engine.runningSessions.size === 0 && engine.pendingPermissions.size === 0
+    if (engine.runningSessions.size > 0 || engine.pendingPermissions.size > 0) return false
+    return !this.backgroundRunning(engine)
+  }
+
+  /** 注入探针的有界调用：回调异常按 false（无后台任务）降级——等价 T1 现行为，
+   * 不让注入方 bug 炸进状态机共用调用链（trackWireEvent/reportX 均经 isIdle）。
+   * 宁可漏判忙（探针坏了退回旧行为）也不崩管理器。 */
+  private backgroundRunning(engine: ProjectEngine): boolean {
+    try {
+      return this.opts.sessionBackgroundRunning?.(engine.sessionPath) ?? false
+    } catch {
+      return false
+    }
   }
 
   private rescheduleIdleCheck(engine: ProjectEngine): void {
@@ -1004,16 +1108,16 @@ export class EngineProcessManager {
         this.rescheduleIdleCheck(engine)
         return
       }
-      this.emit({ type: "engine_reclaimed", projectPath: engine.projectPath, reason: "idle_timeout" })
-      void this.stop(engine.projectPath).catch(() => {})
+      this.emit({ type: "engine_reclaimed", projectPath: engine.projectPath, sessionPath: engine.sessionPath, reason: "idle_timeout" })
+      void this.stop(engine.sessionPath).catch(() => {})
     }, remaining)
   }
 
   // ---- 活动上报（adapter 集成面；事件流跟踪为兜底，以下 API 为显式修正口）----
 
-  /** adapter open 会话后上报（显式口径优先于事件流推断）。 */
-  reportSessionActive(projectPath: string, sessionId: string): void {
-    const engine = this.engines.get(projectPath)
+  /** adapter open 会话后上报（显式口径优先于事件流推断）。按引擎键（sessionPath）。 */
+  reportSessionActive(sessionPath: string, sessionId: string): void {
+    const engine = this.engines.get(sessionPath)
     if (!engine) return
     engine.runningSessions.add(sessionId)
     engine.lastActivityAt = this.now()
@@ -1021,8 +1125,8 @@ export class EngineProcessManager {
   }
 
   /** adapter close 会话后上报。 */
-  reportSessionClosed(projectPath: string, sessionId: string): void {
-    const engine = this.engines.get(projectPath)
+  reportSessionClosed(sessionPath: string, sessionId: string): void {
+    const engine = this.engines.get(sessionPath)
     if (!engine) return
     engine.runningSessions.delete(sessionId)
     engine.lastActivityAt = this.now()
@@ -1030,8 +1134,8 @@ export class EngineProcessManager {
   }
 
   /** adapter 应答权限请求后上报（应答 wire 上无事件回声，必须显式上报解除忙）。 */
-  reportPermissionAnswered(projectPath: string, uiRequestId: string): void {
-    const engine = this.engines.get(projectPath)
+  reportPermissionAnswered(sessionPath: string, uiRequestId: string): void {
+    const engine = this.engines.get(sessionPath)
     if (!engine) return
     engine.pendingPermissions.delete(uiRequestId)
     engine.lastActivityAt = this.now()
@@ -1062,7 +1166,7 @@ export class EngineProcessManager {
         if (typeof anyE.id === "string") engine.pendingPermissions.delete(anyE.id)
         break
     }
-    this.emit({ type: "engine_event", projectPath: engine.projectPath, event })
+    this.emit({ type: "engine_event", projectPath: engine.projectPath, sessionPath: engine.sessionPath, event })
     this.rescheduleIdleCheck(engine)
   }
 
@@ -1107,12 +1211,13 @@ export class EngineProcessManager {
     if (engine.state === to) return
     const from = engine.state
     engine.state = to
-    this.emit({ type: "state_changed", projectPath: engine.projectPath, from, to })
+    this.emit({ type: "state_changed", projectPath: engine.projectPath, sessionPath: engine.sessionPath, from, to })
   }
 
   private snapshot(engine: ProjectEngine): EngineStatusSnapshot {
     return {
       projectPath: engine.projectPath,
+      sessionPath: engine.sessionPath,
       state: engine.state,
       pid: engine.pid,
       consecutiveRestarts: engine.consecutiveRestarts,

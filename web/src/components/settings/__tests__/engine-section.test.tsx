@@ -2,8 +2,10 @@
 // 设置页「引擎」分区单测（2026-11-04 空闲回收配置化 + 进程管理）。环境说明同
 // auth-section.test.tsx：@ts-nocheck + 被测模块动态 import + @happy-dom 全局注册 +
 // api 整模块代理 mock。验收：(a) 六档单选渲染、缺省 7 天选中；(b) kv 为 never 时
-// 「永不」选中；(c) 换档调 putSettings 且入参正确；(d) 进程列表渲染（项目名/状态/
-// 停止钮）；(e) 运行回合 >0 时 confirm 确认后调 stopEngine，取消则不调。
+// 「永不」选中；(c) 换档调 putSettings 且入参正确；(d) 进程列表每会话一行渲染
+// （项目·会话/状态/停止钮；inactive 行灰显不误报 ready）；(e) 行内定向停以
+// {sessionPath} 形态调 stopEngine（confirm 拦截保留）；(f) 头部「全部停止」按项目
+// 去重以 {project} 形态调 stopEngine，仅 inactive 行时禁用。
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -102,37 +104,99 @@ describe("引擎分区（2026-11-04）", () => {
     expect(putSettingsFn).toHaveBeenCalledWith({ [ENGINE_IDLE_TIMEOUT_KV]: "never" });
   });
 
-  test("(d) 进程列表渲染项目名与停止钮", async () => {
+  test("(d) 进程列表每会话一行：项目·会话短显；inactive 行灰显不误报 ready", async () => {
     listEnginesFn.mockResolvedValue({
       engines: [
-        { projectPath: "/data/projects/alpha", state: "ready", pid: 42, restarts: 0, runningSessions: 0, lastActivityAt: 1793800000000 },
-        { projectPath: "/data/projects/beta", state: "inactive", restarts: 0, runningSessions: 0, lastActivityAt: null },
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-aaa.jsonl", state: "ready", pid: 42, restarts: 0, runningSessions: 0, lastActivityAt: 1793800000000 },
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-bbb.jsonl", state: "ready", pid: 43, restarts: 0, runningSessions: 1, lastActivityAt: 1793800000000 },
+        { projectPath: "/data/projects/beta", sessionPath: null, state: "inactive", restarts: 0, runningSessions: 0, lastActivityAt: null },
       ],
     });
     const { container } = mount();
     await flush();
-    expect(container.querySelector('[data-testid="engine-proc-row-alpha"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="engine-proc-stop-alpha"]')).toBeTruthy();
-    expect(container.textContent).toContain("alpha");
+    // 双会话双行 + inactive 项目行
+    expect(container.querySelector('[data-testid="engine-proc-row-s-aaa"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="engine-proc-row-s-bbb"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="engine-proc-row-beta"]')).toBeTruthy();
+    // 会话文件名短显（去 .jsonl 后缀）与项目名同展
+    expect(container.textContent).toContain("alpha · s-aaa");
+    expect(container.textContent).toContain("alpha · s-bbb");
+    // 头部项目级停止入口保留
+    expect(container.querySelector('[data-testid="engine-proc-stop-all"]')).toBeTruthy();
+    // inactive 行灰显且不误报 ready/运行中（stale_state 对抗）
+    const betaRow = container.querySelector('[data-testid="engine-proc-row-beta"]');
+    expect(betaRow.className).toContain("opacity-50");
+    expect(betaRow.textContent).toContain("engineStateInactive");
+    expect(betaRow.textContent).not.toContain("engineStateReady");
+    expect(betaRow.textContent).not.toContain("engineProcRunningSessions");
+    const betaStop = container.querySelector('[data-testid="engine-proc-stop-beta"]') as HTMLButtonElement;
+    expect(betaStop.disabled).toBe(true);
   });
 
-  test("(e) 运行回合>0：confirm 取消不调 stopEngine，确认则调", async () => {
+  test("(e) 行内定向停：入参为 {sessionPath} 对象形态；confirm 取消不调，确认则调", async () => {
     listEnginesFn.mockResolvedValue({
-      engines: [{ projectPath: "/data/projects/busy", state: "ready", pid: 7, restarts: 0, runningSessions: 2, lastActivityAt: null }],
+      engines: [
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-aaa.jsonl", state: "ready", pid: 7, restarts: 0, runningSessions: 2, lastActivityAt: null },
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-bbb.jsonl", state: "ready", pid: 8, restarts: 0, runningSessions: 0, lastActivityAt: null },
+      ],
     });
     const confirmSpy = vi.spyOn(globalThis, "confirm");
     const { container } = mount();
     await flush();
-    const btn = container.querySelector('[data-testid="engine-proc-stop-busy"]');
-
-    confirmSpy.mockReturnValueOnce(false);
-    btn.click();
-    expect(stopEngineFn).not.toHaveBeenCalled();
-
-    confirmSpy.mockReturnValueOnce(true);
-    btn.click();
+    // 空闲会话定向停：无需 confirm，入参必须是 {sessionPath} 形态（非仅按钮存在）
+    const idleBtn = container.querySelector('[data-testid="engine-proc-stop-s-bbb"]') as HTMLButtonElement;
+    idleBtn.click();
     await flush();
-    expect(stopEngineFn).toHaveBeenCalledWith("/data/projects/busy");
+    expect(stopEngineFn).toHaveBeenCalledTimes(1);
+    expect(stopEngineFn).toHaveBeenCalledWith({ sessionPath: "/store/alpha/s-bbb.jsonl" });
+    expect(stopEngineFn).not.toHaveBeenCalledWith({ project: expect.anything() });
+
+    // 忙会话定向停：confirm 取消不调，确认后仍以 {sessionPath} 形态定向
+    stopEngineFn.mockClear();
+    const busyBtn = container.querySelector('[data-testid="engine-proc-stop-s-aaa"]') as HTMLButtonElement;
+    confirmSpy.mockReturnValueOnce(false);
+    busyBtn.click();
+    expect(stopEngineFn).not.toHaveBeenCalled();
+    confirmSpy.mockReturnValueOnce(true);
+    busyBtn.click();
+    await flush();
+    expect(stopEngineFn).toHaveBeenCalledWith({ sessionPath: "/store/alpha/s-aaa.jsonl" });
     confirmSpy.mockRestore();
+  });
+
+  test("(f) 全部停止：按项目去重以 {project} 形态调用；取消不调；仅 inactive 行时禁用", async () => {
+    listEnginesFn.mockResolvedValue({
+      engines: [
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-aaa.jsonl", state: "ready", pid: 1, restarts: 0, runningSessions: 1, lastActivityAt: null },
+        { projectPath: "/data/projects/alpha", sessionPath: "/store/alpha/s-bbb.jsonl", state: "ready", pid: 2, restarts: 0, runningSessions: 0, lastActivityAt: null },
+        { projectPath: "/data/projects/beta", sessionPath: "/store/beta/s-ccc.jsonl", state: "ready", pid: 3, restarts: 0, runningSessions: 0, lastActivityAt: null },
+      ],
+    });
+    const confirmSpy = vi.spyOn(globalThis, "confirm");
+    const { container } = mount();
+    await flush();
+    const stopAllBtn = container.querySelector('[data-testid="engine-proc-stop-all"]') as HTMLButtonElement;
+    confirmSpy.mockReturnValueOnce(false);
+    stopAllBtn.click();
+    expect(stopEngineFn).not.toHaveBeenCalled();
+    confirmSpy.mockReturnValueOnce(true);
+    stopAllBtn.click();
+    await flush();
+    // alpha 两个会话只触发一次项目级停；beta 一次；共两次 {project} 形态
+    expect(stopEngineFn).toHaveBeenCalledTimes(2);
+    expect(stopEngineFn).toHaveBeenCalledWith({ project: "/data/projects/alpha" });
+    expect(stopEngineFn).toHaveBeenCalledWith({ project: "/data/projects/beta" });
+    expect(stopEngineFn).not.toHaveBeenCalledWith({ sessionPath: expect.anything() });
+    confirmSpy.mockRestore();
+  });
+
+  test("(g) 仅 inactive 行时全部停止禁用", async () => {
+    listEnginesFn.mockResolvedValue({
+      engines: [{ projectPath: "/data/projects/beta", sessionPath: null, state: "inactive", restarts: 0, runningSessions: 0, lastActivityAt: null }],
+    });
+    const { container } = mount();
+    await flush();
+    const stopAllBtn = container.querySelector('[data-testid="engine-proc-stop-all"]') as HTMLButtonElement;
+    expect(stopAllBtn.disabled).toBe(true);
   });
 });

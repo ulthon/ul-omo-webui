@@ -3,7 +3,7 @@
 export const errors = {
   // 引擎与回合状态
   engineNotReady: "Engine not ready; try again shortly",
-  notStarted: "Project runtime not started",
+  unknownSession: "No engine process for this session",
   alreadyProcessing: "A turn is already running in this session; wait or abort first",
   alreadyCompacted: "Context already compacted; nothing new to compact",
   nothingToCompact: "Session context is still small; no compaction needed",

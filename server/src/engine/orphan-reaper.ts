@@ -76,7 +76,15 @@ export const linuxProcProbe: ProcProbe = {
 }
 
 export interface OrphanReapResult {
-  killed: Array<{ pid: number; source: "registry" | "scan"; projectPath: string }>
+  killed: Array<{
+    pid: number
+    source: "registry" | "scan"
+    projectPath: string
+    /** 引擎键定的会话路径（T4 multi-session-parallel 会话粒度观测）：registry 判定
+     * 携带登记记录对（projectPath+sessionPath），scan 判定按项目 cwd 扫描无会话
+     * 归属故缺席。 */
+    sessionPath?: string
+  }>
   skipped: Array<{ pid: number; reason: string }>
   /** 登记表里已死亡的记录（进程自然退出，仅清记录）。 */
   deadRecords: number[]
@@ -156,7 +164,12 @@ export async function reapOrphanEngines(opts: {
     }
     // engineCliPath 不可得时降级为"登记 PID + cwd 双因子"：记录本身出自本管理器，可信度足够
     if (await killWithGrace(record.pid)) {
-      result.killed.push({ pid: record.pid, source: "registry", projectPath: record.projectPath })
+      result.killed.push({
+        pid: record.pid,
+        source: "registry",
+        projectPath: record.projectPath,
+        sessionPath: record.sessionPath,
+      })
     } else {
       result.skipped.push({ pid: record.pid, reason: "终止失败" })
     }

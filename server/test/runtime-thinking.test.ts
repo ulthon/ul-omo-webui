@@ -37,17 +37,12 @@ function sessionFile(agentDir: string, id: string): string {
   return path
 }
 
-/** fake 引擎 RPC 面：prompt 记录 (message, options)，其余为 adapter 握手/活跃行最小面 */
+/** fake 引擎 RPC 面（T3 路径键控：每会话一实例）：prompt 记录 (message, options)，
+ * 其余为 adapter 握手/活跃行最小面；事件监听可注入收尾回声（结算用，禁真睡）。 */
 class FakeEngineRpc {
   promptCalls: Array<{ message: string; options?: { thinkingLevel?: string; images?: unknown } }> = []
-  private routing = 1
-  private readonly lowPath: string
-  private readonly maxPath: string
-
-  constructor(lowPath: string, maxPath: string) {
-    this.lowPath = lowPath
-    this.maxPath = maxPath
-  }
+  readonly handles: string[] = []
+  private readonly listeners: Array<(event: unknown) => void> = []
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -60,17 +55,15 @@ class FakeEngineRpc {
     sessionId: string
     state: { sessionId: string; sessionFile?: string }
   }> {
-    const handle = `rpc-${this.routing++}`
+    const handle = `rpc-${this.handles.length + 1}`
+    this.handles.push(handle)
     return { sessionId: handle, state: { sessionId: handle, sessionFile: options.sessionPath } }
   }
 
   async closeSession(): Promise<void> {}
 
   async listSessions(): Promise<Array<Record<string, unknown>>> {
-    return [
-      { sessionId: "rpc-low", durableSessionId: LOW_ID, sessionPath: this.lowPath, cwd: PROJECT, status: "open" },
-      { sessionId: "rpc-max", durableSessionId: MAX_ID, sessionPath: this.maxPath, cwd: PROJECT, status: "open" },
-    ]
+    return []
   }
 
   async prompt(message: string, options?: { thinkingLevel?: string; images?: unknown }): Promise<string> {
@@ -79,8 +72,16 @@ class FakeEngineRpc {
   }
 
   async abort(): Promise<void> {}
-  onEvent(): () => void {
-    return () => {}
+  onEvent(listener: (event: unknown) => void): () => void {
+    this.listeners.push(listener)
+    return () => {
+      const i = this.listeners.indexOf(listener)
+      if (i >= 0) this.listeners.splice(i, 1)
+    }
+  }
+  /** 测试注入引擎回声帧（wire handle 归属结算） */
+  emit(event: unknown): void {
+    for (const fn of [...this.listeners]) fn(event)
   }
   async sendExtensionUIResponse(): Promise<void> {}
   async getAvailableModels(): Promise<unknown[]> {
@@ -98,6 +99,9 @@ class FakeEngineRpc {
   async getEntries(): Promise<{ entries: unknown[]; leafId: string | null }> {
     return { entries: [], leafId: null }
   }
+  async getState(): Promise<Record<string, unknown>> {
+    return {}
+  }
 }
 
 describe("thinkingLevel 运行时透传（W2 todo 7）", () => {
@@ -109,10 +113,15 @@ describe("thinkingLevel 运行时透传（W2 todo 7）", () => {
       const lowPath = sessionFile(agentDir, LOW_ID)
       const maxPath = sessionFile(agentDir, MAX_ID)
 
-      const rpc = new FakeEngineRpc(lowPath, maxPath)
+      const lowRpc = new FakeEngineRpc()
+      const maxRpc = new FakeEngineRpc()
+      const rpcs = new Map([
+        [lowPath, lowRpc],
+        [maxPath, maxRpc],
+      ])
       const fakeManager = {
         ensureRunning: async () => {},
-        getClient: (_project: string) => rpc,
+        getClient: (sessionPath: string) => rpcs.get(sessionPath),
         getStatus: () => ({ state: "ready" }),
         onEvent: (_listener: (event: unknown) => void) => () => {},
         stop: async () => {},
@@ -127,15 +136,19 @@ describe("thinkingLevel 运行时透传（W2 todo 7）", () => {
       // low 档：RPC options 收到 thinkingLevel="low"
       const lowReceipt = await registry.prompt(LOW_ID, { text: "低档", thinkingLevel: "low" })
       expect(lowReceipt.disposition).toBe("started")
-      expect(rpc.promptCalls[0]).toEqual({ message: "低档", options: { thinkingLevel: "low" } })
+      expect(lowRpc.promptCalls[0]).toEqual({ message: "低档", options: { thinkingLevel: "low" } })
 
-      // max 档（另一会话，避开单驱动 409）：options 逐回合生效
+      // max 档（另一会话）：options 逐回合生效
       await registry.prompt(MAX_ID, { text: "高档", thinkingLevel: "max" })
-      expect(rpc.promptCalls[1]).toEqual({ message: "高档", options: { thinkingLevel: "max" } })
+      expect(maxRpc.promptCalls[0]).toEqual({ message: "高档", options: { thinkingLevel: "max" } })
+
+      // 首回合收尾（引擎回声按 wire handle 归属结算，禁真睡）：清 LOW 的在途回合行，
+      // 缺省档才能对同会话再发（T3 单驱动按 sessionPath 键判定）
+      lowRpc.emit({ type: "agent_end", sessionId: lowRpc.handles[0] })
 
       // 缺省：options 不带 thinkingLevel（引擎用会话缺省档）
       await registry.prompt(LOW_ID, { text: "缺省" })
-      expect(rpc.promptCalls[2].options).toEqual({})
+      expect(lowRpc.promptCalls[1].options).toEqual({})
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

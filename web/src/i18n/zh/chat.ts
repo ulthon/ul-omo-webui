@@ -347,9 +347,11 @@ export const chat = {
     memoryReflectionPausedProbe: "下次自动探针 {time}",
     memoryReflectionPausedRetry: "可运行 /reflect 立即重试",
   },
-  /** 流内错误卡（发送失败入流，对齐 CLI） */
+  /** 流内错误卡（发送失败入流，对齐 CLI）；sessionBusy=撞车 409 常驻卡回退文案
+   *  （multi-session-parallel T7，服务端详情含 sessionPath 时原样呈现） */
   streamError: {
     dismiss: "关闭",
     sendFailed: "发送失败",
+    sessionBusy: "该会话正被另一个引擎回合占用：等外部回合落定或去 CLI 侧中断后再发送",
   },
 } as const;

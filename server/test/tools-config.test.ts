@@ -284,21 +284,21 @@ describe("工具启停 restart 集成（组合根同构 extraSpawnArgs）", () =
       extraSpawnArgs: extra,
     });
     try {
-      await manager.ensureRunning(projWith);
+      await manager.ensureRunning(join(projWith, "s.jsonl"), projWith);
       expect(client.spawnOpts.args).toContain("--exclude-tools");
       expect(client.spawnOpts.args).toContain("write,bash");
       await manager.stopAll();
 
       // 改配置为显式空集 → 重建进程（restart 通道）argv 含 --no-tools
       writeFileSync(join(projWith, ".ul-omo-webui.json"), JSON.stringify({ version: 1, tools: [] }));
-      await manager.ensureRunning(projWith);
+      await manager.ensureRunning(join(projWith, "s.jsonl"), projWith);
       expect(client.spawnOpts.args).toContain("--no-tools");
       expect(client.spawnOpts.args).not.toContain("--exclude-tools");
       await manager.stopAll();
 
       // null（未配置）→ argv 不含任何工具参数
       writeFileSync(join(projWith, ".ul-omo-webui.json"), JSON.stringify({ version: 1 }));
-      await manager.ensureRunning(projWith);
+      await manager.ensureRunning(join(projWith, "s.jsonl"), projWith);
       expect(client.spawnOpts.args).not.toContain("--tools");
       expect(client.spawnOpts.args).not.toContain("--exclude-tools");
       expect(client.spawnOpts.args).not.toContain("--no-tools");

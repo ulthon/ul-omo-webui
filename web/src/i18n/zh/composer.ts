@@ -4,7 +4,6 @@
 // 图片上限两条为复数形（en 按 one/other 选择；zh 两形同文）。
 export const composer = {
   compactNoArgs: "/compact 不接受参数：请直接发送 /compact",
-  sessionBusy: "该会话正在被另一个窗口处理中，请等待其完成后再发送",
   interruptFailed: "中断失败",
   attachmentSaveFailed: "附件保存失败",
   attachmentCleanupFailed: "附件清理失败（48h 后自动清理）",

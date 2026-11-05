@@ -4,6 +4,9 @@
 //   [perf] op=<name> proj=<hash8> session=<id8> ensureMs= queueWaitMs= switchToMs= rpcMs= entries=<n>
 // 四层归因模型（docs/08:391-397）：ensureMs=④冷 spawn、queueWaitMs=②runExclusive 串行、
 // switchToMs=③每次开仓、rpcMs=①全量拉取（含传输+解析的引擎侧往返）。
+// 退役注记（multi-session-parallel T1）：queueWaitMs / switchToMs 两段随项目级引擎
+// 串行队列与开仓切换一并退役——每会话独占引擎进程后无互斥排队、无切换 RPC，恒缺省
+// 不落字段；字段与行格式位保留仅为既有 [perf] 行格式（日志解析器）兼容。
 import { createHash } from "node:crypto";
 
 /** env 真值判定（导出供单测）：1/true/yes/on 不分大小写视为开，其余（含缺省）关 */
@@ -23,9 +26,9 @@ export interface PerfSpan {
   session?: string;
   /** ④ ensure()：引擎进程确保就绪（冷项目首触=spawn 等待） */
   ensureMs?: number;
-  /** ② runExclusive 互斥队列等待（同项目在飞调用串行排队） */
+  /** ② runExclusive 互斥队列等待（同项目在飞调用串行排队）。已退役恒空（T1，保留为格式兼容） */
   queueWaitMs?: number;
-  /** ③ switchTo：open_session 切换 RPC（同会话活跃态早退≈0） */
+  /** ③ switchTo：open_session 切换 RPC（同会话活跃态早退≈0）。已退役恒空（T1，保留为格式兼容） */
   switchToMs?: number;
   /** ① 主 RPC（messages=getEntries 全量；prompt 含 setModel） */
   rpcMs?: number;

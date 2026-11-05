@@ -29,9 +29,10 @@ import {
   attachBackgroundTaskLedger,
   handleProjectEngineDeath,
 } from "./api/background-task-ledger";
+import { sessionBackgroundRunning } from "./api/background-tasks";
 import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
 import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
-import { createEngineAdminRoutes } from "./api/routes-engines";
+import { buildEngineAdminRows, createEngineAdminRoutes, type EngineAdminRow } from "./api/routes-engines";
 import { createUpdateRoutes } from "./api/routes-update";
 import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
@@ -78,6 +79,11 @@ const manager = new EngineProcessManager({
     ...permissionPresetSpawnArgs(projectConfigs, meta, projectPath),
     ...toolsSpawnArgsFromConfig(projectConfigs, meta, projectPath),
   ],
+  // multi-session-parallel T2：空闲回收第三判据——会话 jsonl 派生 background_running
+  // 视为忙不回收（2026-11-04 3h53m 误杀事故防回归）。与 routes-session 会话列表
+  // 第四态同源同一实现（jsonl 探测半边；内存 backgroundTaskLedger 是 api 层状态，
+  // 按计划不取）。mtime+size 指纹缓存摊销，回收判定读到的是当前落盘态非快照。
+  sessionBackgroundRunning,
 });
 // 2026-11-04：空闲回收时长配置化（meta_kv engine.idleTimeoutMinutes：分钟数或 "never"；
 // 缺省 7 天见 process-manager DEFAULTS）。启动时读一次，设置页改档经
@@ -142,9 +148,15 @@ const detachEventBus = attachEventBus(manager, eventBus);
 const detachTaskLedger = attachBackgroundTaskLedger(eventBus);
 setEventBus(eventBus, {
   heartbeatMs: 8000,
-  durableLookup: (projectPath, handle) => engines.durableSessionIdFor(projectPath, handle),
+  // sessionPath = 桥附源引擎绑定（A→B 串显修复 2026-11-06）：透传进双键查表，
+  // 帧归属只解析该引擎绑定态（兼容查表仅限无绑定的合成帧，多引擎下不猜）
+  durableLookup: (projectPath, handle, sessionPath) => engines.durableSessionIdFor(projectPath, handle, sessionPath),
   // 重放过滤条件 (c)（W1 #4）：项目引擎进程 ready 才视为可应答权限请求
-  isEngineRunning: (projectPath) => manager.getStatus(projectPath)?.state === "ready",
+  // multi-session-parallel：引擎按会话键后，「项目引擎 ready」= 该项目任一
+  // 会话引擎 ready；T4 已落地——墓碑杀者另带会话可解析性门槛，单引擎重启
+  // 不误清兄弟会话 replay
+  isEngineRunning: (projectPath) =>
+    manager.getAllStatus().some((s) => s.projectPath === projectPath && s.state === "ready"),
 });
 
 // 权限失效墓碑（W1 #4）：引擎进程死亡/回收/显式停止后向事件桥发一条
@@ -161,18 +173,14 @@ const detachTombstones = manager.onEvent((e) => {
     e.type === "engine_reclaimed" ||
     (e.type === "state_changed" && e.to === "stopped")
   ) {
-    publishPermissionsInvalidated(eventBus, e.projectPath);
-    // 引擎死亡失效（spike §3.3 + §5.2 第二缺陷）：三个信号 = 该项目全部任务子会话
-    // 已死（owner-fd 看门狗 ≤2s）。清账本项目快照 + 冻结 jsonl 推导的启动态指纹
-    //（修复「回执已落盘 + 引擎死亡 → background_running 永久卡死」的假阳性）。
-    // sessionsList 是 SDK 直读（不走 rpc、不 spawn），死引擎下也能列出会话路径；
-    // 失败按空列表降级（账本清项目仍生效）。
-    void engines
-      .sessionsList(e.projectPath)
-      .then(
-        (rows) => handleProjectEngineDeath(e.projectPath, rows.map((row) => row.path)),
-        () => handleProjectEngineDeath(e.projectPath, []),
-      );
+    publishPermissionsInvalidated(eventBus, e.projectPath); // 保持项目级：T4 sessionResolvable 已兜兄弟会话重放
+    // 引擎死亡失效（spike §3.3 + §5.2 第二缺陷；multi-session-parallel 收缩为会话
+    // 粒度）：三个信号 = 死亡引擎（e.sessionPath 键）死亡，其任务子会话被 owner-fd
+    // 看门狗 ≤2s 连带杀死，该会话启动态回执可证明已死。只清该会话的账本快照 +
+    // 只冻结该会话 jsonl 指纹（修复「回执已落盘 + 引擎死亡 → background_running
+    // 永久卡死」的假阳性）；兄弟会话引擎双源不受扰——按项目清/冻会把 B 的安静
+    // 后台任务误判为已死，等空闲回收连根杀（2026-11-04 3h53m 事故同型）。
+    handleProjectEngineDeath(e.projectPath, [e.sessionPath]);
   }
 });
 
@@ -288,19 +296,11 @@ app.route("/", createTipsRoutes(tipsDeps));
 app.route("/", createExtensionsRoutes({ agentDir: agentDir(), engineCli: resolveEngineCli(resolveEnginePaths().pluginDir) }));
 app.route("/", createTrafficRoutes({ meter: trafficMeter }));
 // 诊断面（采集增强批）：日志查询/运行快照/前端日志上报；随 /api/* 鉴权中间件保护
-// 2026-11-04：engines 摘要与进程管理路由共用同一 rows 构造器（单一来源）
-const engineAdminRows = () =>
-  meta.listProjectMeta().map((p) => {
-    const st = manager.getStatus(p.projectPath);
-    return {
-      projectPath: p.projectPath,
-      state: st?.state ?? "inactive",
-      pid: st?.pid ?? undefined,
-      restarts: st?.consecutiveRestarts ?? 0,
-      runningSessions: st?.runningSessions.length ?? 0,
-      lastActivityAt: st?.lastActivityAt ?? null,
-    };
-  });
+// engines 摘要与进程管理路由共用同一 rows 构造器 buildEngineAdminRows（单一来源，
+// T5 从组合根移入 routes-engines.ts）：每会话引擎一行（projectPath+sessionPath
+// 记录对），无引擎的已知项目保留 inactive 行；前端每会话一行是 T6。
+const engineAdminRows = (): EngineAdminRow[] =>
+  buildEngineAdminRows(manager.getAllStatus(), meta.listProjectMeta());
 app.route(
   "/",
   createDiagnosticsRoutes({
@@ -323,7 +323,9 @@ app.route(
   "/",
   createEngineAdminRoutes({
     listEngines: engineAdminRows,
-    stopEngine: (projectPath) => manager.stop(projectPath),
+    // T5：sessionPath 定向停单会话引擎；project 级停该项目全部会话引擎
+    stopEngine: (sessionPath) => manager.stop(sessionPath),
+    stopProject: (projectPath) => manager.stopProject(projectPath),
     isKnownProject: (projectPath) => meta.listProjectMeta().some((p) => p.projectPath === projectPath),
   }),
 );

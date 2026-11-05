@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Hono } from "hono";
 import {
   EngineRuntimeRegistry,
@@ -46,10 +46,10 @@ function writeSessionJsonl(
   dir: string,
   name: string,
   durableId: string,
-  opts?: { onlyUser?: boolean; noUser?: boolean },
+  opts?: { onlyUser?: boolean; noUser?: boolean; cwd?: string },
 ): string {
   const lines: Array<Record<string, unknown>> = [
-    { type: "session", version: 3, id: durableId, timestamp: "2026-10-11T00:00:00.000Z", cwd: dir },
+    { type: "session", version: 3, id: durableId, timestamp: "2026-10-11T00:00:00.000Z", cwd: opts?.cwd ?? dir },
   ];
   if (!opts?.noUser) {
     lines.push({ type: "message", id: "u1", parentId: null, timestamp: "t", message: { role: "user", content: [{ type: "text", text: "帮我看看 tsconfig 的 strict 选项" }] } });
@@ -406,14 +406,23 @@ describe("resolveSessionTitle 链序与 export 文件名", () => {
 
 // ---------------------------------------------------------------- engine-runtime 接线矩阵
 
-/** 最小 fake RpcClient：覆盖 wrapLifecycleClient/checkSettle 引用面。
- * openScript 为 openSession 应答队列（handle/state）；listRows 为 list_sessions 行。 */
+/** 最小 fake RpcClient（T3 新契约形态）：引擎即会话，每会话一路径键控实例。
+ * open 按路径 echo（createSession/ensure 的绑定 open 与显式参数 open 同路径 attach
+ * 幂等，旧契约的 openScript 应答队列已无生存面）；list_sessions 回本引擎唯一
+ * 会话行（durable 权威来源）。durableId 由 FakeManager 按预生成路径注入序分配
+ * （空串 = 未认领别名流）。 */
+let fakeAnonHandleSeq = 0;
 class FakeRpcClient {
   readonly eventListeners: Array<(e: { type: string; [k: string]: unknown }) => void> = [];
-  openScript: Array<{ handle: string; durable: string; sessionFile: string }> = [];
-  listRows: Array<Record<string, unknown>> = [];
+  readonly handle: string;
   isStreaming = false;
-  private openCount = 0;
+  constructor(
+    readonly sessionPath: string,
+    readonly durableId: string,
+    private readonly cwd: string,
+  ) {
+    this.handle = durableId ? `rpc-${durableId}` : `rpc-anon-${++fakeAnonHandleSeq}`;
+  }
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -422,17 +431,23 @@ class FakeRpcClient {
     return Promise.resolve({ success: true });
   }
   async openSession(options: { sessionPath?: string }): Promise<{ sessionId: string; state: { sessionId: string; sessionFile: string } }> {
-    // 顶层 sessionId = routing handle（真实形态）；switchTo 按已打开路径匹配
-    //（同一会话会被 createSession 与 switchTo 各 open 一次，不能顺序消耗）
-    const next = options.sessionPath
-      ? this.openScript.find((s) => s.sessionFile === options.sessionPath)
-      : this.openScript[this.openCount++];
-    if (!next) throw new Error("openScript exhausted");
-    return { sessionId: next.handle, state: { sessionId: next.durable, sessionFile: next.sessionFile } };
+    // 顶层 sessionId = routing handle（wire 事件同源）；state.sessionId = 引擎认领
+    // 身份（未认领时即 handle 本身）；sessionFile echo 实际 open 的路径
+    return {
+      sessionId: this.handle,
+      state: { sessionId: this.durableId || this.handle, sessionFile: options.sessionPath ?? this.sessionPath },
+    };
   }
   async closeSession(): Promise<void> {}
   async listSessions(): Promise<Array<Record<string, unknown>>> {
-    return this.listRows;
+    const row: Record<string, unknown> = {
+      sessionId: this.handle,
+      sessionPath: this.sessionPath,
+      cwd: this.cwd,
+      status: "open",
+    };
+    if (this.durableId) row.durableSessionId = this.durableId;
+    return [row];
   }
   async getEntries(): Promise<{ entries: never[]; leafId: null }> {
     return { entries: [], leafId: null };
@@ -473,7 +488,11 @@ class FakeRpcClient {
 }
 
 class FakeManager {
-  readonly client = new FakeRpcClient();
+  /** 路径 → 引擎（T1 键迁移：每会话一台，ensure 按目标路径解析） */
+  readonly rpcs = new Map<string, FakeRpcClient>();
+  /** createSession 预生成路径（运行期才可知）的 durable 注入队列：ensureRunning 造
+   * 路径专属引擎实例时按到达序消费（空串 = 未认领别名流）。 */
+  readonly pregenDurables: string[] = [];
   private listeners: Array<(e: { type: string; [k: string]: unknown }) => void> = [];
   onEvent(listener: (e: { type: string; [k: string]: unknown }) => void): () => void {
     this.listeners.push(listener);
@@ -484,12 +503,16 @@ class FakeManager {
   emit(event: { type: string; [k: string]: unknown }): void {
     for (const l of this.listeners) l(event);
   }
-  async ensureRunning(): Promise<void> {}
+  async ensureRunning(sessionPath: string, projectPath: string): Promise<void> {
+    if (!this.rpcs.has(sessionPath)) {
+      this.rpcs.set(sessionPath, new FakeRpcClient(sessionPath, this.pregenDurables.shift() ?? "", projectPath));
+    }
+  }
   getStatus(): { state: string } {
     return { state: "ready" };
   }
-  getClient(): FakeRpcClient {
-    return this.client;
+  getClient(sessionPath: string): FakeRpcClient | undefined {
+    return this.rpcs.get(sessionPath);
   }
   async stop(): Promise<void> {}
   async stopAll(): Promise<void> {}
@@ -502,16 +525,18 @@ interface RegistryHarness {
   settledCalls: Array<{ projectPath: string; info: RoundSettleInfo; reason: string }>;
   syntheticEvents: Array<Record<string, unknown>>;
   projectPath: string;
+  agentDir: string;
 }
 
 function buildRegistry(extra?: Partial<EngineRuntimeOptions>): RegistryHarness {
   const projectPath = tmpDir("tg-proj-");
+  const agentDir = tmpDir("tg-agent-");
   const manager = new FakeManager();
   const settledCalls: Array<{ projectPath: string; info: RoundSettleInfo; reason: string }> = [];
   const syntheticEvents: Array<Record<string, unknown>> = [];
   const registry = new EngineRuntimeRegistry(manager as never, {
     listProjects: () => [projectPath],
-    agentDir: tmpDir("tg-agent-"),
+    agentDir,
     publishSyntheticEvent: (_p, event) => {
       syntheticEvents.push(event);
     },
@@ -522,92 +547,114 @@ function buildRegistry(extra?: Partial<EngineRuntimeOptions>): RegistryHarness {
     settleGraceMs: 25,
     ...extra,
   });
-  return { registry, manager, settledCalls, syntheticEvents, projectPath };
+  return { registry, manager, settledCalls, syntheticEvents, projectPath, agentDir };
 }
 
+/** 建会话 → 落盘回执 → 首回合（T3 新契约形态）：会话路径由运行时预生成（uuid 落
+ * agent 会话库，createSession 回带），fixture 在该路径补写会话头模拟引擎落盘
+ * （durable 存在性复核与真实引擎同源读盘）。 */
 async function startRound(
   h: RegistryHarness,
-  fixture: { name: string; durable: string },
-): Promise<{ id: string; path: string }> {
-  const path = writeSessionJsonl(h.projectPath, fixture.name, fixture.durable);
-  h.manager.client.openScript.push({ handle: `rpc-${fixture.durable}`, durable: fixture.durable, sessionFile: path });
-  h.manager.client.listRows.push({
-    sessionId: `rpc-${fixture.durable}`, durableSessionId: fixture.durable, sessionPath: path,
-    cwd: h.projectPath, status: "open",
-  });
+  fixture: { durable: string },
+): Promise<{ id: string; path: string; client: FakeRpcClient }> {
+  h.manager.pregenDurables.push(fixture.durable);
   const created = await h.registry.createSession(h.projectPath, {});
+  writeSessionJsonl(dirname(created.sessionPath), basename(created.sessionPath), fixture.durable, { cwd: h.projectPath });
   await h.registry.prompt(created.id, { text: "hi" });
-  return { id: created.id, path };
+  const client = h.manager.getClient(created.sessionPath);
+  if (!client) throw new Error("ensure 未按预生成路径造引擎");
+  return { id: created.id, path: created.sessionPath, client };
+}
+
+/** 有界条件等待（禁真睡：条件驱动 + 硬截止，不用固定时长赌定时器） */
+async function waitForCondition(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() >= deadline) throw new Error("waitForCondition deadline exceeded");
+    await new Promise((r) => setTimeout(r, 5));
+  }
 }
 
 describe("EngineRuntimeRegistry.onRoundSettled 接线", () => {
   test("事件路径触发：wire handle 解析 durable 落 settleInfo；同回合多事件只触发一次", async () => {
     const h = buildRegistry();
-    const { id, path } = await startRound(h, { name: "a.jsonl", durable: "dur-a" });
-    h.manager.client.emit({ type: "agent_end", sessionId: `rpc-${"dur-a"}` });
-    expect(h.settledCalls).toEqual([{ projectPath: h.projectPath, info: { sessionId: id, sessionPath: path }, reason: "agent_end" }]);
-    // 后续同回合事件：streamingId 已清位，不重复触发
-    h.manager.client.emit({ type: "agent_settled", sessionId: "rpc-dur-a" });
-    h.manager.client.emit({ type: "agent_idle", sessionId: "rpc-dur-a" });
+    const a = await startRound(h, { durable: "dur-a" });
+    a.client.emit({ type: "agent_end", sessionId: `rpc-${"dur-a"}` });
+    expect(h.settledCalls).toEqual([{ projectPath: h.projectPath, info: { sessionId: a.id, sessionPath: a.path }, reason: "agent_end" }]);
+    // 后续同回合事件：回合行已清位，不重复触发
+    a.client.emit({ type: "agent_settled", sessionId: "rpc-dur-a" });
+    a.client.emit({ type: "agent_idle", sessionId: "rpc-dur-a" });
     expect(h.settledCalls).toHaveLength(1);
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 
   test("wire sessionId 不匹配只清位不触发（并发错触防护）", async () => {
     const h = buildRegistry();
-    await startRound(h, { name: "a.jsonl", durable: "dur-a" });
-    await startRound(h, { name: "b.jsonl", durable: "dur-b" }); // streamingId 被第二回合覆盖
-    h.manager.client.emit({ type: "agent_end", sessionId: "rpc-dur-a" }); // A 的收尾事件
+    const a = await startRound(h, { durable: "dur-a" });
+    const b = await startRound(h, { durable: "dur-b" });
+    // A 的收尾 handle 打到 B 的引擎：归属校验不过 → B 只清位不触发；T3 引擎即会话，
+    // 兄弟回合挂各自引擎监听器下，A 的回合不受 B 引擎上的错触事件影响
+    b.client.emit({ type: "agent_end", sessionId: `rpc-${"dur-a"}` });
     expect(h.settledCalls).toHaveLength(0);
+    const states = await h.registry.peekRunStates(h.projectPath);
+    expect([...states!.keys()]).toEqual([a.path]);
+    expect(states!.get(a.path)).toBe("running");
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 
   test("别名 sessionId 事件路径放行（durable 解析不出 = 归属未证明不排除）", async () => {
     const h = buildRegistry();
-    // listRows 不含 durable：createSession 退化为 handle 别名
-    const path = writeSessionJsonl(h.projectPath, "alias.jsonl", "dur-alias");
-    h.manager.client.openScript.push({ handle: "rpc-alias", durable: "rpc-alias", sessionFile: path });
+    // 无预生成 durable 注入：引擎未认领 → createSession 退化为 handle 别名
     const created = await h.registry.createSession(h.projectPath, {});
     expect(created.durable).toBe(false);
     await h.registry.prompt(created.id, { text: "hi" });
-    h.manager.client.emit({ type: "agent_end", sessionId: "rpc-alias" });
+    const client = h.manager.getClient(created.sessionPath);
+    if (!client) throw new Error("ensure 未按预生成路径造引擎");
+    client.emit({ type: "agent_end", sessionId: created.id }); // wire handle 即别名
     expect(h.settledCalls).toHaveLength(1);
-    expect(h.settledCalls[0].info.sessionId).toBe("rpc-alias"); // 别名原样透传，title-gen 经 jsonl 解析
-    expect(h.settledCalls[0].info.sessionPath).toBe(path);
+    expect(h.settledCalls[0].info.sessionId).toBe(created.id); // 别名原样透传，title-gen 经 jsonl 解析
+    expect(h.settledCalls[0].info.sessionPath).toBe(created.sessionPath);
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 
   test("合成 watchdog 触发（reason=settle_watchdog），synthetic 事件不回归", async () => {
     const h = buildRegistry();
-    const { id, path } = await startRound(h, { name: "w.jsonl", durable: "dur-w" });
-    h.manager.client.isStreaming = false; // get_state 复核空闲 → 宽限后合成
-    await new Promise((r) => setTimeout(r, 150));
+    const w = await startRound(h, { durable: "dur-w" });
+    w.client.isStreaming = false; // get_state 复核空闲 → 宽限后合成
+    await waitForCondition(() => h.settledCalls.length > 0);
     expect(h.settledCalls).toEqual([
-      { projectPath: h.projectPath, info: { sessionId: id, sessionPath: path }, reason: "settle_watchdog" },
+      { projectPath: h.projectPath, info: { sessionId: w.id, sessionPath: w.path }, reason: "settle_watchdog" },
     ]);
     expect(h.syntheticEvents).toHaveLength(1);
-    expect(h.syntheticEvents[0]).toMatchObject({ type: "agent_settled", synthetic: true, sessionId: id, reason: "settle_watchdog" });
+    expect(h.syntheticEvents[0]).toMatchObject({ type: "agent_settled", synthetic: true, sessionId: w.id, reason: "settle_watchdog" });
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 
   test("crashSettle 不触发 onRoundSettled（engine_crash 排除），synthetic 事件不回归", async () => {
     const h = buildRegistry();
-    const { id } = await startRound(h, { name: "c.jsonl", durable: "dur-c" });
+    const c = await startRound(h, { durable: "dur-c" });
+    // 事件缺 sessionPath → 项目级兜底全结（T3 保留的旧口径）
     h.manager.emit({ type: "process_crashed", projectPath: h.projectPath });
     expect(h.settledCalls).toHaveLength(0);
     expect(h.syntheticEvents).toHaveLength(1);
-    expect(h.syntheticEvents[0]).toMatchObject({ type: "agent_settled", synthetic: true, sessionId: id, reason: "engine_crash" });
+    expect(h.syntheticEvents[0]).toMatchObject({ type: "agent_settled", synthetic: true, sessionId: c.id, reason: "engine_crash" });
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 
   test("resolveSessionRow：durable/别名都解析出 path，未知返回 null，不触发 spawn", async () => {
     const h = buildRegistry();
-    const { id, path } = await startRound(h, { name: "r.jsonl", durable: "dur-r2" });
-    expect(await h.registry.resolveSessionRow(id)).toMatchObject({ path, id });
-    const alias = await h.registry.resolveSessionRow("rpc-dur-r2");
+    const r = await startRound(h, { durable: "dur-r2" });
+    expect(await h.registry.resolveSessionRow(r.id)).toMatchObject({ path: r.path, id: r.id });
+    const alias = await h.registry.resolveSessionRow(`rpc-${"dur-r2"}`);
     expect(alias).toBeNull(); // handle 非 API 身份（durable 会话未注册别名）
     expect(await h.registry.resolveSessionRow("nope")).toBeNull();
     rmSync(h.projectPath, { recursive: true, force: true });
+    rmSync(h.agentDir, { recursive: true, force: true });
   });
 });
 
