@@ -21,10 +21,15 @@
  * engine_reclaimed 是管理器状态机事件，暂不进桥——前端需要"项目引擎不可用"
  * 提示时再扩展 attachEventBus，不在本 todo 范围。
  *
- * wire 透传约束（docs/verification/01 实证）：multi-session 模式下 wire 事件的
- * sessionId 是会话身份（磁盘 jsonl header id），是事件按会话路由的依据；
- * `?session=` 过滤与前端按 session 分发都吃这个字段。管理器内部 holder UUID
- * 不是会话身份，不进事件桥。
+ * wire 透传约束（2026-11-06 口径更正，原「sessionId=磁盘 jsonl header id」是文档
+ * 漂移）：wire 事件的 sessionId 是 routing handle（引擎 RPC 会话句柄，rpc-N /
+ * holder UUID 形态，每引擎进程独立编号，跨引擎会同槽撞值），不是磁盘会话 id。
+ * 帧归属以桥直附的 sessionPath 为准（engine_event 帧级携带的源引擎绑定，
+ * multi-session-parallel T1 引擎键）：SSE 层据 sessionPath 在该引擎绑定态内解析
+ * durableSessionId 注入信封；跨引擎 handle 查表已退役为兼容/诊断路径（同项目双
+ * 引擎同槽别名曾致 A→B 输出串显，排查报告 notes/facts/
+ * senpi-webui-ab-stream-crossdisplay-2026-11-05.md）。`?session=` 过滤与前端按
+ * 会话分发吃的都是解析后的会话身份；管理器内部 holder UUID 别名不进路由。
  */
 
 import type { EngineProcessManager, RpcClientEvent } from "./process-manager"
@@ -36,6 +41,10 @@ export interface BridgeEvent {
   id: number
   /** 事件来源项目（引擎子进程 cwd）。SSE data 包装层透出，前端多项目路由用。 */
   projectPath: string
+  /** 事件来源引擎绑定的会话文件路径（multi-session-parallel T1 引擎键 = 帧归属键）。
+   * 缺省 = 无绑定归属的桥级帧（心跳 / 权限失效墓碑 / 组合根直发的合成帧——后者
+   * sessionId 本身是 durable id，由兼容查表直认）。 */
+  sessionPath?: string
   /** 引擎 wire 事件原样透传，事件桥不改写。 */
   event: RpcClientEvent
 }
@@ -85,9 +94,9 @@ export class EventBus {
    * 单线程同步扇出保证了各订阅者队列内的事件顺序与游标顺序一致。
    * 订阅者抛异常只吞掉该次回调，不阻断其他订阅者。
    */
-  publish(projectPath: string, event: RpcClientEvent): BridgeEvent {
+  publish(projectPath: string, event: RpcClientEvent, sessionPath?: string): BridgeEvent {
     this.cursor += 1
-    const bridge: BridgeEvent = { id: this.cursor, projectPath, event }
+    const bridge: BridgeEvent = { id: this.cursor, projectPath, sessionPath, event }
     // 采集增强批：帧级观测（debug 级，默认零输出）；debug 门控先行省字段构造
     if (log.isDebugEnabled()) {
       const rawType = (event as { type?: unknown }).type
@@ -162,11 +171,21 @@ export function publishPermissionsInvalidated(bus: EventBus, projectPath: string
 /**
  * 把进程管理器的 engine_event 透传接进事件桥（装配口）。
  * 返回退订函数（server 关停时调用）。
+ *
+ * 帧序 FIFO 契约（multi-session-parallel T4 固化）：每会话引擎恰挂一个 wire
+ * 监听器（engine-runtime SessionEngine.attachEvents，T3 收编），引擎子进程的
+ * RPC 帧按到达序同步回调 → manager emit 同步透传 → bus.publish 同步入缓冲+
+ * 扇出（单线程执行，回调链无 await 插队）。由此：单引擎帧序 = RPC 到达序；
+ * 跨引擎帧在全局游标上单调（publish 串行）；重放序列（id 升序）与实时扇出对
+ * 同帧序一致。api/sse.ts 墓碑会话粒度过滤依赖的「请求帧先于其后缀墓碑/收尾帧」
+ * 方向性判定即建立在此契约上——生产者链（本文件与 index.ts 装配）不改写
+ * wire 帧体、不重排、不缓冲帧；桥级元数据（sessionPath 直附）为加法透传，
+ * 帧序契约不受影响。
  */
 export function attachEventBus(manager: EngineProcessManager, bus: EventBus): () => void {
   return manager.onEvent((e) => {
     if (e.type === "engine_event") {
-      bus.publish(e.projectPath, e.event)
+      bus.publish(e.projectPath, e.event, e.sessionPath)
     }
   })
 }

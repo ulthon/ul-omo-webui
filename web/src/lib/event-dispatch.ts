@@ -572,7 +572,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     if (orphan === "resync") {
       if (sseDebugEnabled()) {
         console.debug(
-          `[sse-dispatch] 孤儿收尾帧 type=${wire.type} route=${sessionId} → resyncRunStatesFromServer`,
+          `[sse-dispatch] orphan end frame type=${wire.type} route=${sessionId} → resyncRunStatesFromServer`,
         );
       }
       // r11 todo 12b 契约保留：孤儿键留痕落 idle（诚实记录该 handle 回合已收束，
@@ -582,7 +582,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     } else if (orphan !== null) {
       // 唯一活跃候选：清态落到真实归属（patchSession 对不在列表的键自然 no-op）
       if (sseDebugEnabled()) {
-        console.debug(`[sse-dispatch] 孤儿收尾帧 type=${wire.type} route=${sessionId} → 归属兜底 ${orphan}`);
+        console.debug(`[sse-dispatch] orphan end frame type=${wire.type} route=${sessionId} → rescue ${orphan}`);
       }
       sessions.patchSession(orphan, { active: false });
       sessions.setRunState(orphan, "idle");
