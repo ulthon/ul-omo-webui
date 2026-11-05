@@ -557,6 +557,15 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(fake.promptAttempts).toBe(2)
   })
 
+  test("并发 open_session 同会话在途合并（02:37 实录四路拉取竞态，2026-11-06 修）", async () => {
+    const fake = new FlakyPromptClient()
+    const adapter = await setup(fake)
+    const before = fake.calls.filter((c) => c.method === "open_session").length
+    const [a, b] = await Promise.all([adapter.openSession({ sessionPath: "/tmp/dur-x.jsonl" }), adapter.openSession({ sessionPath: "/tmp/dur-x.jsonl" })])
+    expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(before + 1)
+    expect(a.sessionPath).toBe(b.sessionPath)
+  })
+
   test("重开仍失败 → 原样报错（不无限重试）", async () => {
     const fake = new FlakyPromptClient()
     fake.failWith = new Error("unknown_session")

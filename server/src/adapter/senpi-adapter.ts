@@ -299,6 +299,9 @@ export class SenpiAdapter implements EngineAdapter {
   /** 最近一次成功 open 的 sessionPath（2026-11-06：no_active_session 兕底重开用，绑定丢失后仍可恢复） */
   private lastSessionPath: string | undefined = undefined
   private starting: Promise<void> | null = null
+  /** 在途 open_session 合并（2026-11-06：并发开门竞态修复）：同 sessionPath 的并发
+   *  调用共享同一次打开，等待结果而非被引擎 in-flight 保护拒绝成 500。 */
+  private opening: { sessionPath: string | undefined; promise: Promise<EngineOpenSessionResult> } | null = null
   /** unknown_session 兜底的 in-flight 重开去重：并发失败共享同一次 open_session（防重开风暴） */
   private reopening: Promise<EngineOpenSessionResult> | null = null
 
@@ -473,6 +476,24 @@ export class SenpiAdapter implements EngineAdapter {
   }
 
   async openSession(options: EngineOpenSessionOptions): Promise<EngineOpenSessionResult> {
+    // 同会话并发开门：共享在途 promise（02:37:28 实录：会话页四路拉取并发 open_session，
+    // 后到者被引擎「already in flight」拒成 500）；不同会话则排队等当前完成后另开。
+    if (this.opening && this.opening.sessionPath === options.sessionPath) {
+      return this.opening.promise
+    }
+    if (this.opening) {
+      await this.opening.promise.catch(() => undefined)
+    }
+    const promise = this.doOpenSession(options)
+    this.opening = { sessionPath: options.sessionPath, promise }
+    try {
+      return await promise
+    } finally {
+      if (this.opening?.promise === promise) this.opening = null
+    }
+  }
+
+  private async doOpenSession(options: EngineOpenSessionOptions): Promise<EngineOpenSessionResult> {
     const client = this.rpc()
     const res = await this.tracedRpc("open_session", () =>
       withTimeout(

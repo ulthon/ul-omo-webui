@@ -62,6 +62,16 @@ function perfErrCode(err: unknown): string {
 /** 关闭态共享哑 span（body 的段写入无读者；省去按调用分配，零行为差异） */
 const INERT_PERF_SPAN = {} as PerfSpan;
 
+/** no_active_session 鸭子判定（runTraced 兜底重开判据，2026-11-06）：EngineAdapterError
+ *  携 code 字段；网关/线程层可能抛非 Error 实例的普通对象（01:13:04 实录 15ms 直 5xx），
+ *  instanceof 门会静默绕过兜底——只看 message/errorCode/code 字段内容。 */
+function isNoActiveSessionError(err: unknown): boolean {
+  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined;
+  const hit = (v: unknown): boolean => typeof v === "string" && v.includes("no_active_session");
+  if (!e || typeof e !== "object") return typeof err === "string" && hit(err);
+  return [e.message, e.errorCode, e.code].some(hit);
+}
+
 /** 会话运行态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
  *  语义与前端 SSE 驱动的 runStates 同口径（agent_start → running；四型权限/阻塞型
  *  question → waiting；落定 → idle），error 属前端独有态（服务端不合成）。
@@ -610,7 +620,32 @@ class ProjectRuntime {
    * open，同路径 open 为 attach 幂等；provider/model 不传沿用会话自身存档），后续
    * 驾驶操作直接用该 adapter，无切换 RPC。
    */
-  private async ensure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
+  /** 在途 ensure 合并（2026-11-06 02:52:50 实录，webui-2026-11-06.log seq 0190-0194）：
+   *  引擎就绪瞬间五个并发网关 op（usage×2/queueList/questionsList/prompt）各自走完
+   *  ensure——adapter.start() 的 get_protocol_info 真实往返期间 engines 未置，后到者
+   *  existing 判空落空，五个 adapter 五路 open_session，引擎 in-flight 守卫全数拒绝
+   *  （5×500），落败 adapter 反占 engines 表（active=null 永不自愈）→ 02:53 连环
+   *  no_active_session 33 秒（seq 0239-0326）。按 sessionPath 合并在途 ensure：并发
+   *  调用共享同一次建 adapter+open，从源头消除多路开门；合并等待者完成后各自套用
+   *  自身 durableHint（与既有态快路径同语义）。 */
+  private readonly ensuring = new Map<string, Promise<SessionEngine>>();
+
+  private ensure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
+    const inFlight = this.ensuring.get(sessionPath);
+    if (inFlight) {
+      return inFlight.then((state) => {
+        if (durableHint !== undefined) state.activeId = durableHint;
+        return state;
+      });
+    }
+    const run = this.doEnsure(sessionPath, durableHint).finally(() => {
+      if (this.ensuring.get(sessionPath) === run) this.ensuring.delete(sessionPath);
+    });
+    this.ensuring.set(sessionPath, run);
+    return run;
+  }
+
+  private async doEnsure(sessionPath: string, durableHint?: string): Promise<SessionEngine> {
     await this.manager.ensureRunning(sessionPath, this.projectPath);
     // 有界等待就绪（冷启动窗口竞态修复）：ensureRunning 返回时可能仍在 starting，
     // 立即 503 迫使用户手动重试三四次；改为等待握手完成（上限 15s，250ms 轮询）
@@ -1208,10 +1243,32 @@ class ProjectRuntime {
         log.debug("gw", "op", f);
       }
     };
+    // no_active_session 兜底重开（2026-11-06 02:53 实录，server/data/logs/webui-2026-11-06.log
+    //  seq 0239-0326）：开局竞态落败的 adapter（active=null）占住 engines 表后，UI 轮询
+    //  messages/usage/queueList 连环 no_active_session 33 秒（02:53:00.511→02:53:33.760）
+    //  直到用户刷新——adapter 层 rpcOp 兜底只包 RPC 调用，requireActive() 在其之外抛出
+    //  即被旁路，错误直达本层只落 logGw 无自愈。此处单点兜底：鸭子判定命中 → 同路径
+    //  adapter.openSession 重开一次（并发失败共享 adapter 层 in-flight 合并，不开重开风暴）
+    //  → body 恰好重试一次；重试仍败按原样抛，不吞其它错误、不改变请求语义。
+    const runBody = async (span: PerfSpan, state: SessionEngine): Promise<T> => {
+      try {
+        return await body(span, state);
+      } catch (err) {
+        if (!isNoActiveSessionError(err)) throw err;
+        log.info("gw", "op.reopen", {
+          op,
+          session: sessionId.slice(0, 8),
+          proj: projHash8(this.projectPath),
+          rid: currentRid(),
+        });
+        await state.adapter.openSession({ sessionPath: state.sessionPath });
+        return body(span, state);
+      }
+    };
     if (!debugPerfOn()) {
       // 关闭路径与原实现等价：解析目标会话专属引擎（ensure 内联）后直驱
       return this.ensureForSession(sessionId)
-        .then((state) => body(INERT_PERF_SPAN, state))
+        .then((state) => runBody(INERT_PERF_SPAN, state))
         .then(
           (r) => {
             logGw(null);
@@ -1234,7 +1291,7 @@ class ProjectRuntime {
       })
       .then((state) => {
         span.ensureMs = performance.now() - t0;
-        return body(span, state);
+        return runBody(span, state);
       })
       .catch((err) => {
         seenErr = err;
