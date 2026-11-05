@@ -52,6 +52,7 @@ import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
 import { createExtensionsRoutes } from "./api/routes-extensions";
 import { resolveEngineCli } from "./api/extensions-store";
 import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
+import { bootGitDiagnostics, runRuntimeRetention } from "./lib/runtime-retention";
 import { TrafficMeter, trafficMiddleware, createTrafficRoutes } from "./api/traffic";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
@@ -509,6 +510,28 @@ try {
       if (purged > 0) console.log(`附件临时区清理：${purged} 个过期文件（>48h）`);
     } catch (err) {
       console.warn(`附件临时区清理失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    // 启动 git 诊断（engine-open-read-batch 任务 8）：同样监听就绪后一次性。非 git
+    // 目录与 git 缺失静默降级；版本 <2.39 打 WARN——2026-11-05 实录死锁链：git
+    // 2.30.2 不支持 --diff-merges=first-parent → omo memory 扩展反复 stall →
+    // session worker 隔离 → 引擎宿主连环重启（notes/facts/
+    // senpi-webui-active-session-interrupt-2026-11-05.md）
+    try {
+      bootGitDiagnostics();
+    } catch (err) {
+      console.warn(`启动 git 诊断失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    // runtime 保留 30d（engine-open-read-batch 任务 8）：只清 webui 已登记项目派生
+    // 的引擎 runtime（identity 派生与 routes-memory 同源），DRY-RUN 默认仅日志输出
+    // 可删清单；meta_kv runtime.retentionEnabled="true" 才实删（realpath 守卫
+    // 限制删除不逃逸 runtime 目录，详见 lib/runtime-retention.ts 头注释）
+    try {
+      runRuntimeRetention({
+        projects: meta.listProjectMeta().map((p) => p.projectPath),
+        enabled: meta.getKv("runtime.retentionEnabled") === "true",
+      });
+    } catch (err) {
+      console.warn(`runtime 保留策略执行失败：${err instanceof Error ? err.message : String(err)}`);
     }
   };
   // node-server 的 serve() 返回时可能已在监听（事件已发过），双保险挂接
