@@ -1621,10 +1621,15 @@ class ProjectRuntime {
   async commandsList(): Promise<EngineCommandInfo[] | null> {
     // T3（D11 退役定版）：项目级「当前会话」单槽不存在后，2026-11-04 的「未起即
     // ensure 拉起 + 垫最新会话路由」失去载体，命令面回归 EngineGateway 契约原文：
-    // 遍历项目内全部就绪会话引擎，取任一绑定会话已 open 的引擎命令（命令集按项目
-    // scope，任一会话同值，取首个命中）；不 ensure 不 spawn，无就绪引擎/全部无活跃
+    // 遍历项目内全部存活会话引擎，取任一绑定会话已 open 的引擎命令（命令集按项目
+    // scope，任一会话同值，取首个命中）；不 ensure 不 spawn，无存活引擎/全部无活跃
     // 会话/引擎异常一律降级 null（端点 available=false），不 5xx。
-    for (const state of this.readyEngines()) {
+    // 2026-11-06 实录（对话进行中输 / 只剩 compact）：筛选原仅认 manager 'ready'
+    // 档，对话进行中（引擎忙/运行档）被误排除。放宽为存活档（ready/starting）即
+    // 可入选，真正门槛是活跃绑定（getActiveSession 非空）——绑定缺失一律降级 null。
+    for (const state of this.engines.values()) {
+      const st = this.manager.getStatus(state.sessionPath)?.state;
+      if (st !== "ready" && st !== "starting") continue;
       if (!state.adapter.getActiveSession()) continue;
       try {
         // 注意 await：oxc 降级编译下 try 内裸 return promise 会绕开 catch（实测）
