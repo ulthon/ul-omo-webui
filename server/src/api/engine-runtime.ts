@@ -484,7 +484,7 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
       client.openSession(options as never),
     closeSession: (sessionId?: string) => client.closeSession(sessionId),
     listSessions: () => client.listSessions(),
-    getEntries: (since?: string) => client.getEntries(since),
+    getEntries: (since?: string, page?: { limit?: number; maxBytes?: number }) => client.getEntries(since, page),
     fork: (entryId: string, options?: { position?: "before" | "at" }) => client.fork(entryId, options),
     prompt: (message: string, options?: { thinkingLevel?: string; images?: EnginePromptInput["images"]; streamingBehavior?: EnginePromptInput["streamingBehavior"] }) =>
       client.prompt(message, options as never),
