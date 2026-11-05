@@ -1,14 +1,16 @@
 /**
  * SenpiAdapter 流程单测——fake RpcClient 全部以真实引擎实录 fixture 应答（零 token）。
- * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径。
+ * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径；
+ * 任务 10：重开撞 session_path_in_use 有界退避 + 退避尽映射 503 session_reopen_failed。
  */
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
+import { ApiError } from "../src/api/http"
 
 const FIXTURES = new URL("./fixtures/protocol/", import.meta.url).pathname
 
@@ -610,6 +612,177 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(b.disposition).toBe("started")
     // 两次并发失败只触发一次 open_session 重开
     expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(2) // 初始 + 一次重开
+  })
+})
+
+/** session_path_in_use 有界退避 + 503 映射（任务 10，t9 诊断）：重开面（rpcOp 兑底
+ *  重开）撞引擎 closing 条目 attach 即拒 → 250ms→500ms→1s 三档有界退避；退避内
+ *  排空 → op 成功；持久占位 → 结构化 503 session_reopen_failed（非裸 500）。
+ *  全部假时钟推进（禁真实睡眠）；非重开面/非 path_in_use 码行为不变。 */
+describe("SenpiAdapter 重开撞 session_path_in_use 有界退避（任务 10）", () => {
+  /** 可编程 open 撞路 + op 可编程失败的 fake（path_in_use 用引擎
+   *  RpcSessionRegistryError 实录形态：message 同名的普通 Error） */
+  class ReopenBackoffClient extends FakeRpcClient {
+    /** 连续撞 session_path_in_use 的 open 次数（按调用顺序消费；Infinity=持久占位） */
+    pathInUseOpens = 0
+    /** open 返回缺 state 形态（adapter 报 open_failed，非 path_in_use 码对照组） */
+    openBrokenResponse = false
+    openCalls = 0
+    promptAttempts = 0
+    usageAttempts = 0
+    /** op 首败形态（触发 rpcOp 兑底重开）：次数 + 错误 */
+    opFailWith: Error | null = null
+    opFailTimes = 0
+    override async openSession(options: { sessionPath?: string }): Promise<{ sessionId: string; state: { sessionId?: string; sessionFile?: string } }> {
+      this.openCalls++
+      if (this.pathInUseOpens > 0) {
+        this.pathInUseOpens--
+        throw new Error("session_path_in_use")
+      }
+      if (this.openBrokenResponse) return { sessionId: "rpc-1", state: {} }
+      return super.openSession(options)
+    }
+    override async prompt(message: string, options?: { thinkingLevel?: string }): Promise<unknown> {
+      this.promptAttempts++
+      if (this.opFailTimes > 0 && this.opFailWith) {
+        this.opFailTimes--
+        throw this.opFailWith
+      }
+      return super.prompt(message, options)
+    }
+    override async getSessionStats(): Promise<Record<string, unknown>> {
+      this.usageAttempts++
+      if (this.opFailTimes > 0 && this.opFailWith) {
+        this.opFailTimes--
+        throw this.opFailWith
+      }
+      return super.getSessionStats()
+    }
+  }
+
+  /** 微任务链冲刷（假时钟下无 timer 可等时的确定性推进：rpcOp catch → 重开 →
+   *  open 首撞全在微任务上，无需真实时间） */
+  async function flushMicrotasks(turns = 30): Promise<void> {
+    for (let i = 0; i < turns; i++) await Promise.resolve()
+  }
+
+  async function setup(fake: ReopenBackoffClient) {
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: "/tmp/dur-piu.jsonl" })
+    expect(fake.openCalls).toBe(1) // setup 首开 1 次
+    return adapter
+  }
+
+  test("重开首撞 path_in_use：退避恰 250ms 后第二次 open 成功，op 恰重试一次", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.pathInUseOpens = 1 // 重开首撞（open#2）即拒；退避后 open#3 成功
+    vi.useFakeTimers()
+    try {
+      const receiptPromise = adapter.prompt({ text: "退避后应成功" })
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(2) // 重开首撞已落定，退避睡眠挂起
+      await vi.advanceTimersByTimeAsync(249)
+      expect(fake.openCalls).toBe(2) // 未满 250ms：不开第二次
+      await vi.advanceTimersByTimeAsync(1)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(3) // 恰满 250ms：第二次 open 成功
+      const receipt = await receiptPromise
+      expect(receipt.disposition).toBe("started")
+      expect(fake.promptAttempts).toBe(2) // op 恰好重试一次
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("持久占位：250/500/1000 三档退避逐档耗尽 → 503 session_reopen_failed 结构化体（读面 usage 同覆盖）", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.pathInUseOpens = Number.POSITIVE_INFINITY
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.usage().then(
+        () => {
+          throw new Error("应当 503 拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(2) // 重开首撞（t=0）
+      await vi.advanceTimersByTimeAsync(250)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(3) // 第 1 档 250ms 后再撞
+      await vi.advanceTimersByTimeAsync(500)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(4) // 第 2 档 500ms 后再撞
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(5) // 第 3 档 1000ms 后再撞 → 耗尽
+      const err = (await errPromise) as ApiError
+      expect(err).toBeInstanceOf(ApiError)
+      expect(err.status).toBe(503)
+      expect(err.code).toBe("session_reopen_failed")
+      expect(err.message).toContain("会话重开失败")
+      expect(fake.usageAttempts).toBe(1) // 重开失败：op 不重试
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("非重开面（首开）撞 path_in_use：不退避不映射，原样上抛", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.pathInUseOpens = 1
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.openSession({ sessionPath: "/tmp/dur-first-open.jsonl" }).then(
+        () => {
+          throw new Error("应当原样拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000) // 若误退避，此处会续开（计数可检出）
+      const err = await errPromise
+      expect(err).not.toBeInstanceOf(ApiError)
+      expect((err as Error).message).toBe("session_path_in_use")
+      expect(fake.openCalls).toBe(1) // 恰一次 open，无退避重试
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("重开撞 open_failed（非 path_in_use 码）：不退避不吞不换错，原样上抛", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.openBrokenResponse = true // 重开 open 响应缺 state → open_failed
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.prompt({ text: "x" }).then(
+        () => {
+          throw new Error("应当原样拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000) // open_failed 不在退避判据：无续开
+      const err = await errPromise
+      expect(err).toBeInstanceOf(EngineAdapterError)
+      expect(err).not.toBeInstanceOf(ApiError)
+      expect((err as EngineAdapterError).code).toBe("open_failed")
+      expect(fake.openCalls).toBe(2) // setup 1 + 重开 1，无退避
+      expect(fake.promptAttempts).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

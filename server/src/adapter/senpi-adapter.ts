@@ -22,6 +22,7 @@ import { dirname, join } from "node:path"
 import { isCompiledBinary, releaseRoot } from "../runtime-paths"
 import { resolveEnginePaths } from "../engine/process-manager"
 import { RPC_CLIENT_CAPABILITIES_ENV, RPC_CLIENT_CAPABILITY_LIST } from "../engine/rpc-capabilities"
+import { ApiError } from "../api/http"
 import { RpcClient, SessionManager } from "@code-yeongyu/senpi"
 import type { SessionInfo } from "@code-yeongyu/senpi"
 import {
@@ -287,11 +288,29 @@ const OPEN_TIMEOUT_MS = 60000
 const MESSAGE_PAGE_MAX_BYTES = 8 * 1024 * 1024
 /** messages() 分页循环总预算 24MB（=3 页封顶）：引擎 nextSince 异常（无限续页）时按已收字节截停，防死循环 */
 const MESSAGE_PAGE_WALK_BUDGET_BYTES = 24 * 1024 * 1024
+/** 重开撞 session_path_in_use 的有界退避档位（任务 10，t9 诊断）：引擎 registry 的
+ *  closing 条目对同路径 attach 即拒（无等待语义；t9 实录 7-20ms 快拒，2026-11-06
+ *  全天 44 次重开撞路落裸 500）——退避吸收的是这个宿主内快排空窗：首撞后
+ *  250ms→500ms→1s 三档重试（至多 4 次 open，覆盖 ~1.75s）。t9 诊断的最坏 ~100s
+ *  close-grace 窗（SENPI_RPC_CLOSE_GRACE_MS 语义）不是退避要吸收的：长尾持久占位
+ *  在退避耗尽后映射 503 session_reopen_failed，客户端显净错，下一次用户动作净重试。 */
+const REOPEN_BACKOFF_DELAYS_MS = [250, 500, 1000]
 
 /** 引擎拒答（响应超限）判据：RpcCommandError.errorCode 精确等值（鸭子形态兼容网关普通对象），不做子串宽匹配 */
 function isResponseTooLargeError(err: unknown): boolean {
   const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
   const hit = (v: unknown): boolean => typeof v === "string" && v === "response_too_large"
+  if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
+  return [e.message, e.errorCode, e.code].some(hit)
+}
+
+/** 精确匹配引擎 session_path_in_use（RpcSessionRegistryError("session_path_in_use")
+ *  经 stdio 反序列化 message 同名；session-worker-credit 亦抛同名 Error）：三字段
+ *  精确等值鸭子判定（与 isSessionReopenableError 同款纪律，禁 includes 子串宽匹配）。
+ *  仅作重开路径有界退避的触发判据，不进三码可重开集（盲重试 op 会活锁，t9 裁定排除）。 */
+function isSessionPathInUseError(err: unknown): boolean {
+  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
+  const hit = (v: unknown): boolean => typeof v === "string" && v === "session_path_in_use"
   if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
   return [e.message, e.errorCode, e.code].some(hit)
 }
@@ -514,27 +533,61 @@ export class SenpiAdapter implements EngineAdapter {
 
   private async doOpenSession(options: EngineOpenSessionOptions): Promise<EngineOpenSessionResult> {
     const client = this.rpc()
-    const res = await this.tracedRpc("open_session", () =>
-      withTimeout(
-        client.openSession({
-          sessionPath: options.sessionPath,
-          provider: options.provider ?? this.options.provider,
-          modelId: options.modelId ?? this.options.modelId,
-          thinkingLevel: options.thinkingLevel,
-        }),
-        OPEN_TIMEOUT_MS,
-        "open_session",
-      ),
-    )
-    // open_session 返回的 sessionId 是 routing handle；durable id 在 state.sessionId（verification/01 结论 2）
-    const sessionId = String(res.state?.sessionId ?? "")
-    const sessionPath = String(res.state?.sessionFile ?? "")
-    if (!sessionId || !sessionPath) {
-      throw new EngineAdapterError("open_failed", `open_session 响应缺 state.sessionId/sessionFile: ${JSON.stringify(res).slice(0, 200)}`)
+    // session_path_in_use 有界退避（任务 10）：仅「本 adapter 曾绑定过同一路径」的重开
+    // 面生效（rpcOp 兜底重开与 runTraced forceOpen 重开都汇到此处）；首开（新路径/
+    // 新 adapter）不退避行为不变——不碰上层 openLane 单车道（t6 范围）
+    const isReopen =
+      options.sessionPath !== undefined &&
+      (this.active?.sessionPath === options.sessionPath || this.lastSessionPath === options.sessionPath)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.tracedRpc("open_session", () =>
+          withTimeout(
+            client.openSession({
+              sessionPath: options.sessionPath,
+              provider: options.provider ?? this.options.provider,
+              modelId: options.modelId ?? this.options.modelId,
+              thinkingLevel: options.thinkingLevel,
+            }),
+            OPEN_TIMEOUT_MS,
+            "open_session",
+          ),
+        )
+        // open_session 返回的 sessionId 是 routing handle；durable id 在 state.sessionId（verification/01 结论 2）
+        const sessionId = String(res.state?.sessionId ?? "")
+        const sessionPath = String(res.state?.sessionFile ?? "")
+        if (!sessionId || !sessionPath) {
+          throw new EngineAdapterError("open_failed", `open_session 响应缺 state.sessionId/sessionFile: ${JSON.stringify(res).slice(0, 200)}`)
+        }
+        this.active = { sessionId, sessionPath, routingId: res.sessionId }
+        this.lastSessionPath = sessionPath
+        return this.active
+      } catch (err) {
+        if (!isReopen || !isSessionPathInUseError(err)) throw err
+        if (attempt >= REOPEN_BACKOFF_DELAYS_MS.length) {
+          // 退避耗尽 = 持久占位（引擎 close-grace 长尾/跨代清理）：映射结构化 503
+          // （对齐 t1 switchModel 路径的 session_reopen_failed 映射语义），不再放大成裸 500
+          log.warn("adapter", "重开退避耗尽仍撞 session_path_in_use，映射 503 session_reopen_failed", {
+            sessionPath: options.sessionPath ?? "",
+            opens: attempt + 1,
+            sessionId: this.active?.sessionId ?? "",
+          })
+          throw new ApiError(
+            503,
+            "session_reopen_failed",
+            `会话重开失败（session_path_in_use 已退避 ${REOPEN_BACKOFF_DELAYS_MS.length} 次仍被占用），请稍后重试或重启引擎`,
+          )
+        }
+        const delayMs = REOPEN_BACKOFF_DELAYS_MS[attempt]!
+        log.warn("adapter", "重开撞 session_path_in_use，有界退避后重试", {
+          sessionPath: options.sessionPath ?? "",
+          retry: attempt + 1,
+          delayMs,
+          sessionId: this.active?.sessionId ?? "",
+        })
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
     }
-    this.active = { sessionId, sessionPath, routingId: res.sessionId }
-    this.lastSessionPath = sessionPath
-    return this.active
   }
 
   getActiveSession(): EngineOpenSessionResult | null {
