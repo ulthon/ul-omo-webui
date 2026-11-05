@@ -87,28 +87,25 @@ describe("messages() 引擎原生分页循环（任务 4）", () => {
     expect(fake.calls[1]).toEqual({ since: "e2", maxBytes: PAGE_MAX_BYTES })
   })
 
-  test("游标失效降级仍走分页（Entry not found 不再无参整读），语义不变", async () => {
+  test("游标失效上抛 cursor_invalid（任务 5：不再静默降级全量），调用有界", async () => {
     const fake = new PagingFakeRpcClient()
-    const scripted: PageResult[] = [
-      { entries: [entry("f1"), entry("f2")], leafId: "LF", hasMore: true, nextSince: "f2" },
-      { entries: [entry("f3")], leafId: "LF", hasMore: false },
-    ]
-    fake.respond = async (since, _page, callNo) => {
-      // 首查带游标 → 引擎报游标失效；降级后的每查（since=undefined/续页）按脚本应答
-      if (callNo === 1 && since) throw new Error("Entry not found: stale-cursor")
-      const page = scripted[callNo - 2]
-      if (!page) throw new Error("fake 分页脚本耗尽")
-      return page
+    fake.respond = async (since) => {
+      if (since) throw new Error("Entry not found: stale-cursor")
+      // 降级路径已删除：不应发生无参全量读
+      throw new Error("fake 不应被无参调用（降级全量已删除）")
     }
     const adapter = await openedAdapter(fake)
 
-    const page = await adapter.messages("stale-cursor")
-    expect(page.entries.map((e) => e.id)).toEqual(["f1", "f2", "f3"])
-    expect(page.cursor).toBe("LF")
-    // 降级路径同样全部分页携带 maxBytes（无参整读不存在）
-    expect(fake.calls.length).toBe(3)
-    expect(fake.calls.every((c) => c.maxBytes === PAGE_MAX_BYTES)).toBe(true)
-    expect(fake.calls[1]).toEqual({ since: undefined, maxBytes: PAGE_MAX_BYTES })
+    let err: unknown
+    try {
+      await adapter.messages("stale-cursor")
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(EngineAdapterError)
+    expect((err as EngineAdapterError).code).toBe("cursor_invalid")
+    // 误导性成功输出防线：首查即上抛，无降级第二次调用
+    expect(fake.calls.length).toBe(1)
   })
 
   test("引擎回 response_too_large 结构化上抛（EngineAdapterError），不裸传 RPC 错误", async () => {

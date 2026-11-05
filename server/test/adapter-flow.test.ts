@@ -2,8 +2,10 @@
  * SenpiAdapter 流程单测——fake RpcClient 全部以真实引擎实录 fixture 应答（零 token）。
  * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径。
  */
-import { describe, expect, test } from "vitest"
-import { readFileSync } from "node:fs"
+import { afterEach, describe, expect, test } from "vitest"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
@@ -310,19 +312,29 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(fake.calls.some((c) => c.method === "abort")).toBe(true)
   })
 
-  test("无效 cursor（引擎 Entry not found）降级全量返回", async () => {
+  test("无效 cursor（引擎 Entry not found）上抛 cursor_invalid，不再静默降级全量（任务 5）", async () => {
     const fake = new FakeRpcClient()
     const rawGetEntries = fake.getEntries.bind(fake)
+    // 覆写后 fake.calls 不再自动记录：本地计数器作引擎调用探针
+    let engineCalls = 0
     fake.getEntries = async (since?: string) => {
+      engineCalls++
       if (since) throw new Error("Entry not found: stale-cursor")
-      return rawGetEntries()
+      return rawGetEntries(since)
     }
     const adapter = makeAdapter(fake)
     await adapter.start()
     await adapter.openSession({ thinkingLevel: "low" })
-    const page = await adapter.messages("stale-cursor")
-    expect(page.entries.length).toBe(sampleEntries.length)
-    expect(page.cursor).toBe("b2")
+    let err: unknown
+    try {
+      await adapter.messages("stale-cursor")
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(EngineAdapterError)
+    expect((err as EngineAdapterError).code).toBe("cursor_invalid")
+    // 降级全量路径已删除：首查即上抛，无第二次调用（不触发无参全量）
+    expect(engineCalls).toBe(1)
   })
 
   test("无活跃会话时 prompt/messages 报 no_active_session", async () => {
@@ -598,5 +610,97 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(b.disposition).toBe("started")
     // 两次并发失败只触发一次 open_session 重开
     expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(2) // 初始 + 一次重开
+  })
+})
+
+/** todoState 磁盘直读（任务 5 / A-2）：按窗反扫命中 senpi.todo-state 即停，
+ *  纯看不占引擎；会话文件不在（未落盘/别名）回退引擎分页读（旧语义等价）。 */
+describe("SenpiAdapter todoState 磁盘直读", () => {
+  const tempDirs: string[] = []
+  function mkTempDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "t5-todo-"))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  /** 造会话 jsonl：header + fixture 条目（含多条 senpi.todo-state）+ 可选尾部噪声 */
+  function makeTodoFile(tailNoiseCount = 0): string {
+    const dir = mkTempDir()
+    const path = join(dir, "s.jsonl")
+    const lines = [JSON.stringify({ type: "session", version: 3, id: "hdr-todo", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/p" })]
+    for (const e of entriesFixture) lines.push(JSON.stringify(e))
+    for (let i = 0; i < tailNoiseCount; i++) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `noise${String(i).padStart(4, "0")}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: [{ type: "text", text: `n${i}` }] },
+        }),
+      )
+    }
+    writeFileSync(path, lines.join("\n") + "\n")
+    return path
+  }
+
+  test("磁盘反扫命中最新 senpi.todo-state（与旧引擎读值等价），零 get_entries 调用", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: makeTodoFile() })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    // 引擎零参与（纯看不拉引擎）
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  test("todo 条目在窗外更早处（噪声 > PAGE_LIMIT）：按窗续扫仍命中，仍零引擎调用", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    // 300 条尾部噪声 > 216 单窗：首窗全噪声无命中，须续窗才扫到 fixture 内 todo 条目
+    await adapter.openSession({ sessionPath: makeTodoFile(300) })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  test("会话文件不在（未落盘/别名）：回退引擎读，行为与旧实现等价", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: join(mkTempDir(), "missing.jsonl") })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(true)
+  })
+
+  test("磁盘文件无任何 todo 条目：扫尽文件头返回 null，不撞引擎", async () => {
+    const dir = mkTempDir()
+    const path = join(dir, "s.jsonl")
+    const lines = [JSON.stringify({ type: "session", version: 3, id: "hdr-nt", timestamp: "t", cwd: "/p" })]
+    for (let i = 0; i < 3; i++) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `m${i}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: [{ type: "text", text: "hi" }] },
+        }),
+      )
+    }
+    writeFileSync(path, lines.join("\n") + "\n")
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: path })
+    expect(await adapter.todoState()).toBeNull()
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 })

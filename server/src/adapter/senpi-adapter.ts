@@ -48,6 +48,7 @@ import {
   type EngineUsageStats,
 } from "./engine-adapter"
 import { log } from "../obs/logger"
+import { readEntriesBefore, readTailEntries } from "./session-file"
 
 /** 宿主仓库根（源码形态 server/src/adapter -> 上三级，realpath 解析符号链接）；
  * 编译形态 = 可执行文件所在目录（发行包根）。 */
@@ -554,10 +555,11 @@ export class SenpiAdapter implements EngineAdapter {
       return await this.readEntriesPaged(cursor, "get_entries")
     } catch (err) {
       // 引擎对未知 since 报 "Entry not found: <id>"——游标失效（如引擎重启后会话态
-      // 重建）属异常路径，降级全量让客户端按条目 id 幂等收敛，历史完整性优先。
-      // 降级同样走分页循环（无参整读在大会话历史上正是 16MB 隔离真凶，不再存在）
+      // 重建/compaction）不再静默降级全量（降级路径正是历史上 16MB 隔离的真凶入口，
+      // 任务 5 起删除）：上抛 cursor_invalid 由 REST 层映射 409，客户端按既有分层升级
+      // full=1（web/src/lib/event-dispatch.ts refetchSession），全量校准由磁盘主读路径承担
       if (err instanceof Error && err.message.includes("Entry not found")) {
-        return this.readEntriesPaged(undefined, "get_entries_full")
+        throw new EngineAdapterError("cursor_invalid", "增量游标已失效（引擎不再认识该 since），请以 full=1 全量重取")
       }
       throw err
     }
@@ -695,7 +697,26 @@ export class SenpiAdapter implements EngineAdapter {
 
   async todoState(): Promise<EngineTodoState | null> {
     this.requireActive()
-    const page = await this.rpcOp("get_entries", () => this.rpc().getEntries())
+    // 任务 5（A-2）磁盘化：todo 面板拉取不再占引擎（纯看不拉引擎/不冷 spawn）。
+    // 磁盘按窗反扫（尾窗 → hasMore 时以 oldestId 续窗）命中 senpi.todo-state 即停；
+    // 扫尽文件头未命中 → null。会话文件不在（新会话未落盘/别名——条目只在引擎内存）
+    // 回退引擎分页读，行为与旧实现等价。
+    const sessionPath = this.active?.sessionPath ?? this.lastSessionPath ?? ""
+    if (sessionPath && existsSync(sessionPath)) {
+      let before: string | undefined
+      for (;;) {
+        const window = before === undefined
+          ? await readTailEntries(sessionPath)
+          : await readEntriesBefore(sessionPath, before)
+        const hit = [...window.entries].reverse().find((e) => e.customType === "senpi.todo-state")
+        if (hit) return parseTodoState(hit)
+        // 空窗或扫尽文件头：hasMore=true 必伴 ≥1 条（字节/条数截停都在 push 后判定），
+        // oldestId 恒非空，续窗锚安全
+        if (!window.hasMore || window.oldestId === null) return null
+        before = window.oldestId
+      }
+    }
+    const page = await this.readEntriesPaged(undefined, "get_entries")
     const last = [...page.entries].reverse().find((e) => e.customType === "senpi.todo-state")
     return parseTodoState(last)
   }
