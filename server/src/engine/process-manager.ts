@@ -84,6 +84,11 @@ export interface EngineManagerOptions {
   defaultModel?: string
   /** 空闲回收超时（默认 30 分钟，可配置）。 */
   idleTimeoutMs?: number
+  /** 探活窗档（任务 7，C4-B）：未发过消息的引擎（纯看/仅 RPC 面拉起）按 wire 活动
+   *  时钟判收——wire 静默 ≥ activityWindowMs 且非真忙即回收（双门，单门静默不算
+   *  空闲）。<=0 = 关闭该档（回落正常档 idleTimeoutMs 梯子，灰度逃生口，同
+   *  meta_kv engine.activityWindowMinutes="never" 口径）。缺省 5 分钟。 */
+  activityWindowMs?: number
   /** 重启退避基数（默认 1s，第 n 次连续失败退避 base*2^(n-1)）。 */
   backoffBaseMs?: number
   /** 重启退避上限（默认 60s）。 */
@@ -115,6 +120,12 @@ export interface EngineManagerOptions {
    * （:307 就地复制纪律同源），故回调注入；缺省未注入 = 无第三判据（现状行为）。
    * 回调异常由 isIdle 有界捕获按 false 降级（不炸状态机）。 */
   sessionBackgroundRunning?: (sessionPath: string) => boolean
+  /** 排队豁免（任务 7 第四判据）：返回 true 视为忙不回收——排队工作永不因空闲
+   *  被杀。数据面为 wire queue_update 帧（引擎整队变动必发，清空也发；组合根
+   *  index.ts 订阅 manager engine_event 维护会话粒度集合后注入，同
+   *  sessionBackgroundRunning 先例——排队语义不进 manager）。缺省未注入 = 无
+   *  第四判据。回调异常由 isIdle 有界捕获按 false 降级（不炸状态机）。 */
+  sessionQueuedWork?: (sessionPath: string) => boolean
   /** 时钟（测试注入）。 */
   now?: () => number
   /** 进程探针（测试注入；默认 Linux /proc）。 */
@@ -159,7 +170,7 @@ export type EngineManagerEvent =
       exit?: { code: number | null; signal: NodeJS.Signals | null; uptimeMs: number }
     }
   | { type: "engine_unavailable"; projectPath: string; sessionPath: string; reason: string }
-  | { type: "engine_reclaimed"; projectPath: string; sessionPath: string; reason: "idle_timeout" }
+  | { type: "engine_reclaimed"; projectPath: string; sessionPath: string; reason: "idle_timeout" | "activity_window" }
 
 /** 上层在进程 ready 后可注入的会话级预热钩子（如预 open 一个空闲会话）。
  *  T1 冲突注记（multi-session-parallel）：生产装配（index.ts）不注入本钩子；
@@ -179,6 +190,10 @@ const DEFAULTS = {
   // idle_timeout 回收连根杀）。默认 7 天，可经 meta_kv engine.idleTimeoutMinutes 配置，
   // "never"（=0）永不回收；设置页改档即时生效（setIdleTimeoutMs）。
   idleTimeoutMs: 7 * 24 * 60 * 60 * 1000,
+  // 任务 7（C4-B）探活窗：纯看引擎 5 分钟 wire 静默即收（双门之一；另一门是
+  // isIdle 四判据）。发过消息（markUserActivity）即转正常档 idleTimeoutMs 梯子。
+  // meta_kv engine.activityWindowMinutes 可调/可关（"never"=0 关闭回落正常档）。
+  activityWindowMs: 5 * 60 * 1000,
   backoffBaseMs: 1000,
   backoffMaxMs: 60 * 1000,
   maxConsecutiveFailures: 5,
@@ -207,6 +222,13 @@ interface ProjectEngine {
   startedAt: number | undefined
   lastActivityAt: number
   runningSessions: Set<string>
+  /** 真实运行回合标记（agent_start 派生）。runningSessions 含 reportSessionActive
+   *  的点亮项（open ≠ run），探活窗档的忙判定只认本集——点亮会话静默满窗仍可回收
+   *  （t6 证据：纯看引擎恒有点亮项，点亮计忙会让探活窗永不触发，即 GAP-5 本体）。 */
+  agentRunning: Set<string>
+  /** 本进程生命周期内已收到用户消息回执（prompt 成功，任务 7）：true = 正常档
+   *  （idleTimeoutMs 梯子）；false = 探活窗档。换代（createEngine）自然归零重计。 */
+  userPrompted: boolean
   pendingPermissions: Set<string>
   idleTimer: ReturnType<typeof setTimeout> | null
   backoffTimer: ReturnType<typeof setTimeout> | null
@@ -348,7 +370,7 @@ export function parseProbeGateEnv(value: string | undefined): boolean {
 const DEFAULT_FACTORY: EngineClientFactory = (opts) => new RpcClient(opts)
 
 export class EngineProcessManager {
-  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "healthPingTimeoutMs" | "stopGraceMs" | "probeWriteTimeoutMs">> & EngineManagerOptions
+  private readonly opts: Required<Pick<EngineManagerOptions, "idleTimeoutMs" | "activityWindowMs" | "backoffBaseMs" | "backoffMaxMs" | "maxConsecutiveFailures" | "readyProbeIntervalMs" | "readyProbeMaxAttempts" | "healthPingTimeoutMs" | "stopGraceMs" | "probeWriteTimeoutMs">> & EngineManagerOptions
   private readonly registry: PidRegistry
   private readonly probe: ProcProbe
   private readonly probeGateEnabled: boolean
@@ -359,6 +381,7 @@ export class EngineProcessManager {
   constructor(options: EngineManagerOptions = {}) {
     this.opts = {
       idleTimeoutMs: options.idleTimeoutMs ?? DEFAULTS.idleTimeoutMs,
+      activityWindowMs: options.activityWindowMs ?? DEFAULTS.activityWindowMs,
       backoffBaseMs: options.backoffBaseMs ?? DEFAULTS.backoffBaseMs,
       backoffMaxMs: options.backoffMaxMs ?? DEFAULTS.backoffMaxMs,
       maxConsecutiveFailures: options.maxConsecutiveFailures ?? DEFAULTS.maxConsecutiveFailures,
@@ -395,6 +418,15 @@ export class EngineProcessManager {
   setIdleTimeoutMs(ms: number): void {
     if (!Number.isFinite(ms) || ms < 0) return
     this.opts.idleTimeoutMs = Math.floor(ms)
+    for (const engine of this.engines.values()) this.rescheduleIdleCheck(engine)
+  }
+
+  /** 运行时调整探活窗档（任务 7 灰度面，meta_kv engine.activityWindowMinutes）：
+   *  ms<=0 为关窗（未发消息引擎回落正常档 idleTimeoutMs 梯子）；已拉起引擎的既有
+   *  定时器按新值重排（同 setIdleTimeoutMs 语义）。 */
+  setActivityWindowMs(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return
+    this.opts.activityWindowMs = Math.floor(ms)
     for (const engine of this.engines.values()) this.rescheduleIdleCheck(engine)
   }
 
@@ -544,6 +576,8 @@ export class EngineProcessManager {
       startedAt: undefined,
       lastActivityAt: this.now(),
       runningSessions: new Set(),
+      agentRunning: new Set(),
+      userPrompted: false,
       pendingPermissions: new Set(),
       idleTimer: null,
       backoffTimer: null,
@@ -852,6 +886,7 @@ export class EngineProcessManager {
     engine.client = null
     engine.pid = undefined
     engine.runningSessions.clear()
+    engine.agentRunning.clear()
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
@@ -943,6 +978,7 @@ export class EngineProcessManager {
     engine.client = null
     engine.pid = undefined
     engine.runningSessions.clear()
+    engine.agentRunning.clear()
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
@@ -1026,6 +1062,7 @@ export class EngineProcessManager {
     engine.client = null
     engine.pid = undefined
     engine.runningSessions.clear()
+    engine.agentRunning.clear()
     engine.pendingPermissions.clear()
     engine.unsubEvent?.()
     engine.unsubEvent = null
@@ -1070,12 +1107,54 @@ export class EngineProcessManager {
   // ---- 空闲回收 ----
 
   /** 空闲 = 无运行中会话 且 无挂起未应答权限请求（P0-2 实证约束）
-   * 且 非后台运行中（multi-session-parallel T2 第三判据，防 3h53m 误杀回归）。
-   * 前两判据任一非空即忙短路（现状保持）；后台探测仅在前两者空时才查——探测有
-   * mtime/size 指纹缓存摊销，常态零额外磁盘读。 */
+   * 且 非后台运行中（multi-session-parallel T2 第三判据，防 3h53m 误杀回归）
+   * 且 非排队中（任务 7 第四判据，排队工作永不因空闲被杀）。
+   * 前两判据任一非空即忙短路（现状保持）；后台/排队探测仅在前两者空时才查
+   * ——后台探测有 mtime/size 指纹缓存摊销，常态零额外磁盘读。 */
   private isIdle(engine: ProjectEngine): boolean {
     if (engine.runningSessions.size > 0 || engine.pendingPermissions.size > 0) return false
+    if (this.queuedWork(engine)) return false
     return !this.backgroundRunning(engine)
+  }
+
+  /** 探活窗档忙判定（任务 7 双门的第二门）：点亮（reportSessionActive 的 open
+   *  收录）不构成忙——t6 扇出后纯看引擎恒有点亮项，点亮计忙会让探活窗永不触发
+   *  （GAP-5 病灶本体）；真实回合（agent_start 派生 agentRunning）/待答权限/
+   *  后台/排队四判据仍全防误杀。真实回合另有 wire 流式帧刷新活动钟双保险
+   *  （静默门先挡，本门复验）。 */
+  private isIdleForActivityWindow(engine: ProjectEngine): boolean {
+    if (engine.agentRunning.size > 0 || engine.pendingPermissions.size > 0) return false
+    if (this.queuedWork(engine)) return false
+    return !this.backgroundRunning(engine)
+  }
+
+  /** 排队豁免注入的有界调用（同 backgroundRunning 约定）：回调异常按 false（无
+   *  排队）降级，不让注入方 bug 炸进状态机共用调用链。 */
+  private queuedWork(engine: ProjectEngine): boolean {
+    try {
+      return this.opts.sessionQueuedWork?.(engine.sessionPath) ?? false
+    } catch {
+      return false
+    }
+  }
+
+  /** 本引擎当前回收档（任务 7 双档）：探活窗档（未发过消息且窗开）或正常档
+   *  （idleTimeoutMs 梯子，现状行为）。返回该档窗口、engine_reclaimed reason
+   *  与忙判定。markUserActivity 翻档后必经 rescheduleIdleCheck 重排，不会出现
+   *  档位与挂起定时器错位。 */
+  private reclaimTier(engine: ProjectEngine): {
+    windowMs: number
+    reason: "activity_window" | "idle_timeout"
+    idle: boolean
+  } {
+    if (this.opts.activityWindowMs > 0 && !engine.userPrompted) {
+      return {
+        windowMs: this.opts.activityWindowMs,
+        reason: "activity_window",
+        idle: this.isIdleForActivityWindow(engine),
+      }
+    }
+    return { windowMs: this.opts.idleTimeoutMs, reason: "idle_timeout", idle: this.isIdle(engine) }
   }
 
   /** 注入探针的有界调用：回调异常按 false（无后台任务）降级——等价 T1 现行为，
@@ -1095,20 +1174,24 @@ export class EngineProcessManager {
       engine.idleTimer = null
     }
     if (engine.state !== "ready") return
-    if (!this.isIdle(engine)) return
-    if (this.opts.idleTimeoutMs <= 0) return // "never"：永不回收（仅清既有定时器）
+    if (this.opts.idleTimeoutMs <= 0) return // "never" 总逃生口：两档全部停摆（含探活窗）
+    const tier = this.reclaimTier(engine)
+    if (!tier.idle) return
+    if (tier.windowMs <= 0) return
     const elapsed = this.now() - engine.lastActivityAt
-    const remaining = Math.max(this.opts.idleTimeoutMs - elapsed, 0)
+    const remaining = Math.max(tier.windowMs - elapsed, 0)
     engine.idleTimer = setTimeout(() => {
       engine.idleTimer = null
-      if (engine.state !== "ready" || !this.isIdle(engine)) return
-      if (this.now() - engine.lastActivityAt < this.opts.idleTimeoutMs) {
-        // 定时器毫秒级抖动可能提前触发（remaining 与触发时 elapsed 踩同一边界）：
-        // 重排空闲检查而非 return 丢弃，否则该次回收被永久吞掉（实测竞态，见 task-2b 证据）
+      if (engine.state !== "ready") return
+      // 到点复评：档位与忙判定以触发时刻为准（后台/排队翻忙无 wire 事件可依，靠
+      // 这里复验拦下）；复评非忙但时钟未到阈值则重排不丢弃，见 task-2b 竞态实证
+      const nowTier = this.reclaimTier(engine)
+      if (!nowTier.idle) return
+      if (this.now() - engine.lastActivityAt < nowTier.windowMs) {
         this.rescheduleIdleCheck(engine)
         return
       }
-      this.emit({ type: "engine_reclaimed", projectPath: engine.projectPath, sessionPath: engine.sessionPath, reason: "idle_timeout" })
+      this.emit({ type: "engine_reclaimed", projectPath: engine.projectPath, sessionPath: engine.sessionPath, reason: nowTier.reason })
       void this.stop(engine.sessionPath).catch(() => {})
     }, remaining)
   }
@@ -1129,6 +1212,18 @@ export class EngineProcessManager {
     const engine = this.engines.get(sessionPath)
     if (!engine) return
     engine.runningSessions.delete(sessionId)
+    engine.agentRunning.delete(sessionId) // 会话已关：该会话不可能仍有运行回合，防点亮/回合标记残留卡忙
+    engine.lastActivityAt = this.now()
+    this.rescheduleIdleCheck(engine)
+  }
+
+  /** 用户消息回执成功上报（任务 7，ProjectRuntime.prompt 成功点钩子）：引擎转
+   *  正常档（idleTimeoutMs 梯子，不再受探活窗约束）并刷新活动时钟。本进程生命
+   *  周期内单向不回退；换代重拉自然归零回探活窗档。 */
+  markUserActivity(sessionPath: string): void {
+    const engine = this.engines.get(sessionPath)
+    if (!engine) return
+    engine.userPrompted = true
     engine.lastActivityAt = this.now()
     this.rescheduleIdleCheck(engine)
   }
@@ -1149,12 +1244,18 @@ export class EngineProcessManager {
     const anyE = event as { type?: string; sessionId?: string; method?: string; id?: string }
     switch (anyE.type) {
       case "agent_start":
-        if (anyE.sessionId) engine.runningSessions.add(anyE.sessionId)
+        if (anyE.sessionId) {
+          engine.runningSessions.add(anyE.sessionId)
+          engine.agentRunning.add(anyE.sessionId)
+        }
         break
       case "agent_end":
       case "agent_settled":
       case "session_closed":
-        if (anyE.sessionId) engine.runningSessions.delete(anyE.sessionId)
+        if (anyE.sessionId) {
+          engine.runningSessions.delete(anyE.sessionId)
+          engine.agentRunning.delete(anyE.sessionId)
+        }
         break
       case "extension_ui_request":
         if (anyE.method && DIALOG_UI_METHODS.has(anyE.method) && typeof anyE.id === "string") {

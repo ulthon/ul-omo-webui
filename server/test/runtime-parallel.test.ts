@@ -251,6 +251,8 @@ async function setup(opts?: {
       // 缺省拉满测试生命期（不超 32 位定时器上限）：空闲回收面不进入既有断言；
       // ⑦⑧ 显式调小（80ms）驱动 isIdle 第三判据，并注入生产同源 sessionBackgroundRunning
       idleTimeoutMs: opts?.idleTimeoutMs ?? 2_000_000_000,
+      // 任务 7：本套件（含 ⑦⑧ 真实 isIdle 复评）到正常档回收梯，探活窗关闭
+      activityWindowMs: 0,
       sessionBackgroundRunning: opts?.sessionBackgroundRunning,
       readyProbeIntervalMs: 1,
       readyProbeMaxAttempts: 20,

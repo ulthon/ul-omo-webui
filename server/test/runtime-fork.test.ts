@@ -158,6 +158,7 @@ describe("运行时 fork→按 fork id 删除（走查实锤：删 fork 实删�
         stop: async () => {},
         stopAll: async () => {},
         reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+        markUserActivity: (_sessionPath: string): void => {},
       } as unknown as EngineProcessManager
 
       const registry = new EngineRuntimeRegistry(fakeManager, {

@@ -171,6 +171,7 @@ class SpyManager {
   reportSessionActive(sessionPath: string, sessionId: string): void {
     this.activeReports.push({ sessionPath, sessionId })
   }
+  markUserActivity(_sessionPath: string): void {}
   onEvent(_listener: (event: unknown) => void): () => void {
     return () => {}
   }

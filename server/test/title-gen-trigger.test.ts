@@ -519,6 +519,8 @@ class FakeManager {
   reportPermissionAnswered(): void {}
   /** 任务 6 扇出点亮面（真管理器上报口；本套件不断言其副作用，空实现即可） */
   reportSessionActive(_sessionPath: string, _sessionId: string): void {}
+  /** 任务 7 探活窗翻档口（真管理器 markUserActivity；同上空实现即可） */
+  markUserActivity(_sessionPath: string): void {}
 }
 
 interface RegistryHarness {

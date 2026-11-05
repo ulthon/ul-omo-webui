@@ -81,6 +81,7 @@ function makeRegistry(
     stop: async () => {},
     stopAll: async () => {},
     reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+    markUserActivity: (_sessionPath: string): void => {},
   } as unknown as EngineProcessManager
   const registry = new EngineRuntimeRegistry(fakeManager, {
     listProjects: () => [PROJECT],

@@ -1496,6 +1496,10 @@ class ProjectRuntime {
           streamingBehavior: input.streamingBehavior,
         });
         span.rpcMs = performance.now() - tRpc;
+        // 任务 7（C4-B）探活窗档位翻档点：消息回执成功 = 用户活动铁证——引擎转
+        // 正常档（idleTimeoutMs 梯子），不再受 5 分钟探活窗约束。任何成功回执都算
+        // （含 disposition=queued 排队与 handled 斜杠命令）；失败路径不翻档
+        this.manager.markUserActivity(state.sessionPath);
         // disposition="handled"（如 /命令）表示没有开启回合，不等 agent_settled
         if (receipt.disposition !== "handled") {
           const turn: TurnRow = {

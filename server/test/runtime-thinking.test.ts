@@ -127,6 +127,7 @@ describe("thinkingLevel 运行时透传（W2 todo 7）", () => {
         stop: async () => {},
         stopAll: async () => {},
         reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+        markUserActivity: (_sessionPath: string): void => {},
       } as unknown as EngineProcessManager
 
       const registry = new EngineRuntimeRegistry(fakeManager, {

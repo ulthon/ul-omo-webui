@@ -147,6 +147,7 @@ class FakeManager {
   }
   /** 任务 6 扇出点亮面（真管理器上报口；本套件不断言其副作用，空实现即可） */
   reportSessionActive = (_sessionPath: string, _sessionId: string): void => {}
+  markUserActivity = (_sessionPath: string): void => {}
   onEvent = (listener: (event: unknown) => void): (() => void) => {
     this.listeners.push(listener)
     return () => {

@@ -115,6 +115,7 @@ async function setup(): Promise<Harness> {
     stop: async () => {},
     stopAll: async () => {},
     reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+    markUserActivity: (_sessionPath: string): void => {},
   } as unknown as EngineProcessManager
   const registry = new EngineRuntimeRegistry(fakeManager, { listProjects: () => [PROJECT], agentDir })
   // 首次 usage：ensure() 建 adapter 挂事件回调 + switchTo 回填 handle→durable 映射
