@@ -95,6 +95,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   schedule_runner_unavailable: "errors.scheduleRunnerUnavailable",
   session_not_found: "errors.sessionNotFound",
   session_not_persisted: "errors.sessionNotPersisted",
+  // 多会话并行批次（引擎重开退避耗尽映射新增 1 码）
+  session_reopen_failed: "errors.sessionReopenFailed",
   snippet_conflict: "errors.snippetConflict",
   tag_conflict: "errors.tagConflict",
   tag_mount_conflict: "errors.tagMountConflict",

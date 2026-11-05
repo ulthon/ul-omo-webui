@@ -13,6 +13,7 @@ export const errors = {
   cliMissing: "omo CLI not found: credential testing is unavailable (install via the engine CLI)",
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
+  sessionReopenFailed: "Failed to reopen the engine session; try again shortly",
   tagConflict: "Tag definitions were changed elsewhere; please refresh and retry",
   tagMountConflict: "Session tags were changed elsewhere; please refresh and retry",
   snippetConflict: "Snippets were changed elsewhere; please refresh and retry",
