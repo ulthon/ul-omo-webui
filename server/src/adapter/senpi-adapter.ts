@@ -48,6 +48,7 @@ import {
   type EngineUsageStats,
 } from "./engine-adapter"
 import { log } from "../obs/logger"
+import { readEntriesBefore, readTailEntries } from "./session-file"
 
 /** 宿主仓库根（源码形态 server/src/adapter -> 上三级，realpath 解析符号链接）；
  * 编译形态 = 可执行文件所在目录（发行包根）。 */
@@ -100,7 +101,13 @@ export interface SenpiRpcClient {
   }): Promise<{ sessionId: string; state: { sessionId?: string; sessionFile?: string; [k: string]: unknown }; attached?: boolean }>
   closeSession(sessionId?: string): Promise<void>
   listSessions(): Promise<Array<Record<string, unknown>>>
-  getEntries(since?: string): Promise<{ entries: EngineEntry[]; leafId: string | null }>
+  /** 分页读取（引擎原生页读，官方 rpc-client.d.ts:521-534 同签名）：page 传 maxBytes/limit
+   *  时引擎按页返回，hasMore/nextSince 供续页；不传 page 为旧整读语义（历史过大报
+   *  response_too_large）。无页参数调用方行为不变。 */
+  getEntries(
+    since?: string,
+    page?: { limit?: number; maxBytes?: number },
+  ): Promise<{ entries: EngineEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }>
   /** 从指定条目 fork 新会话（verification/05 P1-1 实证可用；"before" 仅接受 user 消息条目） */
   fork(entryId: string, options?: { position?: "before" | "at" }): Promise<{ text: string; cancelled: boolean }>
   prompt(
@@ -276,6 +283,18 @@ const READY_PROBE_INTERVAL_MS = 2000
 const READY_PROBE_MAX = 15
 const START_TIMEOUT_MS = 60000
 const OPEN_TIMEOUT_MS = 60000
+/** messages() 引擎原生分页单页字节上限：对齐引擎默认页 8MiB（get-entries-page.js DEFAULT_ENTRY_PAGE_BYTES） */
+const MESSAGE_PAGE_MAX_BYTES = 8 * 1024 * 1024
+/** messages() 分页循环总预算 24MB（=3 页封顶）：引擎 nextSince 异常（无限续页）时按已收字节截停，防死循环 */
+const MESSAGE_PAGE_WALK_BUDGET_BYTES = 24 * 1024 * 1024
+
+/** 引擎拒答（响应超限）判据：RpcCommandError.errorCode 精确等值（鸭子形态兼容网关普通对象），不做子串宽匹配 */
+function isResponseTooLargeError(err: unknown): boolean {
+  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
+  const hit = (v: unknown): boolean => typeof v === "string" && v === "response_too_large"
+  if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
+  return [e.message, e.errorCode, e.code].some(hit)
+}
 
 /** 可重开兜底判据（2026-11-06 扩）：unknown_session（引擎重启后残留旧绑定）
  *  或 session_closing（引擎侧 session worker 单条输出超 16MB 硬限被隔离，
@@ -551,18 +570,58 @@ export class SenpiAdapter implements EngineAdapter {
   async messages(cursor?: string): Promise<EngineMessagesPage> {
     this.requireActive()
     try {
-      const page = await this.rpcOp("get_entries", () => this.rpc().getEntries(cursor))
-      // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
-      return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
+      return await this.readEntriesPaged(cursor, "get_entries")
     } catch (err) {
       // 引擎对未知 since 报 "Entry not found: <id>"——游标失效（如引擎重启后会话态
-      // 重建）属异常路径，降级全量让客户端按条目 id 幂等收敛，历史完整性优先
+      // 重建/compaction）不再静默降级全量（降级路径正是历史上 16MB 隔离的真凶入口，
+      // 任务 5 起删除）：上抛 cursor_invalid 由 REST 层映射 409，客户端按既有分层升级
+      // full=1（web/src/lib/event-dispatch.ts refetchSession），全量校准由磁盘主读路径承担
       if (err instanceof Error && err.message.includes("Entry not found")) {
-        const page = await this.rpcOp("get_entries_full", () => this.rpc().getEntries())
-        return { entries: page.entries, leafId: page.leafId, cursor: page.leafId }
+        throw new EngineAdapterError("cursor_invalid", "增量游标已失效（引擎不再认识该 since），请以 full=1 全量重取")
       }
       throw err
     }
+  }
+
+  /** 分页循环拼接（plan A-1）：每页 maxBytes 8MiB（引擎原生分页），hasMore=true 时以
+   *  nextSince 续页直至读尽；总预算 24MB 与无进展双守卫防引擎异常（nextSince 原地踏步/
+   *  空页续问）导致的死循环。预算/无进展截停时 cursor 回退为最后交付条目 id——leafId
+   *  在截停语义下会跳过未交付区间，续读会丢数据；正常读尽保持 cursor=leafId 原语义。
+   *  response_too_large（引擎拒答）转结构化 EngineAdapterError，REST 层不再落裸 internal 500。 */
+  private async readEntriesPaged(startSince: string | undefined, op: string): Promise<EngineMessagesPage> {
+    const entries: EngineEntry[] = []
+    let since = startSince
+    let leafId: string | null = null
+    let hasMore = false
+    let totalBytes = 0
+    try {
+      do {
+        const page = await this.rpcOp(op, () => this.rpc().getEntries(since, { maxBytes: MESSAGE_PAGE_MAX_BYTES }))
+        leafId = page.leafId
+        hasMore = page.hasMore === true
+        const next = page.nextSince
+        if (hasMore && (next === undefined || next === since || page.entries.length === 0)) {
+          // 无进展截停：原地踏步页与此前轮同查询同答，再拼接只会重复
+          log.warn("adapter", "引擎分页无进展，按守卫截停", { op, since: since ?? "", nextSince: next ?? "", entries: page.entries.length })
+          break
+        }
+        entries.push(...page.entries)
+        totalBytes += Buffer.byteLength(JSON.stringify(page.entries))
+        since = next
+      } while (hasMore && totalBytes < MESSAGE_PAGE_WALK_BUDGET_BYTES)
+    } catch (err) {
+      if (isResponseTooLargeError(err)) {
+        const detail = err instanceof Error ? err.message : String(err)
+        throw new EngineAdapterError("response_too_large", `引擎拒答会话读取（响应超限）: ${detail.slice(0, 200)}`)
+      }
+      throw err
+    }
+    if (hasMore) {
+      log.warn("adapter", "引擎分页达总预算截停", { op, since: startSince ?? "", entries: entries.length, totalBytes })
+      return { entries, leafId, cursor: entries[entries.length - 1]?.id ?? leafId, hasMore: true, nextSince: since }
+    }
+    // getEntries(since) 游标语义（verification/01：since=leafId 时增量为 0 条）
+    return { entries, leafId, cursor: leafId }
   }
 
   async prompt(input: EnginePromptInput): Promise<{ disposition: string }> {
@@ -656,7 +715,26 @@ export class SenpiAdapter implements EngineAdapter {
 
   async todoState(): Promise<EngineTodoState | null> {
     this.requireActive()
-    const page = await this.rpcOp("get_entries", () => this.rpc().getEntries())
+    // 任务 5（A-2）磁盘化：todo 面板拉取不再占引擎（纯看不拉引擎/不冷 spawn）。
+    // 磁盘按窗反扫（尾窗 → hasMore 时以 oldestId 续窗）命中 senpi.todo-state 即停；
+    // 扫尽文件头未命中 → null。会话文件不在（新会话未落盘/别名——条目只在引擎内存）
+    // 回退引擎分页读，行为与旧实现等价。
+    const sessionPath = this.active?.sessionPath ?? this.lastSessionPath ?? ""
+    if (sessionPath && existsSync(sessionPath)) {
+      let before: string | undefined
+      for (;;) {
+        const window = before === undefined
+          ? await readTailEntries(sessionPath)
+          : await readEntriesBefore(sessionPath, before)
+        const hit = [...window.entries].reverse().find((e) => e.customType === "senpi.todo-state")
+        if (hit) return parseTodoState(hit)
+        // 空窗或扫尽文件头：hasMore=true 必伴 ≥1 条（字节/条数截停都在 push 后判定），
+        // oldestId 恒非空，续窗锚安全
+        if (!window.hasMore || window.oldestId === null) return null
+        before = window.oldestId
+      }
+    }
+    const page = await this.readEntriesPaged(undefined, "get_entries")
     const last = [...page.entries].reverse().find((e) => e.customType === "senpi.todo-state")
     return parseTodoState(last)
   }

@@ -37,8 +37,12 @@ export interface EngineEntry {
 export interface EngineMessagesPage {
   entries: EngineEntry[]
   leafId: string | null
-  /** 下一页游标（= 本页 leafId；传回 messages(cursor) 取增量） */
+  /** 下一页游标（读尽时=leafId；预算截停时=最后交付条目 id，传回 messages(cursor) 续读不丢不重） */
   cursor: string | null
+  /** 分页循环因 24MB 总预算/无进展守卫截停时为 true（引擎侧仍有未读页）；正常读尽不出此字段 */
+  hasMore?: boolean
+  /** 截停时引擎告知的未消费续页游标（原样透传，供上层续读） */
+  nextSince?: string
 }
 
 /**
