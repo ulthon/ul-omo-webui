@@ -42,6 +42,10 @@ class FakeReopenRpc {
   private holdResolve: (() => void) | null = null
   openShouldFail = false
   persistOnOpen = false
+  setModelCalls = 0
+  setModelFailCode: string | null = null
+  /** setModelFailCode 生效次数（按调用序前 N 次抛，之后成功——重试成功形态用） */
+  setModelFailTimes = 0
   private routing = 1
   private lastOpenPath = ""
 
@@ -61,6 +65,15 @@ class FakeReopenRpc {
   }
   async send(): Promise<{ success: boolean }> {
     return { success: true }
+  }
+  async setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+    this.setModelCalls += 1
+    if (this.setModelFailCode !== null && this.setModelCalls <= this.setModelFailTimes) {
+      const e = new Error(this.setModelFailCode)
+      ;(e as unknown as { code: string }).code = this.setModelFailCode
+      throw e
+    }
+    return { provider, id: modelId }
   }
   async openSession(options: { sessionPath?: string }): Promise<{
     sessionId: string
@@ -248,6 +261,86 @@ describe("ensure 在途合并（2026-11-06 02:52:50 五路 in-flight 竞门事�
       expect(rpcB.setClientInfoEntered).toBe(1)
       expect(rpcB.openCalls).toBe(1)
       expect(rtB?.engines.size).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("switchModel 兜底重开重试（2026-11-06 04:09 prompt 三连 500 回归）", () => {
+  test("active=null + 带 model 的 prompt → 重开+重试后成功，openCalls 恰 +1", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.openCalls).toBe(1)
+      const st = boundStateOf(registry, sessionPath)
+      expect(st).toBeDefined()
+      // 注入绑定丢失 + setModel 首抛 unknown_session（mock prompt 免回合生命周期）
+      st!.adapter.active = null
+      rpc.setModelFailCode = "unknown_session"
+      rpc.setModelFailTimes = 1
+      ;(st as unknown as { adapter: { prompt: () => Promise<{ disposition: string }> } }).adapter.prompt = async () => ({
+        disposition: "handled",
+      })
+
+      const r = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" })
+      expect(r.appliedModel).toBe("prov/m")
+      // 恰 +1：首开 1 次 + switchModel 兜底重开 1 次，无风暴
+      expect(rpc.openCalls).toBe(2)
+      // 重试恰一次：首抛 1 次 + 重试成功 1 次
+      expect(rpc.setModelCalls).toBe(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("switchModel 重开失败 → 503 session_reopen_failed 结构化上抛（非裸 500）", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      rpc.setModelFailCode = "unknown_session"
+      rpc.setModelFailTimes = 1
+      rpc.openShouldFail = true
+      const st = boundStateOf(registry, sessionPath)
+      st!.adapter.active = null
+
+      const err = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" }).then(
+        () => {
+          throw new Error("应当拒绝，不应成功")
+        },
+        (e: unknown) => e as { status?: number; code?: string; message?: string },
+      )
+      expect(err.status).toBe(503)
+      expect(err.code).toBe("session_reopen_failed")
+      expect(err.message).toContain("重开失败")
+      // 重开失败后不重试 setModel；open 为首开 1 次 + 失败重开 1 次
+      expect(rpc.setModelCalls).toBe(1)
+      expect(rpc.openCalls).toBe(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("未知 errorCode（session_path_in_use）不触发重开（malformed-input 对抗）", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.openCalls).toBe(1)
+      rpc.setModelFailCode = "session_path_in_use"
+      rpc.setModelFailTimes = 1
+      const st = boundStateOf(registry, sessionPath)
+      st!.adapter.active = null
+
+      const err = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" }).then(
+        () => {
+          throw new Error("应当拒绝，不应成功")
+        },
+        (e: unknown) => e as { code?: string },
+      )
+      expect(err.code).toBe("session_path_in_use")
+      // 非三码错误：零重开零重试，错误原样上抛
+      expect(rpc.openCalls).toBe(1)
+      expect(rpc.setModelCalls).toBe(1)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

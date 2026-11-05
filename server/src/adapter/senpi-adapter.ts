@@ -277,6 +277,22 @@ const READY_PROBE_MAX = 15
 const START_TIMEOUT_MS = 60000
 const OPEN_TIMEOUT_MS = 60000
 
+/** 可重开兜底判据（2026-11-06 扩）：unknown_session（引擎重启后残留旧绑定）
+ *  或 session_closing（引擎侧 session worker 单条输出超 16MB 硬限被隔离，
+ *  深查 st_01a1ae48 实证 session_worker_output_limit——隔离后该会话非白名单
+ *  命令全部报 session_closing；重开 = 换新 worker 恢复会话，落盘 jsonl 不受损）；
+ *  no_active_session（绑定丢失，prompt 撞 requireActive）。鸭子判定：网关/线程层
+ *  可能抛非 Error 实例的普通对象（01:13:04 实录 15ms 直 5xx），instanceof 门会静默
+ *  绕过兕底——只看 message/errorCode/code 三字段内容，三码集全等精确匹配
+ *  （禁 includes 子串宽匹配）。导出供 engine-runtime runTraced/switchModel 同口径复用。 */
+export function isSessionReopenableError(err: unknown): boolean {
+  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
+  const reopenable = new Set(["unknown_session", "session_closing", "no_active_session"])
+  const hit = (v: unknown): boolean => typeof v === "string" && reopenable.has(v)
+  if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
+  return [e.message, e.errorCode, e.code].some(hit)
+}
+
 export class SenpiAdapter implements EngineAdapter {
   readonly capabilities: EngineCapabilities = {
     // 实证：agent 枚举无协议面（docs/verification/05 P1-5）；UI 按 docs/01 预案降级
@@ -363,24 +379,6 @@ export class SenpiAdapter implements EngineAdapter {
     }
   }
 
-  /** 精确匹配引擎 unknown_session（RpcSessionRegistryError("unknown_session") 经 stdio
-   *  反序列化为 message=unknown_session 的 Error；errorCode 同名时亦认）。不宽匹配其它错误。 */
-  /** 可重开兜底判据（2026-11-06 扩）：unknown_session（引擎重启后残留旧绑定）
-   *  或 session_closing（引擎侧 session worker 单条输出超 16MB 硬限被隔离，
-   *  深查 st_01a1ae48 实证 session_worker_output_limit——隔离后该会话非白名单
-   *  命令全部报 session_closing；重开 = 换新 worker 恢复会话，落盘 jsonl 不受损）。 */
-  private isSessionReopenableError(err: unknown): boolean {
-    // 鸭子判定（2026-11-06 修）：网关/线程层可能抛非 Error 实例的普通对象，
-    // instanceof 门会静默绕过兕底（01:13:04 实录 15ms 直 5xx）；只看 message/errorCode 字段。
-    // no_active_session（01:57:21 实录：隔离/重启后绑定丢失，prompt 撞 requireActive）
-    // 亦纳入：有 lastSessionPath 即可自动重开恢复。
-    const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
-    const reopenable = new Set(["unknown_session", "session_closing", "no_active_session"])
-    const hit = (v: unknown): boolean => typeof v === "string" && reopenable.has(v)
-    if (!e || typeof e !== "object") return typeof err === "string" ? hit(err) : false
-    return [e.message, e.errorCode, e.code].some(hit)
-  }
-
   /** 按当前活跃绑定的 sessionPath 重新 open_session 重建引擎侧绑定（路由 handle 会更新）。
    *  in-flight 去重：同 adapter 并发失败共享同一次重开，重开完成或失败后清槽。 */
   private reopenActiveSession(): Promise<EngineOpenSessionResult> {
@@ -400,11 +398,31 @@ export class SenpiAdapter implements EngineAdapter {
     try {
       return await fn()
     } catch (err) {
-      if (!this.isSessionReopenableError(err)) throw err
+      if (!isSessionReopenableError(err)) throw err
       const reason = err instanceof Error ? err.message : "unknown_session"
       log.warn("adapter", "会话可重开错误，自动重开并重试一次", { op, reason, sessionId: this.active?.sessionId ?? "" })
-      await this.reopenActiveSession()
-      return fn()
+      try {
+        await this.reopenActiveSession()
+      } catch (reopenErr) {
+        // 重开失败（如 session_path_in_use / open_failed）必落 warn 可观测，再原样上抛
+        log.warn("adapter", "自动重开失败，按原错误路径上抛", {
+          op,
+          reason: reopenErr instanceof Error ? reopenErr.message : String(reopenErr),
+          sessionId: this.active?.sessionId ?? "",
+        })
+        throw reopenErr
+      }
+      try {
+        return await fn()
+      } catch (retryErr) {
+        // 重试再败必落 warn 可观测（重开未救回的形态），再原样上抛
+        log.warn("adapter", "重开重试仍失败，按原错误路径上抛", {
+          op,
+          reason: retryErr instanceof Error ? retryErr.message : String(retryErr),
+          sessionId: this.active?.sessionId ?? "",
+        })
+        throw retryErr
+      }
     }
   }
 

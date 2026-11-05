@@ -44,7 +44,7 @@ import {
   type EngineTurnSpeed,
   type EngineUsageStats,
 } from "../adapter/engine-adapter";
-import { SenpiAdapter, encodeCwdToSessionDirName, type SenpiRpcClient } from "../adapter/senpi-adapter";
+import { SenpiAdapter, encodeCwdToSessionDirName, isSessionReopenableError, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 import { debugPerfOn } from "../conf/diagnostics-flags";
@@ -61,16 +61,6 @@ function perfErrCode(err: unknown): string {
 
 /** 关闭态共享哑 span（body 的段写入无读者；省去按调用分配，零行为差异） */
 const INERT_PERF_SPAN = {} as PerfSpan;
-
-/** no_active_session 鸭子判定（runTraced 兜底重开判据，2026-11-06）：EngineAdapterError
- *  携 code 字段；网关/线程层可能抛非 Error 实例的普通对象（01:13:04 实录 15ms 直 5xx），
- *  instanceof 门会静默绕过兜底——只看 message/errorCode/code 字段内容。 */
-function isNoActiveSessionError(err: unknown): boolean {
-  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined;
-  const hit = (v: unknown): boolean => typeof v === "string" && v.includes("no_active_session");
-  if (!e || typeof e !== "object") return typeof err === "string" && hit(err);
-  return [e.message, e.errorCode, e.code].some(hit);
-}
 
 /** 会话运行态（服务端真相源，docs08-r6 任务 11）：GET /api/sessions 行 runState 字段值。
  *  语义与前端 SSE 驱动的 runStates 同口径（agent_start → running；四型权限/阻塞型
@@ -1254,7 +1244,7 @@ class ProjectRuntime {
       try {
         return await body(span, state);
       } catch (err) {
-        if (!isNoActiveSessionError(err)) throw err;
+        if (!isSessionReopenableError(err)) throw err;
         log.info("gw", "op.reopen", {
           op,
           session: sessionId.slice(0, 8),
@@ -1522,7 +1512,32 @@ class ProjectRuntime {
     }
     const provider = model.slice(0, slash);
     const modelId = model.slice(slash + 1);
-    return state.client.setModel(provider, modelId);
+    try {
+      return await state.client.setModel(provider, modelId);
+    } catch (err) {
+      // prompt 兜底（2026-11-06 04:09-04:10 实录：绑定丢失态 prompt 撞 switchModel 直 500
+      // 三连零兜底——runTraced 兜底只包 body 抛错，setModel 在 adapter rpcOp 之外裸抛旁路）：
+      // 三码可重开错误 → 同路径 openSession 重开（并发共享 adapter opening 在途合并）
+      // → rememberHandleFor 同步新 routingId → 恰好重试一次。
+      if (!isSessionReopenableError(err)) throw err;
+      log.warn("gw", "switchModel.reopen", {
+        session: state.sessionPath.slice(0, 8),
+        reason: err instanceof Error ? err.message : String(err),
+        rid: currentRid(),
+      });
+      try {
+        await state.adapter.openSession({ sessionPath: state.sessionPath });
+      } catch (reopenErr) {
+        // 重开失败（如 session_path_in_use / open_failed）结构化 503 上抛，不裸 500
+        throw new ApiError(
+          503,
+          "session_reopen_failed",
+          `会话重开失败（${reopenErr instanceof Error ? reopenErr.message : String(reopenErr)}），请稍后重试或重启引擎`,
+        );
+      }
+      this.rememberHandleFor(state, state.adapter.getActiveSession()!.routingId, state.activeId ?? undefined);
+      return state.client.setModel(provider, modelId);
+    }
   }
 
   async abort(sessionId: string): Promise<void> {
