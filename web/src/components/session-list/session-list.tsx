@@ -1,7 +1,7 @@
 // 会话列表（W3 todo 10 单列表重构）：侧栏唯一列表——全部注册项目的会话按项目分组平铺，
 // 分组头可折叠（localStorage 按项目记忆），顶部"最近会话"区跨项目按 modified 取最新 8 条直达。
-// 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）：同项目仅 select；
-// 跨项目轻量切换 currentProject + 应用该项目偏好模型（跳过 lastOpenedAt PATCH）。
+// 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）仅调内聚 select：
+// 目标项目切换与偏好模型应用由 sessions store 的 select 自持（跳过 lastOpenedAt PATCH）。
 // 数据来自 store.refreshSessions 的聚合分支（todo 9）；旧 human/all 分段控件已删——
 // 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork。
 // 归档三态/搜索/批量模式照常工作，
@@ -44,7 +44,6 @@ import {
   GROUP_VISIBLE_STEP,
   LOCATE_EVENT,
   PROJECT_ORDER_KV,
-  crossProjectDecision,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
@@ -214,21 +213,14 @@ export function SessionList() {
     void s.refreshSessions();
   };
 
-  /** 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用，todo 10）：
-   * 同项目仅 select；跨项目轻量切换 currentProject + 应用该项目偏好模型（模型列表按需补拉），
-   * 跳过 lastOpenedAt PATCH——聊一句不应改项目排序，但偏好不能漏应用
-   * （否则跨项目跳转后首条 prompt 带旧项目模型，输入历史也记错项目）。 */
+  /** 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用）：仅调内聚
+   * select——目标项目切换/偏好模型应用/模型列表补拉由 sessions store 的 select 自持
+   * （会话根架构 W2 任务 6，跳过 lastOpenedAt PATCH 的轻量切换契约不变，同项目重选
+   * 也不重置用户手选模型）；调用点只保留抽屉收起等展示层副作用。 */
   const selectSession = useCallback((session: SessionListItem) => {
-    const ui = useUiStore.getState();
     useSessionsStore.getState().select(session.id);
-    const decision = crossProjectDecision(session.project, ui.currentProject, ui.projects);
-    if (decision.switchProject) {
-      ui.setCurrentProject(session.project);
-      ui.setSelectedModel(decision.preferredModel);
-      if (ui.models.length === 0) void loadProjectModels(session.project);
-    }
     // 抽屉态（lg 以下）选中会话后自动收起（todo 26 既有行为，统一收口到共享 handler）
-    ui.setDrawerOpen(false);
+    useUiStore.getState().setDrawerOpen(false);
   }, []);
 
   /** 新建会话：工具条按钮在 currentProject 创建；分组头 "+" 在该项目内创建

@@ -10,14 +10,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, FolderOpen, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
-import { loadProjectModels, openProject } from "@/lib/bootstrap";
+import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { scheduleModelPreferencePersist } from "@/lib/preferences";
 import { resolveSiteName, useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
-  crossProjectDecision,
   flattenSessions,
   locateProjectInSidebar,
   recentTop,
@@ -63,8 +62,9 @@ function basename(path: string): string {
  * 新建，sheet 内不做（计划 Must NOT）。定制行=标题(text-base≥16px font-medium)+项目
  * 名副行(text-xs muted)+标签徽标（TagBadges 文字形态，任务 20 色格在其内部升级，此处
  * 预留 slot）；行 min-h-11(44px) 触控达标、双行紧凑。头部/尾部按 env(safe-area-inset-*)
- * 让位（任务 6 viewport-fit=cover 先例）。点击直达切换：决策核复用 crossProjectDecision
- * （跨项目 setCurrentProject + setSelectedModel 偏好模型 + 模型按需补拉），选完关 sheet。
+ * 让位（任务 6 viewport-fit=cover 先例）。点击直达切换：调内聚 select（目标项目切换/
+ * 偏好模型应用/模型补拉由 sessions store 的 select 自持，会话根架构 W2 任务 6），
+ * 选完关 sheet。
  * 标签定义两源键集（global+全部注册项目）沿侧栏 reloadTagDefs 同构，仅 sheet 打开时拉；
  * 失败静默 null→徽标整体不渲染（同侧栏防闪烁语义）。 */
 export function SessionSwitcherSheet({
@@ -112,14 +112,7 @@ export function SessionSwitcherSheet({
   }, [open]);
 
   const select = (s: SessionListItem) => {
-    const ui = useUiStore.getState();
     useSessionsStore.getState().select(s.id);
-    const decision = crossProjectDecision(s.project, ui.currentProject, ui.projects);
-    if (decision.switchProject) {
-      ui.setCurrentProject(s.project);
-      ui.setSelectedModel(decision.preferredModel);
-      if (ui.models.length === 0) void loadProjectModels(s.project);
-    }
     onOpenChange(false);
   };
 

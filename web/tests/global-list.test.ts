@@ -2,13 +2,13 @@
 // - groupOrder 分组排序（当前项目组最前，其余按各组最新 modified 降序）
 // - recentTop 最近 8 条选取（跨项目按 modified 降序，置顶自然参与）
 // - 折叠记忆（readCollapsed/writeCollapsed 回环 + isGroupExpanded 优先级）
-// - crossProjectDecision 跨项目点击切换判定
+// （跨项目点击判定 crossProjectDecision 已随会话根架构 W2 任务 6 退役：决策内联进
+//  sessions store 的 select，调用点只调内聚 select）
 import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import {
   COLLAPSE_PREFIX,
   RECENT_LIMIT,
-  crossProjectDecision,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
@@ -237,31 +237,5 @@ describe("折叠记忆", () => {
     // 记忆展开的非当前项目
     writeCollapsed("/other", false, ls);
     expect(isGroupExpanded("/other", "/cur", undefined, ls)).toBe(true);
-  });
-});
-
-describe("crossProjectDecision 跨项目点击切换判定", () => {
-  const projects = [
-    { projectPath: "/a", preferredModel: "zai-coding-cn/glm-5.3-flash" },
-    { projectPath: "/b", preferredModel: "zai-coding-cn/glm-4.6v" },
-  ];
-
-  test("同项目：仅选中，不切换", () => {
-    expect(crossProjectDecision("/a", "/a", projects)).toEqual({ switchProject: false, preferredModel: null });
-  });
-
-  test("跨项目：切换并携带目标项目偏好模型", () => {
-    expect(crossProjectDecision("/b", "/a", projects)).toEqual({
-      switchProject: true,
-      preferredModel: "zai-coding-cn/glm-4.6v",
-    });
-  });
-
-  test("目标项目未注册或无偏好：preferredModel 为 null（仍切换）", () => {
-    expect(crossProjectDecision("/ghost", "/a", projects)).toEqual({ switchProject: true, preferredModel: null });
-    expect(crossProjectDecision("/c", "/a", [{ projectPath: "/c", preferredModel: null }])).toEqual({
-      switchProject: true,
-      preferredModel: null,
-    });
   });
 });
