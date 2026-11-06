@@ -60,8 +60,37 @@ const { SessionList } = await import("@/components/session-list/session-list");
 const { useUiStore } = await import("@/stores/ui");
 const { useSessionsStore } = await import("@/stores/sessions");
 
+const BASE_ROW = {
+  id: "s0",
+  path: "/tmp/p/s0.jsonl",
+  project: "/tmp/p",
+  title: "s0",
+  name: null,
+  renamedTitle: null,
+  parentSessionPath: null,
+  created: "2026-01-01T00:00:00.000Z",
+  modified: "2026-01-01T00:00:00.000Z",
+  messageCount: 0,
+  firstMessage: "",
+  pinned: false,
+  archivedAt: null,
+  unreadCount: 0,
+  lastRead: null,
+  active: false,
+};
+
 useUiStore.setState({ currentProject: "/tmp/p", projects: [{ projectPath: "/tmp/p", preferredModel: null, preferredThinkingLevel: null, lastOpenedAt: null }] });
-useSessionsStore.setState({ byProject: { "/tmp/p": [] }, archived: "false", loading: false });
+// 工具条新建落点改选中会话派生（会话根架构 W2 任务 8）：布景补齐 selectedId+byProject
+// 反查链，派生项目=/tmp/p（全局项目字段仅作遗留态存在，新建链路不再读取）。
+// 挂载制 refreshSessions 会用 api.listSessions 聚合回包整替 byProject——mock 带回
+// s0 行，否则派生反查被空回包清空、按钮禁用（旧链路读全局字段故不受影响）
+useSessionsStore.setState({
+  byProject: { "/tmp/p": [BASE_ROW] },
+  selectedId: "s0",
+  archived: "false",
+  loading: false,
+});
+api.listSessions.mockImplementation(() => Promise.resolve({ sessions: [BASE_ROW] }));
 
 async function mountList() {
   const container = document.createElement("div");
@@ -96,6 +125,8 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
     vi.restoreAllMocks();
     api.createSession.mockReset();
     api.createSession.mockImplementation(() => Promise.resolve({ global: [], project: [], projects: [], sessions: [], items: [], list: [] }));
+    // restoreAllMocks 会把 listSessions 打回代理缺省空回包：重建 s0 回包，保住下一用例的派生反查链
+    api.listSessions.mockImplementation(() => Promise.resolve({ sessions: [BASE_ROW] }));
   });
 
   test("(1) 首次 engine_not_ready 重试成功：会话创建、无错误 toast、api 恰 2 次", async () => {

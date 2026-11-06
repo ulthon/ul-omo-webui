@@ -1,7 +1,7 @@
 // 会话列表（W3 todo 10 单列表重构）：侧栏唯一列表——全部注册项目的会话按项目分组平铺，
 // 分组头可折叠（localStorage 按项目记忆），顶部"最近会话"区跨项目按 modified 取最新 8 条直达。
-// 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）：同项目仅 select；
-// 跨项目轻量切换 currentProject + 应用该项目偏好模型（跳过 lastOpenedAt PATCH）。
+// 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）仅调内聚 select：
+// 目标项目切换与偏好模型应用由 sessions store 的 select 自持（跳过 lastOpenedAt PATCH）。
 // 数据来自 store.refreshSessions 的聚合分支（todo 9）；旧 human/all 分段控件已删——
 // 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork。
 // 归档三态/搜索/批量模式照常工作，
@@ -16,7 +16,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { diag } from "@/lib/diag";
 import { loadProjectModels } from "@/lib/bootstrap";
-import { useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
+import { projectOfSession, useActiveProject, useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 // tSnap：异步续体（await 之后/promise 回调）取词用快照态；渲染期文本走 useT 响应式
 import { t as tSnap, useT } from "@/i18n/i18n";
@@ -44,7 +44,6 @@ import {
   GROUP_VISIBLE_STEP,
   LOCATE_EVENT,
   PROJECT_ORDER_KV,
-  crossProjectDecision,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
@@ -98,6 +97,9 @@ function useMarkReadOnView(): void {
 
 export function SessionList() {
   const currentProject = useUiStore((s) => s.currentProject);
+  // 新建会话工具条落点（会话根架构 W2 任务 8）：选中会话派生项目——selectedId +
+  // byProject 反查，无选中会话为 null（按钮禁用）；不再读全局项目字段
+  const activeProject = useActiveProject();
   const projects = useUiStore((s) => s.projects);
   const projectSort = useUiStore((s) => s.projectSort);
   const projectOrder = useUiStore((s) => s.projectOrder);
@@ -214,25 +216,19 @@ export function SessionList() {
     void s.refreshSessions();
   };
 
-  /** 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用，todo 10）：
-   * 同项目仅 select；跨项目轻量切换 currentProject + 应用该项目偏好模型（模型列表按需补拉），
-   * 跳过 lastOpenedAt PATCH——聊一句不应改项目排序，但偏好不能漏应用
-   * （否则跨项目跳转后首条 prompt 带旧项目模型，输入历史也记错项目）。 */
+  /** 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用）：仅调内聚
+   * select——目标项目切换/偏好模型应用/模型列表补拉由 sessions store 的 select 自持
+   * （会话根架构 W2 任务 6，跳过 lastOpenedAt PATCH 的轻量切换契约不变，同项目重选
+   * 也不重置用户手选模型）；调用点只保留抽屉收起等展示层副作用。 */
   const selectSession = useCallback((session: SessionListItem) => {
-    const ui = useUiStore.getState();
     useSessionsStore.getState().select(session.id);
-    const decision = crossProjectDecision(session.project, ui.currentProject, ui.projects);
-    if (decision.switchProject) {
-      ui.setCurrentProject(session.project);
-      ui.setSelectedModel(decision.preferredModel);
-      if (ui.models.length === 0) void loadProjectModels(session.project);
-    }
     // 抽屉态（lg 以下）选中会话后自动收起（todo 26 既有行为，统一收口到共享 handler）
-    ui.setDrawerOpen(false);
+    useUiStore.getState().setDrawerOpen(false);
   }, []);
 
-  /** 新建会话：工具条按钮在 currentProject 创建；分组头 "+" 在该项目内创建
-   * （创建后轻量切到该项目——当前项目=正在聊的会话的项目语义，todo 10）。 */
+  /** 新建会话：工具条按钮在选中会话的派生项目创建；分组头 "+" 在该项目内创建。
+   * 准备无条件化（W2 任务 8）：目标项目偏好先行 + await 模型解析完成再 POST——
+   * 落点即目标，不再与全局项目字段比对（创建后的项目切换由 select 内聚承担）。 */
   const createSession = async (project: string | null) => {
     if (!project || creating) return;
     setCreating(true);
@@ -245,16 +241,14 @@ export function SessionList() {
     let retryScheduled = false;
     try {
       const ui = useUiStore.getState();
-      if (ui.currentProject !== project) {
-        ui.setCurrentProject(project);
-        const meta = ui.projects.find((p) => p.projectPath === project);
-        // 偏好先行与 openProject 同口径（模型 + 思考档）；随后 await 模型解析完成再建会话
-        // （docs08-r5 任务 2：回退链 项目偏好 > 引擎默认 > 列表首项 落定后才发请求，
-        // 请求携带解析所得 model 与 thinkingLevel——未解析完不建，避免落回引擎隐式默认）
-        ui.setSelectedModel(meta?.preferredModel ?? null);
-        ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
-        await loadProjectModels(project);
-      }
+      // 偏好先行与 openProject 同口径（模型 + 思考档）；随后 await 模型解析完成再建会话
+      // （docs08-r5 任务 2：回退链 项目偏好 > 引擎默认 > 列表首项 落定后才发请求，
+      // 请求携带解析所得 model 与 thinkingLevel——未解析完不建，避免落回引擎隐式默认）。
+      // 无条件化（W2 任务 8）：两个落点（工具条=派生项目/分组头=显式项目）都先解析再建
+      const meta = ui.projects.find((p) => p.projectPath === project);
+      ui.setSelectedModel(meta?.preferredModel ?? null);
+      ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
+      await loadProjectModels(project);
       const { selectedModel, selectedThinkingLevel } = useUiStore.getState();
       const tCreate = performance.now();
       const res = await api.createSession({
@@ -342,8 +336,8 @@ export function SessionList() {
 
   /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
    * 上面 sortedProjects 的防御过滤）+ refreshSessions（服务端聚合口径同步换）；
-   * 隐藏的是当前项目时复用注销的回空会话态流程（清 currentProject + 选中会话），
-   * 非当前项目不动选中。 */
+   * 隐藏的是选中会话所属项目时回空选中（仅 select(null)——会话根架构 W2 任务 10A：
+   * 判定改选中会话派生，不再写全局项目字段），其余情况不动选中。 */
   const hideProject = async (projectPath: string, hidden: boolean) => {
     if (hiding) return;
     setHiding(true);
@@ -353,11 +347,12 @@ export function SessionList() {
       const res = await api.listProjects();
       const ui = useUiStore.getState();
       ui.setProjects(res.projects);
-      if (hidden && ui.currentProject === projectPath) {
-        ui.setCurrentProject(null);
-        useSessionsStore.getState().select(null);
+      // 判定改派生（W2 任务 10A）：选中会话反查所属项目，恰为隐藏目标才回空选中
+      const sessions = useSessionsStore.getState();
+      if (hidden && projectOfSession(sessions.byProject, sessions.selectedId) === projectPath) {
+        sessions.select(null);
       }
-      void useSessionsStore.getState().refreshSessions();
+      void sessions.refreshSessions();
       ui.showToast(hidden ? t("sessionList.list.projectHidden") : t("sessionList.list.projectShown"), "info");
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
@@ -645,21 +640,22 @@ export function SessionList() {
       {/* 工具条：新建 + 全局搜索 + 批量/归档/标签（搜索模式下隐藏后者）。
           触控目标（todo 26 走查修复）：手机 ≥44px（lg 保持桌面紧凑尺寸）。
           A1（docs08-r4 任务 5）：手机档容器内边距与纵向节奏收紧（p/space 1.5），
-          lg 档维持原 p-2/space-y-2；"新建会话"固定在 currentProject 创建
+          lg 档维持原 p-2/space-y-2；"新建会话"在选中会话的派生项目创建
           （分组头 "+" 才是跨项目落点）。 */}
       <div className="shrink-0 space-y-1.5 border-b px-1.5 py-1.5 lg:space-y-2 lg:px-2 lg:py-2">
         {/* r10 todo 4：手机档新建会话收成 size-9 图标钮，与搜索/批量同行防误触；
             lg 档保持原三行堆叠（全宽钮/搜索/批量）。 */}
         <div className="flex items-center gap-1.5 lg:flex-col lg:items-stretch lg:gap-0 lg:space-y-2">
-        {/* 点击时刻实时读 currentProject：跨项目点击后 300ms 内 React 提交可能未完成，
-            render 闭包值会滞后并把 createSession 的落点拉回旧项目（S7 QA 实证） */}
+        {/* 落点=选中会话派生项目（useActiveProject 订阅 selectedId+byProject，跨项目
+            选中后随 store 提交同步更新）；无选中会话禁用（W2 任务 8：点击时刻实时读
+            全局项目字段的补丁退役） */}
         <Button
           size="sm"
           aria-label={t("sessionList.list.newSession")}
           data-testid="new-session-btn"
           className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:w-full"
-          disabled={creating || !currentProject}
-          onClick={() => void createSession(useUiStore.getState().currentProject)}
+          disabled={creating || !activeProject}
+          onClick={() => void createSession(activeProject)}
         >
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
           <span className="hidden lg:inline">{t("sessionList.list.newSession")}</span>

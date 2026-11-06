@@ -1,4 +1,4 @@
-// 全局平铺列表纯逻辑（todo 10）：分组排序、最近会话选取、折叠记忆、跨项目点击判定、侧栏定位事件。
+// 全局平铺列表纯逻辑（todo 10）：分组排序、最近会话选取、折叠记忆、侧栏定位事件。
 // 抽成纯函数便于单测（web/tests/global-list.test.ts）；localStorage 薄封装带环境守卫，
 // 存储实例可注入（bun 测试无 DOM，组件路径缺省用浏览器 localStorage）。
 import type { SessionListItem } from "@/lib/api";
@@ -16,12 +16,6 @@ export const COLLAPSE_PREFIX = "ul-omo-webui:collapse:";
 
 /** 侧栏定位事件（topbar 项目切换器 → session-list 展开该组并滚动置顶） */
 export const LOCATE_EVENT = "ul-omo-webui:locate-project";
-
-/** 项目偏好最小形状（ui.projects 的子集，便于单测构造） */
-export interface ProjectPreference {
-  projectPath: string;
-  preferredModel: string | null;
-}
 
 /** 侧栏项目排序档位（C16 docs08-r3 todo 9）：
  * activity=现状（各组最新会话 modified 降序）；added=注册时间 createdAt 升序
@@ -158,18 +152,6 @@ export function isGroupExpanded(
   const remembered = readCollapsed(projectPath, storage);
   if (remembered !== null) return !remembered;
   return projectPath === currentProject;
-}
-
-/** 跨项目点击判定（计划 todo 10 统一 handler 的决策核）：
- * 同项目仅选中；跨项目轻量切换并携带目标项目偏好模型（跳过 lastOpenedAt PATCH） */
-export function crossProjectDecision(
-  sessionProject: string,
-  currentProject: string | null,
-  projects: ProjectPreference[],
-): { switchProject: boolean; preferredModel: string | null } {
-  if (sessionProject === currentProject) return { switchProject: false, preferredModel: null };
-  const preferred = projects.find((p) => p.projectPath === sessionProject)?.preferredModel ?? null;
-  return { switchProject: true, preferredModel: preferred };
 }
 
 /** 触发侧栏定位（topbar 调用）：session-list 监听后展开该组并滚动置顶 */
