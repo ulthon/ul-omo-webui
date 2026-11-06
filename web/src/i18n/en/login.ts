@@ -183,7 +183,7 @@ export const login = {
     sortSaveFailed: "Failed to save sort settings",
     sidebarHeading: "Sidebar",
     projectSort: "Project group sorting",
-    sortNote: "When sorting by time added, projects registered before the upgrade fall back to their most recent open time; manual dragging happens on sidebar group headers (drag on desktop, group-header menu on mobile), and the order syncs across devices.",
+    sortNote: "When sorting by time added, legacy projects sharing the same registration time keep a stable list order; manual dragging happens on sidebar group headers (drag on desktop, group-header menu on mobile), and the order syncs across devices.",
     // 对话分区
     chatSaveFailed: "Failed to save chat settings",
     chatHeading: "Chat",

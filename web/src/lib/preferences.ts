@@ -2,7 +2,7 @@
 // （latest-wins）；触发时再读 store 当前值——项目从 sessions store 的当前选中会话
 // 派生（projectOfSession(byProject, selectedId)，会话根架构 W1 任务 4：项目不再
 // 读 ui 顶栏字段），防抖期间切换会话时写入的是新选中会话所属项目自己的当前
-// 选择（与 openProject 应用的偏好一致，幂等无害）；派生为 null（无选中会话或未
+// 选择（与项目切换路径应用的偏好一致，幂等无害）；派生为 null（无选中会话或未
 // 命中）时静默跳过。原 topbar 模块内实现迁移至此，供顶栏与输入区 chip 两个选择
 // 面共用同一条持久化路径；delayMs 形参仅供单测加速。
 import { api, ApiError } from "@/lib/api";
@@ -16,7 +16,7 @@ let modelTimer: ReturnType<typeof setTimeout> | null = null;
 let thinkingTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** 模型偏好 latest-wins PATCH preferredModel；成功后同步本地 projects（切走再切回时
- * openProject 直接读到最新值，不等服务端 refetch）。 */
+ * 会话 select 直接读到最新值，不等服务端 refetch）。 */
 export function scheduleModelPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_MS): void {
   if (modelTimer) clearTimeout(modelTimer);
   modelTimer = setTimeout(() => {

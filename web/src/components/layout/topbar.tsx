@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, FolderOpen, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
-import { openProject } from "@/lib/bootstrap";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { scheduleModelPreferencePersist } from "@/lib/preferences";
 import { resolveSiteName, useUiStore } from "@/stores/ui";
@@ -198,8 +197,8 @@ export function SessionSwitcherSheet({
 }
 
 /** 项目下拉菜单内容：桌面项目下拉与手机档会话身份区共用（任务 6）。
- * openProject（当前项目 + 偏好 + lastOpenedAt + 聚合口径刷新）与
- * locateProjectInSidebar（展开分组滚动置顶）逻辑自原顶栏下拉零改动迁移。 */
+ * 条目点按仅 locateProjectInSidebar（展开分组滚动置顶）；项目切换语义已退役
+ * （W3 任务 11），下拉本体等待 t14 裁撤。 */
 function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
   const projects = useUiStore((s) => s.projects);
   const currentProject = useUiStore((s) => s.currentProject);
@@ -214,9 +213,9 @@ function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
         <DropdownMenuItem
           key={p.projectPath}
           onSelect={() => {
-            // "定位 + 切换"（todo 10）：仍走 openProject（当前项目 + 偏好 + lastOpenedAt +
-            // 聚合口径刷新），叠加侧栏动作展开该组并滚动置顶；侧栏保持全局平铺不切单项目视图
-            if (p.projectPath !== currentProject) void openProject(p.projectPath);
+            // 项目下拉切换语义已退役，等待 t14 裁撤下拉（W3 任务 11）：仅定位侧栏分组
+            // （展开 + 滚动置顶），不 setCurrentProject、不自动选会话——项目内会话由
+            // 用户点选，切换与偏好应用由 sessions store 的 select 内聚承担
             locateProjectInSidebar(p.projectPath);
           }}
         >

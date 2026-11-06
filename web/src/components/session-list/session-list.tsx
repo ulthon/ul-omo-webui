@@ -148,8 +148,8 @@ export function SessionList() {
     void s.refreshSessions();
   }, []);
 
-  // topbar 项目切换器的"定位"动作：展开该组 + 滚动置顶（数据刷新由 openProject 的
-  // 聚合分支 refreshSessions 负责，这里只做侧栏视口动作）
+  // 项目下拉/添加项目的"定位"动作：展开该组 + 滚动置顶（数据刷新由 store 聚合分支
+  // refreshSessions 负责，这里只做侧栏视口动作）
   useEffect(() => {
     const onLocate = (e: Event) => {
       const project = (e as CustomEvent).detail;
@@ -241,7 +241,7 @@ export function SessionList() {
     let retryScheduled = false;
     try {
       const ui = useUiStore.getState();
-      // 偏好先行与 openProject 同口径（模型 + 思考档）；随后 await 模型解析完成再建会话
+      // 偏好先行（模型 + 思考档，与会话 select 内聚同口径）；随后 await 模型解析完成再建会话
       // （docs08-r5 任务 2：回退链 项目偏好 > 引擎默认 > 列表首项 落定后才发请求，
       // 请求携带解析所得 model 与 thinkingLevel——未解析完不建，避免落回引擎隐式默认）。
       // 无条件化（W2 任务 8）：两个落点（工具条=派生项目/分组头=显式项目）都先解析再建
@@ -317,8 +317,8 @@ export function SessionList() {
   };
 
   // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
-  // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行退化
-  // lastOpenedAt 稳定序）、manual=kv 手动序（未列项目按 activity 规则追加）。
+  // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行同值
+  // 保持稳定序，W3 任务 11）、manual=kv 手动序（未列项目按 activity 规则追加）。
   // A2 客户端防御过滤（双保险第二道）：hidden 分组在此剔除——服务端聚合已滤
   // hidden 项目会话（byProject 无该键），但空分组渲染自 ui store projects，
   // 不滤则隐藏项目的空分组头仍会出现。
@@ -328,7 +328,7 @@ export function SessionList() {
         mode: projectSort,
         manualOrder: projectOrder,
         meta: Object.fromEntries(
-          projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null, lastOpenedAt: p.lastOpenedAt }]),
+          projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null }]),
         ),
       }),
     [projects, byProject, currentProject, projectSort, projectOrder],
