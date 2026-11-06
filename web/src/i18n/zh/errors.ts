@@ -34,6 +34,7 @@ export const errors = {
   invalidEntry: "条目 ID 无效",
   invalidHidden: "hidden 参数无效",
   invalidImages: "图片参数无效",
+  // 保留（server PATCH /api/projects/meta 仍可返回该码，见 src/i18n/errors.ts 保留说明）
   invalidLastOpenedAt: "最近打开时间无效",
   invalidLimit: "limit 参数无效",
   invalidModel: "模型参数无效",

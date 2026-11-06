@@ -156,4 +156,28 @@ describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
     });
     container.remove();
   });
+
+  test("(e) 无选中禁用（todo 8 验收）：派生 activeProject 为 null 时钮 disabled，选中会话后恢复可用", async () => {
+    // 引导空态同款布景：分组行存在但无选中（selectedId null → useActiveProject 派生 null）。
+    // 挂载 effect 会置 allMode 并聚合刷新，回包钉住同一行，避免刷新整替冲掉布景。
+    useSessionsStore.setState({ byProject: { "/tmp/p": [BASE_ROW] }, selectedId: null });
+    api.listSessions.mockResolvedValue({ sessions: [BASE_ROW] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SessionList));
+    });
+    const btn = () => container.querySelector('[data-testid="new-session-btn"]') as HTMLButtonElement;
+    expect(btn().disabled).toBe(true);
+    // 选中会话 → 派生项目非空 → 钮恢复可用（zustand 订阅驱动的真实重渲染）
+    await act(async () => {
+      useSessionsStore.getState().select("s0");
+    });
+    expect(btn().disabled).toBe(false);
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

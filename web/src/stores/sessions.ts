@@ -229,6 +229,39 @@ export function projectOfSession(
   return null;
 }
 
+/** 选中决策核（W2 任务 6 内聚；F2 F-1 恢复竞态补偿共用）：目标项目偏好链应用 + 无条件
+ * 补拉模型列表。偏好先行（顺序承重，见 bootstrap 回退链注释）：先置非空选中，随后
+ * loadProjectModels 的回退链只在选中为空时补位——引擎默认不会覆盖项目偏好。链：会话
+ * 生效模型 appliedModels > 目标项目偏好 preferredModel > null（交回退链兜引擎默认 >
+ * 列表首项）。appliedModels 键空间只有模型字符串（无思考档）：applied 命中时思考档
+ * 未知置 null 交回退链兜底，不跨会话携带残留；空串视为未知（composer 挂载对齐同判据）。
+ * 无条件补拉模型列表（撤调用点 models.length===0 惰性门）：快速连续切换由 modelsLoadSeq
+ * 序号守卫丢弃迟到响应（含失败）；取数途中 setModels 未跑，旧列表整体保留（成功才整替），
+ * 不出现空窗。 */
+function applyProjectDecision(sessionId: string, targetProject: string): void {
+  const s = useSessionsStore.getState();
+  const ui = useUiStore.getState();
+  const applied = s.appliedModels[sessionId] || null;
+  const pref = ui.projects.find((p) => p.projectPath === targetProject);
+  ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
+  ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
+  void loadProjectModels(targetProject);
+}
+
+/** URL 恢复竞态补偿（F2 F-1）：恢复选中先于列表回包落地时「行不在 store」早退，决策核
+ * 未跑且无后续触发源（loadProjectModels 仅 select 跨项目分支与 createSession 调用；
+ * 同项目幂等又挡住点击补救），模型列表/收藏/promptPresets 恒空、项目偏好不应用。列表
+ * 写入使已置 selectedId 由不可解析转为可解析时在此补跑一次决策核；此前已可解析（决策
+ * 核已随 select 跑过）不触发——二次刷新幂等不重拉。 */
+function compensateRestoreSelect(before: Pick<SessionsState, "byProject" | "selectedId">): void {
+  const s = useSessionsStore.getState();
+  if (s.selectedId === null) return;
+  if (projectOfSession(before.byProject, s.selectedId) !== null) return;
+  const targetProject = projectOfSession(s.byProject, s.selectedId);
+  if (targetProject === null) return;
+  applyProjectDecision(s.selectedId, targetProject);
+}
+
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
@@ -273,32 +306,24 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     if (targetProject === null) return;
     // 同项目重选：幂等面——纯选中，不重拉模型、不重置偏好（用户手选的模型不被项目偏好冲掉）
     if (targetProject === projectOfSession(s.byProject, prevSelectedId)) return;
-    const ui = useUiStore.getState();
-    // 偏好先行（顺序承重，见 bootstrap 回退链注释）：先置非空选中，随后 loadProjectModels
-    // 的回退链只在选中为空时补位——引擎默认不会覆盖项目偏好。链：会话生效模型
-    // appliedModels > 目标项目偏好 preferredModel > null（交回退链兜引擎默认 > 列表首项）。
-    // appliedModels 键空间只有模型字符串（无思考档）：applied 命中时思考档未知置 null
-    // 交回退链兜底，不跨会话携带残留；空串视为未知（composer 挂载对齐同判据）。
-    const applied = s.appliedModels[id] || null;
-    const pref = ui.projects.find((p) => p.projectPath === targetProject);
-    ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
-    ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
-    // 无条件补拉模型列表（撤调用点 models.length===0 惰性门）：快速连续切换由
-    // modelsLoadSeq 序号守卫丢弃迟到响应（含失败）；取数途中 setModels 未跑，旧列表
-    // 整体保留（成功才整替），不出现空窗。
-    void loadProjectModels(targetProject);
+    applyProjectDecision(id, targetProject);
   },
   setLoading: (loading) => set({ loading }),
 
-  setSessions: (project, sessions) =>
+  setSessions: (project, sessions) => {
+    const before = useSessionsStore.getState();
     set((s) => ({
       byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, mergeKeys(s)) },
       ...syncBackgroundStates(s, sessions),
-    })),
+    }));
+    compensateRestoreSelect(before);
+  },
 
-  setAllSessions: (sessions) =>
+  setAllSessions: (sessions) => {
+    const before = useSessionsStore.getState();
     set((s) => {
-      const byProject: Record<string, SessionListItem[]> = {};      for (const session of sessions) {
+      const byProject: Record<string, SessionListItem[]> = {};
+      for (const session of sessions) {
         (byProject[session.project] ??= []).push(session);
       }
       // 占位行追回（docs08-r6 任务 7）：聚合键内的按项目合并；聚合响应里消失的旧项目
@@ -313,7 +338,9 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         if (restored.length > 0) byProject[project] = restored;
       }
       return { byProject, ...syncBackgroundStates(s, sessions) };
-    }),
+    });
+    compensateRestoreSelect(before);
+  },
 
   refreshSessions: async () => {
     const { allMode, archived, q, tagFilter, setLoading } = useSessionsStore.getState();
