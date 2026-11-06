@@ -11,7 +11,7 @@
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, FolderPlus, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { diag } from "@/lib/diag";
@@ -51,6 +51,7 @@ import {
   writeCollapsed,
 } from "./global-list-data";
 import { SessionItem, buildForkIndexes } from "./session-item";
+import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagDropdown } from "./tag-dropdown";
 import { TagManageDialog, type TagManageScope, type TagOrphanCleanup } from "./tag-manage-dialog";
@@ -96,9 +97,8 @@ function useMarkReadOnView(): void {
 }
 
 export function SessionList() {
-  const currentProject = useUiStore((s) => s.currentProject);
-  // 新建会话工具条落点（会话根架构 W2 任务 8）：选中会话派生项目——selectedId +
-  // byProject 反查，无选中会话为 null（按钮禁用）；不再读全局项目字段
+  // 新建会话工具条落点与分组钉选（会话根架构 W2 任务 8 / W3 任务 14）：派生活跃项目——
+  // selectedId + byProject 反查，无选中会话为 null；不再读全局项目字段
   const activeProject = useActiveProject();
   const projects = useUiStore((s) => s.projects);
   const projectSort = useUiStore((s) => s.projectSort);
@@ -111,14 +111,17 @@ export function SessionList() {
   const [searchResults, setSearchResults] = useState<SessionListItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   // 组展开态：本次会话内的显式点按覆盖；持久记忆走 localStorage（isGroupExpanded 内读取），
-  // 都缺省时当前项目组展开、其余折叠。不做 currentProject 同步 effect——默认展开随
-  // currentProject 变化由派生规则自然生效，显式覆盖按记忆语义保留。
+  // 都缺省时派生活跃项目组展开、其余折叠。不做同步 effect——默认展开随
+  // 派生项目变化由派生规则自然生效，显式覆盖按记忆语义保留。
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
   // 每组可见条数（r9 wave1）：按项目键控，缺省 = GROUP_VISIBLE_LIMIT（10）。值 Infinity =
   // topbar「定位」触发的临时全展——仅本次会话内有效，刷新重挂载回落默认；切项目不重置，
   // 与 groupOverrides 同为会话内覆盖语义。搜索/批量模式渲染全量，不读此值。
   const [groupVisible, setGroupVisible] = useState<Record<string, number>>({});
   const [recentOpen, setRecentOpen] = useState(true);
+  // 添加项目弹窗开合（W3 任务 13）：侧栏列表与手机抽屉共用本组件，两端入口就近
+  // 挂载在项目分组区（桌面组尾/手机组头），弹窗状态提升到本容器
+  const [addOpen, setAddOpen] = useState(false);
   const [dialog, setDialog] = useState<SessionDialogState | null>(null);
   const [creating, setCreating] = useState(false);
   // 批量模式（todo 25）：勾选集合提升到容器层；归档循环的进度反馈
@@ -204,7 +207,7 @@ export function SessionList() {
 
   const t = useT();
   const toggleGroup = (project: string) => {
-    const next = !isGroupExpanded(project, currentProject, groupOverrides[project]);
+    const next = !isGroupExpanded(project, activeProject, groupOverrides[project]);
     setGroupOverrides((s) => ({ ...s, [project]: next }));
     writeCollapsed(project, !next);
   };
@@ -316,7 +319,7 @@ export function SessionList() {
     await attempt(true);
   };
 
-  // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
+  // 分组排序（C16 docs08-r3 todo 9）：派生活跃项目组置顶规则不变；其余项目按档位排序——
   // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行同值
   // 保持稳定序，W3 任务 11）、manual=kv 手动序（未列项目按 activity 规则追加）。
   // A2 客户端防御过滤（双保险第二道）：hidden 分组在此剔除——服务端聚合已滤
@@ -324,14 +327,14 @@ export function SessionList() {
   // 不滤则隐藏项目的空分组头仍会出现。
   const sortedProjects = useMemo(
     () =>
-      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, currentProject, {
+      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, activeProject, {
         mode: projectSort,
         manualOrder: projectOrder,
         meta: Object.fromEntries(
           projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null }]),
         ),
       }),
-    [projects, byProject, currentProject, projectSort, projectOrder],
+    [projects, byProject, activeProject, projectSort, projectOrder],
   );
 
   /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
@@ -376,7 +379,7 @@ export function SessionList() {
     }
   }, [t]);
 
-  /** 把某项目移到当前展示序的目标位（当前项目组置顶规则不动——kv 序仅作用于其余组） */
+  /** 把某项目移到当前展示序的目标位（派生活跃项目组置顶规则不动——kv 序仅作用于其余组） */
   const moveProjectTo = useCallback(
     (srcPath: string, targetPath: string) => {
       const order = useUiStore.getState().projectOrder;
@@ -384,7 +387,7 @@ export function SessionList() {
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(srcPath);
       const to = base.indexOf(targetPath);
@@ -394,7 +397,7 @@ export function SessionList() {
       next.splice(to, 0, srcPath);
       void persistManualOrder(next);
     },
-    [currentProject, sortedProjects, persistManualOrder],
+    [activeProject, sortedProjects, persistManualOrder],
   );
 
   /** 上移/下移一位（manual 档；入口在分组头唯一 DropdownMenu——手机与桌面同菜单） */
@@ -404,7 +407,7 @@ export function SessionList() {
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(projectPath);
       const to = from + delta;
@@ -414,7 +417,7 @@ export function SessionList() {
       next.splice(to, 0, projectPath);
       void persistManualOrder(next);
     },
-    [currentProject, sortedProjects, persistManualOrder],
+    [activeProject, sortedProjects, persistManualOrder],
   );
 
   // 桌面拖拽状态（HTML5 DnD，仅 manual 档分组头）：dragger 存被拖路径，drop 目标经
@@ -502,7 +505,7 @@ export function SessionList() {
     if (searchResults !== null) return searchResults;
     const out: SessionListItem[] = [...recent];
     for (const projectPath of sortedProjects) {
-      if (!isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath])) continue;
+      if (!isGroupExpanded(projectPath, activeProject, groupOverrides[projectPath])) continue;
       out.push(...(byProject[projectPath] ?? []));
     }
     return out;
@@ -861,6 +864,24 @@ export function SessionList() {
               />
             ))
           )
+        ) : projects.length === 0 ? (
+          /* 零项目空态（W3 任务 13）：图标 + 添加项目 + 一行提示的居中 CTA，
+             替代空白列表区；点击打开同一 AddProjectDialog */
+          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center" data-testid="zero-project-cta">
+            <FolderPlus className="size-8 text-muted-foreground/40" />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-9 gap-1.5 text-xs"
+              data-testid="zero-project-add"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5" />
+              {t("login.topbar.addProjectShort")}
+            </Button>
+            <p className="text-xs text-muted-foreground">{t("sessionList.list.addProjectHint")}</p>
+          </div>
         ) : (
           <>
             {/* 最近会话区（todo 10）：跨项目按 modified 最新 8 条，独立可折叠，行复用 SessionItem 标注来源项目 */}
@@ -896,10 +917,22 @@ export function SessionList() {
             )}
             {recent.length > 0 && sortedProjects.length > 0 && <div className="mx-1.5 border-t" />}
 
+            {/* 手机抽屉组头入口（W3 任务 13）：抽屉即手机项目列表，添加项目置于分组区头部
+                （桌面侧栏同一组件，lg 档隐藏，桌面入口见分组区尾部） */}
+            <button
+              type="button"
+              data-testid="sidebar-add-project-mobile"
+              className="flex w-full min-h-11 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:hidden"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5 shrink-0" />
+              <span>{t("login.topbar.addProjectShort")}</span>
+            </button>
+
             {sortedProjects.map((projectPath, index) => {
               const sessions = byProject[projectPath];
-              const expanded = isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath]);
-              const isCurrent = projectPath === currentProject;
+              const expanded = isGroupExpanded(projectPath, activeProject, groupOverrides[projectPath]);
+              const isCurrent = projectPath === activeProject;
               // 唯一列表（W3 todo 10）：子会话按血缘归到父项下。
               // 父不在当前数据集（如归档过滤只返回归档子会话）时子会话按孤儿顶层平铺，不丢行。
               const pathSet = new Set((sessions ?? []).map((s) => s.path));
@@ -969,7 +1002,7 @@ export function SessionList() {
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
                     {/* 分组头唯一菜单（A2）：三组语义——排序（仅 manual 档）/隐藏/管理标签（任务 11 已接线）。
-                        菜单 onSelect 内实时读 currentProject（跨项目点击后 render 闭包可能滞后）。 */}
+                        菜单 onSelect 内实时读派生活跃项目（跨项目点击后 render 闭包可能滞后）。 */}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -1004,7 +1037,12 @@ export function SessionList() {
                         <DropdownMenuItem
                           data-testid="group-hide"
                           onSelect={() => {
-                            if (useUiStore.getState().currentProject === projectPath) {
+                            if (
+                              projectOfSession(
+                                useSessionsStore.getState().byProject,
+                                useSessionsStore.getState().selectedId,
+                              ) === projectPath
+                            ) {
                               setHidePending(projectPath);
                             } else {
                               void hideProject(projectPath, true);
@@ -1087,11 +1125,27 @@ export function SessionList() {
                 </div>
               );
             })}
+
+            {/* 桌面侧栏组尾入口（W3 任务 13）：添加项目置于项目分组列表尾部
+                （手机抽屉同一组件，lg 以下隐藏，手机入口见分组区头部） */}
+            <button
+              type="button"
+              data-testid="sidebar-add-project-desktop"
+              className="hidden w-full min-h-11 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:flex"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5 shrink-0" />
+              <span>{t("login.topbar.addProjectShort")}</span>
+            </button>
           </>
         )}
       </div>
 
       <SessionDialogs state={dialog} onClose={() => setDialog(null)} onChanged={onChanged} />
+      {/* 添加项目弹窗（W3 任务 13）：桌面组尾/手机组头/零项目 CTA 三入口共用；
+          成功后 store refetch + locateProjectInSidebar 定位新分组（W3 任务 11 契约），
+          不自动建会话 */}
+      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
       {/* 隐藏当前项目确认（A2）：回空会话态是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
       <Dialog
         open={hidePending !== null}

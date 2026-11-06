@@ -230,10 +230,8 @@ export const login = {
     filesUrlLabel: "文件管理外链地址",
     filesUrlPlaceholder: "https://files.example.com 或 /files",
     saving: "保存中…",
-    // 项目下拉
-    projectMenu: "项目",
-    noProjectsMenu: "尚无项目，先添加一个",
-    addProject: "添加项目…",
+    // 项目下拉已裁撤（W3 任务 14），projectMenu/noProjectsMenu/addProject 键随之删除；
+    // addProjectShort 由侧栏列表双端入口继续使用
     addProjectShort: "添加项目",
     // 模型下拉与连接状态
     noModels: "无可用模型",

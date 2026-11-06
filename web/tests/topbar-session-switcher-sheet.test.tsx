@@ -250,7 +250,7 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
     expect(sheetRoot()).toBeNull();
   });
 
-  test("空列表空态不崩：显示「暂无会话」，零行，尾部仍可添加项目", async () => {
+  test("空列表空态不崩：显示「暂无会话」，零行，无底部添加项目钮（任务 13 已迁抽屉分组区）", async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/tags")) return okJson({ global: [], project: [] });
       return okJson({ models: [], favorites: [], defaults: null });
@@ -266,17 +266,8 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
     expect(sheetItems()).toHaveLength(0);
     expect(document.querySelector('[data-testid="session-switcher-sheet-list"]')?.textContent).toContain("暂无会话");
 
-    // 尾部添加项目入口仍在（任务 4 双入口之一在 sheet 形态下保持可达）
-    const add = document.querySelector('[data-testid="mobile-add-project"]') as HTMLElement | null;
-    expect(add).not.toBeNull();
-    expect(add?.textContent).toContain("添加项目…");
-    let addCalled = false;
-    add?.addEventListener("click", () => {
-      addCalled = true;
-    });
-    await act(async () => {
-      add?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(addCalled).toBe(true);
+    // 添加项目入口已迁抽屉分组区头部（任务 13）：sheet 无 footer、无旧测试锚点
+    expect(document.querySelector('[data-testid="mobile-add-project"]')).toBeNull();
+    expect(document.querySelector('[data-testid="session-switcher-sheet"] footer')).toBeNull();
   });
 });

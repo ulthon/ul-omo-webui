@@ -7,7 +7,7 @@
 // "更多"ModelChip 到达）；桌面（lg+）布局不动（项目/模型下拉原位）。手机档按 useIsMobile
 // 条件渲染（DOM 不存在，非 CSS 隐藏）。
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, FolderOpen, FolderPlus, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, Keyboard, ListTodo, Menu, Settings, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -17,14 +17,12 @@ import { useT } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 import {
   flattenSessions,
-  locateProjectInSidebar,
   recentTop,
 } from "@/components/session-list/global-list-data";
 import { definedTagKeys, type TagDefs } from "@/components/session-list/tag-data";
 import { TagBadges } from "@/components/session-list/tag-badge";
 import { formatRelative } from "@/components/session-list/session-item";
 import { RowPinnedBadge, RowStatusDot, RowUnreadBadge } from "@/components/session-list/row-bits";
-import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +30,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -57,7 +54,7 @@ function basename(path: string): string {
 /** 手机档会话切换全屏 sheet（docs08-r7 任务 19，替代原任务 15 下拉菜单）：触发器
  * 点按开 Radix Dialog 全屏页——头部「会话」标题+关闭钮（焦点陷阱/Esc 关闭由 Dialog
  * 原语承担），列表区 recentTop(flattenSessions(byProject))（跨项目 modified 降序 8 条，
- * 派生复用不复制），尾部「添加项目…」（任务 4 双入口之一）；抽屉承载全量列表/搜索/
+ * 派生复用不复制）；添加项目入口已迁抽屉分组区（任务 13）；抽屉承载全量列表/搜索/
  * 新建，sheet 内不做（计划 Must NOT）。定制行=标题(text-base≥16px font-medium)+项目
  * 名副行(text-xs muted)+标签徽标（TagBadges 文字形态，任务 20 色格在其内部升级，此处
  * 预留 slot）；行 min-h-11(44px) 触控达标、双行紧凑。头部/尾部按 env(safe-area-inset-*)
@@ -69,11 +66,9 @@ function basename(path: string): string {
 export function SessionSwitcherSheet({
   open,
   onOpenChange,
-  onAddProject,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddProject: () => void;
 }) {
   const byProject = useSessionsStore((s) => s.byProject);
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
@@ -180,65 +175,15 @@ export function SessionSwitcherSheet({
             </button>
           ))}
         </div>
-        <footer className="shrink-0 border-t bg-background pb-[max(env(safe-area-inset-bottom),8px)]">
-          <button
-            type="button"
-            data-testid="mobile-add-project"
-            onClick={onAddProject}
-            className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-base outline-none hover:bg-accent/50 focus-visible:bg-accent/50 active:bg-accent"
-          >
-            <FolderPlus className="size-4 shrink-0" />
-            {t("login.topbar.addProject")}
-          </button>
-        </footer>
+        {/* 手机档添加项目入口已随会话根架构 W3 任务 13 迁往抽屉项目分组区头部；
+            sheet 仅保留会话列表本体 */}
       </DialogContent>
     </Dialog>
   );
 }
 
-/** 项目下拉菜单内容：桌面项目下拉与手机档会话身份区共用（任务 6）。
- * 条目点按仅 locateProjectInSidebar（展开分组滚动置顶）；项目切换语义已退役
- * （W3 任务 11），下拉本体等待 t14 裁撤。 */
-function ProjectMenuItems({ onAddProject }: { onAddProject: () => void }) {
-  const projects = useUiStore((s) => s.projects);
-  const currentProject = useUiStore((s) => s.currentProject);
-  const t = useT();
-  return (
-    <>
-      <DropdownMenuLabel>{t("login.topbar.projectMenu")}</DropdownMenuLabel>
-      {projects.length === 0 && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">{t("login.topbar.noProjectsMenu")}</div>
-      )}
-      {projects.map((p) => (
-        <DropdownMenuItem
-          key={p.projectPath}
-          onSelect={() => {
-            // 项目下拉切换语义已退役，等待 t14 裁撤下拉（W3 任务 11）：仅定位侧栏分组
-            // （展开 + 滚动置顶），不 setCurrentProject、不自动选会话——项目内会话由
-            // 用户点选，切换与偏好应用由 sessions store 的 select 内聚承担
-            locateProjectInSidebar(p.projectPath);
-          }}
-        >
-          <Check
-            className={`size-4 shrink-0 ${p.projectPath === currentProject ? "opacity-100" : "opacity-0"}`}
-          />
-          <span className="ml-2 truncate" title={p.projectPath}>
-            {basename(p.projectPath)}
-          </span>
-        </DropdownMenuItem>
-      ))}
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onSelect={onAddProject}>
-        <FolderPlus className="mr-2 size-4" />
-        {t("login.topbar.addProject")}
-      </DropdownMenuItem>
-    </>
-  );
-}
-
 export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void }) {
   const connection = useUiStore((s) => s.connection);
-  const currentProject = useUiStore((s) => s.currentProject);
   const models = useUiStore((s) => s.models);
   const modelsLoaded = useUiStore((s) => s.modelsLoaded);
   const selectedModel = useUiStore((s) => s.selectedModel);
@@ -246,7 +191,6 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   const setSettingsPageOpen = useUiStore((s) => s.setSettingsPageOpen);
   const setFilesPageOpen = useUiStore((s) => s.setFilesPageOpen);
   const isMobile = useIsMobile();
-  const [addOpen, setAddOpen] = useState(false);
   // 会话切换全屏 sheet 开合（任务 19）：手机档身份区触发钮点按置位，选完/关钮/Esc 关
   const [switcherOpen, setSwitcherOpen] = useState(false);
   // 快捷键帮助开关（docs08-r7 任务 12）：帮助钮 onClick 置位，shell 的 ?/Ctrl+K 触发同写
@@ -306,7 +250,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       {isMobile ? (
         /* 手机档会话身份区（A3 + 任务 19）：标题+项目名两行堆叠 truncate（字大微调：
            标题 text-base、项目名 text-xs）；点按开全屏会话切换 sheet（recentTop 跨项目
-           8 条 + 尾部「添加项目…」；汉堡抽屉不动，桌面项目下拉不动） */
+           8 条；添加项目入口迁抽屉分组区，任务 13；汉堡抽屉不动，桌面项目下拉不动） */
         <>
           <button
             type="button"
@@ -331,14 +275,11 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               className="flex w-full min-w-0 items-center gap-0.5 text-xs leading-tight text-muted-foreground"
             >
               <span className="min-w-0 truncate">
-                {/* 会话身份块的项目名随选中会话走（2026-10-31 缺陷：刷新水合后全局
-                    currentProject 可能是最近项目，与选中会话不同源；重选才同步）。桌面
-                    项目选择器钮仍用 currentProject（那是选项目入口非会话身份）。 */}
-                {selectedSession
+                {/* 会话身份块的项目名只随选中会话派生（W3 任务 14 收口）：无选中回空态
+                    文案（login.topbar.chooseProject），不再回退全局项目字段 */}
+                {selectedSession?.project
                   ? basename(selectedSession.project)
-                  : currentProject
-                    ? basename(currentProject)
-                    : t("login.topbar.chooseProject")}
+                  : t("login.topbar.chooseProject")}
               </span>
               <ChevronDown className="size-3 shrink-0" aria-hidden />
             </span>
@@ -353,44 +294,28 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               </span>
             )}
           </button>
-          <SessionSwitcherSheet
-            open={switcherOpen}
-            onOpenChange={setSwitcherOpen}
-            onAddProject={() => {
-              setSwitcherOpen(false);
-              setAddOpen(true);
-            }}
-          />
+          <SessionSwitcherSheet open={switcherOpen} onOpenChange={setSwitcherOpen} />
         </>
       ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            {/* 站点名小字（todo3）：标题钮内第二行，h-auto 覆盖默认 h-8 让两行立起，
-                chevron 位置不变（图标布局不动）；未设置单行原样 */}
-            <Button
-              variant="ghost"
-              className={`max-w-[32vw] gap-1.5 px-2 sm:max-w-xs ${siteName ? "h-auto py-1" : ""}`}
+        /* 桌面档会话身份（W3 任务 14）：项目下拉裁撤，仅保留站点名第二行的展示块——
+           标题行改显派生项目名（选中会话反查；无选中回空态文案），项目入口在侧栏
+           列表两端（任务 13）；无触发钮、无下拉 */
+        <div
+          data-testid="desktop-session-identity"
+          className={`flex min-w-0 flex-col items-start justify-center gap-0.5 ${identityPad}`}
+        >
+          <span className="max-w-[32vw] truncate font-medium sm:max-w-xs">
+            {selectedSession?.project ? basename(selectedSession.project) : t("login.topbar.chooseProject")}
+          </span>
+          {siteName && (
+            <span
+              data-testid="topbar-site-name"
+              className="max-w-full truncate text-[11px] font-normal leading-tight text-muted-foreground"
             >
-              <span className="flex min-w-0 flex-col items-start gap-0.5">
-                <span className="max-w-full truncate font-medium">
-                  {currentProject ? basename(currentProject) : t("login.topbar.chooseProject")}
-                </span>
-                {siteName && (
-                  <span
-                    data-testid="topbar-site-name"
-                    className="max-w-full truncate text-[11px] font-normal leading-tight text-muted-foreground"
-                  >
-                    {siteName}
-                  </span>
-                )}
-              </span>
-              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-72">
-            <ProjectMenuItems onAddProject={() => setAddOpen(true)} />
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {siteName}
+            </span>
+          )}
+        </div>
       )}
 
       {isMobile ? (
@@ -492,7 +417,6 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
         </div>
       )}
 
-      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
       <ShortcutsDialog open={shortcutsHelpOpen} onOpenChange={setShortcutsHelpOpen} />
     </header>
   );
