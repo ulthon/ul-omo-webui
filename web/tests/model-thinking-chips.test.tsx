@@ -83,14 +83,14 @@ async function type(root: ParentNode, value: string): Promise<void> {
 }
 
 beforeEach(() => {
+  // W1 t5 审计：思考档 chip 只读选中档相关 ui 字段，不读项目（发送域已派生化），
+  // 旧布景 currentProject/projects 不再播种
   useUiStore.setState({
     models: [],
     modelsLoaded: false,
     selectedModel: null,
     selectedThinkingLevel: null,
     modelPickerOpen: false,
-    currentProject: "/p1",
-    projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: null }],
     toast: null,
   });
 });

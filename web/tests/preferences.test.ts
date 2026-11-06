@@ -68,8 +68,8 @@ beforeEach(() => {
     byProject: { "/p1": [sessionRow("/p1", "sess-a")] },
     selectedId: "sess-a",
   });
+  // W1 t5 审计：项目目标已由上方 sessions 播种派生，ui.currentProject 退役不播种
   useUiStore.setState({
-    currentProject: "/p1",
     projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: null }],
     selectedModel: null,
     selectedThinkingLevel: null,
