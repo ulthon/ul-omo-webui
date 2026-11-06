@@ -1,6 +1,7 @@
 // thinking_level_changed 消费单测（W2 todo 8）：引擎回显仅同步前台选中会话的 chip；
 // 后台会话（SSE 全局多路复用）不得篡改前台选择。显示层同步——零 PATCH、零偏好写入。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import type { SessionListItem } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -8,6 +9,30 @@ import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let patchCount = 0;
+
+/** 绊线布景行（会话根架构 W2 任务 8 交接自 Wave1-t5）：选中会话 s1 的反查链齐备——
+ * 偏好写入路径的项目派生（projectOfSession(byProject, selectedId)）才能解析出 /p1。
+ * 若 thinking_level_changed 被错误接线到偏好持久化（直接 patchProjectMeta 或非防抖
+ * 写入），PATCH 会真实发出并被「零 PATCH」断言捕获；缺 byProject 布景时派生得
+ * null、错误写入被静默跳过，绊线失去牙齿——故必须 seed byProject+selectedId。 */
+const SELECTED_ROW: SessionListItem = {
+  id: "s1",
+  path: "/p1/s1.jsonl",
+  project: "/p1",
+  title: "s1",
+  name: null,
+  renamedTitle: null,
+  parentSessionPath: null,
+  created: "2026-01-01T00:00:00.000Z",
+  modified: "2026-01-01T00:00:00.000Z",
+  messageCount: 0,
+  firstMessage: "",
+  pinned: false,
+  archivedAt: null,
+  unreadCount: 0,
+  lastRead: null,
+  active: false,
+};
 
 beforeEach(() => {
   patchCount = 0;
@@ -21,7 +46,7 @@ beforeEach(() => {
     projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: null }],
     toast: null,
   });
-  useSessionsStore.setState({ selectedId: "s1" });
+  useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [SELECTED_ROW] } });
   useMessagesStore.setState({ bySession: {} });
 });
 
