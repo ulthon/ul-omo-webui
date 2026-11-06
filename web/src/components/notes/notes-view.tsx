@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, GripVertical, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
 import { useUiStore } from "@/stores/ui";
+import { useActiveProject } from "@/stores/sessions";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -366,7 +367,8 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
 }
 
 export function NotesView({ dirtyRef }: { dirtyRef: { current: boolean } }) {
-  const project = useUiStore((s) => s.currentProject);
+  // 项目源：选中会话派生（会话根架构 W1 t3）；未选中/未命中为 null 走空态，key 仍随项目整体重挂
+  const project = useActiveProject();
   const t = useT();
   if (!project) {
     return (

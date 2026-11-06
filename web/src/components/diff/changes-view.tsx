@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, CircleCheck, FolderGit2, RefreshCw } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
-import { useUiStore } from "@/stores/ui";
+import { useActiveProject } from "@/stores/sessions";
 import { t, useT } from "@/i18n/i18n";
 import type { FileData } from "react-diff-view";
 import { cleanStatusPath, matchDiffFile, parseGitDiff, statusInfo, type StatusInfo } from "./diff-utils";
@@ -111,7 +111,8 @@ function ChangeRow({ entry, file }: { entry: ChangeEntry; file: FileData | null 
 }
 
 export function ChangesView() {
-  const project = useUiStore((s) => s.currentProject);
+  // 项目源：选中会话派生（会话根架构 W1 t3）；未选中为 null 时展示空态，load 依赖 [project] 不变
+  const project = useActiveProject();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [reloadSeq, setReloadSeq] = useState(0);
   // 订阅 locale（切换即重渲染）；模块级 fileMissingNote 仍走快照 t——重渲染时取新态
