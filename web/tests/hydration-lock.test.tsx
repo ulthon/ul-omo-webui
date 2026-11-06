@@ -72,12 +72,20 @@ function Probe({ sessionId, onValue }: { sessionId: string; onValue: (v: { hydra
 }
 
 function resetStores() {
-  useSessionsStore.setState({ byProject: {}, runStates: {}, runStateAt: {}, selectedId: null, loading: false });
+  // 活动项目派生播种（W3 任务 12）：选中 s1 ∈ /p（active=null 未解锁），探询走
+  // refreshSessions 单项目分支（派生项目 /p）写回 byProject
+  useSessionsStore.setState({
+    byProject: { "/p": [makeSession("s1", null)] },
+    runStates: {},
+    runStateAt: {},
+    selectedId: "s1",
+    loading: false,
+  });
   useMessagesStore.setState({ bySession: {} });
   useQueueStore.setState({ bySession: {} });
   usePermissionsStore.setState({ bySession: {} });
   useQuestionsStore.setState({ bySession: {} });
-  useUiStore.setState({ currentProject: "/p", toast: null });
+  useUiStore.setState({ toast: null });
 }
 
 beforeEach(() => {
@@ -119,7 +127,6 @@ describe("useHydrationRunLock 水合锁", () => {
   test("探询带回 active=true → 解锁（knownRunning）", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(new Response(JSON.stringify({ sessions: [makeSession("s1", true)] }), { status: 200 }))) as typeof fetch;
-    useUiStore.setState({ currentProject: "/p" });
     let value = { hydrationLocked: true, knownRunning: false };
     const { unmount } = await render(
       createElement(Probe, { sessionId: "s1", onValue: (v) => (value = v) }),
@@ -132,7 +139,6 @@ describe("useHydrationRunLock 水合锁", () => {
   test("探询带回 active=false → 解锁（空闲，knownRunning=false）", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(new Response(JSON.stringify({ sessions: [makeSession("s1", false)] }), { status: 200 }))) as typeof fetch;
-    useUiStore.setState({ currentProject: "/p" });
     let value = { hydrationLocked: true, knownRunning: false };
     const { unmount } = await render(
       createElement(Probe, { sessionId: "s1", onValue: (v) => (value = v) }),
@@ -145,7 +151,6 @@ describe("useHydrationRunLock 水合锁", () => {
   test("探询完成仍 unknown（引擎不可用 active 持续 null）→ 解锁不永久锁死", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(new Response(JSON.stringify({ sessions: [makeSession("s1", null)] }), { status: 200 }))) as typeof fetch;
-    useUiStore.setState({ currentProject: "/p" });
     let value = { hydrationLocked: true, knownRunning: false };
     const { unmount } = await render(
       createElement(Probe, { sessionId: "s1", onValue: (v) => (value = v) }),
@@ -177,7 +182,7 @@ describe("useHydrationRunLock 水合锁", () => {
 describe("Composer 接线（hydrationLocked）", () => {
   test("水合期：可输入但发送钮禁用；解锁后（排队态）发送钮可用且排队模式钮在场", async () => {
     globalThis.fetch = () => new Promise(() => {});
-    useUiStore.setState({ currentProject: "/p", modelsLoaded: true });
+    useUiStore.setState({ modelsLoaded: true });
     const harness = (locked: boolean, queueAvailable: boolean) =>
       createElement(Composer, {
         sessionId: "s1",

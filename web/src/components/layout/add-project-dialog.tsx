@@ -11,7 +11,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Folder } from "lucide-react";
 import { api, ApiError, type FsBrowseEntry } from "@/lib/api";
-import { openProject } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +32,7 @@ import {
   suggestDirOf,
 } from "@/components/file-tree/directory-tree-logic";
 import { useT } from "@/i18n/i18n";
+import { locateProjectInSidebar } from "@/components/session-list/global-list-data";
 
 /** 目录建议状态：记录取数时的目录部分，用于过滤陈旧结果（输入已跨目录段时不展示） */
 interface SuggestState {
@@ -133,7 +133,9 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
       const { projects } = await api.listProjects();
       useUiStore.getState().setProjects(projects);
       onOpenChange(false);
-      await openProject(path.trim());
+      // 不自动打开项目（W3 任务 11）：仅定位侧栏新分组（展开 + 滚动置顶），
+      // 不写全局项目字段、不自动建会话——会话由用户点选（select 内聚承担切换）
+      locateProjectInSidebar(path.trim());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("login.addProjectDialog.addFailed"));
     } finally {

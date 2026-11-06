@@ -2,13 +2,13 @@
 // - groupOrder 分组排序（当前项目组最前，其余按各组最新 modified 降序）
 // - recentTop 最近 8 条选取（跨项目按 modified 降序，置顶自然参与）
 // - 折叠记忆（readCollapsed/writeCollapsed 回环 + isGroupExpanded 优先级）
-// - crossProjectDecision 跨项目点击切换判定
+// （跨项目点击判定已随会话根架构 W2 任务 6 内联进 sessions store 的 select，
+//  调用点只调内聚 select）
 import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import {
   COLLAPSE_PREFIX,
   RECENT_LIMIT,
-  crossProjectDecision,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
@@ -102,24 +102,25 @@ describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
     expect(groupOrder(["/a", "/b", "/c"], byProject, "/a", { mode: "activity" })).toEqual(["/a", "/b", "/c"]);
   });
 
-  test("added 档：按 createdAt 升序；存量行（createdAt 同值）退化为 lastOpenedAt 稳定序", () => {
+  test("added 档：按 createdAt 升序；存量行（createdAt 同值）保持传入稳定序", () => {
     // 迁移后注册时间：c < a < b（与 activity 序不同，验证档位生效）
     const meta = {
-      "/a": { createdAt: "2026-03-02T00:00:00.000Z", lastOpenedAt: "2026-03-05T00:00:00.000Z" },
-      "/b": { createdAt: "2026-03-03T00:00:00.000Z", lastOpenedAt: "2026-03-06T00:00:00.000Z" },
-      "/c": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-07T00:00:00.000Z" },
+      "/a": { createdAt: "2026-03-02T00:00:00.000Z" },
+      "/b": { createdAt: "2026-03-03T00:00:00.000Z" },
+      "/c": { createdAt: "2026-03-01T00:00:00.000Z" },
     };
     expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
     // 当前项目组置顶规则不动
     expect(groupOrder(["/a", "/b", "/c"], byProject, "/b", { mode: "added", meta })).toEqual(["/b", "/c", "/a"]);
-    // 存量行：createdAt 全部同为迁移时刻 → 按 lastOpenedAt 升序稳定退化
+    // 存量行：createdAt 全部同为迁移时刻 → 保持传入稳定序（W3 任务 11：打开链路退化序
+    // 已退役，createdAt 是唯一排序依据）
     const legacy = {
-      "/x": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-09T00:00:00.000Z" },
-      "/y": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-08T00:00:00.000Z" },
-      "/z": { createdAt: "2026-03-01T00:00:00.000Z", lastOpenedAt: "2026-03-10T00:00:00.000Z" },
+      "/x": { createdAt: "2026-03-01T00:00:00.000Z" },
+      "/y": { createdAt: "2026-03-01T00:00:00.000Z" },
+      "/z": { createdAt: "2026-03-01T00:00:00.000Z" },
     };
-    expect(groupOrder(["/x", "/y", "/z"], byProject, null, { mode: "added", meta: legacy })).toEqual(["/y", "/x", "/z"]);
-    // meta 缺失 defensively 当空值走稳定退化序（不崩）
+    expect(groupOrder(["/x", "/y", "/z"], byProject, null, { mode: "added", meta: legacy })).toEqual(["/x", "/y", "/z"]);
+    // meta 缺失 defensively 当空值走稳定序（不崩）
     expect(groupOrder(["/a", "/b"], byProject, null, { mode: "added" })).toEqual(["/a", "/b"]);
   });
 
@@ -237,31 +238,5 @@ describe("折叠记忆", () => {
     // 记忆展开的非当前项目
     writeCollapsed("/other", false, ls);
     expect(isGroupExpanded("/other", "/cur", undefined, ls)).toBe(true);
-  });
-});
-
-describe("crossProjectDecision 跨项目点击切换判定", () => {
-  const projects = [
-    { projectPath: "/a", preferredModel: "zai-coding-cn/glm-5.3-flash" },
-    { projectPath: "/b", preferredModel: "zai-coding-cn/glm-4.6v" },
-  ];
-
-  test("同项目：仅选中，不切换", () => {
-    expect(crossProjectDecision("/a", "/a", projects)).toEqual({ switchProject: false, preferredModel: null });
-  });
-
-  test("跨项目：切换并携带目标项目偏好模型", () => {
-    expect(crossProjectDecision("/b", "/a", projects)).toEqual({
-      switchProject: true,
-      preferredModel: "zai-coding-cn/glm-4.6v",
-    });
-  });
-
-  test("目标项目未注册或无偏好：preferredModel 为 null（仍切换）", () => {
-    expect(crossProjectDecision("/ghost", "/a", projects)).toEqual({ switchProject: true, preferredModel: null });
-    expect(crossProjectDecision("/c", "/a", [{ projectPath: "/c", preferredModel: null }])).toEqual({
-      switchProject: true,
-      preferredModel: null,
-    });
   });
 });

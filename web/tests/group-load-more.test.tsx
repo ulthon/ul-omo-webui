@@ -76,12 +76,13 @@ async function mountSessionList(): Promise<HTMLElement> {
     return okJson({ ok: true });
   }) as typeof fetch;
   useUiStore.setState({
-    currentProject: P1,
     projects: [
-      { projectPath: P1, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
-      { projectPath: P2, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+      { projectPath: P1, preferredModel: null },
+      { projectPath: P2, preferredModel: null },
     ],
   });
+  // 分组钉选改派生（W3 任务 14）：选中 P1 会话使 P1 为活跃组（默认展开规则跟随）
+  useSessionsStore.setState({ selectedId: P1_IDS[0] });
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -125,7 +126,7 @@ beforeEach(() => {
     archived: "false",
     tagFilter: [],
   });
-  useUiStore.setState({ currentProject: null, projects: [], models: [] });
+  useUiStore.setState({ projects: [], models: [] });
 });
 
 afterEach(async () => {
@@ -250,11 +251,12 @@ describe("项目组加载更多（r9 wave1）", () => {
     expect(shownInGroup(container, P1)).toHaveLength(15);
     expect(shownInGroup(container, P2)).toHaveLength(10);
     expect(loadMoreButton(container, P2)).not.toBeNull();
-    // 切当前项目：P2 成为当前组自动展开（既有分组规则），P1 非当前组自动折叠——
+    // 切活跃项目（派生收口，W3 任务 14）：选中 P2 会话后 P2 成为活跃组自动展开
+    // （既有分组规则），P1 非活跃组自动折叠——
     // 但 P1 的键控可见值保留：重新展开后仍全显 15（而非回落 10），证明未被切换重置，
     // 且 P2 不继承 P1 的加载更多（仍 10 + 还有 2 个）
     await act(async () => {
-      useUiStore.setState({ currentProject: P2 });
+      useSessionsStore.setState({ selectedId: P2_IDS[0] });
       await flush();
     });
     expect(shownInGroup(container, P2)).toHaveLength(10);

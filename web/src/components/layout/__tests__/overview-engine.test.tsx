@@ -37,7 +37,6 @@ const { OverviewEngine } = await import("../overview-engine");
 const { OverviewPanel } = await import("../overview-panel");
 const { useEnginesStore } = await import("@/stores/engines");
 const { useSessionsStore } = await import("@/stores/sessions");
-const { useUiStore } = await import("@/stores/ui");
 const { api } = await import("@/lib/api");
 
 const S1 = "/data/sess/s1.jsonl";
@@ -114,7 +113,7 @@ beforeEach(() => {
     allMode: false,
   });
   useEnginesStore.getState().resetEngines();
-  useUiStore.setState({ currentProject: null });
+  // W1 t5 审计 + W3 任务 12 收口：概览项目源已由上方 sessions 播种派生（selectedId），全局字段已退役
   api.getEngineMetrics.mockReset().mockResolvedValue({ engines: [] });
   api.stopEngine.mockReset().mockResolvedValue({ ok: true });
   api.getPlanProgress.mockReset().mockResolvedValue({});

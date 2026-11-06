@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
+import { loadProjectModels } from "@/lib/bootstrap";
 import { writeSessionUrl } from "@/lib/session-url";
 import { diag, sendTrace } from "@/lib/diag";
 import { useUiStore } from "@/stores/ui";
@@ -213,6 +214,54 @@ function mergeAliasRows(
   return merged;
 }
 
+/** 选中会话 → 所属项目反查（会话根架构 W1 任务 1：自 memory-panel 私有实现上提，
+ * 全局唯一实现）。对 byProject 线性扫描（会话列表体量小，无索引必要）；每次调用
+ * 全新扫描、无记忆化——byProject 在渲染间可能被整替（setAllSessions / setSessions），
+ * 缓存反查结果会读到陈旧分组。未命中或 sessionId 为 null 返回 null。 */
+export function projectOfSession(
+  byProject: Record<string, SessionListItem[]>,
+  sessionId: string | null,
+): string | null {
+  if (sessionId === null) return null;
+  for (const [project, list] of Object.entries(byProject)) {
+    if (list.some((s) => s.id === sessionId)) return project;
+  }
+  return null;
+}
+
+/** 选中决策核（W2 任务 6 内聚；F2 F-1 恢复竞态补偿共用）：目标项目偏好链应用 + 无条件
+ * 补拉模型列表。偏好先行（顺序承重，见 bootstrap 回退链注释）：先置非空选中，随后
+ * loadProjectModels 的回退链只在选中为空时补位——引擎默认不会覆盖项目偏好。链：会话
+ * 生效模型 appliedModels > 目标项目偏好 preferredModel > null（交回退链兜引擎默认 >
+ * 列表首项）。appliedModels 键空间只有模型字符串（无思考档）：applied 命中时思考档
+ * 未知置 null 交回退链兜底，不跨会话携带残留；空串视为未知（composer 挂载对齐同判据）。
+ * 无条件补拉模型列表（撤调用点 models.length===0 惰性门）：快速连续切换由 modelsLoadSeq
+ * 序号守卫丢弃迟到响应（含失败）；取数途中 setModels 未跑，旧列表整体保留（成功才整替），
+ * 不出现空窗。 */
+function applyProjectDecision(sessionId: string, targetProject: string): void {
+  const s = useSessionsStore.getState();
+  const ui = useUiStore.getState();
+  const applied = s.appliedModels[sessionId] || null;
+  const pref = ui.projects.find((p) => p.projectPath === targetProject);
+  ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
+  ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
+  void loadProjectModels(targetProject);
+}
+
+/** URL 恢复竞态补偿（F2 F-1）：恢复选中先于列表回包落地时「行不在 store」早退，决策核
+ * 未跑且无后续触发源（loadProjectModels 仅 select 跨项目分支与 createSession 调用；
+ * 同项目幂等又挡住点击补救），模型列表/收藏/promptPresets 恒空、项目偏好不应用。列表
+ * 写入使已置 selectedId 由不可解析转为可解析时在此补跑一次决策核；此前已可解析（决策
+ * 核已随 select 跑过）不触发——二次刷新幂等不重拉。 */
+function compensateRestoreSelect(before: Pick<SessionsState, "byProject" | "selectedId">): void {
+  const s = useSessionsStore.getState();
+  if (s.selectedId === null) return;
+  if (projectOfSession(before.byProject, s.selectedId) !== null) return;
+  const targetProject = projectOfSession(s.byProject, s.selectedId);
+  if (targetProject === null) return;
+  applyProjectDecision(s.selectedId, targetProject);
+}
+
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
@@ -241,20 +290,40 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     // 采集增强批：会话切换埋点（info 默认可见）+ 发送链悬挂 span 清理
     diag.event("session.select", { session: id ? id.slice(0, 8) : "-", alias: isAlias || undefined });
     if (id) sendTrace.drop(id, "switch");
+    // 捕获本次选中前的选中态（活动项目派生源）：同项目幂等判定据此对照（W3 任务 12）
+    const prevSelectedId = useSessionsStore.getState().selectedId;
     set({ selectedId: id });
     writeSessionUrl(isAlias ? null : id);
+    // —— 选中内聚（会话根架构 W2 任务 6；W3 任务 12 活动项目派生收口）：跨项目选中由
+    // store 自身应用目标项目偏好并补拉模型列表，决策核就地内联（不新增导出全局，store
+    // 自持）。活动项目 = 选中会话派生（useActiveProject 同判据）：本次选中前的活动项目
+    // 与目标同项目 → 幂等纯选中。刻意不 PATCH 项目最近打开时间——轻量切换不写项目排序
+    // （session-list.tsx selectSession 注释同契约）。
+    if (id === null) return;
+    const s = useSessionsStore.getState();
+    const targetProject = projectOfSession(s.byProject, id);
+    // 行不在 store（列表未返回时的 URL 直达等）：推不出目标项目，保持纯选中（与旧行为一致）
+    if (targetProject === null) return;
+    // 同项目重选：幂等面——纯选中，不重拉模型、不重置偏好（用户手选的模型不被项目偏好冲掉）
+    if (targetProject === projectOfSession(s.byProject, prevSelectedId)) return;
+    applyProjectDecision(id, targetProject);
   },
   setLoading: (loading) => set({ loading }),
 
-  setSessions: (project, sessions) =>
+  setSessions: (project, sessions) => {
+    const before = useSessionsStore.getState();
     set((s) => ({
       byProject: { ...s.byProject, [project]: mergeAliasRows(s.byProject[project] ?? [], sessions, mergeKeys(s)) },
       ...syncBackgroundStates(s, sessions),
-    })),
+    }));
+    compensateRestoreSelect(before);
+  },
 
-  setAllSessions: (sessions) =>
+  setAllSessions: (sessions) => {
+    const before = useSessionsStore.getState();
     set((s) => {
-      const byProject: Record<string, SessionListItem[]> = {};      for (const session of sessions) {
+      const byProject: Record<string, SessionListItem[]> = {};
+      for (const session of sessions) {
         (byProject[session.project] ??= []).push(session);
       }
       // 占位行追回（docs08-r6 任务 7）：聚合键内的按项目合并；聚合响应里消失的旧项目
@@ -269,7 +338,9 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         if (restored.length > 0) byProject[project] = restored;
       }
       return { byProject, ...syncBackgroundStates(s, sessions) };
-    }),
+    });
+    compensateRestoreSelect(before);
+  },
 
   refreshSessions: async () => {
     const { allMode, archived, q, tagFilter, setLoading } = useSessionsStore.getState();
@@ -282,10 +353,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         useSessionsStore.getState().setAllSessions(res.sessions);
         return;
       }
-      const { currentProject } = useUiStore.getState();
-      if (!currentProject) return;
-      const res = await api.listSessions({ project: currentProject, archived, q: q || undefined, tags });
-      useSessionsStore.getState().setSessions(currentProject, res.sessions);
+      // 单项目口径：活动项目 = 选中会话派生（W3 任务 12）；无选中会话即无列表语义，
+      // 直接返回（侧栏常驻聚合视图，不经过此分支）
+      const { byProject, selectedId } = useSessionsStore.getState();
+      const project = projectOfSession(byProject, selectedId);
+      if (!project) return;
+      const res = await api.listSessions({ project, archived, q: q || undefined, tags });
+      useSessionsStore.getState().setSessions(project, res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
         useUiStore.getState().showToast(t("common.lib.sessionListLoadFailed"), "error");
@@ -558,3 +632,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return changed ? { pendingIds, runStates, runStateAt } : s;
     }),
 }));
+
+/** 活跃项目派生（会话根架构 W1 任务 1；W3 任务 12 起为全应用唯一项目源）：当前选中
+ * 会话 → 所属项目反查。标准 zustand 选择器订阅 selectedId 与 byProject 引用，任一身份
+ * 变化触发重渲染（派生本身是廉价线性扫描）；未选中或未命中返回 null，调用方各自落
+ * 空态语义（全局项目字段已退役，无回退源）。 */
+export function useActiveProject(): string | null {
+  const selectedId = useSessionsStore((s) => s.selectedId);
+  const byProject = useSessionsStore((s) => s.byProject);
+  return projectOfSession(byProject, selectedId);
+}

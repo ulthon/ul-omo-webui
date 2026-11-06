@@ -82,8 +82,7 @@ const USAGE_PAYLOAD = {
 
 function resetStores() {
   useUiStore.setState({
-    currentProject: "/tmp/p",
-    projects: [{ projectPath: "/tmp/p", preferredModel: null, lastOpenedAt: null }],
+    projects: [{ projectPath: "/tmp/p", preferredModel: null }],
     models: [],
     modelsLoaded: false,
     selectedModel: null,

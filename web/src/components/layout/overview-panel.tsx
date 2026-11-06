@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useTasksStore, type BackgroundTask } from "@/stores/tasks";
 import { MAX_OVERVIEW_NOTES_COUNT, OVERVIEW_NOTES_COUNT_KV, useUiStore } from "@/stores/ui";
+import { useActiveProject } from "@/stores/sessions";
 import { useT } from "@/i18n/i18n";
 import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
 import { collectSubagentCalls, summaryOfCall } from "@/components/chat/subagent-data";
@@ -153,10 +154,11 @@ function OverviewBackgroundTasks({ sessionId }: { sessionId: string | null }) {
 }
 
 // —— 笔记块：notes-api 列表 + 条目点击就地直接编辑（r11 复用笔记 tab 同款
-// NoteInlineEditor，含 composition 安全保存），项目维度与会话无关 ——
+// NoteInlineEditor，含 composition 安全保存），项目源为选中会话派生（W1 t3）——
 function OverviewNotes() {
   const t = useT();
-  const project = useUiStore((s) => s.currentProject);
+  // 未选中会话时派生为 null，块内展示「请先添加项目」空态（过渡期语义不变）
+  const project = useActiveProject();
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
   const [failed, setFailed] = useState(false);
   // 就地展开的条目 id；保存/取消后收起并重取列表。dirtyRef 仅满足编辑器契约

@@ -35,7 +35,7 @@ function stubMatchMedia(mobile: boolean): void {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ projects: [], currentProject: null, shortcutsHelpOpen: false });
+  useUiStore.setState({ projects: [], shortcutsHelpOpen: false });
 });
 
 afterEach(() => {

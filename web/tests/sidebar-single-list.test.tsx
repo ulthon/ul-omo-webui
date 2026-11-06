@@ -26,7 +26,7 @@ const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 const { buildForkIndexes, SessionItem } = await import("@/components/session-list/session-item");
 const { SessionList } = await import("@/components/session-list/session-list");
-const { useSessionsStore } = await import("@/stores/sessions");
+const { projectOfSession, useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -100,7 +100,7 @@ beforeEach(() => {
     archived: "false",
     tagFilter: [],
   });
-  useUiStore.setState({ currentProject: null, projects: [], models: [] });
+  useUiStore.setState({ projects: [], models: [] });
 });
 
 afterEach(async () => {
@@ -205,8 +205,7 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
       return okJson({ ok: true });
     });
     useUiStore.setState({
-      currentProject: "/p1",
-      projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-05T00:00:00.000Z" }],
+      projects: [{ projectPath: "/p1", preferredModel: null }],
     });
     return mount(createElement(SessionList));
   }
@@ -237,13 +236,50 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
   });
 });
 
+describe("分组钉选随派生活跃项目（W3 任务 14 stale_state 对抗）", () => {
+  test("选中切到另一项目后：钉选/置顶/展开标记跟随派生，不读全局项目字段", async () => {
+    useUiStore.setState({
+      projects: [
+        { projectPath: "/p1", preferredModel: null },
+        { projectPath: "/p2", preferredModel: null },
+      ],
+    });
+    const s1 = makeSession("pin-a1", { project: "/p1" });
+    const s2 = makeSession("pin-b1", { project: "/p2", modified: "2026-01-02T00:00:00.000Z" });
+    useSessionsStore.setState({ byProject: { "/p1": [s1], "/p2": [s2] }, selectedId: "pin-b1" });
+    mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/sessions")) return okJson({ project: null, archived: "false", sessions: [s1, s2] });
+      if (url.includes("/api/tags")) return okJson({ global: [], project: [] });
+      return okJson({ ok: true });
+    });
+    const container = await mount(createElement(SessionList));
+    await act(async () => {
+      await flush();
+    });
+    const groups = () => [...container.querySelectorAll("[data-project-group]")].map((g) => g.getAttribute("data-project-group"));
+    const marker = (p: string) =>
+      container.querySelector(`[data-project-group="${p}"] [data-testid="group-toggle"]`)?.textContent ?? "";
+    // 初始：选中 /p2 会话 → /p2 钉选置顶 + 「当前」标记；全局字段同值（行为不变）
+    expect(groups()[0]).toBe("/p2");
+    expect(marker("/p2")).toContain("当前");
+    // 切选中到 /p1：钉选跟随派生（全局字段仍为 /p2，若读全局则不随切——stale_state 对抗点）
+    await act(async () => {
+      useSessionsStore.setState({ selectedId: "pin-a1" });
+      await flush();
+    });
+    expect(groups()[0]).toBe("/p1");
+    expect(marker("/p1")).toContain("当前");
+    expect(marker("/p2")).not.toContain("当前");
+  });
+});
+
 describe("跨项目分组头新建会话（docs08-r5 任务 2）", () => {
   test("分组头 + 新建：等待目标项目模型解析后再建会话，POST 携带解析所得 model/thinkingLevel", async () => {
     useUiStore.setState({
-      currentProject: "/p0",
       projects: [
-        { projectPath: "/p0", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
-        { projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-02T00:00:00.000Z" },
+        { projectPath: "/p0", preferredModel: null },
+        { projectPath: "/p1", preferredModel: null },
       ],
     });
     const posts: Array<Record<string, unknown>> = [];
@@ -296,7 +332,8 @@ describe("跨项目分组头新建会话（docs08-r5 任务 2）", () => {
     // 请求等待模型解析完成后才发出，携带回退链落定的模型与思考档（引擎默认而非列表首项）
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ project: "/p1", model: "zai-coding-cn/glm-5.3-4k", thinkingLevel: "max" });
-    expect(useUiStore.getState().currentProject).toBe("/p1");
+    // 活动项目随新会话选中派生（W3 任务 12）
+    expect(projectOfSession(useSessionsStore.getState().byProject, useSessionsStore.getState().selectedId)).toBe("/p1");
     expect(useUiStore.getState().selectedModel).toBe("zai-coding-cn/glm-5.3-4k");
   });
 });

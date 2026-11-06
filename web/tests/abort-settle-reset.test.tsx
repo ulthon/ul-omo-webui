@@ -146,7 +146,7 @@ function resetStores(): void {
   useQueueStore.setState({ bySession: {} });
   usePermissionsStore.setState({ bySession: {} });
   useQuestionsStore.setState({ bySession: {} });
-  useUiStore.setState({ currentProject: "/p", toast: null });
+  useUiStore.setState({ toast: null });
 }
 
 beforeEach(() => {

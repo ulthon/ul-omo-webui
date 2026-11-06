@@ -1,8 +1,8 @@
-// bootstrap 死项目守卫单测（W1 缺陷 #2）：上次项目目录已不存在（GET /api/projects 标
-// missing:true）时自动恢复静默跳过——零 PATCH、零 openProject 副作用（无 sessions/models
-// 请求、currentProject 不变、无 toast），仅 console.info 记录；可解析项目照常恢复
-// （请求序列与既有行为一致）。
-// W2 todo 8 追加：openProject 应用项目 preferredThinkingLevel 偏好（无偏好项目重置为 null）。
+// bootstrap 空态启动单测（会话根架构 W3 任务 11）：引导仅拉项目列表 + 设置 kv——
+// 不自动打开任何项目（零写请求、零 sessions/models 请求），不选中会话（selectedId
+// 保持 null，W3 任务 12 起活动项目由选中会话派生，无独立全局项目态）。URL ?session=
+// 恢复仍由 shell 承担（session-url.test.ts 覆盖），模型列表按需于首次选中时加载
+// （冷启动教训）。自动打开链路（含死项目守卫）已随本任务整体退役。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { bootstrap } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
@@ -39,7 +39,7 @@ function okJson(payload: unknown): Response {
 const ALIVE = "/tmp/senpi-bootstrap-alive";
 const DEAD = "/tmp/senpi-bootstrap-dead";
 
-/** 标准两读路由：projects / settings（bootstrap 主流程固定拉取） */
+/** 标准两读路由：projects / settings（bootstrap 主流程固定拉取，空态收束后别无他读） */
 function baseRoutes(projects: unknown[]): (url: string, method: string) => Response | undefined {
   return (url, method) => {
     if (method !== "GET") return undefined;
@@ -54,7 +54,6 @@ function baseRoutes(projects: unknown[]): (url: string, method: string) => Respo
 beforeEach(() => {
   useUiStore.setState({
     drawerOpen: false,
-    currentProject: null,
     projects: [],
     models: [],
     modelsLoaded: false,
@@ -64,7 +63,7 @@ beforeEach(() => {
     externalLinks: { gitUrl: null, filesUrl: null },
     toast: null,
   });
-  useSessionsStore.setState({ allMode: false });
+  useSessionsStore.setState({ allMode: false, selectedId: null });
 });
 
 afterEach(() => {
@@ -72,118 +71,55 @@ afterEach(() => {
   console.info = ORIGINAL_INFO;
 });
 
-describe("bootstrap 死项目守卫", () => {
-  test("上次项目 missing:true → 零 PATCH、零 openProject 副作用，console.info 记录路径", async () => {
+describe("bootstrap 空态启动（W3 任务 11）", () => {
+  test("有可解析项目 → 仅两读（projects/settings）：零写请求、零 sessions、零 models，selectedId 保持 null", async () => {
+    const log: RecordedRequest[] = [];
+    mockFetch(log, baseRoutes([
+      { projectPath: ALIVE, preferredModel: null },
+    ]));
+
+    await bootstrap();
+
+    // 引导固定两读即止：自动打开链路（写请求 / sessions / models）全无
+    expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
+    expect(log.some((r) => r.method !== "GET")).toBe(false);
+    // 空态：无会话选中、无 toast；模型不预载（冷启动教训：首次选中才加载）
+    expect(useSessionsStore.getState().selectedId).toBeNull();
+    expect(useUiStore.getState().projects).toHaveLength(1);
+    expect(useUiStore.getState().modelsLoaded).toBe(false);
+    expect(useUiStore.getState().toasts).toEqual([]);
+  });
+
+  test("上次项目 missing:true → 同样空态（自动打开与死项目守卫一并退役，无 console.info）", async () => {
     const log: RecordedRequest[] = [];
     const infos: unknown[][] = [];
     console.info = (...args: unknown[]) => {
       infos.push(args);
     };
     mockFetch(log, baseRoutes([
-      { projectPath: DEAD, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
+      { projectPath: DEAD, preferredModel: null, missing: true },
     ]));
 
     await bootstrap();
 
-    // 只剩 bootstrap 固定两读；PATCH（openProject 的 lastOpenedAt 更新）、sessions、models 全无
     expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
-    expect(log.some((r) => r.method === "PATCH")).toBe(false);
-    // UI 态无副作用：当前项目未设、无 toast
-    expect(useUiStore.getState().currentProject).toBeNull();
+    expect(useSessionsStore.getState().selectedId).toBeNull();
     expect(useUiStore.getState().toasts).toEqual([]);
-    expect(useUiStore.getState().projects).toHaveLength(1);
-    // 静默跳过仅留一条 console.info，含指定前缀与路径
-    expect(infos).toHaveLength(1);
-    expect(infos[0][0]).toBe("[ul-omo-webui] 上次项目路径已不存在，跳过自动打开:");
-    expect(infos[0][1]).toBe(DEAD);
-  });
-
-  test("上次项目可解析 → 既有恢复行为不变：PATCH lastOpenedAt + openProject 全链路", async () => {
-    const log: RecordedRequest[] = [];
-    const infos: unknown[][] = [];
-    console.info = (...args: unknown[]) => {
-      infos.push(args);
-    };
-    mockFetch(log, (url, method) => {
-      const base = baseRoutes([
-        { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
-      ])(url, method);
-      if (base) return base;
-      if (method === "PATCH" && url === "/api/projects/meta") {
-        return okJson({ ok: true, project: null });
-      }
-      if (method === "GET" && url.startsWith("/api/sessions?")) {
-        return okJson({ project: ALIVE, archived: "false", sessions: [] });
-      }
-      if (method === "GET" && url.startsWith("/api/models")) {
-        return okJson({ project: ALIVE, models: [] });
-      }
-      return undefined;
-    });
-
-    await bootstrap();
-
-    // 请求序列与改动前自动恢复逐项一致：两读 → PATCH → sessions → models
-    expect(log.map((r) => `${r.method} ${r.url.split("?")[0]}`)).toEqual([
-      "GET /api/projects",
-      "GET /api/settings",
-      "PATCH /api/projects/meta",
-      "GET /api/sessions",
-      "GET /api/models",
-    ]);
-    const patchBody = log.find((r) => r.method === "PATCH")?.body as { path?: string; lastOpenedAt?: string } | undefined;
-    expect(patchBody).toMatchObject({ path: ALIVE });
-    expect(typeof patchBody?.lastOpenedAt).toBe("string");
-    expect(useUiStore.getState().currentProject).toBe(ALIVE);
+    // 死项目守卫随自动打开退役：不再探测、不再记录
     expect(infos).toHaveLength(0);
   });
 
-  test("missing 的是较旧项目而非 latest → latest 正常恢复（守卫只看目标项目）", async () => {
+  test("无 ?session= 空态：selectedId 保持 null（不自动打开任何项目）", async () => {
     const log: RecordedRequest[] = [];
-    mockFetch(log, (url, method) => {
-      const base = baseRoutes([
-        { projectPath: DEAD, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
-        { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-02-01T00:00:00.000Z" },
-      ])(url, method);
-      if (base) return base;
-      if (method === "PATCH" && url === "/api/projects/meta") return okJson({ ok: true, project: null });
-      if (method === "GET" && url.startsWith("/api/sessions?")) return okJson({ project: ALIVE, archived: "false", sessions: [] });
-      if (method === "GET" && url.startsWith("/api/models")) return okJson({ project: ALIVE, models: [] });
-      return undefined;
-    });
+    mockFetch(log, baseRoutes([
+      { projectPath: ALIVE, preferredModel: null },
+    ]));
 
     await bootstrap();
 
-    // latest（ALIVE，lastOpenedAt 更新）未受 DEAD 的 missing 影响，照常恢复
-    expect(log.some((r) => r.method === "PATCH")).toBe(true);
-    expect(useUiStore.getState().currentProject).toBe(ALIVE);
-  });
-});
-
-describe("openProject 思考档偏好应用（W2 todo 8）", () => {
-  test("项目带 preferredThinkingLevel → 应用；无偏好项目 → 重置为 null", async () => {
-    const { openProject } = await import("@/lib/bootstrap");
-    useUiStore.setState({
-      projects: [
-        { projectPath: "/p-max", preferredModel: null, lastOpenedAt: null, preferredThinkingLevel: "max" },
-        { projectPath: "/p-plain", preferredModel: null, lastOpenedAt: null },
-      ],
-      selectedThinkingLevel: "low", // 模拟上一项目遗留档
-    });
-    const log: RecordedRequest[] = [];
-    mockFetch(log, (url, method) => {
-      const base = baseRoutes([])(url, method);
-      if (base) return base;
-      if (method === "PATCH" && url === "/api/projects/meta") return okJson({ ok: true, project: null });
-      if (method === "GET" && url.startsWith("/api/sessions?")) return okJson({ project: "", archived: "false", sessions: [] });
-      if (method === "GET" && url.startsWith("/api/models")) return okJson({ project: "", models: [] });
-      return undefined;
-    });
-
-    await openProject("/p-max");
-    expect(useUiStore.getState().selectedThinkingLevel).toBe("max");
-
-    await openProject("/p-plain");
-    expect(useUiStore.getState().selectedThinkingLevel).toBeNull();
+    // 空态：会话未选中（URL ?session= 恢复是唯一自动恢复，由 shell 承担）；
+    // 引导仅两读，无任何写请求与 models/sessions 拉取
+    expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
+    expect(useSessionsStore.getState().selectedId).toBeNull();
   });
 });

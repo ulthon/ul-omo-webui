@@ -3,7 +3,8 @@
 // 环境说明同 session-item-expand-removed.test.tsx：@ts-nocheck + 被测模块动态 import +
 // @happy-dom 全局注册；标记断言走 renderToStaticMarkup，点击行为走 createRoot 真实 DOM。
 // 验收：(a) 手机档头部同一 flex 行含 新建图标钮+搜索+批量；(b) 旧 h-11 w-full 全宽钮 DOM 消失；
-// (c) lg 桌面档变体类（lg:h-7 lg:w-full）保留；(d) 点击仍调 api.createSession(currentProject)。
+// (c) lg 桌面档变体类（lg:h-7 lg:w-full）保留；(d) 点击仍调 api.createSession（落点=选中会话派生项目，
+// 会话根架构 W2 任务 8：工具条不再读全局项目字段，布景 seed selectedId+byProject 反查链）。
 import { describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -55,7 +56,29 @@ const { t: tSnap } = await import("@/i18n/i18n");
 
 const NEW_SESSION_LABEL = tSnap("sessionList.list.newSession");
 
-useUiStore.setState({ currentProject: "/tmp/p", projects: [{ projectPath: "/tmp/p", preferredModel: null, lastOpenedAt: null }] });
+// 派生反查链基准行（W2 任务 8，仅用例 (d) 接线）：selectedId 指向它，
+// projectOfSession 反查得 /tmp/p；(a)-(c) 静态标记断言依赖空列表口径（分组头
+// 自带 min-h-11 w-full 子串会深进全标记扫描），故富布景不进模块级
+const BASE_ROW = {
+  id: "s0",
+  path: "/tmp/p/s0.jsonl",
+  project: "/tmp/p",
+  title: "s0",
+  name: null,
+  renamedTitle: null,
+  parentSessionPath: null,
+  created: "2026-01-01T00:00:00.000Z",
+  modified: "2026-01-01T00:00:00.000Z",
+  messageCount: 0,
+  firstMessage: "",
+  pinned: false,
+  archivedAt: null,
+  unreadCount: 0,
+  lastRead: null,
+  active: false,
+};
+
+useUiStore.setState({ projects: [{ projectPath: "/tmp/p", preferredModel: null }] });
 useSessionsStore.setState({ byProject: { "/tmp/p": [] }, archived: "false", loading: false });
 
 function renderList() {
@@ -109,7 +132,10 @@ describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
     expect(html).toContain(NEW_SESSION_LABEL);
   });
 
-  test("(d) 点击图标钮仍调 api.createSession(currentProject)，双击防抖 disabled 逻辑保留", async () => {
+  test("(d) 点击图标钮仍调 api.createSession（落点=派生项目），双击防抖 disabled 逻辑保留", async () => {
+    // 派生链接线（W2 任务 8）：seed selectedId+byProject，并让挂载期聚合刷新回带同一行
+    useSessionsStore.setState({ byProject: { "/tmp/p": [BASE_ROW] }, selectedId: "s0" });
+    api.listSessions.mockImplementation(() => Promise.resolve({ sessions: [BASE_ROW] }));
     api.createSession.mockResolvedValue({ session: { id: "new1", sessionPath: "/tmp/p/new1" } });
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -125,6 +151,30 @@ describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
     expect(api.createSession).toHaveBeenCalled();
     const args = api.createSession.mock.calls.at(-1);
     expect(args[0]).toMatchObject({ project: "/tmp/p" });
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  test("(e) 无选中禁用（todo 8 验收）：派生 activeProject 为 null 时钮 disabled，选中会话后恢复可用", async () => {
+    // 引导空态同款布景：分组行存在但无选中（selectedId null → useActiveProject 派生 null）。
+    // 挂载 effect 会置 allMode 并聚合刷新，回包钉住同一行，避免刷新整替冲掉布景。
+    useSessionsStore.setState({ byProject: { "/tmp/p": [BASE_ROW] }, selectedId: null });
+    api.listSessions.mockResolvedValue({ sessions: [BASE_ROW] });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SessionList));
+    });
+    const btn = () => container.querySelector('[data-testid="new-session-btn"]') as HTMLButtonElement;
+    expect(btn().disabled).toBe(true);
+    // 选中会话 → 派生项目非空 → 钮恢复可用（zustand 订阅驱动的真实重渲染）
+    await act(async () => {
+      useSessionsStore.getState().select("s0");
+    });
+    expect(btn().disabled).toBe(false);
     await act(async () => {
       root.unmount();
     });

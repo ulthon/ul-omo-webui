@@ -268,7 +268,7 @@ describe("ChatView 集成：流内卡 + 提示条 + 权限卡位置", () => {
     usePermissionsStore.setState({ bySession: {}, autoAllow: {} });
     useQuestionsStore.setState({ bySession: {}, drafts: {}, resolvedSummaries: {} });
     useQueueStore.setState({ bySession: {} });
-    useUiStore.setState({ currentProject: "/p", toast: null });
+    useUiStore.setState({ toast: null });
 
     // api 全量 mock：按 URL 分流返回最小合法形状
     globalThis.fetch = (async (input: unknown) => {

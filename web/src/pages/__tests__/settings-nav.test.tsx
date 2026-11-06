@@ -8,7 +8,7 @@
 // auth/schedule/traffic/diagnostics/update 定向形态照搬；model 组真实挂载跑 effect 需要
 // engines/settings/providers 字段，缺则 TypeError（ToolsSection 自带 Array.isArray 兜底）。
 // 每例开头显式重置 ui store：zustand 单例跨用例污染防护，且 permission-preset-select
-// 需 currentProject 才渲染。只断言 data-testid 与 aria 属性，不断言 i18n 文案。
+// 需已选项目（选中会话派生）才渲染。只断言 data-testid 与 aria 属性，不断言 i18n 文案。
 // 验收：(a) 默认 project 组单组渲染；(b) 点 model 组单组切换；(c) aria-selected 精确
 // 字符串（IS-6）；(d) 关开设置页组记忆保持（IS-5）。
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -64,16 +64,18 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SettingsPage } = await import("@/pages/settings");
 const { useUiStore } = await import("@/stores/ui");
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const PROJECT = "/tmp/proj";
 
-/** 每例显式重置 ui store（zustand 单例跨用例污染防护） */
+/** 每例显式重置 ui store（zustand 单例跨用例污染防护）；todo 9 后 permission-preset-select
+ * 的渲染前提是页内选择器初始化出目标项目（选中会话派生），故同步种入 sessions */
 function resetUiStore() {
   useUiStore.setState({
     settingsGroup: "project",
-    currentProject: PROJECT,
-    projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }],
+    projects: [{ projectPath: PROJECT, preferredModel: null }],
   });
+  useSessionsStore.setState({ byProject: { [PROJECT]: [{ id: "s1" }] }, selectedId: "s1" });
 }
 
 /** 挂载后冲刷挂载期 effect 微任务（api promise resolve 不落在 act 外，免 act 告警） */

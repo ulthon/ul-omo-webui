@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import type { ProjectMeta } from "@/lib/api";
+import type { ProjectMeta, SessionListItem } from "@/lib/api";
 
 // bun test 单进程跑多文件：其他测试文件可能已注册，双注册会抛错
 if (!(globalThis as { window?: unknown }).window) {
@@ -46,8 +46,29 @@ function project(path: string, extra?: Partial<ProjectMeta>): ProjectMeta {
   return {
     projectPath: path,
     preferredModel: null,
-    lastOpenedAt: "2026-01-01T00:00:00.000Z",
     ...extra,
+  };
+}
+
+/** 最小完整会话行（t10B：判定派生自选中会话所属项目，需真实种入 byProject） */
+function session(id: string, proj: string): SessionListItem {
+  return {
+    id,
+    path: `${proj}/${id}.jsonl`,
+    project: proj,
+    title: id,
+    name: null,
+    renamedTitle: null,
+    parentSessionPath: null,
+    created: "2026-01-01T00:00:00.000Z",
+    modified: "2026-01-01T00:00:00.000Z",
+    messageCount: 0,
+    firstMessage: "",
+    pinned: false,
+    archivedAt: null,
+    unreadCount: 0,
+    lastRead: null,
+    active: null,
   };
 }
 
@@ -67,6 +88,14 @@ function removeButtonOf(container: ParentNode, projectPath: string): HTMLButtonE
   return row ? findButton(row, "移除") : undefined;
 }
 
+/** 按项目路径定位行内的「隐藏」按钮（同 removeButtonOf 定位口径） */
+function hideButtonOf(container: ParentNode, projectPath: string): HTMLButtonElement | undefined {
+  const row = [...container.querySelectorAll("[data-testid=project-management-row]")].find((li) =>
+    li.querySelector(`[title="${projectPath}"]`),
+  );
+  return row ? findButton(row, "隐藏") : undefined;
+}
+
 /** 微任务 + 宏任务双重冲刷（remove 链路为 DELETE → GET 两次串行 fetch） */
 async function flush(): Promise<void> {
   await act(async () => {
@@ -75,8 +104,8 @@ async function flush(): Promise<void> {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ projects: [], currentProject: null, toast: null });
-  useSessionsStore.setState({ selectedId: null });
+  useUiStore.setState({ projects: [], toast: null });
+  useSessionsStore.setState({ selectedId: null, byProject: {} });
 });
 
 afterEach(() => {
@@ -85,7 +114,7 @@ afterEach(() => {
 });
 
 describe("设置面板项目管理区（W1 #1）", () => {
-  test("确认流：对话框文案含 survivability 承诺，确认后 DELETE + refetch，移除当前项目清选中态", async () => {
+  test("确认流：对话框文案含 survivability 承诺，确认后 DELETE + refetch，移除选中会话所属项目清选中态", async () => {
     const calls: Array<{ path: string; method: string }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -98,9 +127,8 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2")],
-      currentProject: "/p1",
     });
-    useSessionsStore.setState({ selectedId: "s1" });
+    useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -109,7 +137,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
       root.render(createElement(ProjectManagementSection));
     });
 
-    // 列表渲染两个项目，当前项目带「当前」标记，missing 项目带「已丢失」徽标由字段驱动
+    // 列表渲染两个项目，选中会话所属项目带「当前」标记，missing 项目带「已丢失」徽标由字段驱动
     expect(container.querySelectorAll("[data-testid=project-management-row]")).toHaveLength(2);
 
     // 打开确认对话框：文案必须包含重新添加可恢复置顶/改名/标签的产品承诺
@@ -128,7 +156,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
 
-    // 确认移除当前项目：DELETE → refetch → 清 currentProject 与选中会话
+    // 确认移除选中会话（s1）所属项目 /p1：DELETE → refetch → 清选中会话
     await act(async () => {
       removeButtonOf(container, "/p1")?.click();
     });
@@ -138,7 +166,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
     expect(calls.some((c) => c.method === "DELETE" && c.path === "/api/projects")).toBe(true);
     expect(useUiStore.getState().projects.map((p) => p.projectPath)).toEqual(["/p2"]);
-    expect(useUiStore.getState().currentProject).toBeNull();
     expect(useSessionsStore.getState().selectedId).toBeNull();
     expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
 
@@ -160,9 +187,8 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2")],
-      currentProject: "/p1",
     });
-    useSessionsStore.setState({ selectedId: "s1" });
+    useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -180,7 +206,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
 
     expect(useUiStore.getState().projects.map((p) => p.projectPath)).toEqual(["/p1"]);
-    expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBe("s1");
 
     await act(async () => {
@@ -206,9 +231,8 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2", { missing: true })],
-      currentProject: "/p1",
     });
-    useSessionsStore.setState({ selectedId: "s1" });
+    useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -230,8 +254,61 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
     expect(deleteCalled).toBe(true);
     expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
-    expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBe("s1");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("隐藏守卫（t10B 判定，W3 任务 12 派生口径）：活动项目隐藏走确认弹层并清选中，无关项目直隐不动选中", async () => {
+    const calls: Array<{ path: string; method: string }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ path, method });
+      if (method === "PUT" && path === "/api/projects/hidden") return okJson({ ok: true, project: null });
+      if (method === "GET" && path === "/api/projects") {
+        return okJson({ projects: [project("/p1"), project("/p2", { hidden: true })] });
+      }
+      return okJson({ ok: true });
+    }) as typeof fetch;
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    // 相位一：选中 s1∈/p1（活动项目=/p1 派生）→ 隐藏 /p1 为可感知变化，弹确认层；
+    // 确认后 setHidden 守卫判定命中 → 清选中
+    useUiStore.setState({ projects: [project("/p1"), project("/p2")], toast: null });
+    useSessionsStore.setState({
+      selectedId: "s1",
+      byProject: { "/p1": [session("s1", "/p1")], "/p2": [session("s2", "/p2")] },
+    });
+    await act(async () => {
+      root.render(createElement(ProjectManagementSection));
+    });
+    await act(async () => {
+      hideButtonOf(container, "/p1")?.click();
+    });
+    expect(container.querySelector("[data-testid=dialog-root]")).not.toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="project-hide-confirm"]') as HTMLElement)?.click();
+    });
+    await flush();
+    expect(calls.some((c) => c.method === "PUT" && c.path === "/api/projects/hidden")).toBe(true);
+    expect(useSessionsStore.getState().selectedId).toBeNull();
+
+    // 相位二：选中 s2∈/p2，隐藏无关项目 /p1 → 直隐路径（无弹层），选中保持
+    await act(async () => {
+      useSessionsStore.setState({ selectedId: "s2" });
+    });
+    await act(async () => {
+      hideButtonOf(container, "/p1")?.click();
+    });
+    await flush();
+    expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
+    expect(useSessionsStore.getState().selectedId).toBe("s2");
 
     await act(async () => {
       root.unmount();

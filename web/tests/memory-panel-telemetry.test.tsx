@@ -2,6 +2,8 @@
 // - 库存在：头部状态卡渲染四项硬数据（今日条数/库总量/文件数/最近落条/system 文件体积）+ 库路径
 // - 库缺失（telemetry=null）：不渲染卡片，既有诚实空态"该项目尚无记忆库"保留
 // - 库存在但零条目：卡片渲染诚实零值，"该目录暂无记忆条目"空态保留
+// 会话根架构 W1 t5 审计 + W3 任务 12 收口：项目布景走「选中会话派生」主路径
+// （useActiveProject 同口径）；过渡期全局回退已随 W3 任务 12 删除，无选中会话即空态。
 // api 层 mock fetch（session-dialogs.test.tsx 同款风格）；走真实组件（happy-dom + createRoot）。
 import { afterEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -16,10 +18,11 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 const { MemoryPanel } = await import("@/components/chat/memory-panel");
-const { useUiStore } = await import("@/stores/ui");
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const PROJECT = "/tmp/task14-qa/proj";
+const SESSION_ID = "qa-task14-s1";
 
 function okJson(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -39,20 +42,37 @@ function memoryBody(overrides: Record<string, unknown>): unknown {
   };
 }
 
-async function renderPanel(): Promise<HTMLElement> {
+/** 挂载根登记：afterEach 统一卸载，防泄漏根的 store 订阅跨用例触发多余取数 */
+const mountedRoots: { unmount(): void }[] = [];
+
+async function renderPanel(sessionId: string | null = null): Promise<HTMLElement> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(createElement(MemoryPanel, { sessionId: null }));
+    root.render(createElement(MemoryPanel, { sessionId }));
   });
+  mountedRoots.push(root);
   return container;
 }
 
-afterEach(() => {
+/** 派生主路径播种（notes-inline 同款最小行）：选中会话反查得项目 */
+function seedActiveSession(): void {
+  useSessionsStore.setState({
+    byProject: { [PROJECT]: [{ id: SESSION_ID, project: PROJECT }] },
+    selectedId: SESSION_ID,
+  });
+}
+
+afterEach(async () => {
   globalThis.fetch = ORIGINAL_FETCH;
+  for (const root of mountedRoots.splice(0)) {
+    await act(async () => {
+      root.unmount();
+    });
+  }
   document.body.innerHTML = "";
-  useUiStore.setState({ currentProject: null });
+  useSessionsStore.setState({ byProject: {}, selectedId: null });
 });
 
 describe("记忆页签遥测卡（docs08-r5 任务 14）", () => {
@@ -72,9 +92,9 @@ describe("记忆页签遥测卡（docs08-r5 任务 14）", () => {
         }),
       );
     }) as typeof fetch;
-    useUiStore.setState({ currentProject: PROJECT });
+    seedActiveSession();
 
-    const container = await renderPanel();
+    const container = await renderPanel(SESSION_ID);
     const card = container.querySelector('[data-testid="memory-telemetry"]');
     expect(card).not.toBeNull();
     expect(card?.querySelector('[data-testid="memory-telemetry-today"]')?.textContent).toContain("今日 2 条");
@@ -93,9 +113,9 @@ describe("记忆页签遥测卡（docs08-r5 任务 14）", () => {
   test("库缺失（telemetry=null）：不渲染卡片，诚实空态保留", async () => {
     globalThis.fetch = (async () =>
       okJson(memoryBody({ exists: false, libraryPath: "/mem/agents/proj-12345678" }))) as typeof fetch;
-    useUiStore.setState({ currentProject: PROJECT });
+    seedActiveSession();
 
-    const container = await renderPanel();
+    const container = await renderPanel(SESSION_ID);
     expect(container.querySelector('[data-testid="memory-telemetry"]')).toBeNull();
     expect(container.querySelector('[data-testid="memory-empty-library"]')).not.toBeNull();
     expect(container.textContent).toContain("该项目尚无记忆库");
@@ -108,14 +128,27 @@ describe("记忆页签遥测卡（docs08-r5 任务 14）", () => {
           telemetry: { todayCount: 0, totalEntries: 0, fileCount: 0, lastEntryAt: null, systemBytes: 0 },
         }),
       )) as typeof fetch;
-    useUiStore.setState({ currentProject: PROJECT });
+    seedActiveSession();
 
-    const container = await renderPanel();
+    const container = await renderPanel(SESSION_ID);
     const card = container.querySelector('[data-testid="memory-telemetry"]');
     expect(card).not.toBeNull();
     expect(card?.querySelector('[data-testid="memory-telemetry-today"]')?.textContent).toContain("今日 0 条");
     expect(card?.querySelector('[data-testid="memory-telemetry-last"]')?.textContent).toContain("—");
     expect(container.querySelector('[data-testid="memory-empty-entries"]')).not.toBeNull();
     expect(container.textContent).toContain("该目录暂无记忆条目");
+  });
+
+  test("项目口径（W3 任务 12 收口）：无选中会话显示空态且零取数（无全局回退源）", async () => {
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return okJson(memoryBody({ exists: false }));
+    }) as typeof fetch;
+
+    // 无选中会话（sessionId=null）→ 空态文案，不发起任何 facts 取数
+    const container = await renderPanel(null);
+    expect(container.textContent).toContain("未选择会话");
+    expect(seen).toEqual([]);
   });
 });

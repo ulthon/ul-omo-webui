@@ -184,7 +184,7 @@ export const login = {
     sortSaveFailed: "保存排序设置失败",
     sidebarHeading: "侧栏",
     projectSort: "项目分组排序",
-    sortNote: "按添加时间排序时，升级前注册的历史项目以最近打开时间为准；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。",
+    sortNote: "按添加时间排序时，注册时间相同的历史项目按列表顺序保持稳定；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。",
     // 对话分区
     chatSaveFailed: "保存对话设置失败",
     chatHeading: "对话",
@@ -230,10 +230,8 @@ export const login = {
     filesUrlLabel: "文件管理外链地址",
     filesUrlPlaceholder: "https://files.example.com 或 /files",
     saving: "保存中…",
-    // 项目下拉
-    projectMenu: "项目",
-    noProjectsMenu: "尚无项目，先添加一个",
-    addProject: "添加项目…",
+    // 项目下拉已裁撤（W3 任务 14），projectMenu/noProjectsMenu/addProject 键随之删除；
+    // addProjectShort 由侧栏列表双端入口继续使用
     addProjectShort: "添加项目",
     // 模型下拉与连接状态
     noModels: "无可用模型",
@@ -262,6 +260,8 @@ export const login = {
       system: "系统与维护",
     },
     groupNav: "设置分组导航",
+    // —— 页内项目选择器（会话根架构 todo 9）：项目组分区的设置目标项目 ——
+    projectTarget: "目标项目",
     // —— 通知记录分区（2026-11-05 #10：toast 历史回看）——
     notificationsHeading: "通知记录",
     notificationsEmpty: "暂无通知记录",

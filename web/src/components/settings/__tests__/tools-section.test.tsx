@@ -73,12 +73,12 @@ const CATALOG = {
   ],
 };
 
-function mount(Comp: unknown) {
+function mount(node: unknown) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(createElement(Comp));
+    root.render(node);
   });
   return { container, root };
 }
@@ -89,8 +89,7 @@ function click(el: Element) {
 
 function projectState(excludedTools: string[] | null = null) {
   return {
-    currentProject: PROJECT,
-    projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null, excludedTools }],
+    projects: [{ projectPath: PROJECT, preferredModel: null, excludedTools }],
   };
 }
 
@@ -100,7 +99,7 @@ describe("ToolsSection（r10 todo 17）", () => {
     patchFn.mockReset();
     restartFn.mockReset();
     useUiStore.setState(projectState(["bash"]));
-    const { container } = mount(ToolsSection);
+    const { container } = mount(createElement(ToolsSection, { projectPath: PROJECT }));
     await act(async () => {});
     expect(container.querySelectorAll('[data-testid^="tools-toggle-"]').length).toBe(5);
     expect(container.querySelector('[data-testid="tools-toggle-read"]').getAttribute("aria-checked")).toBe("true");
@@ -114,7 +113,7 @@ describe("ToolsSection（r10 todo 17）", () => {
     patchFn.mockReset().mockResolvedValue({ ok: true, project: null });
     restartFn.mockReset().mockResolvedValue({ ok: true, project: PROJECT });
     useUiStore.setState(projectState(null));
-    const { container } = mount(ToolsSection);
+    const { container } = mount(createElement(ToolsSection, { projectPath: PROJECT }));
     await act(async () => {});
     await act(async () => {
       click(container.querySelector('[data-testid="tools-toggle-write"]'));
@@ -140,7 +139,7 @@ describe("ToolsSection（r10 todo 17）", () => {
     patchFn.mockReset();
     restartFn.mockReset();
     useUiStore.setState(projectState(null));
-    const { container } = mount(ToolsSection);
+    const { container } = mount(createElement(ToolsSection, { projectPath: PROJECT }));
     await act(async () => {});
     for (const name of ["read", "bash", "edit", "write", "grep"]) {
       await act(async () => {
@@ -153,8 +152,8 @@ describe("ToolsSection（r10 todo 17）", () => {
 
   test("(d) 无当前项目：提示且无开关列表", async () => {
     catalogFn.mockReset().mockResolvedValue(CATALOG);
-    useUiStore.setState({ currentProject: null, projects: [] });
-    const { container } = mount(ToolsSection);
+    useUiStore.setState({ projects: [] });
+    const { container } = mount(createElement(ToolsSection, { projectPath: null }));
     await act(async () => {});
     expect(container.querySelector('[data-testid^="tools-toggle-"]')).toBeNull();
     expect(container.textContent).toContain("未选择项目");

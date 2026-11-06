@@ -5,7 +5,6 @@ import type { SessionListItem } from "@/lib/api";
 import { api } from "@/lib/api";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 import { useSessionsStore } from "@/stores/sessions";
-import { useUiStore } from "@/stores/ui";
 
 function makeSession(id: string, messageCount = 0): SessionListItem {
   return {
@@ -37,22 +36,22 @@ const listSessions = vi.spyOn(api, "listSessions");
 beforeEach(() => {
   resetDispatchState();
   listSessions.mockReset();
-  useUiStore.getState().setCurrentProject("/p");
 });
 
 afterEach(() => {
   resetDispatchState();
   useSessionsStore.setState({ byProject: {}, runStates: {}, runStateAt: {}, appliedModels: {}, selectedId: null, aliasIds: {}, pendingIds: {}, allMode: false });
-  useUiStore.getState().setCurrentProject(null);
 });
 
 describe("回合结束补拉会话列表（task 19h）", () => {
   test("agent_end → refreshSessions 发射，服务端列表整替写入 byProject", async () => {
+    // 活动项目派生播种（W3 任务 12）：选中会话 dur-new ∈ /p，refreshSessions 据此取单项目口径
     useSessionsStore.getState().setSessions("/p", [makeSession("dur-new")]);
+    useSessionsStore.setState({ selectedId: "dur-new" });
     listSessions.mockResolvedValue({ sessions: [makeSession("dur-new", 5), makeSession("other", 1)] });
     dispatchSseEvent("agent_end", frame({ type: "agent_end", sessionId: "rpc-1" }, "dur-new"), 1);
     await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(1));
-    // 列表带回调用的参数：单项目模式按当前项目拉取
+    // 列表带回调用的参数：单项目模式按活动项目（选中会话派生）拉取
     expect(listSessions.mock.calls[0][0]).toMatchObject({ project: "/p" });
     await vi.waitFor(() => {
       const rows = useSessionsStore.getState().byProject["/p"];
@@ -64,7 +63,9 @@ describe("回合结束补拉会话列表（task 19h）", () => {
   });
 
   test("失败静默：listSessions 拒绝不冒泡、不清空列表", async () => {
+    // 活动项目派生播种（W3 任务 12）：选中会话 dur-new ∈ /p
     useSessionsStore.getState().setSessions("/p", [makeSession("dur-new")]);
+    useSessionsStore.setState({ selectedId: "dur-new" });
     listSessions.mockRejectedValue(new Error("network"));
     expect(() => dispatchSseEvent("agent_settled", frame({ type: "agent_settled", sessionId: "rpc-1" }, "dur-new"), 1)).not.toThrow();
     await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(1));

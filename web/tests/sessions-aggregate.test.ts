@@ -5,7 +5,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
-import { useUiStore } from "@/stores/ui";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -50,7 +49,6 @@ afterEach(() => {
     q: "",
     archived: "false",
   });
-  useUiStore.setState({ currentProject: null });
 });
 
 describe("setAllSessions 分组写入", () => {
@@ -167,8 +165,6 @@ describe("allMode 与 refreshSessions 分支", () => {
       });
     });
     useSessionsStore.setState({ allMode: true });
-    // currentProject 故意留在 ui store（模拟曾打开过项目），allMode 下不得使用它
-    useUiStore.setState({ currentProject: "/stale-proj" });
     await useSessionsStore.getState().refreshSessions();
     expect(requestedUrl).toContain("/api/sessions?");
     expect(requestedUrl).not.toContain("project=");
@@ -178,13 +174,14 @@ describe("allMode 与 refreshSessions 分支", () => {
     expect(state.loading).toBe(false);
   });
 
-  test("allMode=false：单项目现状路径（URL 带 project 参数，写入该项目键）", async () => {
+  test("allMode=false：单项目现状路径（活动项目=选中会话派生，URL 带 project 参数，写入该项目键）", async () => {
     let requestedUrl = "";
     mockFetch(async (input) => {
       requestedUrl = String(input);
       return okJson({ project: "/cur", archived: "false", sessions: [makeSession("c1", "/cur")] });
     });
-    useUiStore.setState({ currentProject: "/cur" });
+    // 派生播种：选中会话 c1 ∈ /cur（useActiveProject 同判据）
+    useSessionsStore.setState({ byProject: { "/cur": [makeSession("c1", "/cur")] }, selectedId: "c1" });
     await useSessionsStore.getState().refreshSessions();
     expect(requestedUrl).toContain("project=%2Fcur");
     expect(useSessionsStore.getState().byProject["/cur"].map((s) => s.id)).toEqual(["c1"]);
@@ -204,13 +201,13 @@ describe("allMode 与 refreshSessions 分支", () => {
     expect(urls[0]).toContain("q=fix");
   });
 
-  test("allMode=false 且无当前项目：不发请求直接返回", async () => {
+  test("allMode=false 且无选中会话（无派生活动项目）：不发请求直接返回", async () => {
     let called = false;
     mockFetch(async () => {
       called = true;
       return okJson({ project: null, archived: "false", sessions: [] });
     });
-    useUiStore.setState({ currentProject: null });
+    useSessionsStore.setState({ byProject: {}, selectedId: null });
     await useSessionsStore.getState().refreshSessions();
     expect(called).toBe(false);
     expect(useSessionsStore.getState().loading).toBe(false);

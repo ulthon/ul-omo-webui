@@ -1,5 +1,6 @@
 // 主布局 /：桌面（≥1024px）常驻左侧栏 + 主区；≤768px（lg 断点以下）侧栏抽屉化 + 汉堡按钮。
-// 初始引导：落到 last_opened_at 最新的项目（lib/bootstrap）。
+// 初始引导：拉项目列表 + 设置 kv 即止（空态启动，不自动打开项目/不选中会话，lib/bootstrap）；
+// URL ?session= 恢复由下方 bootstrap effect 承担。
 // C15（docs08-r3 任务 3）：主区永久为对话（ChatPlaceholder），任务/变更/笔记/统计四页签
 // 收敛到右栏 RightRail（components/layout/right-rail），原主区"变更/笔记"页签移除。
 // todo 26：主区顶栏右侧渲染外链入口（服务端 kv 配置，未配置隐藏）；A6（docs08-r4 任务 6）
@@ -387,8 +388,8 @@ export function AppShell() {
     bootstrap()
       .then(() => {
         // B1 显式恢复：引导完成后按 URL 参数选中会话，store 与 URL 一致（非仅视图兜底）。
-        // bootstrap 先行完毕才恢复——openProject 的 refreshSessions 不写 selectedId，
-        // 恢复动作不会被引导流程覆盖；select 内部会原地把同一 id 写回 URL（无害幂等）。
+        // bootstrap 先行完毕才恢复——引导空态启动不写 selectedId，恢复动作不会被引导
+        // 流程覆盖；select 内部会原地把同一 id 写回 URL（无害幂等）。
         if (cancelled) return;
         const urlId = readSessionUrl();
         if (urlId) useSessionsStore.getState().select(urlId);

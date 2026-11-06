@@ -86,7 +86,7 @@ function resetStores(): void {
   useQueueStore.setState({ bySession: {} });
   usePermissionsStore.setState({ bySession: {} });
   useQuestionsStore.setState({ bySession: {} });
-  useUiStore.setState({ currentProject: "/p1", toast: null });
+  useUiStore.setState({ toast: null });
 }
 
 function setRunState(state: SessionRunState): void {

@@ -183,7 +183,7 @@ export const login = {
     sortSaveFailed: "Failed to save sort settings",
     sidebarHeading: "Sidebar",
     projectSort: "Project group sorting",
-    sortNote: "When sorting by time added, projects registered before the upgrade fall back to their most recent open time; manual dragging happens on sidebar group headers (drag on desktop, group-header menu on mobile), and the order syncs across devices.",
+    sortNote: "When sorting by time added, legacy projects sharing the same registration time keep a stable list order; manual dragging happens on sidebar group headers (drag on desktop, group-header menu on mobile), and the order syncs across devices.",
     // 对话分区
     chatSaveFailed: "Failed to save chat settings",
     chatHeading: "Chat",
@@ -229,10 +229,8 @@ export const login = {
     filesUrlLabel: "File manager link URL",
     filesUrlPlaceholder: "https://files.example.com or /files",
     saving: "Saving…",
-    // 项目下拉
-    projectMenu: "Projects",
-    noProjectsMenu: "No projects yet; add one first",
-    addProject: "Add project…",
+    // 项目下拉已裁撤（W3 任务 14），projectMenu/noProjectsMenu/addProject 键随之删除；
+    // addProjectShort 由侧栏列表双端入口继续使用
     addProjectShort: "Add project",
     // 模型下拉与连接状态
     noModels: "No models available",
@@ -261,6 +259,7 @@ export const login = {
       system: "System & Maintenance",
     },
     groupNav: "Settings group navigation",
+    projectTarget: "Target project",
     notificationsHeading: "Notifications",
     notificationsEmpty: "No notifications yet",
     notificationsClear: "Clear",

@@ -17,10 +17,12 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 
 const { NotesView } = await import("@/components/notes/notes-view");
-const { useUiStore } = await import("@/stores/ui");
+// 会话根架构 W1 t3：项目源改为选中会话派生（useActiveProject），播种 sessions store
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const PROJECT = "/tmp/notes-inline-proj";
+const SESSION_ID = "sess-notes-inline";
 
 interface RouteHit {
   method: string;
@@ -70,11 +72,15 @@ beforeEach(() => {
       headers: { "content-type": "application/json" },
     });
   }) as typeof fetch;
-  useUiStore.setState({ currentProject: PROJECT });
+  useSessionsStore.setState({
+    byProject: { [PROJECT]: [{ id: SESSION_ID, project: PROJECT }] },
+    selectedId: SESSION_ID,
+  });
 });
 
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
+  useSessionsStore.setState({ byProject: {}, selectedId: null });
 });
 
 function listItem(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {

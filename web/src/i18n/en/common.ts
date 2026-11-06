@@ -17,7 +17,6 @@ export const common = {
     unauthorized: "Not signed in or session expired",
     noModelsSend: "No available models; cannot send (check the engine model configuration)",
     sessionListLoadFailed: "Failed to load session list",
-    updateLastOpenedFailed: "Failed to update last-opened time",
     saveModelPrefFailed: "Failed to save model preference",
     saveThinkingPrefFailed: "Failed to save thinking level preference",
     modelChangeRejected: "Model switch to {model} was rejected by the engine ({detail}); current model unchanged",

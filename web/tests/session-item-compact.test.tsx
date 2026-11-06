@@ -79,7 +79,7 @@ beforeEach(() => {
     archived: "false",
     tagFilter: [],
   });
-  useUiStore.setState({ currentProject: null, projects: [], models: [] });
+  useUiStore.setState({ projects: [], models: [] });
 });
 
 afterEach(async () => {

@@ -47,7 +47,7 @@ const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 const { Topbar } = await import("@/components/layout/topbar");
 const { useUiStore } = await import("@/stores/ui");
-const { useSessionsStore } = await import("@/stores/sessions");
+const { projectOfSession, useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const TOPBAR_MOBILE_QUERY = "(max-width: 1023.98px)";
@@ -90,7 +90,7 @@ function makeSession(id: string, overrides: Partial<SessionListItem> = {}): Sess
 }
 
 function project(path: string, preferredModel: string | null = null) {
-  return { projectPath: path, preferredModel, lastOpenedAt: "2026-01-01T00:00:00.000Z" };
+  return { projectPath: path, preferredModel };
 }
 
 function okJson(payload: unknown): Response {
@@ -150,7 +150,7 @@ afterEach(() => {
 
 describe("手机档会话切换全屏 sheet（任务 19）", () => {
   test("触发钮开全屏 sheet：fullscreen-sheet 呈现、头部标题「会话」+关闭钮、Esc 关闭", async () => {
-    useUiStore.setState({ projects: [project("/p1")], currentProject: "/p1" });
+    useUiStore.setState({ projects: [project("/p1")] });
     useSessionsStore.setState({ byProject: { "/p1": [makeSession("a1")] }, selectedId: "a1" });
 
     const container = await mountTopbar();
@@ -185,7 +185,7 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
       return okJson({ models: [], favorites: [], defaults: null });
     }) as typeof fetch;
 
-    useUiStore.setState({ projects: [project("/p1")], currentProject: "/p1" });
+    useUiStore.setState({ projects: [project("/p1")] });
     useSessionsStore.setState({
       byProject: {
         "/p1": [makeSession("a1", { tags: [{ scope: "global", name: "重点" }] })],
@@ -225,7 +225,6 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2", "prov/m2")],
-      currentProject: "/p1",
       models: [],
       modelsLoaded: true,
       selectedModel: "prov/m1",
@@ -242,7 +241,8 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
     await flush();
 
     const ui = useUiStore.getState();
-    expect(ui.currentProject).toBe("/p2");
+    // 内聚 select 一步：选中 + 活动项目随选中派生 + 偏好模型应用
+    expect(projectOfSession(useSessionsStore.getState().byProject, useSessionsStore.getState().selectedId)).toBe("/p2");
     expect(ui.selectedModel).toBe("prov/m2");
     expect(useSessionsStore.getState().selectedId).toBe("b1");
     expect(calls.some((c) => c.includes("/models"))).toBe(true);
@@ -250,13 +250,13 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
     expect(sheetRoot()).toBeNull();
   });
 
-  test("空列表空态不崩：显示「暂无会话」，零行，尾部仍可添加项目", async () => {
+  test("空列表空态不崩：显示「暂无会话」，零行，无底部添加项目钮（任务 13 已迁抽屉分组区）", async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/tags")) return okJson({ global: [], project: [] });
       return okJson({ models: [], favorites: [], defaults: null });
     }) as typeof fetch;
 
-    useUiStore.setState({ projects: [project("/p1")], currentProject: "/p1" });
+    useUiStore.setState({ projects: [project("/p1")] });
     useSessionsStore.setState({ byProject: {}, selectedId: null });
 
     const container = await mountTopbar();
@@ -266,17 +266,8 @@ describe("手机档会话切换全屏 sheet（任务 19）", () => {
     expect(sheetItems()).toHaveLength(0);
     expect(document.querySelector('[data-testid="session-switcher-sheet-list"]')?.textContent).toContain("暂无会话");
 
-    // 尾部添加项目入口仍在（任务 4 双入口之一在 sheet 形态下保持可达）
-    const add = document.querySelector('[data-testid="mobile-add-project"]') as HTMLElement | null;
-    expect(add).not.toBeNull();
-    expect(add?.textContent).toContain("添加项目…");
-    let addCalled = false;
-    add?.addEventListener("click", () => {
-      addCalled = true;
-    });
-    await act(async () => {
-      add?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(addCalled).toBe(true);
+    // 添加项目入口已迁抽屉分组区头部（任务 13）：sheet 无 footer、无旧测试锚点
+    expect(document.querySelector('[data-testid="mobile-add-project"]')).toBeNull();
+    expect(document.querySelector('[data-testid="session-switcher-sheet"] footer')).toBeNull();
   });
 });
