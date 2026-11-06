@@ -1,9 +1,13 @@
 // 项目偏好防抖持久化（todo 22 模型、W2 todo 8 思考级别）：连续切换只落最后一次
-// （latest-wins）；触发时再读 store 当前值，项目已切换时写入的是新项目自己的当前选择
-// （与 openProject 应用的偏好一致，幂等无害）。原 topbar 模块内实现迁移至此，供顶栏
-// 与输入区 chip 两个选择面共用同一条持久化路径；delayMs 形参仅供单测加速。
+// （latest-wins）；触发时再读 store 当前值——项目从 sessions store 的当前选中会话
+// 派生（projectOfSession(byProject, selectedId)，会话根架构 W1 任务 4：项目不再
+// 读 ui 顶栏字段），防抖期间切换会话时写入的是新选中会话所属项目自己的当前
+// 选择（与 openProject 应用的偏好一致，幂等无害）；派生为 null（无选中会话或未
+// 命中）时静默跳过。原 topbar 模块内实现迁移至此，供顶栏与输入区 chip 两个选择
+// 面共用同一条持久化路径；delayMs 形参仅供单测加速。
 import { api, ApiError } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
+import { projectOfSession, useSessionsStore } from "@/stores/sessions";
 import { t } from "@/i18n/i18n";
 
 export const PREFERENCE_DEBOUNCE_MS = 600;
@@ -18,7 +22,9 @@ export function scheduleModelPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_MS)
   modelTimer = setTimeout(() => {
     modelTimer = null;
     const ui = useUiStore.getState();
-    const project = ui.currentProject;
+    // 触发时派生目标项目：跟随当前选中会话（防抖期间切走会话则落新会话的项目）
+    const sessions = useSessionsStore.getState();
+    const project = projectOfSession(sessions.byProject, sessions.selectedId);
     const model = ui.selectedModel;
     if (!project || !model) return;
     api
@@ -43,7 +49,9 @@ export function scheduleThinkingPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_
   thinkingTimer = setTimeout(() => {
     thinkingTimer = null;
     const ui = useUiStore.getState();
-    const project = ui.currentProject;
+    // 触发时派生目标项目：跟随当前选中会话（防抖期间切走会话则落新会话的项目）
+    const sessions = useSessionsStore.getState();
+    const project = projectOfSession(sessions.byProject, sessions.selectedId);
     const level = ui.selectedThinkingLevel;
     if (!project || !level) return;
     api
