@@ -35,6 +35,7 @@ import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
 import { SlashHints } from "@/components/composer/slash-hints";
+import { EngineStatusBar } from "@/components/composer/engine-status-bar";
 import { ComposerModelInfo } from "@/components/composer/model-info";
 import { alignSelectionToApplied, pendingModelBadgeVisible } from "@/components/composer/model-pending";
 import { insertSnippet, snippetActionDisabled } from "@/components/composer/snippet-logic";
@@ -343,6 +344,9 @@ export function Composer({
       <span className="min-w-0 truncate">{t("composer.waitingHint")}</span>
     </div>
   ) : null;
+  // 引擎条件状态条（engine-ux-visibility 任务 4）：当前会话引擎非就绪才可见（三态文案），
+  // 就绪/未知不渲染；纯展示不锁输入，与等待提示条同区位（输入框上方条区）
+  const engineStatusBarNode = <EngineStatusBar sessionId={sessionId} />;
   const slashOpen = slashToken !== null && slashDismissedToken !== slashToken;
   const prevTextRef = useRef("");
   useEffect(() => {
@@ -1395,6 +1399,7 @@ export function Composer({
         {attachmentStrip}
         {fileAttachmentStrip}
         {waitingHintNode}
+        {engineStatusBarNode}
         {toolsOpen && (
           <div className="flex flex-wrap items-center gap-1" data-testid="composer-tools-row">
             {toolButtons}
@@ -1477,6 +1482,7 @@ export function Composer({
       {attachmentStrip}
       {fileAttachmentStrip}
       {waitingHintNode}
+      {engineStatusBarNode}
       {/* todo 13：textarea 整行占满（自增高不变），工具按钮独立成行放下方 */}
       <textarea
         ref={textareaRefCb}
