@@ -30,7 +30,7 @@ import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
 import { useQuestionsStore } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
-import { useSessionsStore } from "@/stores/sessions";
+import { useActiveProject, useSessionsStore } from "@/stores/sessions";
 import { FilePickerDialog } from "@/components/file-tree/file-picker";
 import { SnippetPanelDialog } from "@/components/composer/snippet-panel";
 import { SnippetDropdown } from "@/components/composer/snippet-dropdown";
@@ -139,7 +139,11 @@ export function Composer({
   const showToast = useUiStore((s) => s.showToast);
   // 粘贴图片发送方式档（任务 20）：bootstrap 读 GET /api/settings 填充，粘贴时取当前值路由
   const pasteImageMode = useUiStore((s) => s.pasteImageMode);
-  const project = useUiStore((s) => s.currentProject);
+  // 发送域项目源（会话根架构 W1 任务 2）：ui store 的全局选中项目字段退役，改由
+  // 选中会话派生（useActiveProject：selectedId + byProject 反查）。下游全部自动跟随：
+  // 斜杠取数 getCommands、输入历史 append/listInputHistory（跨会话按项目共享的产品
+  // 语义不变，仅来源切换）、@ 选择器 disabled 门与 FilePicker/常用语面板的 project 入参。
+  const project = useActiveProject();
   // 中断逃逸口（docs08-r6 任务 6 ①）：runState running/waiting 与未决提问并入中断钮
   // 可见性（保守并集，宁多勿少）——SSE 信号缺失/僵尸复位后 runState 停 waiting、或仅
   // 提问未决的死局也有中断口。仅作用停止钮，不改排队语义（queueAvailable 独立）。
