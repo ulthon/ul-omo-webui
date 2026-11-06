@@ -29,7 +29,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  useUiStore.setState({ currentProject: "/home/user/photo", drawerOpen: true });
+  useUiStore.setState({ drawerOpen: true });
   // SessionList 挂载会拉会话聚合，统一空响应
   globalThis.fetch = (async () =>
     new Response(JSON.stringify({ projects: {}, tags: { global: [], project: [] } }), {

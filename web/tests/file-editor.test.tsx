@@ -286,7 +286,7 @@ describe("builtin-file-management 任务 8：FileEditor 组件", () => {
 describe("builtin-file-management 任务 8：预览面板编辑入口集成", () => {
   beforeEach(() => {
     stubMatchMedia(false);
-    useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never, currentProject: "/data/proj-a" });
+    useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never });
   });
 
   afterEach(() => {
@@ -295,8 +295,8 @@ describe("builtin-file-management 任务 8：预览面板编辑入口集成", ()
     document.body.innerHTML = "";
   });
 
-  function project(path: string, lastOpenedAt: string): Record<string, unknown> {
-    return { projectPath: path, preferredModel: null, lastOpenedAt, createdAt: lastOpenedAt };
+  function project(path: string, createdAt: string): Record<string, unknown> {
+    return { projectPath: path, preferredModel: null, createdAt };
   }
 
   const PROJECTS = [project("/data/proj-a", "2026-01-02T00:00:00.000Z")];

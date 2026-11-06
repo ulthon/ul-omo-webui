@@ -21,7 +21,7 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_XHR = globalThis.XMLHttpRequest;
 
 const PROJECTS = [
-  { projectPath: "/data/proj-a", preferredModel: null, lastOpenedAt: "2026-01-02T00:00:00.000Z", createdAt: "2026-01-02T00:00:00.000Z" },
+  { projectPath: "/data/proj-a", preferredModel: null, createdAt: "2026-01-02T00:00:00.000Z" },
 ];
 
 const TREE_FIXTURE: Record<string, Array<{ name: string; type: string; size: number | null; mtime: number | null }>> = {
@@ -130,7 +130,7 @@ function stubXHR(): void {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never, currentProject: "/data/proj-a" });
+  useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never });
   uploadConflictNext = false;
 });
 

@@ -22,7 +22,6 @@ export interface RebindScanRow {
 export interface ProjectMeta {
   projectPath: string;
   preferredModel: string | null;
-  lastOpenedAt: string | null;
   /** 注册时间（C16 todo 9）：迁移前存量行 = 迁移时刻（同值），added 排序档对这批行
    * 保持传入稳定序；可选以兼容旧服务端响应与单测构造 */
   createdAt?: string | null;
@@ -916,7 +915,6 @@ export const api = {
     path: string;
     preferredModel?: string | null;
     preferredThinkingLevel?: string | null;
-    lastOpenedAt?: string | null;
     permissionPreset?: string | null;
     tools?: string[] | null;
     excludedTools?: string[] | null;

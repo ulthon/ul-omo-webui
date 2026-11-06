@@ -1,4 +1,4 @@
-// UI 全局域：连接状态、抽屉开关、当前项目、模型选择、轻提示。
+// UI 全局域：连接状态、抽屉开关、模型选择、轻提示。
 import { create } from "zustand";
 import type { ModelInfo, ProjectMeta } from "@/lib/api";
 import type { ProjectSortMode } from "@/components/session-list/global-list-data";
@@ -98,8 +98,6 @@ interface UiState {
   connection: ConnectionStatus;
   /** ≤768px 侧栏抽屉开关 */
   drawerOpen: boolean;
-  /** 当前项目（绝对路径）；初始加载落到 last_opened_at 最新者 */
-  currentProject: string | null;
   projects: ProjectMeta[];
   /** GET /api/models 结果（顶栏模型下拉数据源；todo 22） */
   models: ModelInfo[];
@@ -165,7 +163,6 @@ interface UiState {
   setDrawerOpen(open: boolean): void;
   toggleDrawer(): void;
   setProjects(projects: ProjectMeta[]): void;
-  setCurrentProject(path: string | null): void;
   setModels(models: ModelInfo[], promptPresets?: Record<string, string | null>): void;
   setFavoriteModels(models: string[]): void;
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
@@ -217,7 +214,6 @@ function clearToastTimer(id: number): void {
 export const useUiStore = create<UiState>()((set) => ({
   connection: "online",
   drawerOpen: false,
-  currentProject: null,
   projects: [],
   models: [],
   modelsLoaded: false,
@@ -247,7 +243,6 @@ export const useUiStore = create<UiState>()((set) => ({
   setDrawerOpen: (open) => set({ drawerOpen: open }),
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
   setProjects: (projects) => set({ projects }),
-  setCurrentProject: (path) => set({ currentProject: path }),
   setModels: (models, promptPresets = {}) => set({ models, modelsLoaded: true, promptPresets }),
   setFavoriteModels: (favoriteModels) => set({ favoriteModels }),
   resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [], promptPresets: {} }),

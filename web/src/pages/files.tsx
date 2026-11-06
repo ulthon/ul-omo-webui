@@ -4,8 +4,8 @@
 // 中=当前目录文件列表（名称/大小/mtime/类型列，列头点击排序，目录恒优先；
 // 单击目录进入、单击文件右栏预览）；右=FilePreview 复用（复用组件自带只读约束）。
 // 页头：项目下拉（ui store projects，bootstrap 已从 GET /api/projects 填充；
-// 空时兜底自拉一次）+ 当前路径面包屑。默认项目 = ui store currentProject
-// （会话 select 内聚写入，即选中会话所属项目），无选中时取列表首个。
+// 空时兜底自拉一次）+ 当前路径面包屑。默认项目 = 选中会话派生的活跃项目
+// （useActiveProject），无选中时取列表首个。
 // 操作面（任务 6）：列表上方工具栏（新建文件/新建目录/上传/刷新）+ 列表与树右键
 // 菜单（下载/重命名/移动/删除，目录加“在此上传”）；上传 = 文件选择器多选 +
 // 逐个排队（进度条 + 结果态）；重命名/移动 = 对话框输入目标相对路径（移动支持
@@ -20,6 +20,7 @@ import { useIsMobile } from "@/lib/use-is-mobile";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
+import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
@@ -195,7 +196,7 @@ export function FilesPage() {
   const showToast = useUiStore((s) => s.showToast);
   const storeProjects = useUiStore((s) => s.projects);
   const setStoreProjects = useUiStore((s) => s.setProjects);
-  const currentProject = useUiStore((s) => s.currentProject);
+  const activeProject = useActiveProject();
   const setFilesPageOpen = useUiStore((s) => s.setFilesPageOpen);
   const isMobile = useIsMobile(MOBILE_FILES_QUERY);
 
@@ -220,13 +221,13 @@ export function FilesPage() {
   }, [projects.length, setStoreProjects]);
 
   // 当前项目：本地 state 只存用户显式选择；渲染期派生生效值——显式选择在表内优先，
-  // 否则最近活跃会话项目（currentProject 在表内），否则列表首个。无 effect 级联。
+  // 否则选中会话派生的活跃项目（activeProject 在表内），否则列表首个。无 effect 级联。
   const [pickedProject, setPickedProject] = useState<string | null>(null);
   const project = useMemo(() => {
     if (pickedProject && projects.some((p) => p.projectPath === pickedProject)) return pickedProject;
-    if (currentProject && projects.some((p) => p.projectPath === currentProject)) return currentProject;
+    if (activeProject && projects.some((p) => p.projectPath === activeProject)) return activeProject;
     return projects[0]?.projectPath ?? null;
-  }, [pickedProject, projects, currentProject]);
+  }, [pickedProject, projects, activeProject]);
 
   const [dir, setDir] = useState("");
   const [selected, setSelected] = useState<string | null>(null);

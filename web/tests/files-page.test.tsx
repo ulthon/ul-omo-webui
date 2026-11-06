@@ -17,13 +17,14 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { FilesPage } = await import("@/pages/files");
 const { useUiStore } = await import("@/stores/ui");
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const REAL_MATCH_MEDIA = window.matchMedia.bind(window);
 const MOBILE_FILES_QUERY = "(max-width: 768px)";
 
-function project(path: string, lastOpenedAt: string): Record<string, unknown> {
-  return { projectPath: path, preferredModel: null, lastOpenedAt, createdAt: lastOpenedAt };
+function project(path: string, createdAt: string): Record<string, unknown> {
+  return { projectPath: path, preferredModel: null, createdAt };
 }
 
 const PROJECTS = [
@@ -100,13 +101,14 @@ function stubMatchMedia(matches768: boolean): void {
 
 beforeEach(() => {
   stubMatchMedia(false);
-  useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never, currentProject: "/data/proj-a" });
+  useUiStore.setState({ filesPageOpen: true, projects: PROJECTS as never });
 });
 
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
   window.matchMedia = REAL_MATCH_MEDIA;
   document.body.innerHTML = "";
+  useSessionsStore.setState({ byProject: {}, selectedId: null });
 });
 
 async function mountPage(calls: Calls) {
@@ -140,13 +142,22 @@ function rowText(container: HTMLElement, name: string): string {
 
 describe("builtin-file-management 任务 2：文件管理页三栏布局", () => {
   test("项目下拉渲染已注册项，默认选中最近活跃会话项目并加载其目录", async () => {
+    // 派生主路径播种（W3 任务 12）：选中会话属 proj-b → 默认选 proj-b（区别于列表首个 proj-a）
+    useSessionsStore.setState({
+      byProject: {
+        "/data/proj-b": [
+          { id: "s-b", path: "/data/proj-b/s-b.jsonl", project: "/data/proj-b", title: "s-b", name: null, renamedTitle: null, parentSessionPath: null, created: "2026-01-03T00:00:00.000Z", modified: "2026-01-03T00:00:00.000Z", messageCount: 1, firstMessage: "", pinned: false, archivedAt: null, unreadCount: 0, lastRead: null, active: false },
+        ],
+      },
+      selectedId: "s-b",
+    });
     const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
     const { container, root } = await mountPage(calls);
     const select = q(container, '[data-testid="files-project-select"]') as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(["/data/proj-a", "/data/proj-b"]);
-    expect(select.value).toBe("/data/proj-a");
+    expect(select.value).toBe("/data/proj-b");
     // 目录列表已按当前项目根加载
-    expect(calls.tree.some((c) => c.project === "/data/proj-a" && c.path === "")).toBe(true);
+    expect(calls.tree.some((c) => c.project === "/data/proj-b" && c.path === "")).toBe(true);
     expect(rowNames(container)).toEqual(["docs", "alpha.md", "beta.txt", "lnk"]);
     await act(async () => {
       root.unmount();
@@ -154,7 +165,8 @@ describe("builtin-file-management 任务 2：文件管理页三栏布局", () =>
   });
 
   test("无会话记忆时默认取列表首个项目", async () => {
-    useUiStore.setState({ currentProject: null });
+    // 无选中会话（无派生活动项目）→ 回退列表首个
+    useSessionsStore.setState({ byProject: {}, selectedId: null });
     const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
     const { container, root } = await mountPage(calls);
     expect((q(container, '[data-testid="files-project-select"]') as HTMLSelectElement).value).toBe("/data/proj-a");

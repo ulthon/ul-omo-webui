@@ -92,8 +92,7 @@ beforeEach(() => {
   getSessionTagsMock.mockReset();
   useLocaleStore.setState({ locale: "zh-CN" });
   useUiStore.setState({
-    currentProject: "/p1",
-    projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" }],
+    projects: [{ projectPath: "/p1", preferredModel: null }],
     models: [],
     toast: null,
     tagDisplayMode: "text",

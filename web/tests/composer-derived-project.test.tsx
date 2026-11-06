@@ -1,6 +1,6 @@
-// 发送域项目源派生（会话根架构 W1 任务 2）：composer 的项目从全局 ui.currentProject
-// 切换为选中会话派生（useActiveProject：selectedId + byProject 反查）。锁定三条行为：
-// (a) 斜杠取数 getCommands(project) 用派生项目——ui.currentProject 故意指向别处也不参与；
+// 发送域项目源派生（会话根架构 W1 任务 2）：composer 的项目 = 选中会话派生
+// （useActiveProject：selectedId + byProject 反查）。锁定三条行为：
+// (a) 斜杠取数 getCommands(project) 用派生项目；
 // (b) 输入历史 list/appendInputHistory 用派生项目（按项目共享的历史产品语义本身不变，仅来源切换）；
 // (c) stale_state 防御：byProject 整替后选中会话落空 → 派生 null → @ 选择器防御门关闭、
 //     斜杠不取数（发送钮 canSend 门本就不含 project，按契约原样保留）。
@@ -77,8 +77,7 @@ function commandsResponse(project: string): Awaited<ReturnType<typeof apiMod.api
 function resetStores(): void {
   useSessionsStore.setState({ byProject: {}, runStates: {}, runStateAt: {}, appliedModels: {}, selectedId: null });
   useMessagesStore.setState({ bySession: {} });
-  // ui.currentProject 故意指向「别的项目」：旧全局源若仍被读取，(a)/(b) 立即暴露
-  useUiStore.setState({ currentProject: OTHER, toast: null });
+  useUiStore.setState({ toast: null });
   useSessionsStore.setState({ byProject: { [PROJECT]: [makeSession(SID, PROJECT)] }, selectedId: SID });
 }
 
@@ -139,7 +138,7 @@ async function click(container: HTMLElement, testid: string): Promise<void> {
 }
 
 describe("composer 发送域项目源 = 选中会话派生（会话根架构 W1 任务 2）", () => {
-  test("(a) 斜杠取数跟随派生项目：ui.currentProject 指向别处不参与", async () => {
+  test("(a) 斜杠取数跟随派生项目", async () => {
     const getCommands = vi.spyOn(apiMod.api, "getCommands").mockResolvedValue(commandsResponse(PROJECT));
     const { container, unmount } = await mountComposer();
     try {

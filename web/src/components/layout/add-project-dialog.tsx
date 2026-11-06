@@ -134,7 +134,7 @@ function AddProjectForm({ onOpenChange }: { onOpenChange: (open: boolean) => voi
       useUiStore.getState().setProjects(projects);
       onOpenChange(false);
       // 不自动打开项目（W3 任务 11）：仅定位侧栏新分组（展开 + 滚动置顶），
-      // 不 setCurrentProject、不自动建会话——会话由用户点选（select 内聚承担切换）
+      // 不写全局项目字段、不自动建会话——会话由用户点选（select 内聚承担切换）
       locateProjectInSidebar(path.trim());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("login.addProjectDialog.addFailed"));

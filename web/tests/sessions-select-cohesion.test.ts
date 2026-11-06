@@ -1,16 +1,17 @@
-// sessions select 内聚单测（会话根架构 W2 任务 6）：
+// sessions select 内聚单测（会话根架构 W2 任务 6；W3 任务 12 活动项目派生口径）：
 // select(id) 跨项目选中由 store 自身完成两件事，顺序承重：
 //   1) 先应用偏好链：appliedModels[sessionId] > 目标项目偏好 preferredModel/preferredThinkingLevel > null
 //   2) 后无条件补拉 loadProjectModels（撤调用点 models.length===0 惰性门；取数途中旧列表保留，
 //      回包后非空选中不被 bootstrap 回退链覆盖——引擎默认不得顶掉项目偏好）
-// 同项目重选幂等（纯选中，不重拉、不重置偏好）；select(null) 只清选中与 URL，不碰模型/偏好；
-// 全程不写 lastOpenedAt（轻量切换不改项目排序，session-list 同契约）。
+// 活动项目 = 选中会话派生（useActiveProject 同判据）：同项目重选幂等（纯选中，不重拉、
+// 不重置偏好）；select(null) 只清选中与 URL，不碰模型/偏好；
+// 全程不写项目排序字段（轻量切换不改项目排序，session-list 同契约）。
 // /api/models 以挂起 Promise 模拟：断言「偏好已应用而模型未回」的窗口态即顺序证据。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { ModelInfo, ModelsResponse, ProjectMeta, SessionListItem } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
-import { useSessionsStore } from "@/stores/sessions";
+import { projectOfSession, useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
 // happy-dom 提供 window/history（session-url.test.ts 同款注册基建；writeSessionUrl 本体
@@ -79,12 +80,12 @@ function seedStores(opts: SeedOptions = {}): void {
       "/p-b": [makeSession("sess-b", "/p-b")],
     },
     appliedModels: opts.applied ?? {},
-    selectedId: null,
+    // 活动项目派生源：预选中 sess-a（∈/p-a）=「当前活动项目 /p-a」的等价布景（W3 任务 12）
+    selectedId: "sess-a",
     aliasIds: {},
   });
   useUiStore.setState({
     projects: (opts.projects ?? []) as ProjectMeta[],
-    currentProject: "/p-a",
     selectedModel: opts.selectedModel ?? "prov/a-stale",
     selectedThinkingLevel: opts.selectedThinkingLevel ?? "low",
     models: opts.models ?? [],
@@ -109,7 +110,6 @@ afterEach(() => {
   useSessionsStore.setState({ byProject: {}, appliedModels: {}, selectedId: null, aliasIds: {} });
   useUiStore.setState({
     projects: [],
-    currentProject: null,
     selectedModel: null,
     selectedThinkingLevel: null,
     models: [],
@@ -130,7 +130,8 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     const ui = useUiStore.getState();
     expect(ui.selectedModel).toBe("prov/b-model");
     expect(ui.selectedThinkingLevel).toBe("high");
-    expect(ui.currentProject).toBe("/p-b");
+    // 活动项目随选中派生（useActiveProject 同判据）：选中 sess-b 后活动项目即 /p-b
+    expect(projectOfSession(useSessionsStore.getState().byProject, useSessionsStore.getState().selectedId)).toBe("/p-b");
     expect(useSessionsStore.getState().selectedId).toBe("sess-b");
     // 无条件补拉（撤 models.length===0 惰性门；初始 models 为空此处本会拉，改用
     // 非空 models 场景不成立——无条件性由下面 resolve 后 models 落库佐证）
@@ -187,7 +188,6 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     const ui = useUiStore.getState();
     expect(ui.selectedModel).toBe("user/picked");
     expect(ui.selectedThinkingLevel).toBe("mid");
-    expect(ui.currentProject).toBe("/p-a");
     expect(useSessionsStore.getState().selectedId).toBe("sess-a");
   });
 
@@ -211,7 +211,6 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     expect(readSessionUrl()).toBeNull();
     expect(useUiStore.getState().models).toBe(modelsBefore);
     expect(useUiStore.getState().selectedModel).toBe("prov/b-model");
-    expect(useUiStore.getState().currentProject).toBe("/p-b");
     expect(listModelsCalls.length).toBe(1);
   });
 });

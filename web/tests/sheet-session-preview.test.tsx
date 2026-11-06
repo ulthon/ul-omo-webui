@@ -80,8 +80,7 @@ const ROW_BASE = {
 
 function setSessionRows(rows) {
   useUiStore.setState({
-    currentProject: "/tmp/p",
-    projects: [{ projectPath: "/tmp/p", preferredModel: null, lastOpenedAt: null }],
+    projects: [{ projectPath: "/tmp/p", preferredModel: null }],
     models: [],
     modelsLoaded: false,
     selectedModel: null,

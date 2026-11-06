@@ -62,15 +62,14 @@ function sessionRow(project: string, id: string): SessionListItem {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 beforeEach(() => {
-  // 派生源播种：选中会话 sess-a 属 /p1（任务 4 起项目目标由选中会话派生，
-  // 播种使派生结果与原 currentProject: "/p1" 意图一致）
+  // 派生源播种：选中会话 sess-a 属 /p1（任务 4 起项目目标由选中会话派生）
   useSessionsStore.setState({
     byProject: { "/p1": [sessionRow("/p1", "sess-a")] },
     selectedId: "sess-a",
   });
-  // W1 t5 审计：项目目标已由上方 sessions 播种派生，ui.currentProject 退役不播种
+  // W1 t5 审计：项目目标已由上方 sessions 播种派生，全局字段退役不播种
   useUiStore.setState({
-    projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: null }],
+    projects: [{ projectPath: "/p1", preferredModel: null }],
     selectedModel: null,
     selectedThinkingLevel: null,
     toast: null,
@@ -174,8 +173,8 @@ describe("跨防抖会话切换（会话根架构 W1 任务 4）", () => {
       });
       useUiStore.setState({
         projects: [
-          { projectPath: "/p1", preferredModel: null, lastOpenedAt: null },
-          { projectPath: "/p2", preferredModel: null, lastOpenedAt: null },
+          { projectPath: "/p1", preferredModel: null },
+          { projectPath: "/p2", preferredModel: null },
         ],
       });
       // 会话 A 下选择模型，排定生产默认 600ms 防抖
@@ -189,8 +188,8 @@ describe("跨防抖会话切换（会话根架构 W1 任务 4）", () => {
       expect(log[0].body).toMatchObject({ path: "/p2", preferredModel: "p/two" });
       // 本地 projects 镜像同步落在新派生项目 /p2 上，/p1 不受扰
       expect(useUiStore.getState().projects).toEqual([
-        { projectPath: "/p1", preferredModel: null, lastOpenedAt: null },
-        { projectPath: "/p2", preferredModel: "p/two", lastOpenedAt: null },
+        { projectPath: "/p1", preferredModel: null },
+        { projectPath: "/p2", preferredModel: "p/two" },
       ]);
     } finally {
       vi.useRealTimers();

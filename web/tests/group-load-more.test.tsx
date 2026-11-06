@@ -76,10 +76,9 @@ async function mountSessionList(): Promise<HTMLElement> {
     return okJson({ ok: true });
   }) as typeof fetch;
   useUiStore.setState({
-    currentProject: P1,
     projects: [
-      { projectPath: P1, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
-      { projectPath: P2, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+      { projectPath: P1, preferredModel: null },
+      { projectPath: P2, preferredModel: null },
     ],
   });
   // 分组钉选改派生（W3 任务 14）：选中 P1 会话使 P1 为活跃组（默认展开规则跟随）
@@ -127,7 +126,7 @@ beforeEach(() => {
     archived: "false",
     tagFilter: [],
   });
-  useUiStore.setState({ currentProject: null, projects: [], models: [] });
+  useUiStore.setState({ projects: [], models: [] });
 });
 
 afterEach(async () => {
