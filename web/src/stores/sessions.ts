@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api";
+import { loadProjectModels } from "@/lib/bootstrap";
 import { writeSessionUrl } from "@/lib/session-url";
 import { diag, sendTrace } from "@/lib/diag";
 import { useUiStore } from "@/stores/ui";
@@ -258,6 +259,34 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     if (id) sendTrace.drop(id, "switch");
     set({ selectedId: id });
     writeSessionUrl(isAlias ? null : id);
+    // —— 选中内聚（会话根架构 W2 任务 6）：跨项目选中由 store 自身应用目标项目偏好并补拉
+    // 模型列表。决策核按 global-list-data crossProjectDecision 语义就地内联（不新增导出全
+    // 局，store 自持）；session-list/topbar 调用点的同名补丁暂保留（后续批次移除，两侧
+    // 决策一致故叠加幂等）。刻意不 PATCH lastOpenedAt——轻量切换不写项目排序
+    // （session-list.tsx selectSession 注释同契约）。
+    if (id === null) return;
+    const s = useSessionsStore.getState();
+    const targetProject = projectOfSession(s.byProject, id);
+    // 行不在 store（列表未返回时的 URL 直达等）：推不出目标项目，保持纯选中（与旧行为一致）
+    if (targetProject === null) return;
+    const ui = useUiStore.getState();
+    // 同项目重选：幂等面——纯选中，不重拉模型、不重置偏好（调用点 crossProjectDecision
+    // 同项目分支 switchProject:false 的语义原样保留，用户手选的模型不被项目偏好冲掉）
+    if (targetProject === ui.currentProject) return;
+    ui.setCurrentProject(targetProject);
+    // 偏好先行（顺序承重，见 bootstrap 回退链注释）：先置非空选中，随后 loadProjectModels
+    // 的回退链只在选中为空时补位——引擎默认不会覆盖项目偏好。链：会话生效模型
+    // appliedModels > 目标项目偏好 preferredModel > null（交回退链兜引擎默认 > 列表首项）。
+    // appliedModels 键空间只有模型字符串（无思考档）：applied 命中时思考档未知置 null
+    // 交回退链兜底，不跨会话携带残留；空串视为未知（composer 挂载对齐同判据）。
+    const applied = s.appliedModels[id] || null;
+    const pref = ui.projects.find((p) => p.projectPath === targetProject);
+    ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
+    ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
+    // 无条件补拉模型列表（撤调用点 models.length===0 惰性门）：快速连续切换由
+    // modelsLoadSeq 序号守卫丢弃迟到响应（含失败）；取数途中 setModels 未跑，旧列表
+    // 整体保留（成功才整替），不出现空窗。
+    void loadProjectModels(targetProject);
   },
   setLoading: (loading) => set({ loading }),
 
