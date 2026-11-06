@@ -13,7 +13,7 @@ import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MO
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import type { SettingsGroupId } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
-import { useSessionsStore } from "@/stores/sessions";
+import { useSessionsStore, useActiveProject } from "@/stores/sessions";
 import { PROJECT_SORT_KV, type ProjectSortMode } from "@/components/session-list/global-list-data";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
 import { RebindSection } from "@/components/settings/rebind-section";
@@ -57,12 +57,14 @@ const PERMISSION_PRESET_OPTIONS: ReadonlyArray<{ value: string; labelKey: Messag
 ];
 
 /** 设置页项目区：权限预设下拉（选中即 PATCH 落服务端 kv）+ 重启引擎按钮。
+ * 目标项目由页内显式选择器（SettingsPage，todo 9）经 props 下发，区块为给定项目
+ * 的纯函数，不再读全局当前项目。
  * 预设是引擎 spawn 参数级配置，变更后需重启项目引擎生效（按钮即生效口）。
  * 重启期间浏览器与服务端的 SSE 不受影响（事件流由服务端发出，引擎重建会推
  * engine_reclaimed 等事件，断线自动重连/心跳为既有通道，无需额外兜底）。 */
-export function ProjectPermissionSection() {
-  const currentProject = useUiStore((s) => s.currentProject);
-  const preset = useUiStore((s) => s.projects.find((p) => p.projectPath === s.currentProject)?.permissionPreset ?? null);
+export function ProjectPermissionSection({ projectPath }: { projectPath?: string | null }) {
+  const project = projectPath ?? null;
+  const preset = useUiStore((s) => (project === null ? null : s.projects.find((p) => p.projectPath === project)?.permissionPreset ?? null));
   const [saving, setSaving] = useState(false);
   const [restartOpen, setRestartOpen] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -76,14 +78,14 @@ export function ProjectPermissionSection() {
   };
 
   const changePreset = async (value: string) => {
-    if (!currentProject || saving) return;
+    if (!project || saving) return;
     const next = value === "" ? null : value;
     if (next === preset) return;
     setSaving(true);
     try {
-      await api.patchProjectMeta({ path: currentProject, permissionPreset: next });
+      await api.patchProjectMeta({ path: project, permissionPreset: next });
       const ui = useUiStore.getState();
-      ui.setProjects(ui.projects.map((p) => (p.projectPath === currentProject ? { ...p, permissionPreset: next } : p)));
+      ui.setProjects(ui.projects.map((p) => (p.projectPath === project ? { ...p, permissionPreset: next } : p)));
       ui.showToast(t("login.topbar.presetSaved"), "info");
     } catch (err) {
       showError(err, "login.topbar.presetSaveFailed");
@@ -93,10 +95,10 @@ export function ProjectPermissionSection() {
   };
 
   const restart = async () => {
-    if (!currentProject || restarting) return;
+    if (!project || restarting) return;
     setRestarting(true);
     try {
-      await api.restartProject(currentProject);
+      await api.restartProject(project);
       setRestartOpen(false);
       useUiStore.getState().showToast(t("login.topbar.engineRestarted"), "info");
     } catch (err) {
@@ -110,9 +112,9 @@ export function ProjectPermissionSection() {
     <div className="border-t pt-1">
       <div className="space-y-1.5">
         <label htmlFor="settings-permission-preset" className="text-sm font-medium">
-          {t("login.topbar.presetLabel")}{currentProject && <span className="ml-1.5 font-normal text-muted-foreground" title={currentProject}>{basename(currentProject)}</span>}
+          {t("login.topbar.presetLabel")}{project && <span className="ml-1.5 font-normal text-muted-foreground" title={project}>{basename(project)}</span>}
         </label>
-        {currentProject ? (
+        {project ? (
           <select
             id="settings-permission-preset"
             data-testid="permission-preset-select"
@@ -138,7 +140,7 @@ export function ProjectPermissionSection() {
           type="button"
           variant="outline"
           data-testid="restart-engine-button"
-          disabled={!currentProject || restarting}
+          disabled={!project || restarting}
           onClick={() => setRestartOpen(true)}
         >
           {restarting ? t("login.topbar.restarting") : t("login.topbar.restartEngine")}
@@ -157,7 +159,7 @@ export function ProjectPermissionSection() {
             <DialogDescription asChild>
               <div className="space-y-1.5 text-left">
                 <p>
-                  {t("login.topbar.restartDesc", { name: currentProject ? basename(currentProject) : "" })}
+                  {t("login.topbar.restartDesc", { name: project ? basename(project) : "" })}
                 </p>
                 <p>{t("login.topbar.restartRecoverNote")}</p>
               </div>
@@ -838,12 +840,12 @@ function ExternalLinksSection() {
   );
 }
 
-/** 设置页五组归组表（settings-page-nav）：组内顺序与改造前页面顺序一致，
- * 分区组件零改动（含内联分区），注册表只表达渲染单元的组织方式。 */
+/** 设置页五组归组表（settings-page-nav）：组内顺序与改造前页面顺序一致；分区统一可收
+ * 页内项目选择器（todo 9）下发的目标项目 props，项目组三区块消费之，其余分区忽略。 */
 const SETTINGS_GROUPS: ReadonlyArray<{
   id: SettingsGroupId;
   labelKey: MessageKey;
-  sections: ReadonlyArray<React.ComponentType>;
+  sections: ReadonlyArray<React.ComponentType<{ projectPath?: string | null }>>;
 }> = [
   {
     id: "project",
@@ -882,6 +884,15 @@ export function SettingsPage() {
   const setSettingsGroup = useUiStore((s) => s.setSettingsGroup);
   const rootRef = useRef<HTMLDivElement>(null);
   const current = SETTINGS_GROUPS.find((g) => g.id === settingsGroup) ?? SETTINGS_GROUPS[0];
+
+  // 页内显式项目选择器（todo 9）：挂载时以选中会话派生的活跃项目初始化一次，此后不
+  // 跟随会话变化（设置目标是用户的显式选择，可指向任意已注册项目）；所选项目在注册
+  // 表查无（如已被移除）时回落未选择，各分区走既有空态。
+  const activeProject = useActiveProject();
+  const [targetProject, setTargetProject] = useState<string | null>(activeProject);
+  const projects = useUiStore((s) => s.projects);
+  const effectiveProject =
+    targetProject !== null && projects.some((p) => p.projectPath === targetProject) ? targetProject : null;
 
   // 切组滚动归顶：滚动容器是覆盖层根 div（overflow-y-auto），组切换即归零
   useEffect(() => {
@@ -942,8 +953,30 @@ export function SettingsPage() {
           </div>
         </nav>
         <div role="tabpanel" aria-labelledby={`settings-group-tab-${current.id}`}>
+          {/* 页内项目选择器：项目组分区（权限预设/工具/导入旧目录）的公共设置目标 */}
+          {current.id === "project" && (
+            <div className="mb-3 space-y-1.5" data-testid="settings-project-target-row">
+              <label htmlFor="settings-project-target" className="text-sm font-medium">
+                {t("login.settingsPage.projectTarget")}
+              </label>
+              <select
+                id="settings-project-target"
+                data-testid="settings-project-target"
+                value={effectiveProject ?? ""}
+                onChange={(e) => setTargetProject(e.target.value === "" ? null : e.target.value)}
+                className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="">{t("tools.noProject")}</option>
+                {projects.map((p) => (
+                  <option key={p.projectPath} value={p.projectPath} title={p.projectPath}>
+                    {basename(p.projectPath)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {current.sections.map((Section, i) => (
-            <Section key={i} />
+            <Section key={i} projectPath={effectiveProject} />
           ))}
         </div>
       </div>

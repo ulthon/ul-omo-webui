@@ -66,12 +66,12 @@ const { useSessionsStore } = await import("@/stores/sessions");
 
 const PROJECT = "/tmp/proj";
 
-function mount(Comp: unknown) {
+function mount(node: unknown) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(createElement(Comp));
+    root.render(node);
   });
   return { container, root };
 }
@@ -101,6 +101,7 @@ const SCAN_FIXTURE = {
 describe("设置页入口（r10 todo 18）", () => {
   test("(a) SettingsPage 渲染含「导入旧目录会话」入口（输入框 + 扫描钮）", () => {
     useUiStore.setState({ settingsGroup: "project", currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useSessionsStore.setState({ byProject: { [PROJECT]: [{ id: "s1" }] }, selectedId: "s1" });
     const html = renderToStaticMarkup(createElement(SettingsPage));
     expect(html).toContain('data-testid="rebind-old-path-input"');
     expect(html).toContain('data-testid="rebind-scan-button"');
@@ -122,7 +123,7 @@ describe("扫描预览与导入重绑流程", () => {
     useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
     useSessionsStore.setState({ byProject: {}, archived: "false", loading: false });
 
-    const { container } = mount(RebindSection);
+    const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     const input = container.querySelector('[data-testid="rebind-old-path-input"]');
     const scanBtn = container.querySelector('[data-testid="rebind-scan-button"]');
     typeInto(input, "/data/projects/old-repo");
@@ -158,7 +159,7 @@ describe("扫描预览与导入重绑流程", () => {
     const refreshSpy = vi.spyOn(useSessionsStore.getState(), "refreshSessions").mockResolvedValue(undefined);
     useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
 
-    const { container } = mount(RebindSection);
+    const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "/data/projects/old-repo");
     await act(async () => {
       click(container.querySelector('[data-testid="rebind-scan-button"]'));
@@ -182,7 +183,7 @@ describe("扫描预览与导入重绑流程", () => {
     scanFn.mockRejectedValue(new ApiError(400, "invalid_old_path", "oldPath 必须是绝对路径：rel/path"));
     useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
 
-    const { container } = mount(RebindSection);
+    const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "rel/path");
     await act(async () => {
       click(container.querySelector('[data-testid="rebind-scan-button"]'));
@@ -199,7 +200,7 @@ describe("扫描预览与导入重绑流程", () => {
     scanFn.mockResolvedValue({ project: PROJECT, oldPath: "/data/projects/none", totalFiles: 0, sessions: [] });
     useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
 
-    const { container } = mount(RebindSection);
+    const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "/data/projects/none");
     await act(async () => {
       click(container.querySelector('[data-testid="rebind-scan-button"]'));

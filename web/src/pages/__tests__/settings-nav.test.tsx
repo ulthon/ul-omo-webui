@@ -64,16 +64,19 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SettingsPage } = await import("@/pages/settings");
 const { useUiStore } = await import("@/stores/ui");
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const PROJECT = "/tmp/proj";
 
-/** 每例显式重置 ui store（zustand 单例跨用例污染防护） */
+/** 每例显式重置 ui store（zustand 单例跨用例污染防护）；todo 9 后 permission-preset-select
+ * 的渲染前提是页内选择器初始化出目标项目（选中会话派生），故同步种入 sessions */
 function resetUiStore() {
   useUiStore.setState({
     settingsGroup: "project",
     currentProject: PROJECT,
     projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }],
   });
+  useSessionsStore.setState({ byProject: { [PROJECT]: [{ id: "s1" }] }, selectedId: "s1" });
 }
 
 /** 挂载后冲刷挂载期 effect 微任务（api promise resolve 不落在 act 外，免 act 告警） */
