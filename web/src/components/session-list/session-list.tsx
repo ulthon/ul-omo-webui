@@ -97,9 +97,8 @@ function useMarkReadOnView(): void {
 }
 
 export function SessionList() {
-  const currentProject = useUiStore((s) => s.currentProject);
-  // 新建会话工具条落点（会话根架构 W2 任务 8）：选中会话派生项目——selectedId +
-  // byProject 反查，无选中会话为 null（按钮禁用）；不再读全局项目字段
+  // 新建会话工具条落点与分组钉选（会话根架构 W2 任务 8 / W3 任务 14）：派生活跃项目——
+  // selectedId + byProject 反查，无选中会话为 null；不再读全局项目字段
   const activeProject = useActiveProject();
   const projects = useUiStore((s) => s.projects);
   const projectSort = useUiStore((s) => s.projectSort);
@@ -112,8 +111,8 @@ export function SessionList() {
   const [searchResults, setSearchResults] = useState<SessionListItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   // 组展开态：本次会话内的显式点按覆盖；持久记忆走 localStorage（isGroupExpanded 内读取），
-  // 都缺省时当前项目组展开、其余折叠。不做 currentProject 同步 effect——默认展开随
-  // currentProject 变化由派生规则自然生效，显式覆盖按记忆语义保留。
+  // 都缺省时派生活跃项目组展开、其余折叠。不做同步 effect——默认展开随
+  // 派生项目变化由派生规则自然生效，显式覆盖按记忆语义保留。
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
   // 每组可见条数（r9 wave1）：按项目键控，缺省 = GROUP_VISIBLE_LIMIT（10）。值 Infinity =
   // topbar「定位」触发的临时全展——仅本次会话内有效，刷新重挂载回落默认；切项目不重置，
@@ -208,7 +207,7 @@ export function SessionList() {
 
   const t = useT();
   const toggleGroup = (project: string) => {
-    const next = !isGroupExpanded(project, currentProject, groupOverrides[project]);
+    const next = !isGroupExpanded(project, activeProject, groupOverrides[project]);
     setGroupOverrides((s) => ({ ...s, [project]: next }));
     writeCollapsed(project, !next);
   };
@@ -320,7 +319,7 @@ export function SessionList() {
     await attempt(true);
   };
 
-  // 分组排序（C16 docs08-r3 todo 9）：当前项目组置顶规则不变；其余项目按档位排序——
+  // 分组排序（C16 docs08-r3 todo 9）：派生活跃项目组置顶规则不变；其余项目按档位排序——
   // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行同值
   // 保持稳定序，W3 任务 11）、manual=kv 手动序（未列项目按 activity 规则追加）。
   // A2 客户端防御过滤（双保险第二道）：hidden 分组在此剔除——服务端聚合已滤
@@ -328,14 +327,14 @@ export function SessionList() {
   // 不滤则隐藏项目的空分组头仍会出现。
   const sortedProjects = useMemo(
     () =>
-      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, currentProject, {
+      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, activeProject, {
         mode: projectSort,
         manualOrder: projectOrder,
         meta: Object.fromEntries(
           projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null }]),
         ),
       }),
-    [projects, byProject, currentProject, projectSort, projectOrder],
+    [projects, byProject, activeProject, projectSort, projectOrder],
   );
 
   /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
@@ -380,7 +379,7 @@ export function SessionList() {
     }
   }, [t]);
 
-  /** 把某项目移到当前展示序的目标位（当前项目组置顶规则不动——kv 序仅作用于其余组） */
+  /** 把某项目移到当前展示序的目标位（派生活跃项目组置顶规则不动——kv 序仅作用于其余组） */
   const moveProjectTo = useCallback(
     (srcPath: string, targetPath: string) => {
       const order = useUiStore.getState().projectOrder;
@@ -388,7 +387,7 @@ export function SessionList() {
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(srcPath);
       const to = base.indexOf(targetPath);
@@ -398,7 +397,7 @@ export function SessionList() {
       next.splice(to, 0, srcPath);
       void persistManualOrder(next);
     },
-    [currentProject, sortedProjects, persistManualOrder],
+    [activeProject, sortedProjects, persistManualOrder],
   );
 
   /** 上移/下移一位（manual 档；入口在分组头唯一 DropdownMenu——手机与桌面同菜单） */
@@ -408,7 +407,7 @@ export function SessionList() {
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== currentProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(projectPath);
       const to = from + delta;
@@ -418,7 +417,7 @@ export function SessionList() {
       next.splice(to, 0, projectPath);
       void persistManualOrder(next);
     },
-    [currentProject, sortedProjects, persistManualOrder],
+    [activeProject, sortedProjects, persistManualOrder],
   );
 
   // 桌面拖拽状态（HTML5 DnD，仅 manual 档分组头）：dragger 存被拖路径，drop 目标经
@@ -506,7 +505,7 @@ export function SessionList() {
     if (searchResults !== null) return searchResults;
     const out: SessionListItem[] = [...recent];
     for (const projectPath of sortedProjects) {
-      if (!isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath])) continue;
+      if (!isGroupExpanded(projectPath, activeProject, groupOverrides[projectPath])) continue;
       out.push(...(byProject[projectPath] ?? []));
     }
     return out;
@@ -932,8 +931,8 @@ export function SessionList() {
 
             {sortedProjects.map((projectPath, index) => {
               const sessions = byProject[projectPath];
-              const expanded = isGroupExpanded(projectPath, currentProject, groupOverrides[projectPath]);
-              const isCurrent = projectPath === currentProject;
+              const expanded = isGroupExpanded(projectPath, activeProject, groupOverrides[projectPath]);
+              const isCurrent = projectPath === activeProject;
               // 唯一列表（W3 todo 10）：子会话按血缘归到父项下。
               // 父不在当前数据集（如归档过滤只返回归档子会话）时子会话按孤儿顶层平铺，不丢行。
               const pathSet = new Set((sessions ?? []).map((s) => s.path));
@@ -1003,7 +1002,7 @@ export function SessionList() {
                       <span className="ml-auto shrink-0 tabular-nums">{sessions?.length ?? 0}</span>
                     </button>
                     {/* 分组头唯一菜单（A2）：三组语义——排序（仅 manual 档）/隐藏/管理标签（任务 11 已接线）。
-                        菜单 onSelect 内实时读 currentProject（跨项目点击后 render 闭包可能滞后）。 */}
+                        菜单 onSelect 内实时读派生活跃项目（跨项目点击后 render 闭包可能滞后）。 */}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -1038,7 +1037,12 @@ export function SessionList() {
                         <DropdownMenuItem
                           data-testid="group-hide"
                           onSelect={() => {
-                            if (useUiStore.getState().currentProject === projectPath) {
+                            if (
+                              projectOfSession(
+                                useSessionsStore.getState().byProject,
+                                useSessionsStore.getState().selectedId,
+                              ) === projectPath
+                            ) {
                               setHidePending(projectPath);
                             } else {
                               void hideProject(projectPath, true);

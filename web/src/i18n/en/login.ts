@@ -229,10 +229,8 @@ export const login = {
     filesUrlLabel: "File manager link URL",
     filesUrlPlaceholder: "https://files.example.com or /files",
     saving: "Saving…",
-    // 项目下拉
-    projectMenu: "Projects",
-    noProjectsMenu: "No projects yet; add one first",
-    addProject: "Add project…",
+    // 项目下拉已裁撤（W3 任务 14），projectMenu/noProjectsMenu/addProject 键随之删除；
+    // addProjectShort 由侧栏列表双端入口继续使用
     addProjectShort: "Add project",
     // 模型下拉与连接状态
     noModels: "No models available",

@@ -237,6 +237,45 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
   });
 });
 
+describe("分组钉选随派生活跃项目（W3 任务 14 stale_state 对抗）", () => {
+  test("选中切到另一项目后：钉选/置顶/展开标记跟随派生，不读全局项目字段", async () => {
+    useUiStore.setState({
+      currentProject: "/p2",
+      projects: [
+        { projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+        { projectPath: "/p2", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    });
+    const s1 = makeSession("pin-a1", { project: "/p1" });
+    const s2 = makeSession("pin-b1", { project: "/p2", modified: "2026-01-02T00:00:00.000Z" });
+    useSessionsStore.setState({ byProject: { "/p1": [s1], "/p2": [s2] }, selectedId: "pin-b1" });
+    mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/sessions")) return okJson({ project: null, archived: "false", sessions: [s1, s2] });
+      if (url.includes("/api/tags")) return okJson({ global: [], project: [] });
+      return okJson({ ok: true });
+    });
+    const container = await mount(createElement(SessionList));
+    await act(async () => {
+      await flush();
+    });
+    const groups = () => [...container.querySelectorAll("[data-project-group]")].map((g) => g.getAttribute("data-project-group"));
+    const marker = (p: string) =>
+      container.querySelector(`[data-project-group="${p}"] [data-testid="group-toggle"]`)?.textContent ?? "";
+    // 初始：选中 /p2 会话 → /p2 钉选置顶 + 「当前」标记；全局字段同值（行为不变）
+    expect(groups()[0]).toBe("/p2");
+    expect(marker("/p2")).toContain("当前");
+    // 切选中到 /p1：钉选跟随派生（全局字段仍为 /p2，若读全局则不随切——stale_state 对抗点）
+    await act(async () => {
+      useSessionsStore.setState({ selectedId: "pin-a1" });
+      await flush();
+    });
+    expect(groups()[0]).toBe("/p1");
+    expect(marker("/p1")).toContain("当前");
+    expect(marker("/p2")).not.toContain("当前");
+  });
+});
+
 describe("跨项目分组头新建会话（docs08-r5 任务 2）", () => {
   test("分组头 + 新建：等待目标项目模型解析后再建会话，POST 携带解析所得 model/thinkingLevel", async () => {
     useUiStore.setState({
