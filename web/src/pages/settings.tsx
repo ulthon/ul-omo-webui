@@ -13,7 +13,7 @@ import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MO
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import type { SettingsGroupId } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
-import { useSessionsStore, useActiveProject } from "@/stores/sessions";
+import { useSessionsStore, useActiveProject, projectOfSession } from "@/stores/sessions";
 import { PROJECT_SORT_KV, type ProjectSortMode } from "@/components/session-list/global-list-data";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
 import { RebindSection } from "@/components/settings/rebind-section";
@@ -182,12 +182,12 @@ export function ProjectPermissionSection({ projectPath }: { projectPath?: string
 /** 项目管理区（W1 缺陷 #1）：列出全部已注册项目（ui store projects，bootstrap 预载 +
  * 注销后 refetch 刷新），死项目（GET /api/projects missing 字段）带「已丢失」徽标。
  * 每行「移除」按钮（44px 触控）弹确认对话框；确认后 DELETE /api/projects（只删注册行，
- * 会话数据与会话 meta 原样保留）→ refetch projects；移除的是当前项目时清 currentProject
- * 与选中会话（回到空会话状态），非当前项目不动选中。项目切换下拉保持纯切换语义，
+ * 会话数据与会话 meta 原样保留）→ refetch projects；移除的是选中会话所属项目时清选中会话
+ * （回到空会话状态，URL 随 select 清参），否则不动选中。项目切换下拉保持纯切换语义，
  * 管理动作只在本区提供（设置 = 管理心智）。
  * A2（docs08-r3 任务 10）：顶部"正常/已隐藏"筛选分段控件 + 每行「隐藏/取消隐藏」按钮
- * （PUT /api/projects/hidden 软标记，注册行与会话 meta 保留）；隐藏当前项目复用注销的
- * 回空会话态流程；hidden 行不加额外徽标（筛选视图本身即可见性，missing 徽标沿用现状）。 */
+ * （PUT /api/projects/hidden 软标记，注册行与会话 meta 保留）；隐藏的是选中会话所属
+ * 项目时清选中（判定同移除）；hidden 行不加额外徽标（筛选视图本身即可见性，missing 徽标沿用现状）。 */
 export function ProjectManagementSection() {
   const projects = useUiStore((s) => s.projects);
   const currentProject = useUiStore((s) => s.currentProject);
@@ -209,13 +209,14 @@ export function ProjectManagementSection() {
       setPending(null);
       // refetch 权威口径刷新列表（顺带吸收并发变化），再按需清理选中态
       const res = await api.listProjects();
-      const ui = useUiStore.getState();
-      ui.setProjects(res.projects);
-      if (ui.currentProject === target) {
-        ui.setCurrentProject(null);
-        useSessionsStore.getState().select(null);
+      useUiStore.getState().setProjects(res.projects);
+      // 判定改选中会话派生（t10B）：选中会话所属项目即被移除目标时清选中（select 自持
+      // URL 清参），否则选中不动；不再写全局项目字段。
+      const sessions = useSessionsStore.getState();
+      if (projectOfSession(sessions.byProject, sessions.selectedId) === target) {
+        sessions.select(null);
       }
-      ui.showToast(t("login.topbar.removedToast"), "info");
+      useUiStore.getState().showToast(t("login.topbar.removedToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
       useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.removeFailed"), "error");
@@ -224,8 +225,8 @@ export function ProjectManagementSection() {
     }
   };
 
-  /** 隐藏/取消隐藏（A2）：软标记 PUT 后 refetch 权威刷新；隐藏的是当前项目时复用
-   * 注销的回空会话态流程（清 currentProject + 选中会话），非当前项目不动选中。 */
+  /** 隐藏/取消隐藏（A2）：软标记 PUT 后 refetch 权威刷新；隐藏的是选中会话所属项目时
+   * 才清选中（判定同移除，t10B 改选中会话派生），否则不动选中。 */
   const setHidden = async (target: string, hidden: boolean) => {
     if (hiding) return;
     setHiding(true);
@@ -233,13 +234,12 @@ export function ProjectManagementSection() {
       await api.putProjectHidden(target, hidden);
       setPendingHide(null);
       const res = await api.listProjects();
-      const ui = useUiStore.getState();
-      ui.setProjects(res.projects);
-      if (hidden && ui.currentProject === target) {
-        ui.setCurrentProject(null);
-        useSessionsStore.getState().select(null);
+      useUiStore.getState().setProjects(res.projects);
+      const sessions = useSessionsStore.getState();
+      if (hidden && projectOfSession(sessions.byProject, sessions.selectedId) === target) {
+        sessions.select(null);
       }
-      ui.showToast(hidden ? t("login.topbar.hiddenToast") : t("login.topbar.unhiddenToast"), "info");
+      useUiStore.getState().showToast(hidden ? t("login.topbar.hiddenToast") : t("login.topbar.unhiddenToast"), "info");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
       useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.operationFailed"), "error");
@@ -397,7 +397,7 @@ export function ProjectManagementSection() {
         </DialogContent>
       </Dialog>
 
-      {/* 隐藏当前项目确认（A2）：回空会话态是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
+      {/* 隐藏当前项目确认（A2）：清选中（回空会话）是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
       <Dialog
         open={pendingHide !== null}
         onOpenChange={(open) => {
