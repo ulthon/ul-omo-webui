@@ -67,19 +67,22 @@ class FakeEngineRpc {
 function makeRegistry(
   rpcOrRpcs: FakeEngineRpc | Map<string, FakeEngineRpc>,
   agentDir: string,
-): { registry: EngineRuntimeRegistry; ensureRunningCalls: () => number } {
+): { registry: EngineRuntimeRegistry; ensureRunningCalls: () => number; setStatusState: (s: string) => void } {
   const rpcs = rpcOrRpcs instanceof Map ? rpcOrRpcs : null
   const single = rpcs === null ? rpcOrRpcs : null
   let ensureRunningCalls = 0
+  let statusState = "ready"
   const fakeManager = {
     ensureRunning: async () => {
       ensureRunningCalls += 1
     },
     getClient: (sessionPath: string) => (rpcs !== null ? rpcs.get(sessionPath) : single),
-    getStatus: () => ({ state: "ready", pendingPermissions: [] }),
+    getStatus: () => ({ state: statusState, pendingPermissions: [] }),
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
     stopAll: async () => {},
+    reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+    markUserActivity: (_sessionPath: string): void => {},
   } as unknown as EngineProcessManager
   const registry = new EngineRuntimeRegistry(fakeManager, {
     listProjects: () => [PROJECT],
@@ -87,7 +90,7 @@ function makeRegistry(
     // 收尾监视轮询远长于测试生命期：用例结算不依赖真实时序
     settlePollMs: 3_600_000,
   })
-  return { registry, ensureRunningCalls: () => ensureRunningCalls }
+  return { registry, ensureRunningCalls: () => ensureRunningCalls, setStatusState: (s: string) => { statusState = s } }
 }
 
 /** 从真实会话库拷两个文件到临时库（cwd 过滤需真实 cwd），新者 mtime 晚 */
@@ -163,6 +166,36 @@ describe("命令面契约（T3 退役定版）", () => {
       expect(rpc.openedPaths).toEqual([])
       expect(rpc.commandsCalls).toBe(1)
       expect(ensureRunningCalls()).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("非 ready 存活档（对话进行中）+活跃绑定：命令仍全量枚举", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rt-cmds-test-"))
+    try {
+      const agentDir = join(root, "agent")
+      seedSessions(agentDir)
+      const rpc = new FakeEngineRpc()
+      const { registry, ensureRunningCalls, setStatusState } = makeRegistry(rpc, agentDir)
+
+      const list = await registry.sessionsList(PROJECT)
+      const receipt = await registry.prompt(list[0]!.id, { text: "hi" })
+      expect(receipt.disposition).toBe("started")
+
+      // 对话进行中模拟：管理器快照离开 ready 档（非 ready 存活档），活跃绑定仍在
+      setStatusState("starting")
+      const rows = await registry.commandsList(PROJECT)
+      // 对抗 misleading_success_output：断言命令真被枚举出全量名单，非空数组/空集蒙混
+      expect(rows).not.toBeNull()
+      expect(rows!.length).toBeGreaterThan(0)
+      expect(rows!.map((r) => r.name).sort(), "rows=" + JSON.stringify(rows)).toEqual(["daily", "init", "skill:browser"])
+      expect(rpc.commandsCalls).toBe(1)
+      expect(ensureRunningCalls()).toBe(1) // 未额外 spawn/ensure
+
+      // 死档回退：引擎不在存活档时仍降级 null
+      setStatusState("stopped")
+      expect(await registry.commandsList(PROJECT)).toBeNull()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

@@ -8,7 +8,7 @@
 // api.prompt）与 /compact 斜杠下拉静态段保留，按钮显隐不再参与功能面。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
-import { api, setPromptGate } from "@/lib/api";
+import { ApiError, api, setPromptGate } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
 import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
 import { diag } from "@/lib/diag";
@@ -223,8 +223,30 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         // 共用：增量走 SSE question / queue_update 帧，此处覆盖服务端重启/环形缓冲淘汰）
         void reconcilePendingState(sessionId, () => cancelled);
       })
-      .catch(() => {
-        if (!cancelled) setLoadState("error");
+      .catch((err) => {
+        if (cancelled) return;
+        // 增量校准撞 cursor_invalid（compact-run 静默留旧游标 → 切回会话带旧游标被服务端
+        // 409 拒绝，engine-open-read-batch t12）：升级全量重取（full=1 整替，对齐
+        // event-dispatch reconcileSessionIncremental→refetchSession 既有分层），消除
+        // 错误屏死胡同（此前只能 F5）。全量响应 setEntries 重写 cursor，二次校准不再 409。
+        // 非 cursor_invalid（网络瞬断/500 等）保持原错误态。
+        if (err instanceof ApiError && err.code === "cursor_invalid") {
+          api
+            .listMessages(sessionId, { full: true })
+            .then((page) => {
+              if (cancelled) return;
+              useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId, {
+                hasMore: page.hasMore ?? false,
+                oldestId: page.oldestId ?? null,
+              });
+              setLoadState("done");
+            })
+            .catch(() => {
+              if (!cancelled) setLoadState("error");
+            });
+          return;
+        }
+        setLoadState("error");
       });
     return () => {
       cancelled = true;
@@ -268,7 +290,21 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           store.setCursor(sessionId, page.cursor);
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        // cursor 校准面同 t12：游标失效（cursor_invalid）升级全量重取整替；before 翻页
+        // 与其余错误保持静默（下次触顶/切回再兜底）。
+        if (action.kind === "cursor" && err instanceof ApiError && err.code === "cursor_invalid") {
+          return api
+            .listMessages(sessionId, { full: true })
+            .then((page) => {
+              useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId, {
+                hasMore: page.hasMore ?? false,
+                oldestId: page.oldestId ?? null,
+              });
+            })
+            .catch(() => {});
+        }
+      })
       .finally(() => {
         syncInFlightRef.current = false;
         syncingUntilRef.current = Date.now() + 10_000;

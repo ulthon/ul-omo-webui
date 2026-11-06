@@ -41,7 +41,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // （T5 定向停单会话引擎网关，routes-engines stop 按 sessionPath 校验）追加 1 码：
 // unknown_session；同批移除 not_started 的 ApiError 构造点（requireAdapter 守卫随重构
 // 移除，not_started 降为 EngineAdapterError 直达码，按约定不入映射，见 i18n/errors.ts
-// 头部排除清单），合计仍 107。
+// 头部排除清单），合计仍 107。多会话并行批次（引擎重开退避耗尽映射）追加 1 码：
+// session_reopen_failed，合计 108。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -139,6 +140,7 @@ const SCANNED_CODES = [
   "schedule_runner_unavailable",
   "session_not_found",
   "session_not_persisted",
+  "session_reopen_failed",
   "snippet_conflict",
   "tag_conflict",
   "tag_mount_conflict",
@@ -195,12 +197,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（107 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（108 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(107);
+    expect(scanned).toHaveLength(108);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(107);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(108);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

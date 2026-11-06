@@ -61,6 +61,9 @@ function makeHarness(opts: { maxConsecutiveFailures?: number; probeMaxAttempts?:
   const manager = new EngineProcessManager({
     registryPath,
     idleTimeoutMs: 80,
+    // 任务 7：本套件到的是正常档（idleTimeoutMs）回收梯——探活窗档关闼（同灰度
+    // 逃生口开关），双门档由专属「探活窗双门」describe 以假时钟覆盖
+    activityWindowMs: 0,
     backoffBaseMs: 20,
     backoffMaxMs: 100,
     maxConsecutiveFailures: opts.maxConsecutiveFailures ?? 5,
@@ -128,6 +131,53 @@ describe("spawn 规范（verification/01、03 实证）", () => {
     } finally {
       await h.manager.stopAll()
       cleanup(h)
+    }
+  })
+
+  test("会话级逐出档 env 注入：max(idleTimeoutMs,30min)、永不档 MAX_SAFE_INTEGER、改档仅影响新 spawn", async () => {
+    // engine-open-read-batch 任务 3：env 名 SENPI_RPC_SESSION_IDLE_EVICTION_MS 实证见
+    // @code-yeongyu/senpi dist/modes/rpc/host-idle-policy.js；档位对齐口径见注入点注释。
+    const h = makeHarness() // makeHarness 默认 idleTimeoutMs=80ms（< 30min 默认）
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      // 低档：引擎逐出不低于引擎默认 30min，由本管理器先回收
+      expect(h.fakes[0].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(30 * 60_000))
+
+      // 改档上调 → 逐 spawn 现算：旧引擎（第一个 fake）env 不变，新 spawn 取新档
+      h.manager.setIdleTimeoutMs(60 * 60_000)
+      await h.manager.stop(SESS_A1)
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      expect(h.fakes.length).toBe(2)
+      expect(h.fakes[0].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(30 * 60_000))
+      expect(h.fakes[1].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(60 * 60_000))
+    } finally {
+      await h.manager.stopAll()
+      cleanup(h)
+    }
+
+    // 永不回收档（<=0）：不能注入 0（引擎侧 parseIdleExitMs 遇 0/非法回落默认 30min），
+    // 用 MAX_SAFE_INTEGER 表达永不
+    const never = new EngineProcessManager({
+      registryPath: `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`,
+      idleTimeoutMs: 0,
+      backoffBaseMs: 20,
+      backoffMaxMs: 100,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      stopGraceMs: 60,
+      probe: h.probe,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        h.fakes.push(fake)
+        return wireProbe(fake, h.probe)
+      },
+    })
+    try {
+      await never.ensureRunning(SESS_A1, PROJ)
+      expect(h.fakes[2].spawnOpts.env?.SENPI_RPC_SESSION_IDLE_EVICTION_MS).toBe(String(Number.MAX_SAFE_INTEGER))
+    } finally {
+      await never.stopAll()
+      cleanup({ manager: never, fakes: h.fakes, probe: h.probe, events: h.events, registryPath: "/tmp/nonexistent" })
     }
   })
 
@@ -540,6 +590,8 @@ describe("空闲回收（空闲 = 无运行会话 且 无挂起权限请求）",
     const m = new EngineProcessManager({
       registryPath,
       idleTimeoutMs: 80,
+      // 任务 7：正常档梯子专项（task-2b 竞态回归），探活窗关闭排除双门档干扰
+      activityWindowMs: 0,
       readyProbeIntervalMs: 5,
       readyProbeMaxAttempts: 10,
       stopGraceMs: 60,
@@ -589,6 +641,8 @@ describe("空闲回收第三判据：background_running（multi-session-parallel
     const manager = new EngineProcessManager({
       registryPath,
       idleTimeoutMs: 80,
+      // 任务 7：第三判据专项仍到正常档梯子（80ms 档），探活窗关闭排除双门档干扰
+      activityWindowMs: 0,
       readyProbeIntervalMs: 5,
       readyProbeMaxAttempts: 10,
       stopGraceMs: 60,
@@ -1370,6 +1424,255 @@ describe("就绪试写门禁（docs08-2026-10-23-24-batch 任务 7）", () => {
       expect(h.fakes[0].probeOpened).toEqual([])
     } finally {
       await cleanupGate(h)
+    }
+  })
+})
+
+describe("探活窗双门（任务 7，C4-B：wire 静默 ≥5min AND isIdle 判据；发过消息转正常档）", () => {
+  /** 假时钟 harness：vi.useFakeTimers 先于一切生效（Date.now 与 setTimeout 同源
+   *  假化，推进 = 时钟前拨 + 定时器到点原子完成）。全套件零真实睡眠——时间推进
+   *  全部经 vi.advanceTimersByTimeAsync，时序 flaky 不成立（对抗 flaky_tests 探针）。
+   *  探针 sleep 同被假化且本套件路径（首次 ping 即就绪、门禁关）不依赖任何轮询
+   *  睡眠，ensureRunning 纯微任务即可落定。 */
+  const MIN = 60_000
+
+  function makeTierHarness(opts: {
+    idleTimeoutMs?: number
+    activityWindowMs?: number
+    queuedWork?: (sessionPath: string) => boolean
+    backgroundRunning?: (sessionPath: string) => boolean
+  } = {}) {
+    const fakes: FakeRpcClient[] = []
+    const probe = new MemProbe()
+    const events: EngineManagerEvent[] = []
+    const registryPath = `/tmp/opencode/w2-pm-test/registry-${Math.random().toString(36).slice(2)}.json`
+    const manager = new EngineProcessManager({
+      registryPath,
+      idleTimeoutMs: opts.idleTimeoutMs ?? 10 * MIN, // 正常档：10min（与 5min 探活窗错开，双档各自可验）
+      activityWindowMs: opts.activityWindowMs ?? 5 * MIN,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      stopGraceMs: 60,
+      crashPollMs: MIN, // 假时钟下崩溃监督周期拉长：本套件不测崩溃，减少推进时的无谓回调
+      probe,
+      sessionBackgroundRunning: opts.backgroundRunning,
+      sessionQueuedWork: opts.queuedWork,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        probe.add(fake.pid, { cwd: PROJ })
+        const origStop = fake.stop.bind(fake)
+        fake.stop = async () => {
+          await origStop()
+          probe.procs.delete(fake.pid)
+        }
+        fakes.push(fake)
+        return fake
+      },
+    })
+    manager.onEvent((e) => events.push(e))
+    return { manager, fakes, events, registryPath }
+  }
+
+  type TierHarness = ReturnType<typeof makeTierHarness>
+
+  function reclaimedEvents(h: TierHarness): Array<Extract<EngineManagerEvent, { type: "engine_reclaimed" }>> {
+    return h.events.filter((e): e is Extract<EngineManagerEvent, { type: "engine_reclaimed" }> => e.type === "engine_reclaimed")
+  }
+
+  async function cleanupTier(h: TierHarness): Promise<void> {
+    await h.manager.stopAll().catch(() => {})
+    vi.useRealTimers()
+    rmSync(h.registryPath, { force: true })
+  }
+
+  test("(a) 纯看引擎（无 prompt 回执）：wire 静默满 5min 即收，engine_reclaimed(activity_window) + 进程拆除实证", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      await vi.advanceTimersByTimeAsync(5 * MIN - 10_000) // 4min50s：未满窗不收
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      await vi.advanceTimersByTimeAsync(20_000) // 越过 5min 窗
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      // 对抗 misleading_success_output：事件 + 进程面拆除实证（非仅状态字段）
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["activity_window"])
+      expect(h.fakes[0].stopCount).toBe(1)
+      expect(h.manager.getClient(SESS_A1)).toBeUndefined()
+      expect(h.manager.getStatus(SESS_A1)?.pid).toBeUndefined()
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(b) 点亮会话（reportSessionActive）不构成忙：静默满窗照收（t6 证据：点亮但静默的正确处理）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.manager.reportSessionActive(SESS_A1, "rpc-9") // t6 扇出点亮等价物（纯看无回合）
+      expect(h.manager.getStatus(SESS_A1)?.runningSessions).toEqual(["rpc-9"]) // 点亮确实在表（面板口径不变）
+      await vi.advanceTimersByTimeAsync(5 * MIN + 10_000)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["activity_window"])
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(c) markUserActivity（prompt 回执钩子）翻正常档：满 5min 不收，满 idleTimeout 档才收（idle_timeout）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness() // 正常档 10min
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.manager.markUserActivity(SESS_A1) // ProjectRuntime.prompt 回执成功点
+      await vi.advanceTimersByTimeAsync(6 * MIN) // 越过探活窗但未到正常档
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(reclaimedEvents(h)).toEqual([])
+      await vi.advanceTimersByTimeAsync(5 * MIN) // 累计 11min > 10min 正常档
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["idle_timeout"])
+      expect(h.fakes[0].stopCount).toBe(1)
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(d) 真实回合（agent_start）静默满窗不收；agent_settled 后静默满窗即收", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.manager.reportSessionActive(SESS_A1, "rpc-9")
+      h.fakes[0].emit({ type: "agent_start", sessionId: "rpc-9" }) // 真实回合（区别于点亮）
+      await vi.advanceTimersByTimeAsync(6 * MIN) // 长工具调用静默 6min：双门之忙门拦下
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(h.fakes[0].stopCount).toBe(0)
+      h.fakes[0].emit({ type: "agent_settled", sessionId: "rpc-9" })
+      await vi.advanceTimersByTimeAsync(5 * MIN + 10_000)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["activity_window"])
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(e) 窗内 wire 事件流刷新活动钟：4min 处流帧 → 9min 处仍 ready（时钟=trackWireEvent）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      await vi.advanceTimersByTimeAsync(4 * MIN)
+      h.fakes[0].emit({ type: "message_start", sessionId: "rpc-9" }) // 流式帧=活动（非回合帧）
+      await vi.advanceTimersByTimeAsync(4 * MIN) // 距流帧 4min<5min，距 spawn 8min>5min：验证时钟从流帧重计
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      await vi.advanceTimersByTimeAsync(1 * MIN + 10_000) // 距流帧超 5min
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h)).toHaveLength(1)
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(f) 后台长任务（jsonl 探测注入）静默 30min 不收（2026-11-04 误杀防线回归）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness({ backgroundRunning: () => true })
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      await vi.advanceTimersByTimeAsync(30 * MIN) // 双档窗口全越过
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(h.fakes[0].stopCount).toBe(0)
+      expect(reclaimedEvents(h)).toEqual([])
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(g) 排队中（sessionQueuedWork 注入）永不回收；出队后满窗即收", async () => {
+    let queued = true
+    vi.useFakeTimers()
+    const h = makeTierHarness({ queuedWork: () => queued })
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      await vi.advanceTimersByTimeAsync(12 * MIN) // 越过探活窗 5min 与正常档 10min
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(h.fakes[0].stopCount).toBe(0)
+      queued = false
+      // 出队无 wire 事件可依：经活动上报口触发重排（生产中任意后续交互必经
+      // reportSessionActive/Closed 或 trackWireEvent，此为最短触发对）
+      h.manager.reportSessionActive(SESS_A1, "rpc-q")
+      h.manager.reportSessionClosed(SESS_A1, "rpc-q")
+      await vi.advanceTimersByTimeAsync(5 * MIN + 10_000)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["activity_window"])
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(h) sessionQueuedWork 回调异常按 false 降级：不阻塞回收、不炸状态机", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness({
+      queuedWork: () => {
+        throw new Error("queue probe boom")
+      },
+    })
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ) // ready 路径即经 isIdle：无有界捕获则直接拗错
+      await vi.advanceTimersByTimeAsync(5 * MIN + 10_000)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h)).toHaveLength(1)
+      expect(() => h.manager.reportSessionActive(SESS_A1, "rpc-x")).not.toThrow()
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(i) setIdleTimeoutMs(0)=never 总逃生口：探活窗一并停摆", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.manager.setIdleTimeoutMs(0)
+      await vi.advanceTimersByTimeAsync(30 * MIN)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(reclaimedEvents(h)).toEqual([])
+      expect(h.fakes[0].stopCount).toBe(0)
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(j) setActivityWindowMs(0)=关窗：未发消息引擎回落正常档（本批前行为）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness() // 探活窗 5min + 正常档 10min
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.manager.setActivityWindowMs(0) // 灰度逃生口：关探活窗
+      await vi.advanceTimersByTimeAsync(6 * MIN) // 越过原探活窗但未到正常档
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      await vi.advanceTimersByTimeAsync(5 * MIN) // 累计 11min > 10min 正常档
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["idle_timeout"])
+    } finally {
+      await cleanupTier(h)
+    }
+  })
+
+  test("(k) 挂起权限挡探活窗：静默满窗不收；应答后满窗即收（P0-2 约束在探活窗档同样成立）", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness()
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      h.fakes[0].emit({ type: "extension_ui_request", method: "select", id: "ui-1", sessionId: "rpc-1" })
+      await vi.advanceTimersByTimeAsync(6 * MIN)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+      expect(h.manager.getStatus(SESS_A1)?.pendingPermissions).toEqual(["ui-1"])
+      h.manager.reportPermissionAnswered(SESS_A1, "ui-1")
+      await vi.advanceTimersByTimeAsync(5 * MIN + 10_000)
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("stopped")
+      expect(reclaimedEvents(h).map((e) => e.reason)).toEqual(["activity_window"])
+    } finally {
+      await cleanupTier(h)
     }
   })
 })

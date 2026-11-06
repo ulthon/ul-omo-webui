@@ -8,6 +8,7 @@ import type {
   EngineSessionSummary,
   EngineThinkingLevel,
 } from "../adapter/engine-adapter";
+import { EngineAdapterError } from "../adapter/engine-adapter";
 import {
   ATTACHMENT_BINARY_MAX_BYTES,
   ATTACHMENT_MAX_BYTES,
@@ -30,7 +31,7 @@ import { readSessionPreview } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
-import { CursorInvalidError, readEntriesBefore, readTailEntries } from "../adapter/session-file";
+import { CursorInvalidError, readAllEntries, readEntriesAfter, readEntriesBefore, readTailEntries } from "../adapter/session-file";
 import { debugPerfOn } from "../conf/diagnostics-flags";
 import { logPerfHttp } from "./perf";
 
@@ -345,7 +346,11 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   // sessionPath，SDK 直读不 spawn 引擎；multi-session-parallel T3 后运行时亦无
   // 互斥链/切换链可占——直读与引擎全量两路径零耦合）；读不到会话
   // 文件的新会话/别名回退引擎全量）；?before= 上一窗（无效 409 cursor_invalid）；
-  // ?cursor= 前向增量与 ?full=1 全量（SSE gap 重连对账依赖）走引擎不变。
+  // 任务 5（A-2 磁盘主读）：?full=1 磁盘优先——文件在则磁盘正向流式全量（引擎完全不
+  // 参与不拉起），不在（未落盘/别名）回退引擎分页循环；?cursor= 前向增量磁盘优先
+  // （任务 13 / F4 IS-2：文件在直读 after-cursor 增量，不在才引擎）；游标失效
+  // （引擎 Entry not found / 磁盘锚点未命中）不再服务端静默降级全量，409 cursor_invalid 让
+  // 客户端按既有分层升级 full=1（event-dispatch refetchSession）。
   // Fix0 HTTP 计时（docs08 任务 1；UL_OMO_WEBUI_DEBUG_PERF 默认关零输出）。
   app.get("/api/sessions/:id/messages", route(async (c: Context) => {
     const id = requireParam(c, "id");
@@ -357,9 +362,68 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       let page: Awaited<ReturnType<typeof deps.engines.messages>>;
       let hasMore = false;
       let oldestId: string | null = null;
-      if (cursor || full || !deps.engines.sessionPath) {
-        // 前向增量 / 全量 / fake 网关（无直读面）：引擎路径原样
-        page = await deps.engines.messages(id, cursor);
+      // 引擎读取统一包装：adapter 对失效游标上抛 cursor_invalid（任务 5 起不再静默
+      // 降级全量），此处映射 409——客户端按既有分层升级 full=1 全量重取
+      const enginePage = async (): Promise<Awaited<ReturnType<typeof deps.engines.messages>>> => {
+        try {
+          return await deps.engines.messages(id, cursor);
+        } catch (err) {
+          if (err instanceof EngineAdapterError && err.code === "cursor_invalid") {
+            throw new ApiError(409, "cursor_invalid", "增量游标已失效，请以 full=1 全量重取");
+          }
+          throw err;
+        }
+      };
+      if (full) {
+        // full=1（SSE gap 重连对账/游标失效升级的兑底全量）：磁盘优先——引擎完全不
+        // 参与（纯看不拉引擎、无 16MB 隔离面）；文件不在（新会话未落盘/别名）回退
+        // 引擎分页循环（任务 4 能力）
+        const sessionPath = deps.engines.sessionPath ? await deps.engines.sessionPath(id) : null;
+        let stat: { size: number } | null = null;
+        if (sessionPath) {
+          try {
+            stat = statSync(sessionPath);
+          } catch {
+            stat = null;
+          }
+        }
+        if (sessionPath && stat && stat.size > 0) {
+          const all = await readAllEntries(sessionPath);
+          page = { entries: all.entries, leafId: all.leafId, cursor: all.leafId };
+          hasMore = false;
+          oldestId = all.entries[0]?.id ?? null;
+        } else {
+          page = await enginePage();
+          oldestId = page.entries[0]?.id ?? null;
+        }
+      } else if (cursor || !deps.engines.sessionPath) {
+        // 任务 13（F4 IS-2 切回校准磁盘优先）：?cursor= 前向增量磁盘优先——会话文件在
+        // 则直读 after-cursor 增量（chat-view 切回已加载会话的校准不再经 ensureRunning
+        // 冷 spawn）；游标不在文件（compaction 重写/换代）409 cursor_invalid 与引擎
+        // Entry not found 同码同层；文件不在（未落盘/别名）或 fake 网关（无直读面）
+        // 回退引擎路径原样（+游标失效 409 映射）。
+        let servedFromDisk: Awaited<ReturnType<typeof deps.engines.messages>> | null = null;
+        if (cursor && deps.engines.sessionPath) {
+          const sessionPath = await deps.engines.sessionPath(id);
+          let stat: { size: number } | null = null;
+          try {
+            stat = statSync(sessionPath);
+          } catch {
+            stat = null;
+          }
+          if (stat && stat.size > 0) {
+            try {
+              const after = await readEntriesAfter(sessionPath, cursor);
+              servedFromDisk = { entries: after.entries, leafId: after.cursor, cursor: after.cursor };
+            } catch (err) {
+              if (err instanceof CursorInvalidError) {
+                throw new ApiError(409, "cursor_invalid", "增量游标已失效，请以 full=1 全量重取");
+              }
+              throw err;
+            }
+          }
+        }
+        page = servedFromDisk ?? (await enginePage());
         oldestId = page.entries[0]?.id ?? null;
       } else {
         // 尾窗直读：磁盘文件在则直读；不在（新会话未落盘/别名）回退引擎

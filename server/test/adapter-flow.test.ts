@@ -1,12 +1,16 @@
 /**
  * SenpiAdapter 流程单测——fake RpcClient 全部以真实引擎实录 fixture 应答（零 token）。
- * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径。
+ * 覆盖：握手/活跃会话语义/messages 游标/prompt/abort/权限应答/todo/usage/模型/事件订阅/错误路径；
+ * 任务 10：重开撞 session_path_in_use 有界退避 + 退避尽映射 503 session_reopen_failed。
  */
-import { describe, expect, test } from "vitest"
-import { readFileSync } from "node:fs"
-import { SenpiAdapter, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
+import { afterEach, describe, expect, test, vi } from "vitest"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { SenpiAdapter, isSessionReopenableError, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
 import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
+import { ApiError } from "../src/api/http"
 
 const FIXTURES = new URL("./fixtures/protocol/", import.meta.url).pathname
 
@@ -310,19 +314,29 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(fake.calls.some((c) => c.method === "abort")).toBe(true)
   })
 
-  test("无效 cursor（引擎 Entry not found）降级全量返回", async () => {
+  test("无效 cursor（引擎 Entry not found）上抛 cursor_invalid，不再静默降级全量（任务 5）", async () => {
     const fake = new FakeRpcClient()
     const rawGetEntries = fake.getEntries.bind(fake)
+    // 覆写后 fake.calls 不再自动记录：本地计数器作引擎调用探针
+    let engineCalls = 0
     fake.getEntries = async (since?: string) => {
+      engineCalls++
       if (since) throw new Error("Entry not found: stale-cursor")
-      return rawGetEntries()
+      return rawGetEntries(since)
     }
     const adapter = makeAdapter(fake)
     await adapter.start()
     await adapter.openSession({ thinkingLevel: "low" })
-    const page = await adapter.messages("stale-cursor")
-    expect(page.entries.length).toBe(sampleEntries.length)
-    expect(page.cursor).toBe("b2")
+    let err: unknown
+    try {
+      await adapter.messages("stale-cursor")
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(EngineAdapterError)
+    expect((err as EngineAdapterError).code).toBe("cursor_invalid")
+    // 降级全量路径已删除：首查即上抛，无第二次调用（不触发无参全量）
+    expect(engineCalls).toBe(1)
   })
 
   test("无活跃会话时 prompt/messages 报 no_active_session", async () => {
@@ -598,5 +612,294 @@ describe("SenpiAdapter unknown_session 自动重开重试", () => {
     expect(b.disposition).toBe("started")
     // 两次并发失败只触发一次 open_session 重开
     expect(fake.calls.filter((c) => c.method === "open_session").length).toBe(2) // 初始 + 一次重开
+  })
+})
+
+describe("isSessionReopenableError 三码全等精确匹配（2026-11-06 task-1）", () => {
+  test("三码经 message/errorCode/code 任一字段命中", () => {
+    expect(isSessionReopenableError(new Error("unknown_session"))).toBe(true)
+    expect(isSessionReopenableError(Object.assign(new Error("x"), { errorCode: "session_closing" }))).toBe(true)
+    expect(isSessionReopenableError(Object.assign(new Error("x"), { code: "no_active_session" }))).toBe(true)
+    expect(isSessionReopenableError("no_active_session")).toBe(true)
+  })
+
+  test("非三码与非全等形态一律不命中（含子串/未知码/非错误对象）", () => {
+    // 子串宽匹配禁令：非全等不命中
+    expect(isSessionReopenableError(new Error("prefix unknown_session suffix"))).toBe(false)
+    expect(isSessionReopenableError("no_active_session_extra")).toBe(false)
+    expect(isSessionReopenableError({ code: "xunknown_session" })).toBe(false)
+    // 拒绝码不扩集
+    expect(isSessionReopenableError({ code: "timeout" })).toBe(false)
+    expect(isSessionReopenableError({ code: "open_failed" })).toBe(false)
+    expect(isSessionReopenableError({ errorCode: "session_path_in_use" })).toBe(false)
+    // 鸭子判定边界：null/undefined/空对象/普通值
+    expect(isSessionReopenableError(null)).toBe(false)
+    expect(isSessionReopenableError(undefined)).toBe(false)
+    expect(isSessionReopenableError({})).toBe(false)
+    expect(isSessionReopenableError(42)).toBe(false)
+  })
+})
+
+/** session_path_in_use 有界退避 + 503 映射（任务 10，t9 诊断）：重开面（rpcOp 兑底
+ *  重开）撞引擎 closing 条目 attach 即拒 → 250ms→500ms→1s 三档有界退避；退避内
+ *  排空 → op 成功；持久占位 → 结构化 503 session_reopen_failed（非裸 500）。
+ *  全部假时钟推进（禁真实睡眠）；非重开面/非 path_in_use 码行为不变。 */
+describe("SenpiAdapter 重开撞 session_path_in_use 有界退避（任务 10）", () => {
+  /** 可编程 open 撞路 + op 可编程失败的 fake（path_in_use 用引擎
+   *  RpcSessionRegistryError 实录形态：message 同名的普通 Error） */
+  class ReopenBackoffClient extends FakeRpcClient {
+    /** 连续撞 session_path_in_use 的 open 次数（按调用顺序消费；Infinity=持久占位） */
+    pathInUseOpens = 0
+    /** open 返回缺 state 形态（adapter 报 open_failed，非 path_in_use 码对照组） */
+    openBrokenResponse = false
+    openCalls = 0
+    promptAttempts = 0
+    usageAttempts = 0
+    /** op 首败形态（触发 rpcOp 兑底重开）：次数 + 错误 */
+    opFailWith: Error | null = null
+    opFailTimes = 0
+    override async openSession(options: { sessionPath?: string }): Promise<{ sessionId: string; state: { sessionId?: string; sessionFile?: string } }> {
+      this.openCalls++
+      if (this.pathInUseOpens > 0) {
+        this.pathInUseOpens--
+        throw new Error("session_path_in_use")
+      }
+      if (this.openBrokenResponse) return { sessionId: "rpc-1", state: {} }
+      return super.openSession(options)
+    }
+    override async prompt(message: string, options?: { thinkingLevel?: string }): Promise<unknown> {
+      this.promptAttempts++
+      if (this.opFailTimes > 0 && this.opFailWith) {
+        this.opFailTimes--
+        throw this.opFailWith
+      }
+      return super.prompt(message, options)
+    }
+    override async getSessionStats(): Promise<Record<string, unknown>> {
+      this.usageAttempts++
+      if (this.opFailTimes > 0 && this.opFailWith) {
+        this.opFailTimes--
+        throw this.opFailWith
+      }
+      return super.getSessionStats()
+    }
+  }
+
+  /** 微任务链冲刷（假时钟下无 timer 可等时的确定性推进：rpcOp catch → 重开 →
+   *  open 首撞全在微任务上，无需真实时间） */
+  async function flushMicrotasks(turns = 30): Promise<void> {
+    for (let i = 0; i < turns; i++) await Promise.resolve()
+  }
+
+  async function setup(fake: ReopenBackoffClient) {
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: "/tmp/dur-piu.jsonl" })
+    expect(fake.openCalls).toBe(1) // setup 首开 1 次
+    return adapter
+  }
+
+  test("重开首撞 path_in_use：退避恰 250ms 后第二次 open 成功，op 恰重试一次", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.pathInUseOpens = 1 // 重开首撞（open#2）即拒；退避后 open#3 成功
+    vi.useFakeTimers()
+    try {
+      const receiptPromise = adapter.prompt({ text: "退避后应成功" })
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(2) // 重开首撞已落定，退避睡眠挂起
+      await vi.advanceTimersByTimeAsync(249)
+      expect(fake.openCalls).toBe(2) // 未满 250ms：不开第二次
+      await vi.advanceTimersByTimeAsync(1)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(3) // 恰满 250ms：第二次 open 成功
+      const receipt = await receiptPromise
+      expect(receipt.disposition).toBe("started")
+      expect(fake.promptAttempts).toBe(2) // op 恰好重试一次
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("持久占位：250/500/1000 三档退避逐档耗尽 → 503 session_reopen_failed 结构化体（读面 usage 同覆盖）", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.pathInUseOpens = Number.POSITIVE_INFINITY
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.usage().then(
+        () => {
+          throw new Error("应当 503 拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(2) // 重开首撞（t=0）
+      await vi.advanceTimersByTimeAsync(250)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(3) // 第 1 档 250ms 后再撞
+      await vi.advanceTimersByTimeAsync(500)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(4) // 第 2 档 500ms 后再撞
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushMicrotasks()
+      expect(fake.openCalls).toBe(5) // 第 3 档 1000ms 后再撞 → 耗尽
+      const err = (await errPromise) as ApiError
+      expect(err).toBeInstanceOf(ApiError)
+      expect(err.status).toBe(503)
+      expect(err.code).toBe("session_reopen_failed")
+      expect(err.message).toContain("会话重开失败")
+      expect(fake.usageAttempts).toBe(1) // 重开失败：op 不重试
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("非重开面（首开）撞 path_in_use：不退避不映射，原样上抛", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.pathInUseOpens = 1
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.openSession({ sessionPath: "/tmp/dur-first-open.jsonl" }).then(
+        () => {
+          throw new Error("应当原样拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000) // 若误退避，此处会续开（计数可检出）
+      const err = await errPromise
+      expect(err).not.toBeInstanceOf(ApiError)
+      expect((err as Error).message).toBe("session_path_in_use")
+      expect(fake.openCalls).toBe(1) // 恰一次 open，无退避重试
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test("重开撞 open_failed（非 path_in_use 码）：不退避不吞不换错，原样上抛", async () => {
+    const fake = new ReopenBackoffClient()
+    fake.opFailWith = new Error("session_closing")
+    fake.opFailTimes = 1
+    const adapter = await setup(fake)
+    fake.openBrokenResponse = true // 重开 open 响应缺 state → open_failed
+    vi.useFakeTimers()
+    try {
+      const errPromise = adapter.prompt({ text: "x" }).then(
+        () => {
+          throw new Error("应当原样拒绝")
+        },
+        (e: unknown) => e,
+      )
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000) // open_failed 不在退避判据：无续开
+      const err = await errPromise
+      expect(err).toBeInstanceOf(EngineAdapterError)
+      expect(err).not.toBeInstanceOf(ApiError)
+      expect((err as EngineAdapterError).code).toBe("open_failed")
+      expect(fake.openCalls).toBe(2) // setup 1 + 重开 1，无退避
+      expect(fake.promptAttempts).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+
+  })
+})
+
+/** todoState 磁盘直读（任务 5 / A-2）：按窗反扫命中 senpi.todo-state 即停，
+ *  纯看不占引擎；会话文件不在（未落盘/别名）回退引擎分页读（旧语义等价）。 */
+describe("SenpiAdapter todoState 磁盘直读", () => {
+  const tempDirs: string[] = []
+  function mkTempDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "t5-todo-"))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  /** 造会话 jsonl：header + fixture 条目（含多条 senpi.todo-state）+ 可选尾部噪声 */
+  function makeTodoFile(tailNoiseCount = 0): string {
+    const dir = mkTempDir()
+    const path = join(dir, "s.jsonl")
+    const lines = [JSON.stringify({ type: "session", version: 3, id: "hdr-todo", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/p" })]
+    for (const e of entriesFixture) lines.push(JSON.stringify(e))
+    for (let i = 0; i < tailNoiseCount; i++) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `noise${String(i).padStart(4, "0")}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: [{ type: "text", text: `n${i}` }] },
+        }),
+      )
+    }
+    writeFileSync(path, lines.join("\n") + "\n")
+    return path
+  }
+
+  test("磁盘反扫命中最新 senpi.todo-state（与旧引擎读值等价），零 get_entries 调用", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: makeTodoFile() })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    // 引擎零参与（纯看不拉引擎）
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  test("todo 条目在窗外更早处（噪声 > PAGE_LIMIT）：按窗续扫仍命中，仍零引擎调用", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    // 300 条尾部噪声 > 216 单窗：首窗全噪声无命中，须续窗才扫到 fixture 内 todo 条目
+    await adapter.openSession({ sessionPath: makeTodoFile(300) })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  test("会话文件不在（未落盘/别名）：回退引擎读，行为与旧实现等价", async () => {
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: join(mkTempDir(), "missing.jsonl") })
+    const todo = await adapter.todoState()
+    expect(todo?.phases[0]!.tasks.map((t) => t.status)).toEqual(["abandoned", "abandoned"])
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(true)
+  })
+
+  test("磁盘文件无任何 todo 条目：扫尽文件头返回 null，不撞引擎", async () => {
+    const dir = mkTempDir()
+    const path = join(dir, "s.jsonl")
+    const lines = [JSON.stringify({ type: "session", version: 3, id: "hdr-nt", timestamp: "t", cwd: "/p" })]
+    for (let i = 0; i < 3; i++) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `m${i}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: [{ type: "text", text: "hi" }] },
+        }),
+      )
+    }
+    writeFileSync(path, lines.join("\n") + "\n")
+    const fake = new FakeRpcClient()
+    const adapter = makeAdapter(fake)
+    await adapter.start()
+    await adapter.openSession({ sessionPath: path })
+    expect(await adapter.todoState()).toBeNull()
+    expect(fake.calls.some((c) => c.method === "get_entries")).toBe(false)
+  })
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 })

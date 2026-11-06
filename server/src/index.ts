@@ -52,6 +52,7 @@ import { createTipsRoutes, type TipsRouteDeps } from "./api/routes-tips";
 import { createExtensionsRoutes } from "./api/routes-extensions";
 import { resolveEngineCli } from "./api/extensions-store";
 import { attachmentsRoot, purgeStaleAttachments } from "./api/attachments";
+import { bootGitDiagnostics, runRuntimeRetention } from "./lib/runtime-retention";
 import { TrafficMeter, trafficMiddleware, createTrafficRoutes } from "./api/traffic";
 
 const auth = createAuth(DATA_DIR, resolvePassword(DATA_DIR));
@@ -64,6 +65,13 @@ const meta = openMetaDb({ path: metaDbPath() });
 // 同项目的合并读/迁移/PATCH 写共用同一条 config-store 写链）
 const configs = openConfigStore();
 const projectConfigs = createProjectConfigStores(configs);
+// 任务 7（C4-B）第四判据数据面（同 sessionBackgroundRunning 注入先例）：排队工作
+// 永不回收。数据源 = wire queue_update 帧（引擎整队变动必发、清空也发，
+// ordered/steering/followUp 三列全空 = 无排队；agent-session.d.ts 实证形态）。
+// 组合根订阅 manager engine_event 维护会话粒度集合后注入同步谓词；引擎退出
+// ready（回收/崩溃/停止）即清键，防陈旧键永久卡死同会话后续引擎的重拉回收
+// （换代重开会话时引擎 restore 会重发 queue_update，空队自然解锁）。
+const queuedWorkSessions = new Set<string>();
 const manager = new EngineProcessManager({
   // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
   agentDir: agentDir(),
@@ -84,6 +92,8 @@ const manager = new EngineProcessManager({
   // 第四态同源同一实现（jsonl 探测半边；内存 backgroundTaskLedger 是 api 层状态，
   // 按计划不取）。mtime+size 指纹缓存摊销，回收判定读到的是当前落盘态非快照。
   sessionBackgroundRunning,
+  // 任务 7 第四判据：排队中视为忙不回收（集合由下方 detachQueueTracking 订阅维护）
+  sessionQueuedWork: (sessionPath) => queuedWorkSessions.has(sessionPath),
 });
 // 2026-11-04：空闲回收时长配置化（meta_kv engine.idleTimeoutMinutes：分钟数或 "never"；
 // 缺省 7 天见 process-manager DEFAULTS）。启动时读一次，设置页改档经
@@ -99,6 +109,22 @@ const applyIdleTimeoutFromKv = (): void => {
   if (Number.isFinite(minutes) && minutes > 0) manager.setIdleTimeoutMs(minutes * 60_000);
 };
 applyIdleTimeoutFromKv();
+// 任务 7（C4-B）灰度档：meta_kv engine.activityWindowMinutes（分钟数或 "never"；
+// 缺省 5 分钟）。"never"/0 = 关闭探活窗档（未发消息引擎回落 idleTimeoutMs 梯子，
+// 即本批前行为）；engine.idleTimeoutMinutes="never" 仍是总逃生口（两档全停）。
+// 设置写入后同钩子即时生效（下方 onSettingsChanged 回调）。改档仅影响后续判定，
+// 已拉起引擎的挂起定时器由 setActivityWindowMs 重排。
+const applyActivityWindowFromKv = (): void => {
+  const raw = meta.getKv("engine.activityWindowMinutes");
+  if (raw === null) return;
+  if (raw === "never") {
+    manager.setActivityWindowMs(0);
+    return;
+  }
+  const minutes = Number(raw);
+  if (Number.isFinite(minutes) && minutes >= 0) manager.setActivityWindowMs(minutes * 60_000);
+};
+applyActivityWindowFromKv();
 // 标题生成服务（W2 todo 8）：jsonl 直读取数 + 独立 HTTP 调模型，零引擎会话污染。
 // resolveSessionRow 不触发引擎 spawn（活跃态/store 直查/别名三级，纯读）。
 const titleGen = new TitleGenService({
@@ -157,6 +183,22 @@ setEventBus(eventBus, {
   // 不误清兄弟会话 replay
   isEngineRunning: (projectPath) =>
     manager.getAllStatus().some((s) => s.projectPath === projectPath && s.state === "ready"),
+});
+
+// 任务 7 第四判据维护面：queue_update 帧更新会话排队集合（非空入集/全空出集）；
+// 引擎退出 ready 清键（state_changed 全部退出路径覆盖：崩溃退 backoff/回收停
+// stopping→stopped/unavailable），关停时随其余订阅一并退订
+const detachQueueTracking = manager.onEvent((e) => {
+  if (e.type === "engine_event") {
+    const wire = e.event as { type?: string; ordered?: unknown[]; steering?: unknown[]; followUp?: unknown[] };
+    if (wire?.type !== "queue_update") return;
+    const queued =
+      (wire.ordered?.length ?? 0) > 0 || (wire.steering?.length ?? 0) > 0 || (wire.followUp?.length ?? 0) > 0;
+    if (queued) queuedWorkSessions.add(e.sessionPath);
+    else queuedWorkSessions.delete(e.sessionPath);
+    return;
+  }
+  if (e.type === "state_changed" && e.to !== "ready") queuedWorkSessions.delete(e.sessionPath);
 });
 
 // 权限失效墓碑（W1 #4）：引擎进程死亡/回收/显式停止后向事件桥发一条
@@ -267,6 +309,7 @@ const deps = {
   // 设置写入后回调：引擎空闲时长改档即时生效（不重启）
   onSettingsChanged: (keys: string[]) => {
     if (keys.includes("engine.idleTimeoutMinutes")) applyIdleTimeoutFromKv();
+    if (keys.includes("engine.activityWindowMinutes")) applyActivityWindowFromKv();
   },
   // 会话删除 → 该会话 pending 定时任务标 invalid（abandoned 语义，任务 21c）
   schedule: {
@@ -456,6 +499,7 @@ async function shutdown(): Promise<void> {
   detachEventBus();
   detachTaskLedger();
   detachTombstones();
+  detachQueueTracking();
   try {
     await scheduleSupervisor?.stop();
   } catch {
@@ -509,6 +553,28 @@ try {
       if (purged > 0) console.log(`附件临时区清理：${purged} 个过期文件（>48h）`);
     } catch (err) {
       console.warn(`附件临时区清理失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    // 启动 git 诊断（engine-open-read-batch 任务 8）：同样监听就绪后一次性。非 git
+    // 目录与 git 缺失静默降级；版本 <2.39 打 WARN——2026-11-05 实录死锁链：git
+    // 2.30.2 不支持 --diff-merges=first-parent → omo memory 扩展反复 stall →
+    // session worker 隔离 → 引擎宿主连环重启（notes/facts/
+    // senpi-webui-active-session-interrupt-2026-11-05.md）
+    try {
+      bootGitDiagnostics();
+    } catch (err) {
+      console.warn(`启动 git 诊断失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    // runtime 保留 30d（engine-open-read-batch 任务 8）：只清 webui 已登记项目派生
+    // 的引擎 runtime（identity 派生与 routes-memory 同源），DRY-RUN 默认仅日志输出
+    // 可删清单；meta_kv runtime.retentionEnabled="true" 才实删（realpath 守卫
+    // 限制删除不逃逸 runtime 目录，详见 lib/runtime-retention.ts 头注释）
+    try {
+      runRuntimeRetention({
+        projects: meta.listProjectMeta().map((p) => p.projectPath),
+        enabled: meta.getKv("runtime.retentionEnabled") === "true",
+      });
+    } catch (err) {
+      console.warn(`runtime 保留策略执行失败：${err instanceof Error ? err.message : String(err)}`);
     }
   };
   // node-server 的 serve() 返回时可能已在监听（事件已发过），双保险挂接

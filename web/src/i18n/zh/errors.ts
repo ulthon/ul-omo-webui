@@ -1,7 +1,7 @@
 // errors 域词条（zh-CN）：server ApiError code 命中映射后的客户端改写文案（任务11）。
 // 简短自然中文，语义对齐 server 各构造点的原 message；服务端原文不经此域——
 // 未命中映射的 code 一律回退 err.message 原文透传（见 ../errors.ts 的 apiErrorMessage）。
-// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（107 个，tests/i18n-errors.test.ts 锁定）。
+// 键集与 ../errors.ts 的 ERROR_CODE_KEYS 一一对应（108 个，tests/i18n-errors.test.ts 锁定）。
 export const errors = {
   // 引擎与回合状态
   engineNotReady: "引擎未就绪，请稍后重试",
@@ -15,6 +15,7 @@ export const errors = {
   cliMissing: "未找到 omo CLI：凭证测试不可用（请用引擎 CLI 安装）",
   sessionNotFound: "会话不存在",
   sessionNotPersisted: "会话尚未落盘（空会话）",
+  sessionReopenFailed: "引擎会话重开失败，请稍后重试",
   tagConflict: "标签定义已被其他端修改，请刷新后重试",
   tagMountConflict: "标签挂载已被其他端修改，请刷新后重试",
   snippetConflict: "常用语已被其他端修改，请刷新后重试",

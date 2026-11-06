@@ -18,6 +18,7 @@ import { dirname, join } from "node:path"
 import type { EngineProcessManager } from "../src/engine/process-manager"
 import { EngineRuntimeRegistry } from "../src/api/engine-runtime"
 import { encodeCwdToSessionDirName } from "../src/adapter/senpi-adapter"
+import { ApiError } from "../src/api/http"
 
 const PROJECT = "/tmp/opencode/rt-reopen-proj"
 const DURABLE_ID = "01c33333-0000-7000-8000-000000000007"
@@ -42,6 +43,12 @@ class FakeReopenRpc {
   private holdResolve: (() => void) | null = null
   openShouldFail = false
   persistOnOpen = false
+  setModelCalls = 0
+  setModelFailCode: string | null = null
+  /** setModelFailCode 生效次数（按调用序前 N 次抛，之后成功——重试成功形态用） */
+  setModelFailTimes = 0
+  /** 连续撞 session_path_in_use 的 open 次数（Infinity=持久占位，任务 10） */
+  pathInUseOpens = 0
   private routing = 1
   private lastOpenPath = ""
 
@@ -62,11 +69,25 @@ class FakeReopenRpc {
   async send(): Promise<{ success: boolean }> {
     return { success: true }
   }
+  async setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+    this.setModelCalls += 1
+    if (this.setModelFailCode !== null && this.setModelCalls <= this.setModelFailTimes) {
+      const e = new Error(this.setModelFailCode)
+      ;(e as unknown as { code: string }).code = this.setModelFailCode
+      throw e
+    }
+    return { provider, id: modelId }
+  }
   async openSession(options: { sessionPath?: string }): Promise<{
     sessionId: string
     state: { sessionId: string; sessionFile?: string }
   }> {
     this.openCalls += 1
+    // 任务 10：closing 条目持久占路形态（引擎 attach 即拒 session_path_in_use）
+    if (this.pathInUseOpens > 0) {
+      this.pathInUseOpens -= 1
+      throw new Error("session_path_in_use")
+    }
     if (this.openShouldFail) {
       return { sessionId: "", state: { sessionId: "", sessionFile: undefined } }
     }
@@ -126,6 +147,8 @@ function makeRegistry(rpc: FakeReopenRpc, agentDir: string): EngineRuntimeRegist
     onEvent: (_listener: (event: unknown) => void) => () => {},
     stop: async () => {},
     stopAll: async () => {},
+    reportSessionActive: (_sessionPath: string, _sessionId: string): void => {},
+    markUserActivity: (_sessionPath: string): void => {},
   } as unknown as EngineProcessManager
   return new EngineRuntimeRegistry(fakeManager, {
     listProjects: () => [PROJECT],
@@ -207,6 +230,47 @@ describe("runTraced no_active_session 兜底重开（2026-11-06 02:53 事故回�
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  test("forceOpen 重开撞 path_in_use 持续占位 → 503 session_reopen_failed 结构化体（任务 10 通用读面）", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.openCalls).toBe(1)
+
+      // 事故形态注入：绑定丢失（active=null）+ 引擎 closing 条目持久占路（t9 W5/W7/W8）
+      rpc.pathInUseOpens = Number.POSITIVE_INFINITY
+      const st = boundStateOf(registry, sessionPath)
+      st!.adapter.active = null
+
+      vi.useFakeTimers()
+      let err: unknown
+      try {
+        const errPromise = registry.messages(DURABLE_ID).then(
+          () => {
+            throw new Error("应当 503 拒绝")
+          },
+          (e: unknown) => e,
+        )
+        // 三档退避（250+500+1000）全在假时钟内推进（禁真实睡眠）。ensure 解析链在
+        // 真实 fs I/O 宏任务上，首个退避睡眠的调度可能晚于首轮推进：步进推进至重开
+        // 四撞全部落定（openCalls=5），上限 40 步（=10s 假时钟）防失控
+        for (let i = 0; i < 40 && rpc.openCalls < 5; i++) {
+          await vi.advanceTimersByTimeAsync(250)
+        }
+        err = await errPromise
+      } finally {
+        vi.useRealTimers()
+      }
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).status).toBe(503)
+      expect((err as ApiError).code).toBe("session_reopen_failed")
+      expect((err as ApiError).message).toContain("会话重开失败")
+      // 有界：首开 1 + 重开 4（首撞 + 三档退避），无重试风暴
+      expect(rpc.openCalls).toBe(5)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("ensure 在途合并（2026-11-06 02:52:50 五路 in-flight 竞门事故回归）", () => {
@@ -248,6 +312,86 @@ describe("ensure 在途合并（2026-11-06 02:52:50 五路 in-flight 竞门事�
       expect(rpcB.setClientInfoEntered).toBe(1)
       expect(rpcB.openCalls).toBe(1)
       expect(rtB?.engines.size).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("switchModel 兜底重开重试（2026-11-06 04:09 prompt 三连 500 回归）", () => {
+  test("active=null + 带 model 的 prompt → 重开+重试后成功，openCalls 恰 +1", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.openCalls).toBe(1)
+      const st = boundStateOf(registry, sessionPath)
+      expect(st).toBeDefined()
+      // 注入绑定丢失 + setModel 首抛 unknown_session（mock prompt 免回合生命周期）
+      st!.adapter.active = null
+      rpc.setModelFailCode = "unknown_session"
+      rpc.setModelFailTimes = 1
+      ;(st as unknown as { adapter: { prompt: () => Promise<{ disposition: string }> } }).adapter.prompt = async () => ({
+        disposition: "handled",
+      })
+
+      const r = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" })
+      expect(r.appliedModel).toBe("prov/m")
+      // 恰 +1：首开 1 次 + switchModel 兜底重开 1 次，无风暴
+      expect(rpc.openCalls).toBe(2)
+      // 重试恰一次：首抛 1 次 + 重试成功 1 次
+      expect(rpc.setModelCalls).toBe(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("switchModel 重开失败 → 503 session_reopen_failed 结构化上抛（非裸 500）", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      rpc.setModelFailCode = "unknown_session"
+      rpc.setModelFailTimes = 1
+      rpc.openShouldFail = true
+      const st = boundStateOf(registry, sessionPath)
+      st!.adapter.active = null
+
+      const err = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" }).then(
+        () => {
+          throw new Error("应当拒绝，不应成功")
+        },
+        (e: unknown) => e as { status?: number; code?: string; message?: string },
+      )
+      expect(err.status).toBe(503)
+      expect(err.code).toBe("session_reopen_failed")
+      expect(err.message).toContain("重开失败")
+      // 重开失败后不重试 setModel；open 为首开 1 次 + 失败重开 1 次
+      expect(rpc.setModelCalls).toBe(1)
+      expect(rpc.openCalls).toBe(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("未知 errorCode（session_path_in_use）不触发重开（malformed-input 对抗）", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.openCalls).toBe(1)
+      rpc.setModelFailCode = "session_path_in_use"
+      rpc.setModelFailTimes = 1
+      const st = boundStateOf(registry, sessionPath)
+      st!.adapter.active = null
+
+      const err = await registry.prompt(DURABLE_ID, { text: "hi", model: "prov/m" }).then(
+        () => {
+          throw new Error("应当拒绝，不应成功")
+        },
+        (e: unknown) => e as { code?: string },
+      )
+      expect(err.code).toBe("session_path_in_use")
+      // 非三码错误：零重开零重试，错误原样上抛
+      expect(rpc.openCalls).toBe(1)
+      expect(rpc.setModelCalls).toBe(1)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
