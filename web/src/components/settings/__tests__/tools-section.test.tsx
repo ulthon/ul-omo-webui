@@ -89,8 +89,7 @@ function click(el: Element) {
 
 function projectState(excludedTools: string[] | null = null) {
   return {
-    currentProject: PROJECT,
-    projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null, excludedTools }],
+    projects: [{ projectPath: PROJECT, preferredModel: null, excludedTools }],
   };
 }
 
@@ -153,7 +152,7 @@ describe("ToolsSection（r10 todo 17）", () => {
 
   test("(d) 无当前项目：提示且无开关列表", async () => {
     catalogFn.mockReset().mockResolvedValue(CATALOG);
-    useUiStore.setState({ currentProject: null, projects: [] });
+    useUiStore.setState({ projects: [] });
     const { container } = mount(createElement(ToolsSection, { projectPath: null }));
     await act(async () => {});
     expect(container.querySelector('[data-testid^="tools-toggle-"]')).toBeNull();

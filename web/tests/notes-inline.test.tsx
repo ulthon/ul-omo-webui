@@ -17,7 +17,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 
 const { NotesView } = await import("@/components/notes/notes-view");
-// 会话根架构 W1 t3：项目源改为选中会话派生（useActiveProject），播种 sessions store 替代 ui.currentProject
+// 会话根架构 W1 t3：项目源改为选中会话派生（useActiveProject），播种 sessions store
 const { useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;

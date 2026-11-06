@@ -78,7 +78,7 @@ const BASE_ROW = {
   active: false,
 };
 
-useUiStore.setState({ currentProject: "/tmp/p", projects: [{ projectPath: "/tmp/p", preferredModel: null, lastOpenedAt: null }] });
+useUiStore.setState({ projects: [{ projectPath: "/tmp/p", preferredModel: null }] });
 useSessionsStore.setState({ byProject: { "/tmp/p": [] }, archived: "false", loading: false });
 
 function renderList() {

@@ -113,7 +113,7 @@ beforeEach(() => {
     allMode: false,
   });
   useEnginesStore.getState().resetEngines();
-  // W1 t5 审计：概览项目源已由上方 sessions 播种派生（selectedId），ui.currentProject 惰性复位行退役
+  // W1 t5 审计 + W3 任务 12 收口：概览项目源已由上方 sessions 播种派生（selectedId），全局字段已退役
   api.getEngineMetrics.mockReset().mockResolvedValue({ engines: [] });
   api.stopEngine.mockReset().mockResolvedValue({ ok: true });
   api.getPlanProgress.mockReset().mockResolvedValue({});

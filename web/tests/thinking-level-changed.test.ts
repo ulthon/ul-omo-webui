@@ -42,8 +42,7 @@ beforeEach(() => {
   }) as typeof fetch;
   useUiStore.setState({
     selectedThinkingLevel: "low",
-    currentProject: "/p1",
-    projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: null }],
+    projects: [{ projectPath: "/p1", preferredModel: null }],
     toast: null,
   });
   useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [SELECTED_ROW] } });

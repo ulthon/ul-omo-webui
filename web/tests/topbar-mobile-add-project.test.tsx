@@ -78,7 +78,7 @@ async function unmountRoot(root: ReturnType<typeof createRoot>): Promise<void> {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ projects: [], currentProject: null });
+  useUiStore.setState({ projects: [] });
   useSessionsStore.setState({ byProject: {}, selectedId: null });
   stubMatchMedia(true);
 });
@@ -92,7 +92,7 @@ afterEach(() => {
 describe("任务13 添加项目入口双端就近", () => {
   test("侧栏列表双行入口：手机档分组区头部 + 桌面档分组列表尾部，点击后弹窗打开", async () => {
     useUiStore.setState({
-      projects: [{ projectPath: "/p1", preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" }],
+      projects: [{ projectPath: "/p1", preferredModel: null }],
     });
     const container = await mountSessionList();
     const mobile = container.querySelector('[data-testid="sidebar-add-project-mobile"]') as HTMLElement | null;

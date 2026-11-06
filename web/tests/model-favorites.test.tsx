@@ -80,7 +80,7 @@ async function type(root: ParentNode, value: string): Promise<void> {
 
 beforeEach(() => {
   // W1 t5 审计：ModelChip 只读模型相关 ui 字段，不读项目（发送域已派生化），
-  // 旧布景 currentProject/projects 不再播种
+  // 旧布景（全局项目字段）不再播种
   useUiStore.setState({
     models: [],
     modelsLoaded: true,

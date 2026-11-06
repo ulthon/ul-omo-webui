@@ -46,7 +46,6 @@ function project(path: string, extra?: Partial<{ permissionPreset: string | null
   return {
     projectPath: path,
     preferredModel: null,
-    lastOpenedAt: "2026-01-01T00:00:00.000Z",
     ...extra,
   };
 }
@@ -102,7 +101,6 @@ function Probe() {
 beforeEach(() => {
   useUiStore.setState({
     projects: [project("/p1", { permissionPreset: null })],
-    currentProject: "/p1",
     settingsPageOpen: false,
     // settings-page-nav：显式归位默认组（zustand 单例跨用例，前例切组不污染）
     settingsGroup: "project",
@@ -245,7 +243,6 @@ describe("设置独立全屏页（弹层退役）", () => {
 
     useUiStore.setState({
       projects: [project("/p1", { permissionPreset: null }), project("/p2", { permissionPreset: "read-only" })],
-      currentProject: "/p1",
       settingsPageOpen: false,
       settingsGroup: "project",
       toast: null,

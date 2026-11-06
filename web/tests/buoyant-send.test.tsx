@@ -95,7 +95,7 @@ beforeEach(() => {
   resetDispatchState();
   useMessagesStore.setState({ bySession: {} });
   useQueueStore.setState({ bySession: {} });
-  // W1 t5 审计：项目已由 seedList 播种派生（byProject+selectedId），ui.currentProject 退役不播种
+  // W1 t5 审计：项目已由 seedList 播种派生（byProject+selectedId），全局字段已退役不播种
   useUiStore.setState({ toast: null });
   seedList();
 });

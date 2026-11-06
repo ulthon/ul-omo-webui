@@ -2,8 +2,8 @@
 // - groupOrder 分组排序（当前项目组最前，其余按各组最新 modified 降序）
 // - recentTop 最近 8 条选取（跨项目按 modified 降序，置顶自然参与）
 // - 折叠记忆（readCollapsed/writeCollapsed 回环 + isGroupExpanded 优先级）
-// （跨项目点击判定 crossProjectDecision 已随会话根架构 W2 任务 6 退役：决策内联进
-//  sessions store 的 select，调用点只调内聚 select）
+// （跨项目点击判定已随会话根架构 W2 任务 6 内联进 sessions store 的 select，
+//  调用点只调内聚 select）
 import { afterEach, describe, expect, test } from "vitest";
 import type { SessionListItem } from "@/lib/api";
 import {
@@ -112,8 +112,8 @@ describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
     expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
     // 当前项目组置顶规则不动
     expect(groupOrder(["/a", "/b", "/c"], byProject, "/b", { mode: "added", meta })).toEqual(["/b", "/c", "/a"]);
-    // 存量行：createdAt 全部同为迁移时刻 → 保持传入稳定序（W3 任务 11：lastOpenedAt
-    // 退化序已随 openProject 链退役，createdAt 是唯一排序依据）
+    // 存量行：createdAt 全部同为迁移时刻 → 保持传入稳定序（W3 任务 11：打开链路退化序
+    // 已退役，createdAt 是唯一排序依据）
     const legacy = {
       "/x": { createdAt: "2026-03-01T00:00:00.000Z" },
       "/y": { createdAt: "2026-03-01T00:00:00.000Z" },

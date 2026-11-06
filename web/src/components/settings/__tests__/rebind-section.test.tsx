@@ -100,7 +100,7 @@ const SCAN_FIXTURE = {
 
 describe("设置页入口（r10 todo 18）", () => {
   test("(a) SettingsPage 渲染含「导入旧目录会话」入口（输入框 + 扫描钮）", () => {
-    useUiStore.setState({ settingsGroup: "project", currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ settingsGroup: "project", projects: [{ projectPath: PROJECT, preferredModel: null }] });
     useSessionsStore.setState({ byProject: { [PROJECT]: [{ id: "s1" }] }, selectedId: "s1" });
     const html = renderToStaticMarkup(createElement(SettingsPage));
     expect(html).toContain('data-testid="rebind-old-path-input"');
@@ -109,7 +109,7 @@ describe("设置页入口（r10 todo 18）", () => {
   });
 
   test("(b) 无当前项目：提示先选项目，无输入框", () => {
-    useUiStore.setState({ currentProject: null, projects: [] });
+    useUiStore.setState({ projects: [] });
     const html = renderToStaticMarkup(createElement(RebindSection));
     expect(html).toContain('data-testid="rebind-need-project"');
     expect(html).not.toContain('data-testid="rebind-old-path-input"');
@@ -120,7 +120,7 @@ describe("扫描预览与导入重绑流程", () => {
   test("(c) 输入旧路径点扫描：调 scanRebindSessions(project, oldPath)，预览行与 alreadyBound 徽标渲染", async () => {
     scanFn.mockReset();
     scanFn.mockResolvedValue(SCAN_FIXTURE);
-    useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ projects: [{ projectPath: PROJECT, preferredModel: null }] });
     useSessionsStore.setState({ byProject: {}, archived: "false", loading: false });
 
     const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
@@ -157,7 +157,7 @@ describe("扫描预览与导入重绑流程", () => {
       skipped: [{ id: "sess-9", reason: "rebind_conflict", message: "同名" }],
     });
     const refreshSpy = vi.spyOn(useSessionsStore.getState(), "refreshSessions").mockResolvedValue(undefined);
-    useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ projects: [{ projectPath: PROJECT, preferredModel: null }] });
 
     const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "/data/projects/old-repo");
@@ -181,7 +181,7 @@ describe("扫描预览与导入重绑流程", () => {
     scanFn.mockReset();
     const { ApiError } = await import("@/lib/api");
     scanFn.mockRejectedValue(new ApiError(400, "invalid_old_path", "oldPath 必须是绝对路径：rel/path"));
-    useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ projects: [{ projectPath: PROJECT, preferredModel: null }] });
 
     const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "rel/path");
@@ -198,7 +198,7 @@ describe("扫描预览与导入重绑流程", () => {
   test("(f) 空清单：无会话目录提示，无导入钮", async () => {
     scanFn.mockReset();
     scanFn.mockResolvedValue({ project: PROJECT, oldPath: "/data/projects/none", totalFiles: 0, sessions: [] });
-    useUiStore.setState({ currentProject: PROJECT, projects: [{ projectPath: PROJECT, preferredModel: null, lastOpenedAt: null }] });
+    useUiStore.setState({ projects: [{ projectPath: PROJECT, preferredModel: null }] });
 
     const { container } = mount(createElement(RebindSection, { projectPath: PROJECT }));
     typeInto(container.querySelector('[data-testid="rebind-old-path-input"]'), "/data/projects/none");

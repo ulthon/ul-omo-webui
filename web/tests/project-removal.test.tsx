@@ -261,63 +261,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     });
   });
 
-  test("幽灵态截断（t10B 移除）：判定读选中会话派生项目——移除其所属项目清选中，移除无关项目不动", async () => {
-    // 全局项目字段故意与选中会话所属项目错开：证明判定不再读全局字段而读派生值
-    const calls: Array<{ path: string; method: string }> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      const method = init?.method ?? "GET";
-      calls.push({ path, method });
-      if (method === "DELETE" && path === "/api/projects") return okJson({ path: "/p1", removed: true });
-      if (method === "GET" && path === "/api/projects") return okJson({ projects: [project("/p2")] });
-      return okJson({ ok: true });
-    }) as typeof fetch;
-
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    // 相位一：选中 s1∈/p1，全局字段指 /p2；移除 /p1 → 选中清空（旧判定读全局字段不会清）
-    useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: "/p2", toast: null });
-    useSessionsStore.setState({
-      selectedId: "s1",
-      byProject: { "/p1": [session("s1", "/p1")], "/p2": [session("s2", "/p2")] },
-    });
-    await act(async () => {
-      root.render(createElement(ProjectManagementSection));
-    });
-    await act(async () => {
-      removeButtonOf(container, "/p1")?.click();
-    });
-    await act(async () => {
-      findButton(container, "确认移除")?.click();
-    });
-    await flush();
-    expect(useSessionsStore.getState().selectedId).toBeNull();
-
-    // 相位二：选中 s2∈/p2，全局字段指 /p1；移除无关项目 /p1 → 选中保持（旧判定会清）
-    await act(async () => {
-      useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: "/p1", toast: null });
-      useSessionsStore.setState({
-        selectedId: "s2",
-        byProject: { "/p1": [session("s1", "/p1")], "/p2": [session("s2", "/p2")] },
-      });
-    });
-    await act(async () => {
-      removeButtonOf(container, "/p1")?.click();
-    });
-    await act(async () => {
-      findButton(container, "确认移除")?.click();
-    });
-    await flush();
-    expect(useSessionsStore.getState().selectedId).toBe("s2");
-    expect(useUiStore.getState().projects.map((p) => p.projectPath)).toEqual(["/p2"]);
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
   test("隐藏守卫（t10B 判定，W3 任务 12 派生口径）：活动项目隐藏走确认弹层并清选中，无关项目直隐不动选中", async () => {
     const calls: Array<{ path: string; method: string }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

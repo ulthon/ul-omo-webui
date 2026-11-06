@@ -79,7 +79,7 @@ const BASE_ROW = {
   active: false,
 };
 
-useUiStore.setState({ currentProject: "/tmp/p", projects: [{ projectPath: "/tmp/p", preferredModel: null, preferredThinkingLevel: null, lastOpenedAt: null }] });
+useUiStore.setState({ projects: [{ projectPath: "/tmp/p", preferredModel: null, preferredThinkingLevel: null }] });
 // 工具条新建落点改选中会话派生（会话根架构 W2 任务 8）：布景补齐 selectedId+byProject
 // 反查链，派生项目=/tmp/p（全局项目字段仅作遗留态存在，新建链路不再读取）。
 // 挂载制 refreshSessions 会用 api.listSessions 聚合回包整替 byProject——mock 带回

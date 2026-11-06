@@ -65,7 +65,6 @@ beforeEach(() => {
     shortcutsHelpOpen: false,
     drawerOpen: false,
     toasts: [],
-    currentProject: null,
     projects: [],
   });
 });

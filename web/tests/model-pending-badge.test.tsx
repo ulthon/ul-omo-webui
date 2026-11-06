@@ -81,7 +81,7 @@ function el(root: ParentNode, testid: string): HTMLElement | null {
 
 beforeEach(() => {
   // W1 t5 审计：徽标判定只读 selectedModel/appliedModels，不读项目（发送域已派生化），
-  // 旧布景 currentProject/projects 不再播种
+  // 旧布景（全局项目字段）不再播种
   useUiStore.setState({
     models: [model()],
     modelsLoaded: true,

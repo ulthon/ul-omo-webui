@@ -1,5 +1,5 @@
 // 新会话默认模型回退链单测（docs08-r5 任务 2；W3 任务 11 起直测 loadProjectModels，
-// openProject 已随 bootstrap 空态化退役——项目偏好的先行置入由调用方承担：
+// 自动打开链路已随 bootstrap 空态化退役——项目偏好的先行置入由调用方承担：
 // session-list 新建会话 / sessions store select 内聚切换，此处模拟先行置入）：
 // - 回退链四情形：有项目偏好 / 无偏好有 defaults / 无 defaults 回落首项 / 列表空
 // - 思考档同链：项目偏好 > defaults.thinkingLevel > null
@@ -22,7 +22,7 @@ const MODELS = [
 const DEFAULTS = { provider: "zai-coding-cn", model: "glm-5.3-4k", thinkingLevel: "max" };
 
 function project(path: string, extra: Record<string, unknown> = {}) {
-  return { projectPath: path, preferredModel: null, lastOpenedAt: null, ...extra };
+  return { projectPath: path, preferredModel: null, ...extra };
 }
 
 /** 模型端点 mock（models 响应可注入）；未命中路由 500 */
@@ -47,7 +47,6 @@ function applyProjectPreference(path: string): void {
 
 beforeEach(() => {
   useUiStore.setState({
-    currentProject: null,
     projects: [],
     models: [],
     modelsLoaded: false,
