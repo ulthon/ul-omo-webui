@@ -213,6 +213,21 @@ function mergeAliasRows(
   return merged;
 }
 
+/** 选中会话 → 所属项目反查（会话根架构 W1 任务 1：自 memory-panel 私有实现上提，
+ * 全局唯一实现）。对 byProject 线性扫描（会话列表体量小，无索引必要）；每次调用
+ * 全新扫描、无记忆化——byProject 在渲染间可能被整替（setAllSessions / setSessions），
+ * 缓存反查结果会读到陈旧分组。未命中或 sessionId 为 null 返回 null。 */
+export function projectOfSession(
+  byProject: Record<string, SessionListItem[]>,
+  sessionId: string | null,
+): string | null {
+  if (sessionId === null) return null;
+  for (const [project, list] of Object.entries(byProject)) {
+    if (list.some((s) => s.id === sessionId)) return project;
+  }
+  return null;
+}
+
 export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
@@ -558,3 +573,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return changed ? { pendingIds, runStates, runStateAt } : s;
     }),
 }));
+
+/** 活跃项目派生（会话根架构 W1 任务 1）：当前选中会话 → 所属项目反查。
+ * 标准 zustand 选择器订阅 selectedId 与 byProject 引用，任一身份变化触发重渲染
+ * （派生本身是廉价线性扫描）；未选中或未命中返回 null，回退语义由调用方自理
+ * （过渡期右栏记忆页签回退 currentProject，后续批次移除）。 */
+export function useActiveProject(): string | null {
+  const selectedId = useSessionsStore((s) => s.selectedId);
+  const byProject = useSessionsStore((s) => s.byProject);
+  return projectOfSession(byProject, selectedId);
+}

@@ -8,8 +8,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystemDoc, type MemoryTelemetry } from "@/lib/api";
-import type { SessionListItem } from "@/lib/api";
-import { useSessionsStore } from "@/stores/sessions";
+import { projectOfSession, useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 import { formatRelativeTime, useT } from "@/i18n/i18n";
 
@@ -18,14 +17,6 @@ function projectLabel(project: string): string {
   const idx = project.lastIndexOf("/");
   const last = idx >= 0 ? project.slice(idx + 1) : project;
   return last === "" ? project : last;
-}
-
-/** 选中会话 → 所属项目反查（byProject 线性扫描；会话列表体量小，无索引必要） */
-function projectOfSession(byProject: Record<string, SessionListItem[]>, sessionId: string): string | null {
-  for (const [project, list] of Object.entries(byProject)) {
-    if (list.some((s) => s.id === sessionId)) return project;
-  }
-  return null;
 }
 
 function PanelMessage({
