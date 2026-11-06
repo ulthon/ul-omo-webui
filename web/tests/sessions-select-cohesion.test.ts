@@ -46,6 +46,8 @@ function makeSession(id: string, project: string): SessionListItem {
 /** /api/models 挂起响应桩：resolve 前请求悬置（窗口态可断言）；记录每次调用路径 */
 let pendingModels: { path: string; resolve: (payload: ModelsResponse) => void } | null = null;
 let listModelsCalls: string[] = [];
+/** 其余端点（含 /api/sessions 聚合）的通用回包体：默认空列表，竞态用例可编程注入行 */
+let genericPayload: Record<string, unknown> = {};
 
 function mockModelsFetch(): void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -60,7 +62,7 @@ function mockModelsFetch(): void {
         };
       });
     }
-    return new Response(JSON.stringify({ sessions: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(genericPayload), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
 }
 
@@ -98,6 +100,7 @@ function seedStores(opts: SeedOptions = {}): void {
 beforeEach(() => {
   pendingModels = null;
   listModelsCalls = [];
+  genericPayload = { sessions: [] };
 });
 
 afterEach(() => {
@@ -107,7 +110,7 @@ afterEach(() => {
     pendingModels = null;
   }
   globalThis.fetch = ORIGINAL_FETCH;
-  useSessionsStore.setState({ byProject: {}, appliedModels: {}, selectedId: null, aliasIds: {} });
+  useSessionsStore.setState({ byProject: {}, appliedModels: {}, selectedId: null, aliasIds: {}, allMode: false });
   useUiStore.setState({
     projects: [],
     selectedModel: null,
@@ -211,6 +214,67 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     expect(readSessionUrl()).toBeNull();
     expect(useUiStore.getState().models).toBe(modelsBefore);
     expect(useUiStore.getState().selectedModel).toBe("prov/b-model");
+    expect(listModelsCalls.length).toBe(1);
+  });
+});
+
+describe("URL 恢复与列表填充竞态补偿（F2 F-1）", () => {
+  test("select 早于列表回包（行不在 store 早退）：聚合填充使选中可解析时补跑决策核恰一次，二次刷新不重拉", async () => {
+    mockModelsFetch();
+    // 恢复时序布景：bootstrap 空态启动后 URL 恢复 select 先落，而侧栏挂载触发的聚合
+    // 列表请求尚未回包（byProject 空）——select 走「行不在 store」早退，决策核不跑。
+    // allMode=true 与 SessionList 挂载即聚合口径一致（refreshSessions 走 setAllSessions）。
+    useSessionsStore.setState({ byProject: {}, selectedId: null, aliasIds: {}, appliedModels: {}, allMode: true });
+    useUiStore.setState({
+      projects: [{ projectPath: "/p-x", preferredModel: "prov/x-model", preferredThinkingLevel: "high" }] as ProjectMeta[],
+      selectedModel: null,
+      selectedThinkingLevel: null,
+      models: [],
+      modelsLoaded: false,
+      favoriteModels: [],
+      promptPresets: {},
+    });
+    // 聚合回包编程注入：含恢复目标 sess-x（∈/p-x）的行
+    genericPayload = { sessions: [makeSession("sess-x", "/p-x")] };
+    useSessionsStore.getState().select("sess-x");
+    expect(useSessionsStore.getState().selectedId).toBe("sess-x");
+    // 早退窗口态：偏好未应用、模型未补拉（无补偿源时的缺陷面）
+    expect(useUiStore.getState().selectedModel).toBeNull();
+    expect(useUiStore.getState().selectedThinkingLevel).toBeNull();
+    expect(listModelsCalls).toEqual([]);
+    // 聚合回包落地：selectedId 由不可解析转为可解析 → 补跑决策核（偏好应用 + 模型补拉）
+    await useSessionsStore.getState().refreshSessions();
+    expect(useUiStore.getState().selectedModel).toBe("prov/x-model");
+    expect(useUiStore.getState().selectedThinkingLevel).toBe("high");
+    expect(listModelsCalls.length).toBe(1);
+    expect(listModelsCalls[0]).toContain("/api/models?project=%2Fp-x");
+    // 补偿幂等：selectedId 此前已可解析，第二次填充不再触发决策核/重拉
+    await useSessionsStore.getState().refreshSessions();
+    expect(listModelsCalls.length).toBe(1);
+  });
+
+  test("选中先于填充但填充不含该行：仍不可解析，不触发决策核（行到达的那次才补跑）", async () => {
+    mockModelsFetch();
+    useSessionsStore.setState({ byProject: {}, selectedId: null, aliasIds: {}, appliedModels: {}, allMode: true });
+    useUiStore.setState({
+      projects: [{ projectPath: "/p-x", preferredModel: "prov/x-model", preferredThinkingLevel: "high" }] as ProjectMeta[],
+      selectedModel: null,
+      selectedThinkingLevel: null,
+      models: [],
+      modelsLoaded: false,
+      favoriteModels: [],
+      promptPresets: {},
+    });
+    useSessionsStore.getState().select("sess-x");
+    // 第一拍回包只含其它项目：恢复目标仍不可解析，决策核不得误触发
+    genericPayload = { sessions: [makeSession("sess-y", "/p-y")] };
+    await useSessionsStore.getState().refreshSessions();
+    expect(useUiStore.getState().selectedModel).toBeNull();
+    expect(listModelsCalls).toEqual([]);
+    // 第二拍回包含目标行：此时才补跑
+    genericPayload = { sessions: [makeSession("sess-y", "/p-y"), makeSession("sess-x", "/p-x")] };
+    await useSessionsStore.getState().refreshSessions();
+    expect(useUiStore.getState().selectedModel).toBe("prov/x-model");
     expect(listModelsCalls.length).toBe(1);
   });
 });

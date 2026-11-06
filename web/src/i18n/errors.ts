@@ -43,6 +43,9 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   invalid_hidden: "errors.invalidHidden",
   invalid_images: "errors.invalidImages",
   invalid_json: "errors.invalidJson",
+  // 保留说明（F2 F-3 复核）：web 客户端已不再发送最近打开时间字段（W3 会话根架构移除），
+  // 但 server PATCH /api/projects/meta 仍验收该字段（API 兼容面，routes.test.ts「PATCH 拆分
+  // 语义」用例覆盖），i18n-errors 门禁要求映射键集与 server 活扫严格一致——此键不可删。
   invalid_last_opened_at: "errors.invalidLastOpenedAt",
   invalid_limit: "errors.invalidLimit",
   invalid_model: "errors.invalidModel",

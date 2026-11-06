@@ -32,6 +32,7 @@ export const errors = {
   invalidEntry: "Invalid entry ID",
   invalidHidden: "Invalid hidden flag",
   invalidImages: "Invalid images payload",
+  // 保留（server PATCH /api/projects/meta 仍可返回该码，见 src/i18n/errors.ts 保留说明）
   invalidLastOpenedAt: "Invalid last-opened time",
   invalidLimit: "Invalid limit",
   invalidModel: "Invalid model",
