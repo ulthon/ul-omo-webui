@@ -32,9 +32,10 @@ function skipReasonKey(reason: string): MessageKey {
   return "login.rebind.skipNotFound";
 }
 
-export function RebindSection() {
+export function RebindSection({ projectPath }: { projectPath?: string | null }) {
   const t = useT();
-  const currentProject = useUiStore((s) => s.currentProject);
+  // 目标项目由设置页页内选择器下发（todo 9）：区块为给定项目的纯函数，不再读全局当前项目
+  const project = projectPath ?? null;
   const [oldPath, setOldPath] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scan, setScan] = useState<ScanState | null>(null);
@@ -50,12 +51,12 @@ export function RebindSection() {
   };
 
   const runScan = async () => {
-    if (!currentProject || scanning || !oldPath.trim()) return;
+    if (!project || scanning || !oldPath.trim()) return;
     setScanning(true);
     setError(null);
     setReport(null);
     try {
-      const res = await api.scanRebindSessions(currentProject, oldPath.trim());
+      const res = await api.scanRebindSessions(project, oldPath.trim());
       setScan({ oldPath: res.oldPath, sessions: res.sessions, totalFiles: res.totalFiles });
       // 默认勾选全部可导入行（alreadyBound 的重复导入无意义，默认不选）
       setChecked(new Set(res.sessions.filter((s) => !s.alreadyBound).map((s) => s.id)));
@@ -67,12 +68,12 @@ export function RebindSection() {
   };
 
   const runImport = async () => {
-    if (!currentProject || !scan || importing || checked.size === 0) return;
+    if (!project || !scan || importing || checked.size === 0) return;
     setImporting(true);
     setError(null);
     try {
       const res = await api.rebindSessions(
-        currentProject,
+        project,
         scan.oldPath,
         scan.sessions.filter((s) => checked.has(s.id)).map((s) => s.id),
       );
@@ -105,14 +106,14 @@ export function RebindSection() {
         <label htmlFor="rebind-old-path" className="flex items-center gap-1.5 text-sm font-medium">
           <FolderInput className="size-4" />
           {t("login.rebind.title")}
-          {currentProject && (
-            <span className="ml-1 font-normal text-muted-foreground" title={currentProject}>
-              → {currentProject.split("/").filter(Boolean).pop()}
+          {project && (
+            <span className="ml-1 font-normal text-muted-foreground" title={project}>
+              → {project.split("/").filter(Boolean).pop()}
             </span>
           )}
         </label>
         <p className="text-xs text-muted-foreground">{t("login.rebind.description")}</p>
-        {!currentProject ? (
+        {!project ? (
           <p className="text-xs text-muted-foreground" data-testid="rebind-need-project">
             {t("login.rebind.needProject")}
           </p>

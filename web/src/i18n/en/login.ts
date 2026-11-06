@@ -261,6 +261,7 @@ export const login = {
       system: "System & Maintenance",
     },
     groupNav: "Settings group navigation",
+    projectTarget: "Target project",
     notificationsHeading: "Notifications",
     notificationsEmpty: "No notifications yet",
     notificationsClear: "Clear",

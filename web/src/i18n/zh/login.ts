@@ -262,6 +262,8 @@ export const login = {
       system: "系统与维护",
     },
     groupNav: "设置分组导航",
+    // —— 页内项目选择器（会话根架构 todo 9）：项目组分区的设置目标项目 ——
+    projectTarget: "目标项目",
     // —— 通知记录分区（2026-11-05 #10：toast 历史回看）——
     notificationsHeading: "通知记录",
     notificationsEmpty: "暂无通知记录",

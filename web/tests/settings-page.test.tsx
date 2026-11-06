@@ -38,6 +38,7 @@ const { createRoot } = await import("react-dom/client");
 const { Topbar } = await import("@/components/layout/topbar");
 const { SettingsPage } = await import("@/pages/settings");
 const { useUiStore } = await import("@/stores/ui");
+const { useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -108,6 +109,8 @@ beforeEach(() => {
     toast: null,
     projectSort: "activity",
   });
+  // todo 9：设置页选择器初值取选中会话派生项目——种入 s1∈/p1 且选中
+  useSessionsStore.setState({ byProject: { "/p1": [{ id: "s1" }] }, selectedId: "s1" });
 });
 
 afterEach(() => {
@@ -231,6 +234,68 @@ describe("设置独立全屏页（弹层退役）", () => {
     expect(put).toBeDefined();
     expect(put.body).toMatchObject({ "tags.displayMode": "grid" });
     expect(useUiStore.getState().tagDisplayMode).toBe("grid");
+
+    await act(async () => {});
+    root.unmount();
+  });
+
+  test("页内项目选择器（todo 9）：初值取选中会话派生项目；切换后分区改口径且不跟随会话切换", async () => {
+    const calls: Array<{ path: string; method: string; body?: unknown }> = [];
+    globalThis.fetch = recordingFetch(calls);
+
+    useUiStore.setState({
+      projects: [project("/p1", { permissionPreset: null }), project("/p2", { permissionPreset: "read-only" })],
+      currentProject: "/p1",
+      settingsPageOpen: false,
+      settingsGroup: "project",
+      toast: null,
+      projectSort: "activity",
+    });
+    // 会话面：s1∈/p1 选中，s2∈/p2 在册——选择器初值应取 s1 派生的 /p1
+    useSessionsStore.setState({ byProject: { "/p1": [{ id: "s1" }], "/p2": [{ id: "s2" }] }, selectedId: "s1" });
+
+    const { container, root } = await mountProbe();
+    await act(async () => {
+      (container.querySelector('[data-testid="settings-button"]') as HTMLButtonElement).click();
+    });
+    const page = container.querySelector('[data-testid="settings-page"]') as HTMLElement;
+
+    // 选择器在场且初值 = 派生活跃项目 /p1；工具/导入区块以 /p1 为口径
+    const selector = page.querySelector('[data-testid="settings-project-target"]') as HTMLSelectElement;
+    expect(selector).not.toBeNull();
+    expect(selector.value).toBe("/p1");
+    expect(page.querySelector('[data-testid="tools-section"] span[title="/p1"]')).not.toBeNull();
+    expect(page.querySelector('label[for="rebind-old-path"] span[title="/p1"]')).not.toBeNull();
+
+    // 不静默跟随：会话选中切到 s2（派生 /p2）后，选择器与区块口径仍停在 /p1
+    await act(async () => {
+      useSessionsStore.setState({ selectedId: "s2" });
+    });
+    expect(selector.value).toBe("/p1");
+    expect(page.querySelector('[data-testid="tools-section"] span[title="/p2"]')).toBeNull();
+
+    // 显式切换到 /p2：工具/导入区块与权限预设改以 /p2 为口径
+    await act(async () => {
+      selector.value = "/p2";
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(selector.value).toBe("/p2");
+    expect(page.querySelector('[data-testid="tools-section"] span[title="/p2"]')).not.toBeNull();
+    expect(page.querySelector('label[for="rebind-old-path"] span[title="/p2"]')).not.toBeNull();
+    const presetSelect = page.querySelector('[data-testid="permission-preset-select"]') as HTMLSelectElement;
+    expect(presetSelect.value).toBe("read-only");
+
+    // 权限预设改值：PATCH 目标与 store 更新都落在所选 /p2（而非会话派生 /p1）
+    await act(async () => {
+      presetSelect.value = "ask";
+      presetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch).toBeDefined();
+    expect(patch?.body).toMatchObject({ path: "/p2", permissionPreset: "ask" });
+    expect(useUiStore.getState().projects.find((p) => p.projectPath === "/p2")?.permissionPreset).toBe("ask");
+    expect(useUiStore.getState().projects.find((p) => p.projectPath === "/p1")?.permissionPreset).toBeNull();
 
     await act(async () => {});
     root.unmount();

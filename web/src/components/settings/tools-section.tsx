@@ -24,10 +24,11 @@ function basename(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
-export function ToolsSection() {
-  const currentProject = useUiStore((s) => s.currentProject);
+export function ToolsSection({ projectPath }: { projectPath?: string | null }) {
+  // 目标项目由设置页页内选择器下发（todo 9）：区块为给定项目的纯函数，不再读全局当前项目
+  const project = projectPath ?? null;
   const excluded = useUiStore(
-    (s) => s.projects.find((p) => p.projectPath === s.currentProject)?.excludedTools ?? null,
+    (s) => (project === null ? null : s.projects.find((p) => p.projectPath === project)?.excludedTools ?? null),
   );
   const [catalog, setCatalog] = useState<Array<{ name: string; builtin: boolean }> | null>(null);
   const [draft, setDraft] = useState<Set<string> | null>(null);
@@ -60,7 +61,7 @@ export function ToolsSection() {
   }, []);
   useEffect(() => {
     setDraft(excluded === null ? new Set() : new Set(excluded));
-  }, [currentProject, excluded]);
+  }, [project, excluded]);
 
   const allDisabled = !!catalog && !!draft && catalog.every((tool) => draft.has(tool.name));
   const dirty = useMemo(() => {
@@ -72,14 +73,14 @@ export function ToolsSection() {
   }, [draft, excluded]);
 
   const save = async () => {
-    if (!currentProject || draft === null || saving) return;
+    if (!project || draft === null || saving) return;
     setSaving(true);
     try {
       const excludedTools = [...draft].sort();
-      await api.patchProjectMeta({ path: currentProject, excludedTools });
+      await api.patchProjectMeta({ path: project, excludedTools });
       const ui = useUiStore.getState();
       ui.setProjects(
-        ui.projects.map((p) => (p.projectPath === currentProject ? { ...p, excludedTools } : p)),
+        ui.projects.map((p) => (p.projectPath === project ? { ...p, excludedTools } : p)),
       );
       ui.showToast(t("tools.saved"), "info");
       // 保存成功即弹重启提示（spawn 参数级生效口，一键复用既有重启路由）
@@ -92,10 +93,10 @@ export function ToolsSection() {
   };
 
   const restart = async () => {
-    if (!currentProject || restarting) return;
+    if (!project || restarting) return;
     setRestarting(true);
     try {
-      await api.restartProject(currentProject);
+      await api.restartProject(project);
       setRestartOpen(false);
       useUiStore.getState().showToast(t("tools.restarted"), "info");
     } catch (err) {
@@ -110,13 +111,13 @@ export function ToolsSection() {
       <div className="space-y-1.5">
         <p className="text-sm font-medium">
           {t("tools.heading")}
-          {currentProject && (
-            <span className="ml-1.5 font-normal text-muted-foreground" title={currentProject}>
-              {basename(currentProject)}
+          {project && (
+            <span className="ml-1.5 font-normal text-muted-foreground" title={project}>
+              {basename(project)}
             </span>
           )}
         </p>
-        {currentProject ? (
+        {project ? (
           loadFailed ? (
             <p className="text-sm text-muted-foreground" data-testid="tools-load-failed">
               {t("tools.loadFailed")}
