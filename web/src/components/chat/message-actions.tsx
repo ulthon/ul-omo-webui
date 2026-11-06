@@ -6,7 +6,6 @@ import { Copy, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
 import type { WireMessage } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { refreshSessions } from "@/lib/bootstrap";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -52,8 +51,9 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
     try {
       const forked = await api.forkSession(sessionId, { entryId: forkTarget.id, position: "before" });
       // 切到 fork 会话（human 视图不列 fork 子会话，"全部活动"视图按血缘归组可见）+ 列表刷新
+      // （W3 任务 11 起 bootstrap 包装退役，直调 store 聚合口径刷新）
       useSessionsStore.getState().select(forked.session.id);
-      void refreshSessions();
+      void useSessionsStore.getState().refreshSessions();
       showToast(t("chat.messageActions.retryBranchCreated"));
       // 重试语义：fork 的新会话是该消息之前的上下文，自动重发原消息触发新一轮生成
       if (forked.text) {

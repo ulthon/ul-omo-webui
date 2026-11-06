@@ -184,7 +184,7 @@ export const login = {
     sortSaveFailed: "保存排序设置失败",
     sidebarHeading: "侧栏",
     projectSort: "项目分组排序",
-    sortNote: "按添加时间排序时，升级前注册的历史项目以最近打开时间为准；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。",
+    sortNote: "按添加时间排序时，注册时间相同的历史项目按列表顺序保持稳定；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。",
     // 对话分区
     chatSaveFailed: "保存对话设置失败",
     chatHeading: "对话",

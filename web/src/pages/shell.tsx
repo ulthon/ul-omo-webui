@@ -387,8 +387,8 @@ export function AppShell() {
     bootstrap()
       .then(() => {
         // B1 显式恢复：引导完成后按 URL 参数选中会话，store 与 URL 一致（非仅视图兜底）。
-        // bootstrap 先行完毕才恢复——openProject 的 refreshSessions 不写 selectedId，
-        // 恢复动作不会被引导流程覆盖；select 内部会原地把同一 id 写回 URL（无害幂等）。
+        // bootstrap 先行完毕才恢复——引导空态启动不写 selectedId，恢复动作不会被引导
+        // 流程覆盖；select 内部会原地把同一 id 写回 URL（无害幂等）。
         if (cancelled) return;
         const urlId = readSessionUrl();
         if (urlId) useSessionsStore.getState().select(urlId);

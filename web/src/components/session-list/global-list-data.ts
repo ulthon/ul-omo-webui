@@ -19,7 +19,7 @@ export const LOCATE_EVENT = "ul-omo-webui:locate-project";
 
 /** 侧栏项目排序档位（C16 docs08-r3 todo 9）：
  * activity=现状（各组最新会话 modified 降序）；added=注册时间 createdAt 升序
- * （存量行 createdAt 同为迁移时刻，退化为 lastOpenedAt 稳定序）；manual=手动顺序。
+ * （存量行 createdAt 同为迁移时刻，保持传入稳定序，W3 任务 11）；manual=手动顺序。
  * 档位与手动顺序存 meta_kv（sidebar.projectSort / sidebar.projectOrder），跨设备一致。 */
 export type ProjectSortMode = "activity" | "added" | "manual";
 
@@ -68,7 +68,7 @@ export function latestModified(list: SessionListItem[]): string {
 
 /** 分组排序（C16 docs08-r3 todo 9 参数化）：当前项目组置顶规则三档通用、不变。
  * activity（缺省）=其余按各组最新 modified 降序；added=按项目注册时间 createdAt 升序，
- * createdAt 相同（存量迁移行同值）退化为 lastOpenedAt 升序稳定序；manual=手动顺序
+ * createdAt 相同（存量迁移行同值）保持传入稳定序；manual=手动顺序
  * （kv 数组序），未列项目与已注销路径按 activity 规则追加/忽略。 */
 export function groupOrder(
   projectPaths: string[],
@@ -76,8 +76,8 @@ export function groupOrder(
   currentProject: string | null,
   opts?: {
     mode?: ProjectSortMode;
-    /** 注册元数据（createdAt/lastOpenedAt），added 档用；缺省视为空值走稳定退化序 */
-    meta?: Record<string, { createdAt: string | null; lastOpenedAt: string | null }>;
+    /** 注册元数据（createdAt），added 档用；缺省视为空值走稳定序 */
+    meta?: Record<string, { createdAt: string | null }>;
     /** 手动顺序（kv 解析结果），manual 档用 */
     manualOrder?: string[];
   },
@@ -101,10 +101,9 @@ export function groupOrder(
       const ca = meta[a]?.createdAt ?? "";
       const cb = meta[b]?.createdAt ?? "";
       if (ca !== cb) return ca < cb ? -1 : 1;
-      // 存量行 createdAt 同为迁移时刻 → 退化 lastOpenedAt 稳定排序（设置区文案注明）
-      const la = meta[a]?.lastOpenedAt ?? "";
-      const lb = meta[b]?.lastOpenedAt ?? "";
-      return la < lb ? -1 : la > lb ? 1 : 0;
+      // 存量行 createdAt 同为迁移时刻 → 保持传入稳定序（W3 任务 11：lastOpenedAt
+      // 退化序已随项目打开链路退役，createdAt 是唯一排序依据）
+      return 0;
     });
     return currentProject && projectPaths.includes(currentProject) ? [currentProject, ...rest] : rest;
   }
