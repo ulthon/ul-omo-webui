@@ -156,6 +156,8 @@ interface UiState {
   /** 斜杠命令集版本号（批次三）：commands_changed 帧到达即 +1，composer 下拉
    *  开着时据此重拉 getCommands（服务端缓存已被同事件失效，立取新值） */
   slashCommandsVersion: number;
+  /** 输入框回填注入（速清批 27c）：排队条「编辑」撤销后取回文本进输入框 */
+  composerInject: { seq: number; text: string } | null;
   toasts: Toast[];
   notifications: ToastNotification[];
 
@@ -187,6 +189,7 @@ interface UiState {
   setSiteName(name: string | null): void;
   setOverviewNotesCount(n: number): void;
   bumpSlashCommandsVersion(): void;
+  injectComposerDraft(text: string): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
   clearNotifications(): void;
@@ -236,6 +239,7 @@ export const useUiStore = create<UiState>()((set) => ({
   siteName: null,
   overviewNotesCount: DEFAULT_OVERVIEW_NOTES_COUNT,
   slashCommandsVersion: 0,
+  composerInject: null,
   toasts: [],
   notifications: [],
 
@@ -263,6 +267,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setSiteName: (siteName) => set({ siteName }),
   setOverviewNotesCount: (overviewNotesCount) => set({ overviewNotesCount }),
   bumpSlashCommandsVersion: () => set((s) => ({ slashCommandsVersion: s.slashCommandsVersion + 1 })),
+  injectComposerDraft: (text) =>
+    set((s) => ({ composerInject: { seq: (s.composerInject?.seq ?? 0) + 1, text } })),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

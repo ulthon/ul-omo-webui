@@ -76,6 +76,8 @@ export const chat = {
     steer: "Steer",
     follow: "Follow-up",
     removeItem: "Remove this item",
+    editItem: "Edit this item",
+    editTitle: "Take this item back to the composer for editing",
     sendNowItem: "Send this item now",
     sendNowTitle: "Send now: injects as steer into the current turn; other items stay queued",
     sendNowFailed: "Failed to send now",

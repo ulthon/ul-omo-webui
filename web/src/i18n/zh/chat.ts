@@ -77,6 +77,8 @@ export const chat = {
     steer: "插入",
     follow: "跟答",
     removeItem: "撤销该条",
+    editItem: "编辑该条",
+    editTitle: "取回该条到输入框修改（撤销后回填）",
     sendNowItem: "立即发送该条",
     sendNowTitle: "立即发送：转插入注入当前回合，其余项保持排队",
     sendNowFailed: "立即发送失败",

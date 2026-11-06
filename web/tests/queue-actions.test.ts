@@ -194,7 +194,7 @@ describe("QueueBar 渲染契约（双操作 testid）", () => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
 
-  test("每条含 queue-item-send-now 与 queue-item-remove；无条目不渲染", async () => {
+  test("每条含 queue-item-send-now / queue-item-edit / queue-item-remove；无条目不渲染", async () => {
     const { act } = await import("react");
     useQueueStore.setState({
       bySession: { s1: { items: items(["甲", "steer"], ["乙", "followUp"]) } },
@@ -205,6 +205,8 @@ describe("QueueBar 渲染契约（双操作 testid）", () => {
       html = renderToStaticMarkup(createElement(QueueBar, { sessionId: "s1" }));
     });
     expect((html.match(/data-testid="queue-item-send-now"/g) ?? []).length).toBe(2);
+    // 编辑（速清批 27c）：撤销+回填输入框，三操作之一
+    expect((html.match(/data-testid="queue-item-edit"/g) ?? []).length).toBe(2);
     expect((html.match(/data-testid="queue-item-remove"/g) ?? []).length).toBe(2);
     expect(html).not.toContain('data-testid="queue-item-cancel"');
     await act(async () => {
@@ -212,5 +214,18 @@ describe("QueueBar 渲染契约（双操作 testid）", () => {
       html = renderToStaticMarkup(createElement(QueueBar, { sessionId: "s1" }));
     });
     expect(html).not.toContain('data-testid="queue-bar"');
+  });
+
+  test("编辑回填注入通道：injectComposerDraft seq 递增同文本可重复触发（27c）", async () => {
+    const { useUiStore } = await import("@/stores/ui");
+    useUiStore.setState({ composerInject: null });
+    useUiStore.getState().injectComposerDraft("改后的排队消息");
+    let inject = useUiStore.getState().composerInject;
+    expect(inject).toEqual({ seq: 1, text: "改后的排队消息" });
+    // 同文本再次注入（连续编辑同一条）seq 仍递增，composer effect 可再次触发
+    useUiStore.getState().injectComposerDraft("改后的排队消息");
+    inject = useUiStore.getState().composerInject;
+    expect(inject?.seq).toBe(2);
+    useUiStore.setState({ composerInject: null });
   });
 });

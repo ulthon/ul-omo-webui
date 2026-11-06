@@ -7,10 +7,11 @@
 // 用户 abort 后队列保留但挂起（spike (b)-6 实测）：列表不清空，明示"将在下次发送时
 // 执行"，另有整队清空（撤空的消息不会再投递）。
 import { useState } from "react";
-import { ListOrdered, SendHorizontal, X } from "lucide-react";
+import { ListOrdered, Pencil, SendHorizontal, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useQueueStore } from "@/stores/queue";
+import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { restructureQueue } from "@/components/chat/queue-actions";
@@ -77,6 +78,24 @@ export function QueueBar({ sessionId }: { sessionId: string }) {
               {item.mode === "steer" ? t("chat.queue.steer") : t("chat.queue.follow")}
             </span>
             <span className="min-w-0 flex-1 truncate">{item.text}</span>
+            <button
+              type="button"
+              data-testid="queue-item-edit"
+              aria-label={t("chat.queue.editItem")}
+              title={t("chat.queue.editTitle")}
+              disabled={busy}
+              onClick={() => {
+                // 编辑（速清批 27c）：撤销该条 + 取回文本进输入框再改（注入通道 ui.composerInject）
+                const text = item.text;
+                run(async () => {
+                  await restructureQueue(sessionId, list, item, false);
+                  useUiStore.getState().injectComposerDraft(text);
+                }, "chat.queue.cancelFailed");
+              }}
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              <Pencil className="size-3.5" />
+            </button>
             <button
               type="button"
               data-testid="queue-item-send-now"

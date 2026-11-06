@@ -176,6 +176,16 @@ export function Composer({
   // 绝不覆盖用户正在输入的内容。useDraft 的恢复是网络异步回调，判定函数挂载即就绪。
   const canRestoreRef = useRef<() => boolean>(() => true);
   const { text, textRef, update, clear: clearDraft } = useDraft(sessionId, canRestoreRef);
+  // 排队条「编辑」回填注入（速清批 27c）：撤销成功后 ui.composerInject 携文本注入，
+  // 回填输入框并聚焦；seq 递增保证同文本重复编辑也能触发（deps 只挂 seq，避免重渲染环）。
+  const composerInjectSeq = useUiStore((s) => s.composerInject?.seq ?? 0);
+  useEffect(() => {
+    if (composerInjectSeq === 0) return;
+    const inject = useUiStore.getState().composerInject;
+    if (!inject) return;
+    update(inject.text);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [composerInjectSeq, update]);
   useEffect(() => {
     canRestoreRef.current = () => {
       const el = textareaRef.current;
@@ -394,9 +404,23 @@ export function Composer({
     api
       .getCommands(project)
       .then((res) => {
+        // 面板观测（2026-11-07 报障排查）：成功记 available+三段计数——复现“只加载
+        // compact”时诊断面板一行分辨服务端降级 vs 前端渲染层问题
+        diag.info("slash", "commands_loaded", {
+          project: project.slice(-24),
+          available: res.available,
+          ext: res.commands.extension.length,
+          skill: res.commands.skill.length,
+          prompt: res.commands.prompt.length,
+        });
         if (active && res.project === project) setSlashData(res);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // 面板观测：失败原因入 diag（旧行为静默置空是排查盲区）
+        diag.warn("slash", "commands_failed", {
+          project: project.slice(-24),
+          message: err instanceof Error ? err.message : String(err),
+        });
         // 置空三段：面板显示空态，打字主路径零关联
         if (active) setSlashData(null);
       });
