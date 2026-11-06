@@ -16,7 +16,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { diag } from "@/lib/diag";
 import { loadProjectModels } from "@/lib/bootstrap";
-import { useActiveProject, useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
+import { projectOfSession, useActiveProject, useSessionsStore, type ArchivedFilter } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 // tSnap：异步续体（await 之后/promise 回调）取词用快照态；渲染期文本走 useT 响应式
 import { t as tSnap, useT } from "@/i18n/i18n";
@@ -336,8 +336,8 @@ export function SessionList() {
 
   /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
    * 上面 sortedProjects 的防御过滤）+ refreshSessions（服务端聚合口径同步换）；
-   * 隐藏的是当前项目时复用注销的回空会话态流程（清 currentProject + 选中会话），
-   * 非当前项目不动选中。 */
+   * 隐藏的是选中会话所属项目时回空选中（仅 select(null)——会话根架构 W2 任务 10A：
+   * 判定改选中会话派生，不再写全局项目字段），其余情况不动选中。 */
   const hideProject = async (projectPath: string, hidden: boolean) => {
     if (hiding) return;
     setHiding(true);
@@ -347,11 +347,12 @@ export function SessionList() {
       const res = await api.listProjects();
       const ui = useUiStore.getState();
       ui.setProjects(res.projects);
-      if (hidden && ui.currentProject === projectPath) {
-        ui.setCurrentProject(null);
-        useSessionsStore.getState().select(null);
+      // 判定改派生（W2 任务 10A）：选中会话反查所属项目，恰为隐藏目标才回空选中
+      const sessions = useSessionsStore.getState();
+      if (hidden && projectOfSession(sessions.byProject, sessions.selectedId) === projectPath) {
+        sessions.select(null);
       }
-      void useSessionsStore.getState().refreshSessions();
+      void sessions.refreshSessions();
       ui.showToast(hidden ? t("sessionList.list.projectHidden") : t("sessionList.list.projectShown"), "info");
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
