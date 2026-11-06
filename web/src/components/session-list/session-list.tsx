@@ -11,7 +11,7 @@
 // 既有能力保持：未读清零（选中且页面可见时 POST /:id/read，visibilitychange 兜底）、
 // 元数据操作弹窗、批量归档/批量删除（todo 25：勾选集合提升到本容器，删除走确认弹窗）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, EyeOff, Filter, FolderPlus, ListChecks, Loader2, MessageSquare, MoreVertical, Plus, Search, Tag, Trash2, X } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { SessionListItem, TagDefinition } from "@/lib/api";
 import { diag } from "@/lib/diag";
@@ -51,6 +51,7 @@ import {
   writeCollapsed,
 } from "./global-list-data";
 import { SessionItem, buildForkIndexes } from "./session-item";
+import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { SessionDialogs, type SessionDialogState } from "./dialogs";
 import { TagDropdown } from "./tag-dropdown";
 import { TagManageDialog, type TagManageScope, type TagOrphanCleanup } from "./tag-manage-dialog";
@@ -119,6 +120,9 @@ export function SessionList() {
   // 与 groupOverrides 同为会话内覆盖语义。搜索/批量模式渲染全量，不读此值。
   const [groupVisible, setGroupVisible] = useState<Record<string, number>>({});
   const [recentOpen, setRecentOpen] = useState(true);
+  // 添加项目弹窗开合（W3 任务 13）：侧栏列表与手机抽屉共用本组件，两端入口就近
+  // 挂载在项目分组区（桌面组尾/手机组头），弹窗状态提升到本容器
+  const [addOpen, setAddOpen] = useState(false);
   const [dialog, setDialog] = useState<SessionDialogState | null>(null);
   const [creating, setCreating] = useState(false);
   // 批量模式（todo 25）：勾选集合提升到容器层；归档循环的进度反馈
@@ -861,6 +865,24 @@ export function SessionList() {
               />
             ))
           )
+        ) : projects.length === 0 ? (
+          /* 零项目空态（W3 任务 13）：图标 + 添加项目 + 一行提示的居中 CTA，
+             替代空白列表区；点击打开同一 AddProjectDialog */
+          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center" data-testid="zero-project-cta">
+            <FolderPlus className="size-8 text-muted-foreground/40" />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-9 gap-1.5 text-xs"
+              data-testid="zero-project-add"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5" />
+              {t("login.topbar.addProjectShort")}
+            </Button>
+            <p className="text-xs text-muted-foreground">{t("sessionList.list.addProjectHint")}</p>
+          </div>
         ) : (
           <>
             {/* 最近会话区（todo 10）：跨项目按 modified 最新 8 条，独立可折叠，行复用 SessionItem 标注来源项目 */}
@@ -895,6 +917,18 @@ export function SessionList() {
               </div>
             )}
             {recent.length > 0 && sortedProjects.length > 0 && <div className="mx-1.5 border-t" />}
+
+            {/* 手机抽屉组头入口（W3 任务 13）：抽屉即手机项目列表，添加项目置于分组区头部
+                （桌面侧栏同一组件，lg 档隐藏，桌面入口见分组区尾部） */}
+            <button
+              type="button"
+              data-testid="sidebar-add-project-mobile"
+              className="flex w-full min-h-11 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:hidden"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5 shrink-0" />
+              <span>{t("login.topbar.addProjectShort")}</span>
+            </button>
 
             {sortedProjects.map((projectPath, index) => {
               const sessions = byProject[projectPath];
@@ -1087,11 +1121,27 @@ export function SessionList() {
                 </div>
               );
             })}
+
+            {/* 桌面侧栏组尾入口（W3 任务 13）：添加项目置于项目分组列表尾部
+                （手机抽屉同一组件，lg 以下隐藏，手机入口见分组区头部） */}
+            <button
+              type="button"
+              data-testid="sidebar-add-project-desktop"
+              className="hidden w-full min-h-11 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:flex"
+              onClick={() => setAddOpen(true)}
+            >
+              <FolderPlus className="size-3.5 shrink-0" />
+              <span>{t("login.topbar.addProjectShort")}</span>
+            </button>
           </>
         )}
       </div>
 
       <SessionDialogs state={dialog} onClose={() => setDialog(null)} onChanged={onChanged} />
+      {/* 添加项目弹窗（W3 任务 13）：桌面组尾/手机组头/零项目 CTA 三入口共用；
+          成功后 store refetch + locateProjectInSidebar 定位新分组（W3 任务 11 契约），
+          不自动建会话 */}
+      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
       {/* 隐藏当前项目确认（A2）：回空会话态是可感知变化，确认弹层防误触；非当前项目直接隐藏不弹 */}
       <Dialog
         open={hidePending !== null}

@@ -46,6 +46,8 @@ export const sessionList = {
     newInProject: "New session in {name}",
     loading: "Loading…",
     empty: "No sessions",
+    // Zero-project CTA hint (W3 task 13); row label reuses login.topbar.addProjectShort
+    addProjectHint: "Add a project directory; sessions group by project",
     loadMore: "Load more",
     loadMoreRemaining: "({n} more)",
     hideProjectTitle: "Hide project",

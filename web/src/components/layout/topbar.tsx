@@ -57,7 +57,7 @@ function basename(path: string): string {
 /** 手机档会话切换全屏 sheet（docs08-r7 任务 19，替代原任务 15 下拉菜单）：触发器
  * 点按开 Radix Dialog 全屏页——头部「会话」标题+关闭钮（焦点陷阱/Esc 关闭由 Dialog
  * 原语承担），列表区 recentTop(flattenSessions(byProject))（跨项目 modified 降序 8 条，
- * 派生复用不复制），尾部「添加项目…」（任务 4 双入口之一）；抽屉承载全量列表/搜索/
+ * 派生复用不复制）；添加项目入口已迁抽屉分组区（任务 13）；抽屉承载全量列表/搜索/
  * 新建，sheet 内不做（计划 Must NOT）。定制行=标题(text-base≥16px font-medium)+项目
  * 名副行(text-xs muted)+标签徽标（TagBadges 文字形态，任务 20 色格在其内部升级，此处
  * 预留 slot）；行 min-h-11(44px) 触控达标、双行紧凑。头部/尾部按 env(safe-area-inset-*)
@@ -69,11 +69,9 @@ function basename(path: string): string {
 export function SessionSwitcherSheet({
   open,
   onOpenChange,
-  onAddProject,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddProject: () => void;
 }) {
   const byProject = useSessionsStore((s) => s.byProject);
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
@@ -180,17 +178,8 @@ export function SessionSwitcherSheet({
             </button>
           ))}
         </div>
-        <footer className="shrink-0 border-t bg-background pb-[max(env(safe-area-inset-bottom),8px)]">
-          <button
-            type="button"
-            data-testid="mobile-add-project"
-            onClick={onAddProject}
-            className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-base outline-none hover:bg-accent/50 focus-visible:bg-accent/50 active:bg-accent"
-          >
-            <FolderPlus className="size-4 shrink-0" />
-            {t("login.topbar.addProject")}
-          </button>
-        </footer>
+        {/* 手机档添加项目入口已随会话根架构 W3 任务 13 迁往抽屉项目分组区头部；
+            sheet 仅保留会话列表本体 */}
       </DialogContent>
     </Dialog>
   );
@@ -306,7 +295,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
       {isMobile ? (
         /* 手机档会话身份区（A3 + 任务 19）：标题+项目名两行堆叠 truncate（字大微调：
            标题 text-base、项目名 text-xs）；点按开全屏会话切换 sheet（recentTop 跨项目
-           8 条 + 尾部「添加项目…」；汉堡抽屉不动，桌面项目下拉不动） */
+           8 条；添加项目入口迁抽屉分组区，任务 13；汉堡抽屉不动，桌面项目下拉不动） */
         <>
           <button
             type="button"
@@ -353,14 +342,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
               </span>
             )}
           </button>
-          <SessionSwitcherSheet
-            open={switcherOpen}
-            onOpenChange={setSwitcherOpen}
-            onAddProject={() => {
-              setSwitcherOpen(false);
-              setAddOpen(true);
-            }}
-          />
+          <SessionSwitcherSheet open={switcherOpen} onOpenChange={setSwitcherOpen} />
         </>
       ) : (
         <DropdownMenu>

@@ -7,7 +7,7 @@
 // 各分区实现自 topbar.tsx 原样迁移（含确认对话框与既有 data-testid），行为不变。
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { ArrowLeft, FolderPlus } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
@@ -27,7 +27,6 @@ import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
 import { EngineSection } from "@/components/settings/engine-section";
 import { UpdateSection } from "@/components/settings/update-section";
-import { AddProjectDialog } from "@/components/layout/add-project-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -196,8 +195,6 @@ export function ProjectManagementSection() {
   const [view, setView] = useState<"normal" | "hidden">("normal");
   const [pendingHide, setPendingHide] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
-  // 「添加项目」入口（docs08-r7 任务 4）：设置页头部按钮，复用同弹框组件
-  const [addOpen, setAddOpen] = useState(false);
 
   const t = useT();
   const remove = async () => {
@@ -284,17 +281,6 @@ export function ProjectManagementSection() {
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">{t("login.topbar.management")}</p>
           <div className="flex shrink-0 items-center gap-1.5">
-            {/* 添加项目（任务 4 双入口之二）：头部小钮复用 AddProjectDialog */}
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-7 px-2 text-xs"
-              data-testid="project-add-button"
-              onClick={() => setAddOpen(true)}
-            >
-              <FolderPlus className="mr-1 size-3.5" />
-              {t("login.topbar.addProjectShort")}
-            </Button>
             {/* 正常/已隐藏筛选（A2）：页面内临时视图态（不持久化），计数即容量提示 */}
             <div className="flex shrink-0 items-center rounded-md border p-0.5" role="tablist" aria-label={t("login.topbar.visibilityFilter")} data-testid="project-visibility-filter">
             <button
@@ -430,7 +416,6 @@ export function ProjectManagementSection() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }

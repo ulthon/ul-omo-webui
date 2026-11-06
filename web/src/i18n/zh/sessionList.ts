@@ -47,6 +47,8 @@ export const sessionList = {
     newInProject: "在 {name} 新建会话",
     loading: "加载中…",
     empty: "暂无会话",
+    // 零项目空态 CTA 提示（W3 任务 13）：行标签复用 login.topbar.addProjectShort
+    addProjectHint: "添加项目目录，会话将按项目分组",
     loadMore: "加载更多",
     loadMoreRemaining: "（还有 {n} 个）",
     hideProjectTitle: "隐藏项目",

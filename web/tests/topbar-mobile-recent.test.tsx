@@ -183,10 +183,10 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
     expect(items[1].getAttribute("data-session-id")).toBe("b2");
     expect(items[2].getAttribute("data-session-id")).toBe("a1");
 
-    // sheet 内容为最近会话；尾部「添加项目…」为任务4双入口之一（非项目分组菜单）
+    // sheet 内容为最近会话；添加项目入口已迁抽屉分组区（任务 13，sheet 无 footer）
     const text = document.querySelector('[data-testid="session-switcher-sheet"]')?.textContent ?? "";
     expect(text).toContain("最近会话");
-    expect(text).toContain("添加项目…");
+    expect(text).not.toContain("添加项目");
     expect(text).not.toContain("尚无项目");
   });
 
