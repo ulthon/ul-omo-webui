@@ -136,7 +136,7 @@ export interface SessionItemProps {
   /** 两源定义集（todo 20 v2 色源与 display 覆盖判定；null = 定义未就绪视为无覆盖） */
   defs?: TagDefs | null;
   /** 选中行为覆盖（todo 10 跨项目统一 handler）：缺省仅 select + 收抽屉；
-   * 全局视图下由 session-list 传入共享 handler（跨项目轻量切换 currentProject + 应用偏好） */
+   * 全局视图下由 session-list 传入共享 handler（跨项目轻量切换 + 应用偏好） */
   onSelect?: (session: SessionListItem) => void;
   /** 元数据/删除成功后回调（父级刷新列表与搜索结果） */
   onChanged: () => void;

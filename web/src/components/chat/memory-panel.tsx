@@ -1,6 +1,6 @@
 // 右栏"记忆"页签（docs08-r4 任务 12，只读）：项目记忆库浏览。
 // 项目口径（钉死）：选中会话经 byProject 反查所属项目（sessions store 先例，与右栏
-// 标题反查同款）；无选中会话回退 ui store currentProject；两者皆无显示空态。
+// 标题反查同款）；无选中会话显示空态（W3 任务 12 起无全局回退源）。
 // 跨项目选中（会话项目≠当前项目）天然以会话所属项目为准——头部恒显示当前浏览项目名。
 // 数据源 GET /api/memory/facts（服务端只读库文件，绝不写库）；手动刷新钮，不订阅
 // 文件变更；库缺失/零条目各有诚实空态（文案按 spike 共库结论：与同目录 CLI 共用）。
@@ -9,7 +9,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, type MemoryFactsGroup, type MemoryFactsResponse, type MemorySystemDoc, type MemoryTelemetry } from "@/lib/api";
 import { projectOfSession, useSessionsStore } from "@/stores/sessions";
-import { useUiStore } from "@/stores/ui";
 import { formatRelativeTime, useT } from "@/i18n/i18n";
 
 /** 路径末段（项目显示名；根路径 "/" 的空末段回退全路径） */
@@ -125,15 +124,8 @@ function SystemDoc({ doc }: { doc: MemorySystemDoc }) {
 
 export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
   const byProject = useSessionsStore((s) => s.byProject);
-  const currentProject = useUiStore((s) => s.currentProject);
-  // 项目口径：选中会话反查优先，回退 currentProject（两者皆无 → 空态）
-  const project = useMemo(() => {
-    if (sessionId) {
-      const fromSession = projectOfSession(byProject, sessionId);
-      if (fromSession) return fromSession;
-    }
-    return currentProject;
-  }, [sessionId, byProject, currentProject]);
+  // 项目口径：选中会话反查所属项目；无选中会话 → null（空态）
+  const project = useMemo(() => (sessionId ? projectOfSession(byProject, sessionId) : null), [sessionId, byProject]);
 
   const [data, setData] = useState<MemoryFactsResponse | null>(null);
   const [failedFor, setFailedFor] = useState<string | null>(null);

@@ -189,7 +189,7 @@ export function ProjectPermissionSection({ projectPath }: { projectPath?: string
  * 项目时清选中（判定同移除）；hidden 行不加额外徽标（筛选视图本身即可见性，missing 徽标沿用现状）。 */
 export function ProjectManagementSection() {
   const projects = useUiStore((s) => s.projects);
-  const currentProject = useUiStore((s) => s.currentProject);
+  const activeProject = useActiveProject();
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [view, setView] = useState<"normal" | "hidden">("normal");
@@ -268,7 +268,7 @@ export function ProjectManagementSection() {
         data-testid="project-hide-button"
         disabled={hiding}
         onClick={() =>
-          p.projectPath === currentProject ? setPendingHide(p.projectPath) : void setHidden(p.projectPath, true)
+          p.projectPath === activeProject ? setPendingHide(p.projectPath) : void setHidden(p.projectPath, true)
         }
       >
         {t("login.topbar.hide")}
@@ -328,7 +328,7 @@ export function ProjectManagementSection() {
                       {t("login.topbar.missingBadge")}
                     </span>
                   )}
-                  {p.projectPath === currentProject && (
+                  {p.projectPath === activeProject && (
                     <span className="shrink-0 text-[10px] leading-none text-muted-foreground">{t("login.topbar.currentBadge")}</span>
                   )}
                 </span>

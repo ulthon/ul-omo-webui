@@ -1,7 +1,7 @@
 // 会话列表（W3 todo 10 单列表重构）：侧栏唯一列表——全部注册项目的会话按项目分组平铺，
 // 分组头可折叠（localStorage 按项目记忆），顶部"最近会话"区跨项目按 modified 取最新 8 条直达。
 // 跨项目点击统一 handler（分组行/搜索结果行/行内子会话行/最近区行共用）仅调内聚 select：
-// 目标项目切换与偏好模型应用由 sessions store 的 select 自持（跳过 lastOpenedAt PATCH）。
+// 目标项目切换与偏好模型应用由 sessions store 的 select 自持（不写项目排序）。
 // 数据来自 store.refreshSessions 的聚合分支（todo 9）；旧 human/all 分段控件已删——
 // 列表固定含 fork 会话（血缘归组），fork 行标题带「(fork #N)」后缀、来源徽标改 GitFork+fork。
 // 归档三态/搜索/批量模式照常工作，
@@ -221,7 +221,7 @@ export function SessionList() {
 
   /** 跨项目点击统一 handler（分组行/搜索结果行/钻取子会话行/最近区行共用）：仅调内聚
    * select——目标项目切换/偏好模型应用/模型列表补拉由 sessions store 的 select 自持
-   * （会话根架构 W2 任务 6，跳过 lastOpenedAt PATCH 的轻量切换契约不变，同项目重选
+   * （会话根架构 W2 任务 6，不写项目排序的轻量切换契约不变，同项目重选
    * 也不重置用户手选模型）；调用点只保留抽屉收起等展示层副作用。 */
   const selectSession = useCallback((session: SessionListItem) => {
     useSessionsStore.getState().select(session.id);

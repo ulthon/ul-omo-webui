@@ -1,9 +1,9 @@
 // bootstrap 空态启动单测（会话根架构 W3 任务 11）：引导仅拉项目列表 + 设置 kv——
-// 不自动打开最新项目（零 PATCH lastOpenedAt、零 sessions/models 请求、currentProject
-// 保持 null），不选中会话（selectedId 保持 null）。URL ?session= 恢复仍由 shell 承担
-// （session-url.test.ts 覆盖），模型列表按需于首次选中时加载（冷启动教训）。
-// openProject/pickLatestProject/死项目守卫已随本任务整体退役。
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+// 不自动打开任何项目（零写请求、零 sessions/models 请求），不选中会话（selectedId
+// 保持 null，W3 任务 12 起活动项目由选中会话派生，无独立全局项目态）。URL ?session=
+// 恢复仍由 shell 承担（session-url.test.ts 覆盖），模型列表按需于首次选中时加载
+// （冷启动教训）。自动打开链路（含死项目守卫）已随本任务整体退役。
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { bootstrap } from "@/lib/bootstrap";
 import { useUiStore } from "@/stores/ui";
 import { useSessionsStore } from "@/stores/sessions";
@@ -54,7 +54,6 @@ function baseRoutes(projects: unknown[]): (url: string, method: string) => Respo
 beforeEach(() => {
   useUiStore.setState({
     drawerOpen: false,
-    currentProject: null,
     projects: [],
     models: [],
     modelsLoaded: false,
@@ -73,19 +72,19 @@ afterEach(() => {
 });
 
 describe("bootstrap 空态启动（W3 任务 11）", () => {
-  test("有可解析项目 → 仅两读（projects/settings）：零 PATCH、零 sessions、零 models，currentProject 保持 null", async () => {
+  test("有可解析项目 → 仅两读（projects/settings）：零写请求、零 sessions、零 models，selectedId 保持 null", async () => {
     const log: RecordedRequest[] = [];
     mockFetch(log, baseRoutes([
-      { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+      { projectPath: ALIVE, preferredModel: null },
     ]));
 
     await bootstrap();
 
-    // 引导固定两读即止：自动打开链路（PATCH lastOpenedAt / sessions / models）全无
+    // 引导固定两读即止：自动打开链路（写请求 / sessions / models）全无
     expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
     expect(log.some((r) => r.method !== "GET")).toBe(false);
-    // 空态：当前项目未设、无 toast；模型不预载（冷启动教训：首次选中才加载）
-    expect(useUiStore.getState().currentProject).toBeNull();
+    // 空态：无会话选中、无 toast；模型不预载（冷启动教训：首次选中才加载）
+    expect(useSessionsStore.getState().selectedId).toBeNull();
     expect(useUiStore.getState().projects).toHaveLength(1);
     expect(useUiStore.getState().modelsLoaded).toBe(false);
     expect(useUiStore.getState().toasts).toEqual([]);
@@ -98,31 +97,29 @@ describe("bootstrap 空态启动（W3 任务 11）", () => {
       infos.push(args);
     };
     mockFetch(log, baseRoutes([
-      { projectPath: DEAD, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z", missing: true },
+      { projectPath: DEAD, preferredModel: null, missing: true },
     ]));
 
     await bootstrap();
 
     expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
-    expect(useUiStore.getState().currentProject).toBeNull();
+    expect(useSessionsStore.getState().selectedId).toBeNull();
     expect(useUiStore.getState().toasts).toEqual([]);
     // 死项目守卫随自动打开退役：不再探测、不再记录
     expect(infos).toHaveLength(0);
   });
 
-  test("无 ?session= 空态：selectedId 保持 null 且 setCurrentProject 零调用（不自动打开任何项目）", async () => {
+  test("无 ?session= 空态：selectedId 保持 null（不自动打开任何项目）", async () => {
     const log: RecordedRequest[] = [];
-    const setCurrentProject = vi.spyOn(useUiStore.getState(), "setCurrentProject");
     mockFetch(log, baseRoutes([
-      { projectPath: ALIVE, preferredModel: null, lastOpenedAt: "2026-01-01T00:00:00.000Z" },
+      { projectPath: ALIVE, preferredModel: null },
     ]));
 
     await bootstrap();
 
-    // 空态双断言：项目自动打开零调用 + 会话未选中（URL ?session= 恢复是唯一自动恢复，由 shell 承担）
-    expect(setCurrentProject).not.toHaveBeenCalled();
-    expect(useUiStore.getState().currentProject).toBeNull();
+    // 空态：会话未选中（URL ?session= 恢复是唯一自动恢复，由 shell 承担）；
+    // 引导仅两读，无任何写请求与 models/sessions 拉取
+    expect(log.map((r) => `${r.method} ${r.url}`)).toEqual(["GET /api/projects", "GET /api/settings"]);
     expect(useSessionsStore.getState().selectedId).toBeNull();
-    setCurrentProject.mockRestore();
   });
 });

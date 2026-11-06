@@ -257,23 +257,23 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     // 采集增强批：会话切换埋点（info 默认可见）+ 发送链悬挂 span 清理
     diag.event("session.select", { session: id ? id.slice(0, 8) : "-", alias: isAlias || undefined });
     if (id) sendTrace.drop(id, "switch");
+    // 捕获本次选中前的选中态（活动项目派生源）：同项目幂等判定据此对照（W3 任务 12）
+    const prevSelectedId = useSessionsStore.getState().selectedId;
     set({ selectedId: id });
     writeSessionUrl(isAlias ? null : id);
-    // —— 选中内聚（会话根架构 W2 任务 6）：跨项目选中由 store 自身应用目标项目偏好并补拉
-    // 模型列表。决策核按 global-list-data crossProjectDecision 语义就地内联（不新增导出全
-    // 局，store 自持）；session-list/topbar 调用点的同名补丁暂保留（后续批次移除，两侧
-    // 决策一致故叠加幂等）。刻意不 PATCH lastOpenedAt——轻量切换不写项目排序
+    // —— 选中内聚（会话根架构 W2 任务 6；W3 任务 12 活动项目派生收口）：跨项目选中由
+    // store 自身应用目标项目偏好并补拉模型列表，决策核就地内联（不新增导出全局，store
+    // 自持）。活动项目 = 选中会话派生（useActiveProject 同判据）：本次选中前的活动项目
+    // 与目标同项目 → 幂等纯选中。刻意不 PATCH 项目最近打开时间——轻量切换不写项目排序
     // （session-list.tsx selectSession 注释同契约）。
     if (id === null) return;
     const s = useSessionsStore.getState();
     const targetProject = projectOfSession(s.byProject, id);
     // 行不在 store（列表未返回时的 URL 直达等）：推不出目标项目，保持纯选中（与旧行为一致）
     if (targetProject === null) return;
+    // 同项目重选：幂等面——纯选中，不重拉模型、不重置偏好（用户手选的模型不被项目偏好冲掉）
+    if (targetProject === projectOfSession(s.byProject, prevSelectedId)) return;
     const ui = useUiStore.getState();
-    // 同项目重选：幂等面——纯选中，不重拉模型、不重置偏好（调用点 crossProjectDecision
-    // 同项目分支 switchProject:false 的语义原样保留，用户手选的模型不被项目偏好冲掉）
-    if (targetProject === ui.currentProject) return;
-    ui.setCurrentProject(targetProject);
     // 偏好先行（顺序承重，见 bootstrap 回退链注释）：先置非空选中，随后 loadProjectModels
     // 的回退链只在选中为空时补位——引擎默认不会覆盖项目偏好。链：会话生效模型
     // appliedModels > 目标项目偏好 preferredModel > null（交回退链兜引擎默认 > 列表首项）。
@@ -326,10 +326,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         useSessionsStore.getState().setAllSessions(res.sessions);
         return;
       }
-      const { currentProject } = useUiStore.getState();
-      if (!currentProject) return;
-      const res = await api.listSessions({ project: currentProject, archived, q: q || undefined, tags });
-      useSessionsStore.getState().setSessions(currentProject, res.sessions);
+      // 单项目口径：活动项目 = 选中会话派生（W3 任务 12）；无选中会话即无列表语义，
+      // 直接返回（侧栏常驻聚合视图，不经过此分支）
+      const { byProject, selectedId } = useSessionsStore.getState();
+      const project = projectOfSession(byProject, selectedId);
+      if (!project) return;
+      const res = await api.listSessions({ project, archived, q: q || undefined, tags });
+      useSessionsStore.getState().setSessions(project, res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
         useUiStore.getState().showToast(t("common.lib.sessionListLoadFailed"), "error");
@@ -603,10 +606,10 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
     }),
 }));
 
-/** 活跃项目派生（会话根架构 W1 任务 1）：当前选中会话 → 所属项目反查。
- * 标准 zustand 选择器订阅 selectedId 与 byProject 引用，任一身份变化触发重渲染
- * （派生本身是廉价线性扫描）；未选中或未命中返回 null，回退语义由调用方自理
- * （过渡期右栏记忆页签回退 currentProject，后续批次移除）。 */
+/** 活跃项目派生（会话根架构 W1 任务 1；W3 任务 12 起为全应用唯一项目源）：当前选中
+ * 会话 → 所属项目反查。标准 zustand 选择器订阅 selectedId 与 byProject 引用，任一身份
+ * 变化触发重渲染（派生本身是廉价线性扫描）；未选中或未命中返回 null，调用方各自落
+ * 空态语义（全局项目字段已退役，无回退源）。 */
 export function useActiveProject(): string | null {
   const selectedId = useSessionsStore((s) => s.selectedId);
   const byProject = useSessionsStore((s) => s.byProject);

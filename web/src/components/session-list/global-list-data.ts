@@ -73,7 +73,7 @@ export function latestModified(list: SessionListItem[]): string {
 export function groupOrder(
   projectPaths: string[],
   byProject: Record<string, SessionListItem[]>,
-  currentProject: string | null,
+  activeProject: string | null,
   opts?: {
     mode?: ProjectSortMode;
     /** 注册元数据（createdAt），added 档用；缺省视为空值走稳定序 */
@@ -83,7 +83,7 @@ export function groupOrder(
   },
 ): string[] {
   const mode = opts?.mode ?? "activity";
-  const rest = projectPaths.filter((p) => p !== currentProject);
+  const rest = projectPaths.filter((p) => p !== activeProject);
 
   if (mode === "manual" && opts?.manualOrder) {
     const known = new Set(rest);
@@ -92,7 +92,7 @@ export function groupOrder(
     const unlisted = rest.filter((p) => !seen.has(p));
     unlisted.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
     const ordered = [...listed, ...unlisted];
-    return currentProject && projectPaths.includes(currentProject) ? [currentProject, ...ordered] : ordered;
+    return activeProject && projectPaths.includes(activeProject) ? [activeProject, ...ordered] : ordered;
   }
 
   if (mode === "added") {
@@ -101,15 +101,15 @@ export function groupOrder(
       const ca = meta[a]?.createdAt ?? "";
       const cb = meta[b]?.createdAt ?? "";
       if (ca !== cb) return ca < cb ? -1 : 1;
-      // 存量行 createdAt 同为迁移时刻 → 保持传入稳定序（W3 任务 11：lastOpenedAt
-      // 退化序已随项目打开链路退役，createdAt 是唯一排序依据）
+      // 存量行 createdAt 同为迁移时刻 → 保持传入稳定序（W3 任务 11：打开链路退化序
+      // 已退役，createdAt 是唯一排序依据）
       return 0;
     });
-    return currentProject && projectPaths.includes(currentProject) ? [currentProject, ...rest] : rest;
+    return activeProject && projectPaths.includes(activeProject) ? [activeProject, ...rest] : rest;
   }
 
   rest.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
-  if (currentProject && projectPaths.includes(currentProject)) return [currentProject, ...rest];
+  if (activeProject && projectPaths.includes(activeProject)) return [activeProject, ...rest];
   return rest;
 }
 
@@ -143,14 +143,14 @@ export function writeCollapsed(projectPath: string, collapsed: boolean, storage?
  * 都缺省时当前项目展开、其余折叠（计划 todo 10 默认规则） */
 export function isGroupExpanded(
   projectPath: string,
-  currentProject: string | null,
+  activeProject: string | null,
   override: boolean | undefined,
   storage?: CollapseStorage | null,
 ): boolean {
   if (override !== undefined) return override;
   const remembered = readCollapsed(projectPath, storage);
   if (remembered !== null) return !remembered;
-  return projectPath === currentProject;
+  return projectPath === activeProject;
 }
 
 /** 触发侧栏定位（topbar 调用）：session-list 监听后展开该组并滚动置顶 */

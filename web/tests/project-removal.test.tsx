@@ -46,7 +46,6 @@ function project(path: string, extra?: Partial<ProjectMeta>): ProjectMeta {
   return {
     projectPath: path,
     preferredModel: null,
-    lastOpenedAt: "2026-01-01T00:00:00.000Z",
     ...extra,
   };
 }
@@ -105,7 +104,7 @@ async function flush(): Promise<void> {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ projects: [], currentProject: null, toast: null });
+  useUiStore.setState({ projects: [], toast: null });
   useSessionsStore.setState({ selectedId: null, byProject: {} });
 });
 
@@ -128,7 +127,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2")],
-      currentProject: "/p1",
     });
     useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
@@ -139,7 +137,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
       root.render(createElement(ProjectManagementSection));
     });
 
-    // 列表渲染两个项目，当前项目带「当前」标记，missing 项目带「已丢失」徽标由字段驱动
+    // 列表渲染两个项目，选中会话所属项目带「当前」标记，missing 项目带「已丢失」徽标由字段驱动
     expect(container.querySelectorAll("[data-testid=project-management-row]")).toHaveLength(2);
 
     // 打开确认对话框：文案必须包含重新添加可恢复置顶/改名/标签的产品承诺
@@ -158,8 +156,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
 
-    // 确认移除选中会话（s1）所属项目 /p1：DELETE → refetch → 清选中会话；
-    // 全局项目字段写入已删（t10B 判定改派生），不再被本区触碰
+    // 确认移除选中会话（s1）所属项目 /p1：DELETE → refetch → 清选中会话
     await act(async () => {
       removeButtonOf(container, "/p1")?.click();
     });
@@ -169,7 +166,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
     expect(calls.some((c) => c.method === "DELETE" && c.path === "/api/projects")).toBe(true);
     expect(useUiStore.getState().projects.map((p) => p.projectPath)).toEqual(["/p2"]);
-    expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBeNull();
     expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
 
@@ -191,7 +187,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2")],
-      currentProject: "/p1",
     });
     useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
@@ -211,7 +206,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
 
     expect(useUiStore.getState().projects.map((p) => p.projectPath)).toEqual(["/p1"]);
-    expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBe("s1");
 
     await act(async () => {
@@ -237,7 +231,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2", { missing: true })],
-      currentProject: "/p1",
     });
     useSessionsStore.setState({ selectedId: "s1", byProject: { "/p1": [session("s1", "/p1")] } });
 
@@ -261,7 +254,6 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await flush();
     expect(deleteCalled).toBe(true);
     expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
-    expect(useUiStore.getState().currentProject).toBe("/p1");
     expect(useSessionsStore.getState().selectedId).toBe("s1");
 
     await act(async () => {
@@ -326,7 +318,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
     });
   });
 
-  test("幽灵态截断（t10B 隐藏）：隐藏选中会话所属项目清选中，隐藏无关项目不动", async () => {
+  test("隐藏守卫（t10B 判定，W3 任务 12 派生口径）：活动项目隐藏走确认弹层并清选中，无关项目直隐不动选中", async () => {
     const calls: Array<{ path: string; method: string }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -343,9 +335,9 @@ describe("设置面板项目管理区（W1 #1）", () => {
     document.body.appendChild(container);
     const root = createRoot(container);
 
-    // 全局字段置 null：隐藏走直隐路径（无确认弹层），直击 setHidden 守卫判定
-    // 相位一：选中 s1∈/p1，隐藏 /p1 → 选中清空
-    useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: null, toast: null });
+    // 相位一：选中 s1∈/p1（活动项目=/p1 派生）→ 隐藏 /p1 为可感知变化，弹确认层；
+    // 确认后 setHidden 守卫判定命中 → 清选中
+    useUiStore.setState({ projects: [project("/p1"), project("/p2")], toast: null });
     useSessionsStore.setState({
       selectedId: "s1",
       byProject: { "/p1": [session("s1", "/p1")], "/p2": [session("s2", "/p2")] },
@@ -356,11 +348,15 @@ describe("设置面板项目管理区（W1 #1）", () => {
     await act(async () => {
       hideButtonOf(container, "/p1")?.click();
     });
+    expect(container.querySelector("[data-testid=dialog-root]")).not.toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="project-hide-confirm"]') as HTMLElement)?.click();
+    });
     await flush();
     expect(calls.some((c) => c.method === "PUT" && c.path === "/api/projects/hidden")).toBe(true);
     expect(useSessionsStore.getState().selectedId).toBeNull();
 
-    // 相位二：选中 s2∈/p2，隐藏无关项目 /p1 → 选中保持
+    // 相位二：选中 s2∈/p2，隐藏无关项目 /p1 → 直隐路径（无弹层），选中保持
     await act(async () => {
       useSessionsStore.setState({ selectedId: "s2" });
     });
@@ -368,6 +364,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
       hideButtonOf(container, "/p1")?.click();
     });
     await flush();
+    expect(container.querySelector("[data-testid=dialog-root]")).toBeNull();
     expect(useSessionsStore.getState().selectedId).toBe("s2");
 
     await act(async () => {

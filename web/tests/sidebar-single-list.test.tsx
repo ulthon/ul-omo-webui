@@ -26,7 +26,7 @@ const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 const { buildForkIndexes, SessionItem } = await import("@/components/session-list/session-item");
 const { SessionList } = await import("@/components/session-list/session-list");
-const { useSessionsStore } = await import("@/stores/sessions");
+const { projectOfSession, useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -335,7 +335,8 @@ describe("跨项目分组头新建会话（docs08-r5 任务 2）", () => {
     // 请求等待模型解析完成后才发出，携带回退链落定的模型与思考档（引擎默认而非列表首项）
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ project: "/p1", model: "zai-coding-cn/glm-5.3-4k", thinkingLevel: "max" });
-    expect(useUiStore.getState().currentProject).toBe("/p1");
+    // 活动项目随新会话选中派生（W3 任务 12）
+    expect(projectOfSession(useSessionsStore.getState().byProject, useSessionsStore.getState().selectedId)).toBe("/p1");
     expect(useUiStore.getState().selectedModel).toBe("zai-coding-cn/glm-5.3-4k");
   });
 });

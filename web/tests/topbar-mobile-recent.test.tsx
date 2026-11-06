@@ -3,8 +3,8 @@
  * - 手机档（<lg）中槽点按会话身份区开全屏会话切换 sheet（Radix Dialog，portal 渲染，
  *   断言查 document 而非挂载容器）；派生复用侧栏最近区同一来源
  *   recentTop(flattenSessions(byProject))（跨项目 modified 降序前 8 条）
- * - 条目点击直达切换：跨项目路径完整断言两步——setCurrentProject（项目切换）+
- *   setSelectedModel（应用该项目偏好模型，模型列表按需补拉）；同项目仅选中；
+ * - 条目点击直达切换：跨项目路径完整断言——内聚 select 一步完成（选中 + 活动项目随
+ *   选中派生 + 应用该项目偏好模型 + 模型列表按需补拉）；同项目仅选中；
  *   选中后 sheet 关闭（条件渲染 DOM 卸载）
  * - 空态：无任何会话时显示「暂无会话」
  * - 桌面档断言不变：中槽仍是项目下拉（项目菜单 + 添加项目入口），无最近会话内容，
@@ -55,7 +55,7 @@ const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
 const { Topbar } = await import("@/components/layout/topbar");
 const { useUiStore } = await import("@/stores/ui");
-const { useSessionsStore } = await import("@/stores/sessions");
+const { projectOfSession, useSessionsStore } = await import("@/stores/sessions");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const TOPBAR_MOBILE_QUERY = "(max-width: 1023.98px)";
@@ -98,7 +98,7 @@ function makeSession(id: string, overrides: Partial<SessionListItem> = {}): Sess
 }
 
 function project(path: string, preferredModel: string | null = null) {
-  return { projectPath: path, preferredModel, lastOpenedAt: "2026-01-01T00:00:00.000Z" };
+  return { projectPath: path, preferredModel };
 }
 
 function okJson(payload: unknown): Response {
@@ -168,7 +168,7 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
         ),
       ],
     };
-    useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: "/p1" });
+    useUiStore.setState({ projects: [project("/p1"), project("/p2")] });
     useSessionsStore.setState({ byProject, selectedId: null });
 
     const container = await mountTopbar();
@@ -200,7 +200,6 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
 
     useUiStore.setState({
       projects: [project("/p1"), project("/p2", "prov/m2")],
-      currentProject: "/p1",
       models: [],
       modelsLoaded: true,
       selectedModel: "prov/m1",
@@ -217,8 +216,8 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
 
     const ui = useUiStore.getState();
     const sessions = useSessionsStore.getState();
-    // 第一步：项目切换；第二步：偏好模型应用
-    expect(ui.currentProject).toBe("/p2");
+    // 内聚 select 一步：选中 + 活动项目随选中派生 + 偏好模型应用
+    expect(projectOfSession(sessions.byProject, sessions.selectedId)).toBe("/p2");
     expect(ui.selectedModel).toBe("prov/m2");
     expect(sessions.selectedId).toBe("b1");
     // 模型列表为空时按需补拉（轻量切换路径）
@@ -237,7 +236,6 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
 
     useUiStore.setState({
       projects: [project("/p1", "prov/m1")],
-      currentProject: "/p1",
       models: [],
       modelsLoaded: true,
       selectedModel: "prov/m1",
@@ -253,7 +251,6 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
     await clickItem("a2");
 
     const ui = useUiStore.getState();
-    expect(ui.currentProject).toBe("/p1");
     expect(ui.selectedModel).toBe("prov/m1");
     expect(useSessionsStore.getState().selectedId).toBe("a2");
     // 选中路径不发模型请求（sheet 打开期的 /api/tags 定义拉取与选中无关）
@@ -261,7 +258,7 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
   });
 
   test("空态：无任何会话显示「暂无会话」，无条目", async () => {
-    useUiStore.setState({ projects: [project("/p1")], currentProject: "/p1" });
+    useUiStore.setState({ projects: [project("/p1")], modelsLoaded: false });
     useSessionsStore.setState({ byProject: {}, selectedId: null });
 
     const container = await mountTopbar();
@@ -274,7 +271,6 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
     stubMatchMedia(false);
     useUiStore.setState({
       projects: [project("/p1"), project("/p2")],
-      currentProject: "/p1",
     });
     useSessionsStore.setState({
       byProject: {
@@ -303,10 +299,10 @@ describe("手机顶栏最近会话切换（任务 15 → 任务 19 全屏 sheet�
 
 
 describe("手机顶栏项目名派生收口（W3 任务 14）", () => {
-  test("选中会话属 /p1 而全局字段为 /p2 → 显 p1；无选中不回退全局，显空态文案", async () => {
+  test("选中会话属 /p1 → 显 p1；无选中显空态文案（全局项目字段已退役，无回退源）", async () => {
     globalThis.fetch = (async () => okJson({ models: [], favorites: [], defaults: null })) as typeof fetch;
     const s1 = makeSession("a1", { project: "/p1" });
-    useUiStore.setState({ projects: [project("/p1"), project("/p2")], currentProject: "/p2" });
+    useUiStore.setState({ projects: [project("/p1"), project("/p2")] });
     useSessionsStore.setState({ byProject: { "/p1": [s1] }, selectedId: "a1" });
     const container = await mountTopbar();
     expect(container.querySelector('[data-testid="topbar-session-title"]')?.textContent).toBe("会话-a1");
@@ -316,7 +312,7 @@ describe("手机顶栏项目名派生收口（W3 任务 14）", () => {
     await act(async () => {
       useSessionsStore.setState({ selectedId: null });
     });
-    // 派生收口：无选中不再回退全局项目字段，显空态文案（缺陷场景 = 无全局回退存在）
+    // 派生收口：无选中显空态文案（全局项目字段已退役，无回退源）
     const after = container.querySelector('[data-testid="topbar-project-name"]')?.textContent ?? "";
     expect(after).toContain("选择项目");
     expect(after).not.toContain("p2");
