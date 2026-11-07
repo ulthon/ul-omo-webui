@@ -394,6 +394,10 @@ app.route(
     resolveBoundSession: makeBoundSessionResolver(meta),
     recentErrors: (sessionPath) => deriveRecentErrors(log.entries(), sessionPath),
     rpcQueueDepth: (sessionPath) => queueDepth.get(sessionPath) ?? 0,
+    // 探活窗暴露（engine-ux-visibility 任务 2）：回收事实只读 getter + 第三判据
+    // 同源注入（与 manager 构造处的 sessionBackgroundRunning 同一实现，纯读）
+    reclaimFacts: (sessionPath) => manager.getReclaimFacts(sessionPath),
+    backgroundRunning: (sessionPath) => sessionBackgroundRunning(sessionPath),
     now: () => Date.now(),
   }),
 );

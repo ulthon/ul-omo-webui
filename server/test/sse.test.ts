@@ -192,7 +192,7 @@ describe("EventBus", () => {
 // ---- attachEventBus 装配 ----
 
 describe("attachEventBus", () => {
-  test("进程管理器 engine_event 透传进事件桥（mock 全流程）", async () => {
+  test("engine_event 透传 + state_changed 合成 engine_state 帧（engine-ux-visibility 任务 2，任务 4 interlock 闭环）", async () => {
     const probe = new MemProbe()
     const bus = new EventBus()
     const fakes: FakeRpcClient[] = []
@@ -213,13 +213,19 @@ describe("attachEventBus", () => {
     fakes[0].emit({ type: "message_update", sessionId: "s1", seq: 1 } as never)
     fakes[0].emit({ type: "agent_end", sessionId: "s1" } as never)
     const replayed = bus.replay(0)
-    expect(replayed.events.length).toBe(2)
+    // 状态迁移每次恰一帧（ensureRunning = stopped→starting→ready 两帧 engine_state），
+    // 帧体最小化 {type, from, to}，无 wire sessionId；信封携源引擎绑定 sessionPath
+    expect(replayed.events.length).toBe(4)
     expect(replayed.events[0].projectPath).toBe(PROJ)
-    expect((replayed.events[0].event as { type: string }).type).toBe("message_update")
-    expect((replayed.events[1].event as { type: string }).type).toBe("agent_end")
+    expect(replayed.events[0].sessionPath).toBe(SESS)
+    expect(replayed.events[0].event).toEqual({ type: "engine_state", from: "stopped", to: "starting" })
+    expect(replayed.events[1].sessionPath).toBe(SESS)
+    expect(replayed.events[1].event).toEqual({ type: "engine_state", from: "starting", to: "ready" })
+    expect((replayed.events[2].event as { type: string }).type).toBe("message_update")
+    expect((replayed.events[3].event as { type: string }).type).toBe("agent_end")
     detach()
     fakes[0].emit({ type: "message_update", sessionId: "s1", seq: 2 } as never)
-    expect(bus.latestId).toBe(2)
+    expect(bus.latestId).toBe(4)
     await manager.stop(SESS)
   })
 })

@@ -1675,4 +1675,35 @@ describe("探活窗双门（任务 7，C4-B：wire 静默 ≥5min AND isIdle 判
       await cleanupTier(h)
     }
   })
+
+  test("(l) getReclaimFacts 只读事实面（engine-ux-visibility 任务 2）：档位/翻档/回合计数/未知键；纯读零副作用", async () => {
+    vi.useFakeTimers()
+    const h = makeTierHarness() // 探活窗 5min + 正常档 10min
+    try {
+      await h.manager.ensureRunning(SESS_A1, PROJ)
+      // 纯看引擎：探活窗档事实齐全（与 harness 构造参数同源）
+      expect(h.manager.getReclaimFacts(SESS_A1)).toEqual({
+        userPrompted: false,
+        agentRunningCount: 0,
+        activityWindowMs: 5 * MIN,
+        idleTimeoutMs: 10 * MIN,
+      })
+      // 真实回合计数：agent_start 入表，agent_settled 出表
+      h.fakes[0].emit({ type: "agent_start", sessionId: "rpc-9" })
+      expect(h.manager.getReclaimFacts(SESS_A1)?.agentRunningCount).toBe(1)
+      h.fakes[0].emit({ type: "agent_settled", sessionId: "rpc-9" })
+      expect(h.manager.getReclaimFacts(SESS_A1)?.agentRunningCount).toBe(0)
+      // 翻档：发过消息转正常档；改档 setter 即时反映
+      h.manager.markUserActivity(SESS_A1)
+      expect(h.manager.getReclaimFacts(SESS_A1)?.userPrompted).toBe(true)
+      h.manager.setActivityWindowMs(0)
+      expect(h.manager.getReclaimFacts(SESS_A1)?.activityWindowMs).toBe(0)
+      // 未知键：undefined（不虚构事实）
+      expect(h.manager.getReclaimFacts("/unknown/key.jsonl")).toBeUndefined()
+      // 纯读零副作用：getter 不触发重排/不改变回收行为（引擎仍探活窗档计时内 ready）
+      expect(h.manager.getStatus(SESS_A1)?.state).toBe("ready")
+    } finally {
+      await cleanupTier(h)
+    }
+  })
 })

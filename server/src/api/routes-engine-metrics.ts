@@ -4,7 +4,9 @@
  * 一次性纯读采样，每引擎一行（行键会话级：sessionPath + boundSession）：
  * state/pid/RSS/进程树合计 RSS+子进程数/CPU 瞬时+累计/IO 字节/startedAt/
  * 启动耗时（本次进行中或上次完成值）/上次启动耗时/uptime/绑定会话
- * (id,标题,文件大小)/换件计数/RPC 队列深度/最近错误尾。
+ * (id,标题,文件大小)/换件计数/RPC 队列深度/最近错误尾；任务 2 追加探活窗暴露
+ * （remainingIdleMs/activityWindowExempt/exemptReason，只读派生自 t7 回收档
+ * 状态，见 deriveActivityWindowExposure）。
  *
  * 硬约束（计划 Must-NOT）：
  * - 采样仅在请求处理器内执行——无定时器/无轮询循环；/proc 读取与绑定会话
@@ -22,7 +24,7 @@ import { Hono, type Context } from "hono";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { route } from "./http";
 import type { LogEntry } from "../obs/logger";
-import type { EngineStatusSnapshot } from "../engine/process-manager";
+import type { EngineReclaimFacts, EngineStatusSnapshot } from "../engine/process-manager";
 import type { EngineProcSample, ProcMetricsSampler } from "../engine/proc-metrics";
 import { resolveSessionTitle } from "./routes-session";
 
@@ -68,6 +70,95 @@ export interface EngineMetricsRow {
   workerRestartCount: number;
   rpcQueueDepth: number;
   recentErrors: EngineMetricError[];
+  /** 探活窗暴露（engine-ux-visibility 任务 2）：距下次空闲回收判收的剩余毫秒
+ *  （max(0, windowMs - elapsed)，镜像 rescheduleIdleCheck 公式）；豁免/非 ready 态
+ *  为 null（无倒计时） */
+  remainingIdleMs: number | null;
+  /** 当前是否豁免空闲回收（忙判据命中 / never 总逃生口 / 非 ready） */
+  activityWindowExempt: boolean;
+  /** 豁免原因（机器可读稳定值，见 ActivityWindowExemptReason；非豁免时缺席） */
+  exemptReason?: ActivityWindowExemptReason;
+}
+
+/** 豁免原因（engine-ux-visibility 任务 2；前端文案自行映射，值保持稳定）：
+ *  not_ready=非 ready 态回收定时器未武装；never=idleTimeoutMs<=0 总逃生口；
+ *  running_turn=真实回合进行中（探活窗档）；active_sessions=点亮会话非空
+ *  （正常档）；pending_permissions=挂起未应答权限/提问；queued_work=排队中
+ *  （第四判据）；background_task=后台任务运行中（第三判据）。 */
+export type ActivityWindowExemptReason =
+  | "not_ready"
+  | "never"
+  | "running_turn"
+  | "active_sessions"
+  | "pending_permissions"
+  | "queued_work"
+  | "background_task";
+
+/** 探活窗暴露（engine-ux-visibility 任务 2）：remainingIdleMs 有值 ⟺ 非豁免。 */
+export interface ActivityWindowExposure {
+  /** 距下次空闲回收判收的剩余毫秒；豁免时 null */
+  remainingIdleMs: number | null;
+  activityWindowExempt: boolean;
+  /** 命中豁免时的原因（非豁免时缺席） */
+  exemptReason?: ActivityWindowExemptReason;
+}
+
+/**
+ * 探活窗暴露纯派生（engine-ux-visibility 任务 2）：由快照 + 回收事实 + 探针面
+ * 推 remainingIdleMs/豁免态。判定序严格镜像 process-manager 回收调度本体
+ * （rescheduleIdleCheck → reclaimTier → isIdle/isIdleForActivityWindow）：
+ *   1. 非 ready 态：回收定时器未武装 → 豁免 not_ready；
+ *   2. idleTimeoutMs<=0 总逃生口（两档全停）→ 豁免 never；
+ *   3. 档位：activityWindowMs>0 且未发过消息（!userPrompted）→ 探活窗档，
+ *      否则正常档（idleTimeoutMs 梯子）；
+ *   4. 忙判据按源序取首个命中原因（源序 = isIdle/isIdleForActivityWindow 的
+ *      短路序）：探活窗档 agentRunning>0 计忙（点亮 open 不计，GAP-5 口径），
+ *      正常档 runningSessions>0 计忙；pendingPermissions/排队/后台两档同序；
+ *   5. 空闲：remainingIdleMs = max(windowMs - (now - lastActivityAt), 0)。
+ *
+ * 只读派生，不驱动任何回收行为；t7 双门/豁免逻辑本体零改动（派生若与本体
+ * 判定序漂移，以 process-manager 为准同步本镜像）。
+ */
+export function deriveActivityWindowExposure(
+  st: Pick<EngineStatusSnapshot, "state" | "lastActivityAt" | "runningSessions" | "pendingPermissions">,
+  input: {
+    facts: EngineReclaimFacts;
+    /** RPC 队列深度（>0 即第四判据排队中，与 manager sessionQueuedWork 同源谓词） */
+    queueDepth: number;
+    /** 后台任务运行探测（第三判据；与 manager sessionBackgroundRunning 同源） */
+    backgroundRunning: boolean;
+    now: number;
+  },
+): ActivityWindowExposure {
+  if (st.state !== "ready") {
+    return { remainingIdleMs: null, activityWindowExempt: true, exemptReason: "not_ready" };
+  }
+  if (input.facts.idleTimeoutMs <= 0) {
+    return { remainingIdleMs: null, activityWindowExempt: true, exemptReason: "never" };
+  }
+  const activityTier = input.facts.activityWindowMs > 0 && !input.facts.userPrompted;
+  let busy: ActivityWindowExemptReason | undefined;
+  if (activityTier) {
+    busy =
+      input.facts.agentRunningCount > 0 ? "running_turn"
+      : st.pendingPermissions.length > 0 ? "pending_permissions"
+      : input.queueDepth > 0 ? "queued_work"
+      : input.backgroundRunning ? "background_task"
+      : undefined;
+  } else {
+    busy =
+      st.runningSessions.length > 0 ? "active_sessions"
+      : st.pendingPermissions.length > 0 ? "pending_permissions"
+      : input.queueDepth > 0 ? "queued_work"
+      : input.backgroundRunning ? "background_task"
+      : undefined;
+  }
+  if (busy !== undefined) {
+    return { remainingIdleMs: null, activityWindowExempt: true, exemptReason: busy };
+  }
+  const windowMs = activityTier ? input.facts.activityWindowMs : input.facts.idleTimeoutMs;
+  const elapsed = input.now - st.lastActivityAt;
+  return { remainingIdleMs: Math.max(windowMs - elapsed, 0), activityWindowExempt: false };
 }
 
 /**
@@ -209,7 +300,7 @@ export function makeBoundSessionResolver(meta: BoundSessionMetaSource) {
   };
 }
 
-/** 单行组装（纯函数）：快照 + /proc 采样 + 会话/错误/队列注入面 → 指标行 */
+/** 单行组装（纯函数）：快照 + /proc 采样 + 会话/错误/队列/探活窗注入面 → 指标行 */
 export function buildMetricsRow(
   st: EngineStatusSnapshot,
   proc: EngineProcSample | null,
@@ -218,6 +309,11 @@ export function buildMetricsRow(
     recentErrors: EngineMetricError[];
     rpcQueueDepth: number;
     now: number;
+    /** 回收事实（manager.getReclaimFacts 同步读；列表与事实同一同步块内必非空）。
+ *  缺席时探活窗字段降级（无倒计时、非豁免），不虚构档位 */
+    reclaimFacts: EngineReclaimFacts | undefined;
+    /** 后台任务运行探测（第三判据；同源注入） */
+    backgroundRunning: boolean;
   },
 ): EngineMetricsRow {
   const now = extra.now;
@@ -245,6 +341,14 @@ export function buildMetricsRow(
     workerRestartCount: st.restartCount,
     rpcQueueDepth: extra.rpcQueueDepth,
     recentErrors: extra.recentErrors,
+    ...(extra.reclaimFacts !== undefined
+      ? deriveActivityWindowExposure(st, {
+          facts: extra.reclaimFacts,
+          queueDepth: extra.rpcQueueDepth,
+          backgroundRunning: extra.backgroundRunning,
+          now,
+        })
+      : { remainingIdleMs: null, activityWindowExempt: false }),
   };
 }
 
@@ -260,6 +364,11 @@ export interface EngineMetricsDeps {
   recentErrors(sessionPath: string): EngineMetricError[];
   /** RPC 队列深度（组合根 queue_update 帧跟踪派生） */
   rpcQueueDepth(sessionPath: string): number;
+  /** 空闲回收事实（manager.getReclaimFacts 只读接线；纯读零副作用，
+ *  与 listStatuses 同一请求同步块内调用） */
+  reclaimFacts(sessionPath: string): EngineReclaimFacts | undefined;
+  /** 后台任务运行探测（与 manager sessionBackgroundRunning 同源注入；纯读） */
+  backgroundRunning(sessionPath: string): boolean;
   now(): number;
 }
 
@@ -276,6 +385,8 @@ export function createEngineMetricsRoutes(deps: EngineMetricsDeps): Hono {
           boundSession: deps.resolveBoundSession(st.sessionPath),
           recentErrors: deps.recentErrors(st.sessionPath),
           rpcQueueDepth: deps.rpcQueueDepth(st.sessionPath),
+          reclaimFacts: deps.reclaimFacts(st.sessionPath),
+          backgroundRunning: deps.backgroundRunning(st.sessionPath),
           now,
         },
       ),
