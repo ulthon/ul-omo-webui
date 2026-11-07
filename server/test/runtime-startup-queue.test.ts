@@ -9,7 +9,11 @@
  * 4. 排队中第二个 prompt → 409 already_processing（不排两个）。
  * 5. backoff 期 prompt → 同样排队。
  * 6. stopped + 开门车道在途（stopped-with-open-in-progress）→ 排队。
- * 7. 纯 stopped 冷态 → 不排队走原同步 ensure 路径（503 engine_not_ready，行为零变化）。
+ * 7. 冷态 prompt（FIXUP：97s 事故真实入口——引擎 stopped 无车道无回合，prompt
+ *    自身 ensure 拉起）→ 同样接住排队并 kick open 恰一次（复用 openLane/
+ *    ensureRunning 链）；冷态同步 503 对可 open 的良构 prompt 不可达；冷态不可
+ *    open（unavailable 形态 ensureRunning 抛错）→ queued 后立即合成
+ *    queued_prompt_failed，零投递不挂满 120s。
  * 8. 回合进行中 prompt → 现有 409 already_processing 语义不变（ready 直投与 starting
  *    排队门两路都先撞回合占用）。
  * 9. ready 后投递失败（open_failed）→ 不重试，合成 queued_prompt_failed 事件可观测。
@@ -135,10 +139,15 @@ class FakeManager {
   state: EngineState = "starting"
   stateOverrides: EngineState[] = []
   ensureRunningCalls = 0
+  /** 冷态不可 open 形态（真实 unavailable：连续失败达上限需 recover，ensureRunning 抛错） */
+  ensureRunningWillFail = false
   private readonly listeners = new Set<(e: unknown) => void>()
   constructor(private readonly rpc: FakeQueueRpc) {}
   ensureRunning = async (): Promise<void> => {
     this.ensureRunningCalls += 1
+    if (this.ensureRunningWillFail) {
+      throw new Error("项目引擎不可用（连续失败 5 次达上限）：需 recover() 显式重试")
+    }
   }
   getClient = (): unknown => this.rpc
   getStatus = (): { state: EngineState } => ({
@@ -232,7 +241,7 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       // ready 事件（引擎冷启完成）→ 自动补投恰好一次
       h.manager.state = "ready"
       h.manager.emitReady(h.sessionPath)
-      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1))
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       // 有界静置复查（misleading_success 对抗：确无第二次投递）
       await new Promise((r) => setTimeout(r, 150))
       expect(h.rpc.promptCalls).toBe(1)
@@ -258,7 +267,7 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       // HTTP 已回排队语义（消息已接受），投递由竞态复查立即异步补发
       expect(receipt.disposition).toBe("queued")
       expect(receipt.queued).toBe(true)
-      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1))
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       expect(h.rpc.prompts[0]).toBe("race-ready")
       expect(occurrencesInSessionFile(h.sessionPath, "race-ready")).toBe(1)
       // 立即投递后无残留订阅与超时误报
@@ -339,7 +348,7 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       // 队列仍只有第一条：ready 后投递的是 first，恰一次
       h.manager.state = "ready"
       h.manager.emitReady(h.sessionPath)
-      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1))
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       expect(h.rpc.prompts[0]).toBe("first")
     } finally {
       rmSync(h.root, { recursive: true, force: true })
@@ -355,7 +364,7 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       expect(h.rpc.promptCalls).toBe(0)
       h.manager.state = "ready"
       h.manager.emitReady(h.sessionPath)
-      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1))
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       expect(h.rpc.prompts[0]).toBe("backoff-msg")
     } finally {
       rmSync(h.root, { recursive: true, force: true })
@@ -365,17 +374,18 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
   test("stopped + 开门车道在途（stopped-with-open-in-progress）→ 排队并在 ready 后补投", async () => {
     const h = setup("stopped")
     try {
-      // 制造在途车道：messages 触发 openLane（引擎未 ready → 车道轮询挂起）
+      // 制造在途车道：messages 触发 openLane（引擎未 ready → 车道轮询挂起）；
+      // ensureRunning 调用是车道已登记的确定性信号（替代时钟静置，负载下不敏感）
       const msgsPromise = h.registry.messages(DURABLE_ID)
-      await new Promise((r) => setTimeout(r, 50))
-      // stopped 且车道在途 → 排队（非纯 stopped 冷态）
+      await vi.waitFor(() => expect(h.manager.ensureRunningCalls).toBeGreaterThanOrEqual(1), { timeout: 5000 })
+      // stopped 且车道在途 → 排队（启动旅程分支，不 kick 二次 open）
       const receipt = await h.registry.prompt(DURABLE_ID, { text: "lane-in-flight" })
       expect(receipt.queued).toBe(true)
       // 引擎就绪（车道轮询放行 + state_changed 事件）
       h.manager.state = "ready"
       h.manager.emitReady(h.sessionPath)
       await msgsPromise
-      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1))
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       expect(h.rpc.prompts[0]).toBe("lane-in-flight")
       expect(occurrencesInSessionFile(h.sessionPath, "lane-in-flight")).toBe(1)
     } finally {
@@ -383,35 +393,53 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
     }
   })
 
-  test("纯 stopped 冷态（无在途车道）→ 不排队走原同步 ensure 路径（503 engine_not_ready，行为零变化）", async () => {
+  test("冷态 prompt（FIXUP：97s 事故真实入口，引擎 stopped 无车道无回合）→ kick open 恰一次 + 200 queued；ready → 单次字节一致投递", async () => {
     const h = setup("stopped")
     try {
-      vi.useFakeTimers()
-      try {
-        const p = h.registry.prompt(DURABLE_ID, { text: "cold-start" })
-        const errP = p.then(
-          () => {
-            throw new Error("应当走原路径 503，不应排队成功")
-          },
-          (e: unknown) => e as ApiError,
-        )
-        // openLane 有界等待 15s（250ms 轮询）全在假时钟内推进；resolveSession 的 fs
-        // 宏任务链会消耗前置步数（首推几步无 timer 可触发），步数上限覆盖
-        // fs 偏移 + 15s deadline（30s 假时钟裕量）防失控
-        for (let i = 0; i < 120; i++) {
-          await vi.advanceTimersByTimeAsync(250)
-        }
-        const err = await errP
-        expect(err).toBeInstanceOf(ApiError)
-        expect(err.status).toBe(503)
-        expect(err.code).toBe("engine_not_ready")
-        // 未排队：无合成事件、无引擎调用、无排队监听（registry 常驻 crash 订阅不计）
-        expect(h.rpc.promptCalls).toBe(0)
-        expect(h.syntheticEvents).toHaveLength(0)
-        expect(queuedListenerActive(h.registry)).toBe(false)
-      } finally {
-        vi.useRealTimers()
-      }
+      const TEXT = "cold-entry-97s"
+      // 事故形态（journal 实证 23:31:18.551 prompt 到达，75ms 后引擎才 stopped→starting
+      // ——prompt 自身 ensure 拉起）：冷态不再同步等 spawn+probe+bind-open，立即接住
+      const receipt = await h.registry.prompt(DURABLE_ID, { text: TEXT })
+      expect(receipt.disposition).toBe("queued")
+      expect(receipt.queued).toBe(true)
+      expect(h.rpc.promptCalls).toBe(0)
+      // open 恰触发一次（kick 车道；排队不直投）——冷态同步 503 路径不可达
+      expect(h.manager.ensureRunningCalls).toBe(1)
+      // 引擎就绪（kick 的 ensure 链完成，state_changed 事件）→ 自动补投恰一次
+      //（flush 共享 kick 在途车道，不二次 ensure）
+      h.manager.state = "ready"
+      h.manager.emitReady(h.sessionPath)
+      await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
+      // 有界静置复查：无第二次投递、全程仅 kick 一次 open
+      await new Promise((r) => setTimeout(r, 150))
+      expect(h.rpc.promptCalls).toBe(1)
+      expect(h.manager.ensureRunningCalls).toBe(1)
+      expect(h.rpc.prompts[0]).toBe(TEXT)
+      expect(occurrencesInSessionFile(h.sessionPath, TEXT)).toBe(1)
+      expect(queuedListenerActive(h.registry)).toBe(false)
+      expect(h.syntheticEvents).toHaveLength(0)
+    } finally {
+      rmSync(h.root, { recursive: true, force: true })
+    }
+  })
+
+  test("冷态 open 不可能（ensureRunning 抛错，真实 unavailable 形态）→ 不同步 503：queued 后立即合成 queued_prompt_failed，零投递", async () => {
+    const h = setup("stopped")
+    try {
+      h.manager.ensureRunningWillFail = true
+      const receipt = await h.registry.prompt(DURABLE_ID, { text: "cold-unopenable" })
+      // 接住排队而非同步 503（HTTP 已 200；kick 车道终态失败立即反馈可观测事件）
+      expect(receipt.queued).toBe(true)
+      await vi.waitFor(() => {
+        expect(h.syntheticEvents.some((e) => e.type === "queued_prompt_failed")).toBe(true)
+      }, { timeout: 5000 })
+      // 零投递、条目已清（不挂满 120s）
+      expect(h.rpc.promptCalls).toBe(0)
+      const failEvent = h.syntheticEvents.find((e) => e.type === "queued_prompt_failed")
+      expect(failEvent?.code).toBe("internal")
+      expect(failEvent?.sessionId).toBe(DURABLE_ID)
+      expect(queuedListenerActive(h.registry)).toBe(false)
+      expect(occurrencesInSessionFile(h.sessionPath, "cold-unopenable")).toBe(0)
     } finally {
       rmSync(h.root, { recursive: true, force: true })
     }
@@ -465,7 +493,7 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       h.manager.emitReady(h.sessionPath)
       await vi.waitFor(() => {
         expect(h.syntheticEvents.some((e) => e.type === "queued_prompt_failed")).toBe(true)
-      })
+      }, { timeout: 5000 })
       // 有界静置复查：不重试（byte-once 铁律：不确定是否送达即不再送）
       await new Promise((r) => setTimeout(r, 150))
       expect(h.rpc.promptCalls).toBe(0)

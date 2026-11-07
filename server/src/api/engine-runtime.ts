@@ -113,9 +113,11 @@ export interface EngineGateway {
    * （回模型行归一）；排队/未携带 model 不回传。
    * queued（engine-ux-visibility 任务 5）：引擎 starting/backoff/开门车道在途期收到
    * prompt 时服务端先接住（disposition="queued" + queued=true，97s 冷启事故修复），
-   * ready 事件触发原样投递一次；等待期可 abort 撤回，超时
-   * （QUEUED_STARTUP_PROMPT_TIMEOUT_MS）合成 queued_prompt_timeout 事件且消息
-   * 绝不投递（迟到的 ready 命中空表自然空转）。
+   * ready 事件触发原样投递一次；冷态（引擎未就绪且无在途启动，含 stopped/
+   * unavailable/stopping——事故真实入口：prompt 自身 ensure 拉起引擎）同样接住并
+   * 复用 openLane/ensureRunning 链 kick open（冷态同步 503 对可 open 的良构
+   * prompt 不可达）；等待期可 abort 撤回，超时（QUEUED_STARTUP_PROMPT_TIMEOUT_MS）
+   * 合成 queued_prompt_timeout 事件且消息绝不投递（迟到的 ready 命中空表自然空转）。
    */
   prompt(
     sessionId: string,
@@ -1493,10 +1495,16 @@ class ProjectRuntime {
   ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string; queued?: boolean }> {
     // 启动期排队门（engine-ux-visibility 任务 5，97s 冷启事故修复）：引擎
     // starting/backoff/开门车道在途期收到 prompt → 立即接住（200 排队语义，
-    // disposition="queued"+queued 标志），ready 事件触发原样投递一次。非排队路径
-    //（含纯 stopped 冷态「发消息将拉起」走原同步 ensure 链）行为零变化。
+    // disposition="queued"+queued 标志），ready 事件触发原样投递一次。冷态
+    //（未就绪且无在途启动：stopped/unavailable/stopping——事故取证 23:31:18.551
+    // prompt 到达、75ms 后引擎才 stopped→starting，即 prompt 自身 ensure 拉起引擎，
+    // 冷态同步等 spawn+probe+bind-open 正是 84s 503 错误卡的入口）同样接住排队并
+    // kick open；对可 open 的良构 prompt，冷态同步 503 路径不可达。引擎就绪的
+    // prompt 走原直投路径（行为零变化）。
     const row = await this.resolveSession(sessionId);
-    if (this.startupQueuePending(row.path)) {
+    const startupJourney = this.startupQueuePending(row.path);
+    const coldStart = !startupJourney && this.coldStartPending(row.path);
+    if (startupJourney || coldStart) {
       // 回合占用优先于排队（单驱动约束，与下方 deliverPrompt 内同族 409）：启动窗口
       // 撞在途回合（如 crash 重启中回合未结算）不排队不双驾驶。
       if (this.runningTurns.has(row.path)) {
@@ -1514,6 +1522,7 @@ class ProjectRuntime {
         );
       }
       this.enqueueStartupPrompt(row.path, sessionId, input);
+      if (coldStart) this.kickColdOpen(row.path, row.id);
       return { disposition: "queued", queued: true };
     }
     return this.deliverPrompt(sessionId, input);
@@ -1525,12 +1534,46 @@ class ProjectRuntime {
   // 用户手动重发。修法：启动旅程中的 prompt 先接住，ready 后自动补投。
 
   /** 排队条件：引擎处于启动旅程中（starting/backoff），或开门车道在途而引擎未就绪
-   *  （stopped-with-open-in-progress：ensure 已触发的 stopped 瞬态）。纯 stopped 冷态
-   *  不排队——「发消息将拉起」走原同步路径（ensure 自己拉起），行为不变。 */
+   *  （stopped-with-open-in-progress：ensure 已触发的 stopped 瞬态）。 */
   private startupQueuePending(sessionPath: string): boolean {
     const alive = this.manager.getStatus(sessionPath)?.state;
     if (alive === "starting" || alive === "backoff") return true;
     return this.openLanes.has(sessionPath) && alive !== "ready";
+  }
+
+  /** 冷态判定（FIXUP：97s 事故真实入口）：非就绪且非启动旅程且无在途车道
+   *  （stopped/unavailable/stopping/无状态行）——prompt 自身触发 open 的入口形态。
+   *  冷态 prompt 同样接住排队，由 kickColdOpen 复用既有 openLane/ensureRunning 链
+   *  拉起引擎；ready 后与其他排队同路径补投。 */
+  private coldStartPending(sessionPath: string): boolean {
+    const alive = this.manager.getStatus(sessionPath)?.state;
+    return alive !== "ready" && !this.startupQueuePending(sessionPath);
+  }
+
+  /** 冷态触发 open（FIXUP）：复用既有 openLane/ensureRunning 链（不发明新 spawn
+   *  路径），fire-and-forget——HTTP 已回排队回执，车道结局异步收敛：成功则随
+   *  ready 事件补投；终态失败（如 unavailable 的 ensure 拒绝/open_failed）时排队
+   *  条目若仍在（未被 ready 投递/撤回/超时取走）→ 立即合成 queued_prompt_failed
+   *  （宁让用户立刻重试，不白挂 120s；不确定送达依旧绝不投递，byte-once 不变）。 */
+  private kickColdOpen(sessionPath: string, durableHint: string): void {
+    void this.openLaneResolved(sessionPath, { durableHint })
+      .then(() => undefined)
+      .catch((err: unknown) => {
+        const entry = this.dequeueStartupPrompt(sessionPath);
+        if (!entry) return;
+        log.warn("gw", "queued_prompt.open_kick_failed", {
+          session: entry.sessionId.slice(0, 8),
+          proj: projHash8(this.projectPath),
+          reason: err instanceof Error ? err.message : String(err),
+          rid: currentRid(),
+        });
+        this.opts.publishSyntheticEvent?.(this.projectPath, {
+          type: "queued_prompt_failed",
+          synthetic: true,
+          sessionId: entry.sessionId,
+          code: err instanceof ApiError || err instanceof EngineAdapterError ? err.code : "internal",
+        });
+      });
   }
 
   /** 排队登记：挂 ready 监听 → 竞态复查（挂监听前一瞬恰已迁 ready 的 state_changed
