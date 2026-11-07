@@ -416,8 +416,17 @@ export function MessageList({
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // 在底部判定（#26）：渲染窗覆盖锚点下标，不再用 scrollHeight/scrollTop 像素比较
-    const atBottom = isAnchorCoveredByRange(virtualizer.getVirtualItems(), anchorIndex);
+    // 在底部判定（02a629e 回归收紧）：渲染窗覆盖锚点下标仅是必要条件——末条为长消息
+    // 时视口落在其中段也覆盖渲染窗；须再要求锚点条目末端贴容器底：滚动容器剩余距离
+    // scrollHeight - scrollTop - clientHeight < 8px（等价于锚点末端 getBoundingClientRect
+    // .bottom 距容器底在容器垫距容差内：末条即内容末端，剩余距离即两者间距减下垫）。
+    // scrollTop 钳到 maxScroll：真实滚动不会越界，mock/惯性越界时仍按贴底算；越界时
+    // 虚拟窗可能整窗卸载（覆盖判定不可用），此时剩余距离<8 即视为在底。
+    const virtualItems = virtualizer.getVirtualItems();
+    const covered = isAnchorCoveredByRange(virtualItems, anchorIndex);
+    const maxScroll = Math.max(el.scrollHeight - el.clientHeight, 0);
+    const remaining = el.scrollHeight - Math.min(el.scrollTop, maxScroll) - el.clientHeight;
+    const atBottom = remaining < 8 && (covered || virtualItems.length === 0);
     const programmatic = Date.now() < programmaticUntilRef.current;
     // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带锚点快照与触发源 scroll；
     // 程序滚动护栏窗口内不解除跟随（中速帧锚点暂不在渲染窗属正常，误解除会打断跟随）
@@ -426,8 +435,11 @@ export function MessageList({
         diag.info("scroll", "follow_flip", { from: followRef.current, to: atBottom, src: "scroll", anchorIndex, items: mergedItems.length, scrollTop: Math.round(el.scrollTop) });
       }
       followRef.current = atBottom;
-      setShowJump(!atBottom);
     }
+    // 回底钮可见性不受程序化护栏拦截（护栏只护 followRef 不被中途解除）：用户在程序
+    // 滚动途中上滚时回底钮必须即时出现，否则 600ms 窗口内滚动状态不可见（02a629e
+    // 回归症状之一）。
+    setShowJump(!atBottom);
     // 粘性用户条（r9 wave1 视口锚定）：候选=视口上缘上方最近含文本 user 气泡，随滚动
     // 实时反查（不再恒取尾部）；回底消失判据不变。测量缺失（未挂载/计数未同步）不钉。
     const measurements = virtualizer.measurementsCache;
