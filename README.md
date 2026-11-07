@@ -37,17 +37,17 @@ Run as a daemon (systemd-managed, auto-start on boot, auto-restart on crash):
 
 ```bash
 sudo ul-omo-webui startup enable --system     # system-level service (recommended for servers)
-ul-omo-webui startup status                   # check service status
-ul-omo-webui startup disable --system         # stop and remove the service
+ul-omo-webui startup status --system          # check service status
+sudo ul-omo-webui startup disable --system    # stop and remove the service
 ```
 
-A user-level service (`ul-omo-webui startup enable`, without `sudo`) suits personal machines; run `loginctl enable-linger` so it survives logout.
+A user-level service (`ul-omo-webui startup enable`, without `sudo`) suits personal machines; `enable` automatically attempts `loginctl enable-linger` so it survives logout, printing a warning if that fails (run it manually in that case).
 
-Upgrading: check and self-update in one click from the Settings page (npm global reinstall + self-healing restart); or from a terminal, `npm install -g @ulthon/ul-omo-webui@latest` then `systemctl restart ul-omo-webui`.
+Upgrading: check and self-update in one click from the Settings page (npm global reinstall + self-healing restart); or from a terminal, `npm install -g @ulthon/ul-omo-webui@latest` then `systemctl restart ul-omo-webui` (system-level service; for a user-level service use `systemctl --user restart ul-omo-webui`).
 
 ## Environment variables
 
-Every env var the server actually reads (sources: `server/src/config.ts`, `obs/logger.ts`, `auth/password.ts`, `api/perf.ts`, `api/http.ts`, `conf/config-store.ts`, `title-gen.ts`, `engine/schedule-runner.ts`, `engine/process-manager.ts`, `api/routes-memory.ts`).
+Every user-facing env var the server reads (sources: `server/src/config.ts`, `obs/logger.ts`, `auth/password.ts`, `api/perf.ts` + `conf/diagnostics-flags.ts`, `api/http.ts`, `conf/config-store.ts`, `title-gen.ts`, `engine/schedule-runner.ts`, `engine/process-manager.ts`, `api/routes-memory.ts` + `lib/runtime-retention.ts`, `startup.ts`). Not listed: internal/QA override vars of the update module (`UL_OMO_WEBUI_UPDATE_REGISTRY`, `UL_OMO_WEBUI_UPDATE_PKG`, `UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE`, `UL_OMO_WEBUI_UPDATE_ENGINE_PKG`, `UL_OMO_WEBUI_UPDATE_ENGINE_BIN`, `UL_OMO_WEBUI_UPDATE_RESTART_CMD` from `update/checker.ts` / `update/installer.ts`) — leave them unset in normal deployments.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -72,7 +72,7 @@ Every env var the server actually reads (sources: `server/src/config.ts`, `obs/l
 | UL_OMO_WEBUI_SCHEDULE_DELIVER_URL | unset | Webhook URL for scheduled task result delivery |
 | UL_OMO_WEBUI_SCHEDULE_DELIVER_TOKEN | unset | Bearer token for the delivery webhook |
 | SENPI_ENGINE_PROBE_GATE | off | Engine process probe gate switch (read by the process manager) |
-| OMO_MEMORY_HOME | ~/.omo/memory | Memory directory (read by the memory routes) |
+| OMO_MEMORY_HOME | ~/.omo/memory | Memory directory (read by memory routes and runtime retention) |
 
 Also: `XDG_DATA_HOME` (Linux) and `APPDATA` (Windows) indirectly affect data dir defaults; a systemd user unit carries the `PATH` captured at enable time (engine child processes spawn node by name).
 
@@ -117,6 +117,7 @@ cd web && npm run dev             # frontend dev server (Vite HMR)
 cd server && npm run dev          # build server only, then start
 cd web && npm run build           # tsc -b typecheck + vite build
 cd web && npm run lint            # oxlint
+cd web && npm run scan:cn         # hardcoded-Chinese scan
 ```
 
 - Tests: server and web each ship vitest suites (`server/test`, `web/tests`); `npm test` at the root runs both

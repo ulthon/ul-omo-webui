@@ -37,17 +37,17 @@ ul-omo-webui
 
 ```bash
 sudo ul-omo-webui startup enable --system     # 系统级服务（推荐服务器部署）
-ul-omo-webui startup status                   # 查看服务状态
-ul-omo-webui startup disable --system         # 停用并移除服务
+ul-omo-webui startup status --system          # 查看服务状态
+sudo ul-omo-webui startup disable --system    # 停用并移除服务
 ```
 
-用户级服务（`ul-omo-webui startup enable`，不加 `sudo`）适合个人机器，需 `loginctl enable-linger` 保持登出后常驻。
+用户级服务（`ul-omo-webui startup enable`，不加 `sudo`）适合个人机器；enable 时会自动尝试 `loginctl enable-linger` 保持登出后常驻，失败仅告警（此时手动补跑一次即可）。
 
-升级：设置页「更新」区一键检查并自更新（npm 全局重装 + 服务自愈重启）；或在终端 `npm install -g @ulthon/ul-omo-webui@latest` 后 `systemctl restart ul-omo-webui`。
+升级：设置页「更新」区一键检查并自更新（npm 全局重装 + 服务自愈重启）；或在终端 `npm install -g @ulthon/ul-omo-webui@latest` 后 `systemctl restart ul-omo-webui`（系统级服务；用户级服务用 `systemctl --user restart ul-omo-webui`）。
 
 ## 环境变量全表
 
-以下为服务器代码实际读取的全部环境变量（来源：`server/src/config.ts`、`obs/logger.ts`、`auth/password.ts`、`api/perf.ts`、`api/http.ts`、`conf/config-store.ts`、`title-gen.ts`、`engine/schedule-runner.ts`、`engine/process-manager.ts`、`api/routes-memory.ts`）。
+以下为服务器代码实际读取的全部面向使用者的环境变量（来源：`server/src/config.ts`、`obs/logger.ts`、`auth/password.ts`、`api/perf.ts` + `conf/diagnostics-flags.ts`、`api/http.ts`、`conf/config-store.ts`、`title-gen.ts`、`engine/schedule-runner.ts`、`engine/process-manager.ts`、`api/routes-memory.ts` + `lib/runtime-retention.ts`、`startup.ts`）。未列：更新模块的内部/QA 覆盖变量（`UL_OMO_WEBUI_UPDATE_REGISTRY`、`UL_OMO_WEBUI_UPDATE_PKG`、`UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE`、`UL_OMO_WEBUI_UPDATE_ENGINE_PKG`、`UL_OMO_WEBUI_UPDATE_ENGINE_BIN`、`UL_OMO_WEBUI_UPDATE_RESTART_CMD`，出自 `update/checker.ts` / `update/installer.ts`），正常部署无需设置。
 
 | 变量名 | 默认值 | 作用 |
 |---|---|---|
@@ -72,7 +72,7 @@ ul-omo-webui startup disable --system         # 停用并移除服务
 | UL_OMO_WEBUI_SCHEDULE_DELIVER_URL | 未设置 | 计划任务结果投递的 Webhook 地址 |
 | UL_OMO_WEBUI_SCHEDULE_DELIVER_TOKEN | 未设置 | 投递 Webhook 的 Bearer Token |
 | SENPI_ENGINE_PROBE_GATE | 关闭 | 引擎进程探针门控开关（引擎子进程管理器读取） |
-| OMO_MEMORY_HOME | ~/.omo/memory | 记忆目录（记忆路由读取） |
+| OMO_MEMORY_HOME | ~/.omo/memory | 记忆目录（记忆路由与运行期保留读取） |
 
 另：`XDG_DATA_HOME`（Linux）与 `APPDATA`（Windows）会间接影响数据目录默认值；systemd 用户单元会显式带入 enable 时的 `PATH`（引擎子进程 spawn node 需要）。
 
