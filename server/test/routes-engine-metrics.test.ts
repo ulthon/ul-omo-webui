@@ -14,12 +14,15 @@
  *   spawn 计数 === 0
  * - 生命周期跟踪（真 manager）：ready 落 lastStartupMs、崩溃换件 restartCount+1
  *   且成功后不清零（区别于 consecutiveRestarts）
+ * - 探活窗暴露（engine-ux-visibility 任务 2）：deriveActivityWindowExposure 纯函数
+ *   假时钟全分支（递减/重置/四判据豁免/正常档/never/not_ready/关窗回落）；
+ *   真 manager + 假时钟端到端（倒计时数值递减、活动重置、running_turn/never 豁免）
  *
  * 对抗面：misleading_success_output——断言具体字段值（计数/数值/尾部内容），
  * 不以「响应 200 无异常」当作通过。
  */
 
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -35,12 +38,13 @@ import {
 import {
   buildMetricsRow,
   createEngineMetricsRoutes,
+  deriveActivityWindowExposure,
   deriveRecentErrors,
   makeBoundSessionResolver,
   parseSessionLead,
   type BoundSessionMetaSource,
 } from "../src/api/routes-engine-metrics"
-import { EngineProcessManager, type EngineStatusSnapshot } from "../src/engine/process-manager"
+import { EngineProcessManager, type EngineReclaimFacts, type EngineStatusSnapshot } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
 import { log, type LogEntry } from "../src/obs/logger"
 
@@ -298,12 +302,22 @@ describe("buildMetricsRow 行组装", () => {
     runningSessions: ["rpc-1"],
     pendingPermissions: [],
   }
+  /** 回收事实（探活窗档默认：5min 窗 / 10min 正常档） */
+  const facts = (over: Partial<EngineReclaimFacts> = {}): EngineReclaimFacts => ({
+    userPrompted: false,
+    agentRunningCount: 0,
+    activityWindowMs: 300_000,
+    idleTimeoutMs: 600_000,
+    ...over,
+  })
 
-  test("ready 行：startupMs 取上次完成值，uptimeMs 现算", () => {
+  test("ready 行：startupMs 取上次完成值，uptimeMs 现算；排队深度命中豁免（queued_work）", () => {
     const row = buildMetricsRow(base, null, {
       boundSession: { id: "d-1", title: "t", fileSizeBytes: 42 },
       recentErrors: [{ t: "t1", ev: "crash", detail: "pid=1" }],
       rpcQueueDepth: 3,
+      reclaimFacts: facts(),
+      backgroundRunning: false,
       now: 200_000,
     })
     expect(row.state).toBe("ready")
@@ -315,13 +329,17 @@ describe("buildMetricsRow 行组装", () => {
     expect(row.rpcQueueDepth).toBe(3)
     expect(row.recentErrors).toEqual([{ t: "t1", ev: "crash", detail: "pid=1" }])
     expect(row.boundSession).toEqual({ id: "d-1", title: "t", fileSizeBytes: 42 })
+    // 探活窗暴露（任务 2）：队列深度 3 > 0 → 第四判据豁免，无倒计时
+    expect(row.remainingIdleMs).toBeNull()
+    expect(row.activityWindowExempt).toBe(true)
+    expect(row.exemptReason).toBe("queued_work")
   })
 
-  test("starting 行：startupMs 为进行中差值（now - startingAt）", () => {
+  test("starting 行：startupMs 为进行中差值（now - startingAt）；非 ready 豁免 not_ready", () => {
     const row = buildMetricsRow(
       { ...base, state: "starting", pid: undefined, startedAt: undefined, startingAt: 150_000, lastStartupMs: undefined },
       null,
-      { boundSession: null, recentErrors: [], rpcQueueDepth: 0, now: 152_500 },
+      { boundSession: null, recentErrors: [], rpcQueueDepth: 0, reclaimFacts: facts(), backgroundRunning: false, now: 152_500 },
     )
     expect(row.startupMs).toBe(2_500)
     expect(row.lastStartupMs).toBeNull()
@@ -330,9 +348,12 @@ describe("buildMetricsRow 行组装", () => {
     expect(row.rssBytes).toBeNull()
     expect(row.treeRssBytes).toBeNull()
     expect(row.childCount).toBe(0)
+    expect(row.remainingIdleMs).toBeNull()
+    expect(row.activityWindowExempt).toBe(true)
+    expect(row.exemptReason).toBe("not_ready")
   })
 
-  test("proc 采样 pid 与快照 pid 不一致时丢弃（换代竞态不误挂新进程数据）", () => {
+  test("proc 采样 pid 与快照 pid 不一致时丢弃（换代竞态不误挂新进程数据）；空闲倒计时数值现算", () => {
     const staleProc: EngineProcSample = {
       pid: 999,
       rssBytes: 1,
@@ -346,12 +367,18 @@ describe("buildMetricsRow 行组装", () => {
       boundSession: null,
       recentErrors: [],
       rpcQueueDepth: 0,
-      now: 1,
+      reclaimFacts: facts(),
+      backgroundRunning: false,
+      now: 200_000,
     })
     expect(row.rssBytes).toBeNull()
     expect(row.treeRssBytes).toBeNull()
     expect(row.cpuTotalMs).toBeNull()
     expect(row.childCount).toBe(0)
+    // 空闲倒计时：elapsed = 200_000 - 95_000 = 105_000 → 300_000 - 105_000 = 195_000
+    expect(row.remainingIdleMs).toBe(195_000)
+    expect(row.activityWindowExempt).toBe(false)
+    expect(row.exemptReason).toBeUndefined()
   })
 })
 
@@ -389,6 +416,8 @@ describe("GET /api/engines/metrics 路由", () => {
       resolveBoundSession: () => ({ id: "d-1", title: "会话一", fileSizeBytes: 1234 }),
       recentErrors: () => [{ t: "t1", ev: "crash", detail: "pid=1" }],
       rpcQueueDepth: () => 2,
+      reclaimFacts: () => ({ userPrompted: false, agentRunningCount: 0, activityWindowMs: 300_000, idleTimeoutMs: 600_000 }),
+      backgroundRunning: () => false,
       now: () => 200_000,
       ...overrides,
     }
@@ -416,6 +445,10 @@ describe("GET /api/engines/metrics 路由", () => {
     expect(row.uptimeMs).toBe(110_000)
     expect(row.boundSession).toEqual({ id: "d-1", title: "会话一", fileSizeBytes: 1234 })
     expect(row.recentErrors).toEqual([{ t: "t1", ev: "crash", detail: "pid=1" }])
+    // 探活窗暴露（任务 2）：队列深度 2 > 0 → 第四判据豁免 queued_work（路由面注入链验证）
+    expect(row.remainingIdleMs).toBeNull()
+    expect(row.activityWindowExempt).toBe(true)
+    expect(row.exemptReason).toBe("queued_work")
   })
 
   test("stale_state：引擎全无 → 200 + 空列表（不是 404/500）", async () => {
@@ -471,6 +504,8 @@ describe("冷态零 spawn 与生命周期跟踪（真 EngineProcessManager）", 
       resolveBoundSession: () => null,
       recentErrors: () => [],
       rpcQueueDepth: () => 0,
+      reclaimFacts: (sessionPath) => h.manager.getReclaimFacts(sessionPath),
+      backgroundRunning: () => false,
       now: () => 1,
     })
     const res = await app.request("/api/engines/metrics")
@@ -544,3 +579,220 @@ async function waitForFn(predicate: () => boolean, timeoutMs = 8000, step = 20):
   }
   throw new Error(`waitFor 超时（${timeoutMs}ms）：条件未成立`)
 }
+
+describe("deriveActivityWindowExposure 探活窗暴露纯函数（engine-ux-visibility 任务 2，假时钟）", () => {
+  const T0 = 1_000_000
+  /** 快照探活窗子集（runningSessions/pendingPermissions 空为默认空闲态） */
+  const mkSt = (over: Partial<Pick<EngineStatusSnapshot, "state" | "lastActivityAt" | "runningSessions" | "pendingPermissions">> = {}) => ({
+    state: "ready" as const,
+    lastActivityAt: T0,
+    runningSessions: [],
+    pendingPermissions: [],
+    ...over,
+  })
+  const mkFacts = (over: Partial<EngineReclaimFacts> = {}): EngineReclaimFacts => ({
+    userPrompted: false,
+    agentRunningCount: 0,
+    activityWindowMs: 300_000,
+    idleTimeoutMs: 600_000,
+    ...over,
+  })
+  const derive = (
+    st: ReturnType<typeof mkSt>,
+    over: { facts?: EngineReclaimFacts; queueDepth?: number; backgroundRunning?: boolean; now?: number } = {},
+  ) =>
+    deriveActivityWindowExposure(st, {
+      facts: over.facts ?? mkFacts(),
+      queueDepth: over.queueDepth ?? 0,
+      backgroundRunning: over.backgroundRunning ?? false,
+      now: over.now ?? T0,
+    })
+
+  test("空闲倒计时随假时钟精确递减（数值断言，非存在性）：+60s→240000，+120s→180000", () => {
+    expect(derive(mkSt(), { now: T0 }).remainingIdleMs).toBe(300_000)
+    expect(derive(mkSt(), { now: T0 + 60_000 }).remainingIdleMs).toBe(240_000)
+    expect(derive(mkSt(), { now: T0 + 120_000 }).remainingIdleMs).toBe(180_000)
+    const idle = derive(mkSt(), { now: T0 + 60_000 })
+    expect(idle.activityWindowExempt).toBe(false)
+    expect(idle.exemptReason).toBeUndefined()
+  })
+
+  test("越窗钳 0 不出负值", () => {
+    expect(derive(mkSt(), { now: T0 + 300_000 }).remainingIdleMs).toBe(0)
+    expect(derive(mkSt(), { now: T0 + 400_000 }).remainingIdleMs).toBe(0)
+  })
+
+  test("活动即重置：lastActivityAt 前移后倒计时回到满窗", () => {
+    // 活动钟在 T0+100_000 被刷新（wire 帧/report），现在 T0+160_000
+    expect(derive(mkSt({ lastActivityAt: T0 + 100_000 }), { now: T0 + 160_000 }).remainingIdleMs).toBe(240_000)
+  })
+
+  test("豁免优先序镜像源判定序：真实回合 > 挂起权限 > 排队 > 后台（探活窗档）", () => {
+    expect(derive(mkSt(), { facts: mkFacts({ agentRunningCount: 1 }), now: T0 })).toEqual({
+      remainingIdleMs: null,
+      activityWindowExempt: true,
+      exemptReason: "running_turn",
+    })
+    expect(derive(mkSt({ pendingPermissions: ["ui-1"] }), { now: T0 }).exemptReason).toBe("pending_permissions")
+    expect(derive(mkSt(), { queueDepth: 3, now: T0 }).exemptReason).toBe("queued_work")
+    expect(derive(mkSt(), { backgroundRunning: true, now: T0 }).exemptReason).toBe("background_task")
+    // 多判据同时命中取首个（源序短路）
+    expect(
+      derive(mkSt({ pendingPermissions: ["ui-1"] }), { facts: mkFacts({ agentRunningCount: 1 }), queueDepth: 2, now: T0 }).exemptReason,
+    ).toBe("running_turn")
+    expect(derive(mkSt({ pendingPermissions: ["ui-1"] }), { queueDepth: 2, now: T0 }).exemptReason).toBe("pending_permissions")
+  })
+
+  test("点亮会话不豁免探活窗档（GAP-5 口径：open ≠ run，静默满窗照收）", () => {
+    const lit = derive(mkSt({ runningSessions: ["rpc-9"] }), { now: T0 + 60_000 })
+    expect(lit.remainingIdleMs).toBe(240_000)
+    expect(lit.activityWindowExempt).toBe(false)
+  })
+
+  test("正常档（发过消息）：点亮会话计忙（active_sessions）；空闲按 idleTimeoutMs 倒计时", () => {
+    expect(
+      derive(mkSt({ runningSessions: ["rpc-9"] }), { facts: mkFacts({ userPrompted: true }), now: T0 }).exemptReason,
+    ).toBe("active_sessions")
+    expect(derive(mkSt(), { facts: mkFacts({ userPrompted: true }), now: T0 + 60_000 }).remainingIdleMs).toBe(540_000)
+  })
+
+  test("never 总逃生口（idleTimeoutMs<=0 两档全停）：豁免 never 且优先于忙判据", () => {
+    expect(derive(mkSt(), { facts: mkFacts({ idleTimeoutMs: 0, agentRunningCount: 1 }), now: T0 })).toEqual({
+      remainingIdleMs: null,
+      activityWindowExempt: true,
+      exemptReason: "never",
+    })
+  })
+
+  test("关窗（activityWindowMs=0）：未发消息引擎回落正常档倒计时（非豁免）", () => {
+    expect(derive(mkSt(), { facts: mkFacts({ activityWindowMs: 0 }), now: T0 + 60_000 })).toEqual({
+      remainingIdleMs: 540_000,
+      activityWindowExempt: false,
+    })
+  })
+
+  test("非 ready 态：豁免 not_ready（回收定时器未武装），优先于一切", () => {
+    for (const state of ["starting", "backoff", "stopping", "unavailable", "stopped"] as const) {
+      expect(derive(mkSt({ state }), { facts: mkFacts({ agentRunningCount: 1 }), queueDepth: 1, now: T0 })).toEqual({
+        remainingIdleMs: null,
+        activityWindowExempt: true,
+        exemptReason: "not_ready",
+      })
+    }
+  })
+})
+
+describe("探活窗暴露端到端（真 manager + 假时钟 + 路由，engine-ux-visibility 任务 2）", () => {
+  const PROJ2 = "/tmp/euv-metrics/proj"
+  const SESS2 = "/tmp/euv-metrics/proj/s1.jsonl"
+
+  function makeFakeClockHarness() {
+    const probe = new MemProbe()
+    const fakes: FakeRpcClient[] = []
+    const registryPath = join(tmpdir(), `euv-metrics-fc-registry-${Math.random().toString(36).slice(2)}.json`)
+    const manager = new EngineProcessManager({
+      registryPath,
+      probeGate: false, // 首次 ping 即就绪：ensureRunning 纯微任务落定，无需推进定时器
+      probe,
+      idleTimeoutMs: 10 * 60_000, // 正常档 10min（与探活窗 5min 错开）
+      activityWindowMs: 5 * 60_000,
+      readyProbeIntervalMs: 5,
+      readyProbeMaxAttempts: 10,
+      stopGraceMs: 60,
+      crashPollMs: 60_000,
+      clientFactory: (o) => {
+        const fake = new FakeRpcClient(o)
+        fakes.push(fake)
+        probe.add(fake.pid, { cwd: PROJ2 })
+        // 同 process-manager.test.ts tier harness：stop 后从探针进程表摘除，
+        // 否则 shutdownProcess 的 waitForExit 在冻结假时钟下永不推进（挂起）
+        const origStop = fake.stop.bind(fake)
+        fake.stop = async () => {
+          await origStop()
+          probe.procs.delete(fake.pid)
+        }
+        return fake
+      },
+    })
+    const app = createEngineMetricsRoutes({
+      listStatuses: () => manager.getAllStatus(),
+      sampler: {
+        sample: (pid: number) => ({ pid, rssBytes: 1, treeRssBytes: 1, childCount: 0, cpuTotalMs: 0, cpuPct: null, ioBytes: null }),
+      },
+      resolveBoundSession: () => null,
+      recentErrors: () => [],
+      rpcQueueDepth: () => 0,
+      reclaimFacts: (sessionPath) => manager.getReclaimFacts(sessionPath),
+      backgroundRunning: () => false,
+      now: () => Date.now(), // 假时钟：Date.now 与定时器同源假化
+    })
+    return { manager, fakes, app, registryPath }
+  }
+
+  test("空闲倒计时数值递减 → 活动重置 → running_turn 豁免 → 回合落定恢复 → never 档豁免", async () => {
+    vi.useFakeTimers()
+    const h = makeFakeClockHarness()
+    try {
+      await h.manager.ensureRunning(SESS2, PROJ2)
+      const readRow = async (): Promise<Record<string, unknown>> => {
+        const res = await h.app.request("/api/engines/metrics")
+        expect(res.status).toBe(200)
+        const body = (await res.json()) as { engines: Array<Record<string, unknown>> }
+        expect(body.engines).toHaveLength(1)
+        return body.engines[0]!
+      }
+      // ready 即采样：elapsed = 0 → 满窗 300000
+      let row = await readRow()
+      expect(row.state).toBe("ready")
+      expect(row.remainingIdleMs).toBe(300_000)
+      expect(row.activityWindowExempt).toBe(false)
+      expect(row.exemptReason).toBeUndefined()
+      // 假时钟推进 60s：精确递减
+      await vi.advanceTimersByTimeAsync(60_000)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBe(240_000)
+      await vi.advanceTimersByTimeAsync(60_000)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBe(180_000)
+      // wire 流式帧刷新活动钟：倒计时回满窗
+      h.fakes[0]!.emit({ type: "message_start", sessionId: "rpc-9" } as never)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBe(300_000)
+      // 真实回合（agent_start）：豁免 running_turn，无倒计时
+      h.fakes[0]!.emit({ type: "agent_start", sessionId: "rpc-9" } as never)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBeNull()
+      expect(row.activityWindowExempt).toBe(true)
+      expect(row.exemptReason).toBe("running_turn")
+      // 回合落定（agent_settled）：回倒计时（活动钟同步刷新）
+      h.fakes[0]!.emit({ type: "agent_settled", sessionId: "rpc-9" } as never)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBe(300_000)
+      expect(row.activityWindowExempt).toBe(false)
+      // never 总逃生口：两档全停，豁免 never
+      h.manager.setIdleTimeoutMs(0)
+      row = await readRow()
+      expect(row.remainingIdleMs).toBeNull()
+      expect(row.activityWindowExempt).toBe(true)
+      expect(row.exemptReason).toBe("never")
+    } finally {
+      await h.manager.stopAll().catch(() => {})
+      vi.useRealTimers()
+      rmSync(h.registryPath, { force: true })
+    }
+  })
+
+  test("冷态：引擎全无 → 空行且探活窗字段随行缺席（字段不凭空出现）", async () => {
+    vi.useFakeTimers()
+    const h = makeFakeClockHarness()
+    try {
+      const res = await h.app.request("/api/engines/metrics")
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ engines: [] })
+    } finally {
+      await h.manager.stopAll().catch(() => {})
+      vi.useRealTimers()
+      rmSync(h.registryPath, { force: true })
+    }
+  })
+})

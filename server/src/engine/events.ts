@@ -17,9 +17,10 @@
  *   setEventBus(bus)                             // 见 api/sse.ts
  *
  * 进程管理器事件订阅面（todo 8）只消费 `engine_event`（wire 原样 + projectPath）；
- * 管理器自身的 state_changed / process_crashed / engine_unavailable /
- * engine_reclaimed 是管理器状态机事件，暂不进桥——前端需要"项目引擎不可用"
- * 提示时再扩展 attachEventBus，不在本 todo 范围。
+ * 管理器自身的 state_changed 经 attachEventBus 合成为 engine_state 帧进桥
+ * （engine-ux-visibility 任务 2，任务 4 interlock 闭环：输入框状态条/状态栏
+ * 实时更新）；process_crashed / engine_unavailable / engine_reclaimed 仍不进桥
+ * ——状态迁移序列 + 权限失效墓碑已覆盖前端消费面。
  *
  * wire 透传约束（2026-11-06 口径更正，原「sessionId=磁盘 jsonl header id」是文档
  * 漂移）：wire 事件的 sessionId 是 routing handle（引擎 RPC 会话句柄，rpc-N /
@@ -186,6 +187,19 @@ export function attachEventBus(manager: EngineProcessManager, bus: EventBus): ()
   return manager.onEvent((e) => {
     if (e.type === "engine_event") {
       bus.publish(e.projectPath, e.event, e.sessionPath)
+      return
+    }
+    // engine-ux-visibility 任务 2（任务 4 interlock 闭环）：state_changed → 合成
+    // engine_state 帧 {type, from, to}（payload 最小化，无 wire sessionId；帧契约
+    // 见 web stores/engines.ts 头注释，event-dispatch 据信封 sessionPath 定位引擎）。
+    // 每次状态迁移恰一帧（transition 同态早退，无重复帧）；重放/Last-Event-ID/
+    // 帧序 FIFO 契约同 wire 帧同游进入环缓。
+    if (e.type === "state_changed") {
+      bus.publish(
+        e.projectPath,
+        { type: "engine_state", from: e.from, to: e.to } as never,
+        e.sessionPath,
+      )
     }
   })
 }

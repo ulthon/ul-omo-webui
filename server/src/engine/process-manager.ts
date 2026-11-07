@@ -160,6 +160,20 @@ export interface EngineStatusSnapshot {
   pendingPermissions: string[]
 }
 
+/** 空闲回收事实面（engine-ux-visibility 任务 2）：reclaimTier/isIdle 判定的只读
+ *  输入子集，供 metrics 派生剩余存活倒计时/豁免态。派生逻辑在 metrics 侧镜像
+ *  判定序，本体（双门/豁免）零改动——本接口只是暴露面，不是行为面。 */
+export interface EngineReclaimFacts {
+  /** 本进程生命周期内已收到用户消息回执（任务 7）：true = 正常档 */
+  userPrompted: boolean
+  /** 真实运行回合计数（agentRunning；探活窗档忙判据之一） */
+  agentRunningCount: number
+  /** 探活窗档窗长（meta_kv engine.activityWindowMinutes；<=0 = 关窗回落正常档） */
+  activityWindowMs: number
+  /** 正常档窗长（meta_kv engine.idleTimeoutMinutes；<=0 = never 总逃生口） */
+  idleTimeoutMs: number
+}
+
 /** 引擎管理器事件。sessionPath = 引擎键（标识哪个引擎）；projectPath = 所属项目
  * （multi-session-parallel 后定态：消费方均已会话粒度化——SSE 墓碑按会话可解析性
  * 判杀（T4）、死亡接线/后台任务账本按死亡引擎的 sessionPath 收缩（F2 修复）、
@@ -434,6 +448,21 @@ export class EngineProcessManager {
 
   getAllStatus(): EngineStatusSnapshot[] {
     return [...this.engines.values()].map((e) => this.snapshot(e))
+  }
+
+  /** 空闲回收事实面只读 getter（engine-ux-visibility 任务 2）：metrics 派生
+   *  remainingIdleMs/豁免态的输入子集（档位配置 + userPrompted/agentRunning），
+   *  与回收判定同源。纯读：不触发重排、不改任何回收行为；键不存在返回
+   *  undefined（行已列出的引擎在同同步块内必命中）。 */
+  getReclaimFacts(sessionPath: string): EngineReclaimFacts | undefined {
+    const engine = this.engines.get(sessionPath)
+    if (!engine) return undefined
+    return {
+      userPrompted: engine.userPrompted,
+      agentRunningCount: engine.agentRunning.size,
+      activityWindowMs: this.opts.activityWindowMs,
+      idleTimeoutMs: this.opts.idleTimeoutMs,
+    }
   }
 
   /** 运行时调整空闲回收时长（2026-11-04 设置页引擎分区）：ms<=0 为永不回收；
