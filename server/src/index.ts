@@ -45,7 +45,7 @@ import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
 import { createRebindRoutes } from "./api/routes-rebind";
 import { createMetaRoutes } from "./api/routes-meta";
-import { createCommandsRoutes } from "./api/routes-commands";
+import { createCommandsRoutes, invalidateCommandsCache } from "./api/routes-commands";
 import { createProjectRoutes } from "./api/routes-project";
 import { createGitRoutes } from "./api/routes-git";
 import { createFsRoutes } from "./api/routes-fs";
@@ -210,6 +210,15 @@ const detachQueueTracking = manager.onEvent((e) => {
     return;
   }
   if (e.type === "state_changed" && e.to !== "ready") queueDepth.delete(e.sessionPath);
+});
+
+// 斜杠命令缓存失效（批次三 2026-11-07）：引擎 commands_changed（扩展/提示词/技能
+// 增减）到达即清该项目命令缓存，前端事件驱动重拉立取新值，不受 60s TTL 滞后。
+const detachCommandInvalidation = manager.onEvent((e) => {
+  if (e.type === "engine_event") {
+    const wire = e.event as { type?: string };
+    if (wire?.type === "commands_changed" && e.projectPath) invalidateCommandsCache(e.projectPath);
+  }
 });
 
 // 权限失效墓碑（W1 #4）：引擎进程死亡/回收/显式停止后向事件桥发一条
@@ -540,6 +549,7 @@ async function shutdown(): Promise<void> {
   detachTaskLedger();
   detachTombstones();
   detachQueueTracking();
+  detachCommandInvalidation();
   detachReclaimHistory();
   try {
     await scheduleSupervisor?.stop();

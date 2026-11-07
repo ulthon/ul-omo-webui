@@ -25,6 +25,13 @@ interface CacheEntry {
 /** 按项目键控的 60s 内存缓存；降级（null）不入缓存——引擎就绪后下一请求即可取到 */
 const cache = new Map<string, CacheEntry>();
 
+/** 缓存失效（批次三 2026-11-07）：引擎 commands_changed（扩展/提示词/技能增减）
+ * 到达时由 index.ts 事件订阅调用，下一请求立取新值——否则 60s TTL 会挡住
+ * 事件驱动的面板刷新，技能刚装上面板最多滞后一分钟。 */
+export function invalidateCommandsCache(projectKey: string): void {
+  cache.delete(normalizeProjectKey(projectKey));
+}
+
 export function groupCommandsBySource(rows: EngineCommandInfo[]): CommandGroups {
   const groups: CommandGroups = { extension: [], skill: [], prompt: [] };
   for (const row of rows) {

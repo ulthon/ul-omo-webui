@@ -43,6 +43,7 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "agent_idle",
   "extension_ui_request", // 四型权限/表单请求（todo 15 状态点"等待权限"信号；按 method 过滤噪音）
   "queue_update", // 排队列表增量（docs08-r4 任务 11）：ordered[] 为引擎侧全量真相
+  "commands_changed", // 斜杠命令集变更（批次三）：扩展/提示词/技能增减宣布，bump 版本号重拉
   "entry_appended", // 记忆标记条目增量（docs08-r4 任务 13）：customType 白名单过滤在 store 侧
   "engine_event", // 服务端对无 type wire 事件的兜底 event 行名
   "thinking_level_changed", // 引擎落定的思考档回显（W2 todo 8：仅选中会话同步 chip）

@@ -543,6 +543,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     }
     return;
   }
+  // 斜杠命令集变更（批次三 2026-11-07）：引擎 commands_changed（扩展/提示词/技能
+  // 增减）宣布命令面更新——项目级帧无会话身份，不能走下方会话路由门，在此分流即
+  // 返回（与 engine_state 同型）。bump 版本号令 composer 下拉开着时重拉；服务端
+  // 缓存已被同事件失效，立取新值。
+  if (wire.type === "commands_changed") {
+    useUiStore.getState().bumpSlashCommandsVersion();
+    return;
+  }
   // store 路由键：信封 durableSessionId 优先（与 REST 会话 id 一致），缺席回退 wire sessionId。
   // r11 todo 12b：双 id 同帧即学习一次映射（同值无意义不记）；wire 键在映射账本中命中时
   // 按真实 durable id 归属（信封缺席的收尾帧也能落到真实会话键上清态），miss 保持

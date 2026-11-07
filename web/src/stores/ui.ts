@@ -155,6 +155,9 @@ interface UiState {
   siteName: string | null;
   /** 总览笔记块显示条数（kv ui.overviewNotesCount，缺省 3，上限 20）：平铺直编批 */
   overviewNotesCount: number;
+  /** 斜杠命令集版本号（批次三）：commands_changed 帧到达即 +1，composer 下拉
+   *  开着时据此重拉 getCommands（服务端缓存已被同事件失效，立取新值） */
+  slashCommandsVersion: number;
   toasts: Toast[];
   notifications: ToastNotification[];
 
@@ -186,6 +189,7 @@ interface UiState {
   setPasteImageMode(mode: PasteImageMode): void;
   setSiteName(name: string | null): void;
   setOverviewNotesCount(n: number): void;
+  bumpSlashCommandsVersion(): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
   clearNotifications(): void;
@@ -235,6 +239,7 @@ export const useUiStore = create<UiState>()((set) => ({
   pasteImageMode: "auto",
   siteName: null,
   overviewNotesCount: DEFAULT_OVERVIEW_NOTES_COUNT,
+  slashCommandsVersion: 0,
   toasts: [],
   notifications: [],
 
@@ -262,6 +267,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setPasteImageMode: (pasteImageMode) => set({ pasteImageMode }),
   setSiteName: (siteName) => set({ siteName }),
   setOverviewNotesCount: (overviewNotesCount) => set({ overviewNotesCount }),
+  bumpSlashCommandsVersion: () => set((s) => ({ slashCommandsVersion: s.slashCommandsVersion + 1 })),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

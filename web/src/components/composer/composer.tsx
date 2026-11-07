@@ -381,7 +381,9 @@ export function Composer({
     slashOpenRef.current = slashOpen;
   }, [text, slashToken, slashOpen]);
 
-  // 取数：下拉开着即取（服务端 60s 按项目缓存，单次 RPC 毫秒级）；失败静默按空处理
+  // 取数：下拉开着即取（服务端 60s 按项目缓存，单次 RPC 毫秒级；commands_changed
+  // 到达时服务端已失效缓存+版本号 +1，此处据版本号重拉立取新值）；失败静默按空处理
+  const slashCommandsVersion = useUiStore((s) => s.slashCommandsVersion);
   useEffect(() => {
     if (!slashOpen || !project) return;
     let active = true;
@@ -397,7 +399,7 @@ export function Composer({
     return () => {
       active = false;
     };
-  }, [slashOpen, project]);
+  }, [slashOpen, project, slashCommandsVersion]);
 
   const slashGroups = useMemo(
     () => (slashData && slashToken !== null ? filterSlashGroups(slashData, slashToken) : EMPTY_SLASH_GROUPS),
