@@ -45,7 +45,7 @@ import {
   type EngineUsageStats,
 } from "../adapter/engine-adapter";
 import { SenpiAdapter, encodeCwdToSessionDirName, isSessionReopenableError, type SenpiRpcClient } from "../adapter/senpi-adapter";
-import type { EngineProcessManager } from "../engine/process-manager";
+import type { EngineManagerEvent, EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 import { debugPerfOn } from "../conf/diagnostics-flags";
 import { logPerfSpan, projHash8, type PerfSpan } from "./perf";
@@ -111,6 +111,11 @@ export interface EngineGateway {
    * （缺陷修复：新会话首条用户消息不显示——前端以此即时换 key）；已落盘会话不回传。
    * appliedModel（docs08-r6 任务 8 ②）：携带 model 且 setModel 成功时回 "provider/model"
    * （回模型行归一）；排队/未携带 model 不回传。
+   * queued（engine-ux-visibility 任务 5）：引擎 starting/backoff/开门车道在途期收到
+   * prompt 时服务端先接住（disposition="queued" + queued=true，97s 冷启事故修复），
+   * ready 事件触发原样投递一次；等待期可 abort 撤回，超时
+   * （QUEUED_STARTUP_PROMPT_TIMEOUT_MS）合成 queued_prompt_timeout 事件且消息
+   * 绝不投递（迟到的 ready 命中空表自然空转）。
    */
   prompt(
     sessionId: string,
@@ -121,7 +126,7 @@ export interface EngineGateway {
       thinkingLevel?: EngineThinkingLevel
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
-  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }>
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string; queued?: boolean }>
   /** 排队对账快照（getSteeringMessages/getFollowUpMessages；断线重连/初次渲染拉一次） */
   queueList(sessionId: string): Promise<EngineQueueSnapshot>
   /** 整队清空（引擎无单条撤单协议面，单条撤销由前端清空后重排实现），返回被撤项 */
@@ -580,6 +585,33 @@ interface OpenLaneOutcome {
   sessionPath: string;
 }
 
+/** prompt 投递输入形状（公开 prompt 面、排队透传与实投共用——同一引用传递保字节级原样） */
+type PromptInput = {
+  text: string;
+  images?: EnginePromptInput["images"];
+  model?: string;
+  thinkingLevel?: EngineThinkingLevel;
+  streamingBehavior?: EnginePromptInput["streamingBehavior"];
+};
+
+/** 启动期排队条目（engine-ux-visibility 任务 5）：引擎 starting/backoff/开门车道
+ *  在途期收到的 prompt，服务端先接住（200 排队语义），ready 事件触发原样投递一次。
+ *  input 持原引用不复制不改写（byte-once 铁律：字节级原样、恰好一次）。 */
+interface QueuedStartupPrompt {
+  sessionPath: string;
+  /** 排队时的 API 会话 id（durable 或别名，投递原样回传） */
+  sessionId: string;
+  input: PromptInput;
+  queuedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** 启动期排队有界等待上限（0addac4 谱系超时族对齐）：排队等待覆盖的链路是
+ *  ensureRunning 建进程（senpi-adapter START_TIMEOUT_MS=60s）+ open_session
+ *  （OPEN_TIMEOUT_MS=60s）两段，120s = 两段超时族之和（该链路的自然组合上界）；
+ *  覆盖 2026-11-06 生产 97 秒冷启事故实测全程（84s 等待 503 + 13s 后 ready）。 */
+export const QUEUED_STARTUP_PROMPT_TIMEOUT_MS = 120_000;
+
 /** 单项目运行时（multi-session-parallel T3）：项目内全部会话引擎绑定态挂管 + 每会话
  * 回合表。引擎即会话（T1 键迁移），驾驶操作经 ensureForSession 解析目标会话专属引擎
  * 直驱；项目级互斥链/切换链/单槽（chain-runExclusive/switchTo/streamingId-streamingPath/
@@ -589,6 +621,13 @@ class ProjectRuntime {
   private readonly engines = new Map<string, SessionEngine>();
   /** 每会话在途回合表：sessionPath → 回合行（跨会话并行，可 N 行 running） */
   private readonly runningTurns = new Map<string, TurnRow>();
+  /** 启动期排队表：sessionPath → 排队条目（每会话至多一条——第二个 prompt 撞 409
+   *  already_processing 与在途回合同族；键=sessionPath 与回合表同口径，别名/durable
+   *  同文件同判）。 */
+  private readonly queuedStartupPrompts = new Map<string, QueuedStartupPrompt>();
+  /** manager state_changed 订阅（按需挂/卸：仅排队存在期间持有，队列清空即退订，
+   *  无排队零常驻监听）。 */
+  private offManagerEvent: (() => void) | null = null;
   /** wire sessionId → durable id 映射 miss 刷新防抖（跨引擎共享一轮） */
   private refreshInFlight = false;
   /** 未落盘新会话的 holder UUID → sessionPath 别名（仅内存，禁止持久化）。恒稳直查：
@@ -1042,6 +1081,9 @@ class ProjectRuntime {
   /** 全停清态（stopAll 原语义：不合成收尾）——回合行清位（停监视定时器）+ 全部引擎
    * 绑定态弃置；别名/认领一并清（旧 invalidate 全量口径）。 */
   invalidateAll(): void {
+    // 启动期排队随全停失效：等待载体（引擎）已被全停清空，逐条走超时路径（合成
+    // queued_prompt_timeout，消息不投递——byte-once 铁律下载体状态不确定绝不投）
+    for (const path of [...this.queuedStartupPrompts.keys()]) this.expireQueuedStartupPrompt(path);
     for (const turn of [...this.runningTurns.values()]) {
       this.stopTurnWatch(turn);
       this.runningTurns.delete(turn.sessionPath);
@@ -1447,13 +1489,156 @@ class ProjectRuntime {
 
   async prompt(
     sessionId: string,
-    input: {
-      text: string
-      images?: EnginePromptInput["images"]
-      model?: string
-      thinkingLevel?: EngineThinkingLevel
-      streamingBehavior?: EnginePromptInput["streamingBehavior"]
-    },
+    input: PromptInput,
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string; queued?: boolean }> {
+    // 启动期排队门（engine-ux-visibility 任务 5，97s 冷启事故修复）：引擎
+    // starting/backoff/开门车道在途期收到 prompt → 立即接住（200 排队语义，
+    // disposition="queued"+queued 标志），ready 事件触发原样投递一次。非排队路径
+    //（含纯 stopped 冷态「发消息将拉起」走原同步 ensure 链）行为零变化。
+    const row = await this.resolveSession(sessionId);
+    if (this.startupQueuePending(row.path)) {
+      // 回合占用优先于排队（单驱动约束，与下方 deliverPrompt 内同族 409）：启动窗口
+      // 撞在途回合（如 crash 重启中回合未结算）不排队不双驾驶。
+      if (this.runningTurns.has(row.path)) {
+        throw new ApiError(
+          409,
+          "already_processing",
+          `该会话已有进行中的回合（单驱动约束）：${row.path}，请先 abort 或等待回合结束`,
+        );
+      }
+      if (this.queuedStartupPrompts.has(row.path)) {
+        throw new ApiError(
+          409,
+          "already_processing",
+          `该会话已有启动期排队中的消息（单驱动约束）：${row.path}，请等待投递或先 abort 撤回`,
+        );
+      }
+      this.enqueueStartupPrompt(row.path, sessionId, input);
+      return { disposition: "queued", queued: true };
+    }
+    return this.deliverPrompt(sessionId, input);
+  }
+
+  // ---- 启动期 prompt 排队（engine-ux-visibility 任务 5）----
+  // 2026-11-06 23:31 生产实录（97 秒冷启事故）：引擎 starting 期发消息 → prompt 在
+  // ensure 链里等满 84s 收 503 engine_not_ready 错误卡（消息未进引擎）→ ready 后
+  // 用户手动重发。修法：启动旅程中的 prompt 先接住，ready 后自动补投。
+
+  /** 排队条件：引擎处于启动旅程中（starting/backoff），或开门车道在途而引擎未就绪
+   *  （stopped-with-open-in-progress：ensure 已触发的 stopped 瞬态）。纯 stopped 冷态
+   *  不排队——「发消息将拉起」走原同步路径（ensure 自己拉起），行为不变。 */
+  private startupQueuePending(sessionPath: string): boolean {
+    const alive = this.manager.getStatus(sessionPath)?.state;
+    if (alive === "starting" || alive === "backoff") return true;
+    return this.openLanes.has(sessionPath) && alive !== "ready";
+  }
+
+  /** 排队登记：挂 ready 监听 → 竞态复查（挂监听前一瞬恰已迁 ready 的 state_changed
+   *  已发过收不到，登记后复查一次状态补收）→ 挂超时定时器（有界等待）。 */
+  private enqueueStartupPrompt(sessionPath: string, sessionId: string, input: PromptInput): void {
+    const entry: QueuedStartupPrompt = { sessionPath, sessionId, input, queuedAt: Date.now(), timer: null };
+    this.queuedStartupPrompts.set(sessionPath, entry);
+    this.attachManagerListener();
+    if (this.manager.getStatus(sessionPath)?.state === "ready") {
+      // 竞态补收：挂监听器前状态恰已迁移 ready。不等待事件，立即投递（异步，
+      // HTTP 已可先回排队回执——消息已接受语义不变）
+      this.dequeueAndFlushStartupPrompt(sessionPath);
+      return;
+    }
+    entry.timer = setTimeout(() => this.expireQueuedStartupPrompt(sessionPath), QUEUED_STARTUP_PROMPT_TIMEOUT_MS);
+    entry.timer.unref?.();
+  }
+
+  /** 按需挂 manager 监听（幂等；队列清空后 detachManagerListenerIfIdle 退订） */
+  private attachManagerListener(): void {
+    if (this.offManagerEvent) return;
+    const listener = (event: EngineManagerEvent): void => {
+      if (event.type !== "state_changed" || event.to !== "ready") return;
+      this.dequeueAndFlushStartupPrompt(event.sessionPath);
+    };
+    this.offManagerEvent = this.manager.onEvent(listener);
+  }
+
+  private detachManagerListenerIfIdle(): void {
+    if (this.queuedStartupPrompts.size > 0) return;
+    this.offManagerEvent?.();
+    this.offManagerEvent = null;
+  }
+
+  /** 原子取走排队条目（get+delete 同步段完成：ready 事件重放、竞态复查、撤回与超时
+   *  多路互斥，至多一方取到——byte-once 保证点）。 */
+  private dequeueStartupPrompt(sessionPath: string): QueuedStartupPrompt | undefined {
+    const entry = this.queuedStartupPrompts.get(sessionPath);
+    if (!entry) return undefined;
+    this.queuedStartupPrompts.delete(sessionPath);
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    this.detachManagerListenerIfIdle();
+    return entry;
+  }
+
+  /** 取走并异步投递：复用 deliverPrompt 同一提交路径，input 原引用传递（字节级
+   *  原样）。投递失败不重试（不确定是否送达即不再送——双重投递风险优先于可用性），
+   *  合成 queued_prompt_failed 事件可观测，用户可重发。 */
+  private dequeueAndFlushStartupPrompt(sessionPath: string): void {
+    const entry = this.dequeueStartupPrompt(sessionPath);
+    if (!entry) return;
+    void this.deliverPrompt(entry.sessionId, entry.input).then(
+      (receipt) => {
+        log.info("gw", "queued_prompt.delivered", {
+          session: entry.sessionId.slice(0, 8),
+          proj: projHash8(this.projectPath),
+          disposition: receipt.disposition,
+          waitedMs: Date.now() - entry.queuedAt,
+          rid: currentRid(),
+        });
+      },
+      (err: unknown) => {
+        log.warn("gw", "queued_prompt.flush_failed", {
+          session: entry.sessionId.slice(0, 8),
+          proj: projHash8(this.projectPath),
+          reason: err instanceof Error ? err.message : String(err),
+          rid: currentRid(),
+        });
+        this.opts.publishSyntheticEvent?.(this.projectPath, {
+          type: "queued_prompt_failed",
+          synthetic: true,
+          sessionId: entry.sessionId,
+          code: err instanceof ApiError || err instanceof EngineAdapterError ? err.code : "internal",
+        });
+      },
+    );
+  }
+
+  /** 超时路径：清条目 + 合成 queued_prompt_timeout 事件（前端常驻错误卡源，
+   *  code=queued_timeout 可重试），消息绝不投递（引擎永久失败的 stale 形态由此
+   *  兜底；迟到的 ready 事件命中空表自然空转）。 */
+  private expireQueuedStartupPrompt(sessionPath: string): void {
+    const entry = this.dequeueStartupPrompt(sessionPath);
+    if (!entry) return;
+    const waitedMs = Date.now() - entry.queuedAt;
+    log.warn("gw", "queued_prompt.timeout", {
+      session: entry.sessionId.slice(0, 8),
+      proj: projHash8(this.projectPath),
+      ms: waitedMs,
+      rid: currentRid(),
+    });
+    this.opts.publishSyntheticEvent?.(this.projectPath, {
+      type: "queued_prompt_timeout",
+      synthetic: true,
+      sessionId: entry.sessionId,
+      code: "queued_timeout",
+      waitedMs,
+    });
+  }
+
+  /** 实投路径（原 prompt 主体原样收存；排队 flush 复用同一提交路径保证字节级原样
+   *  一次投递）。 */
+  private async deliverPrompt(
+    sessionId: string,
+    input: PromptInput,
   ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
     return this.runTraced("prompt", sessionId, async (span, state) => {
       // 单驱动约束（P2-11）：目标会话已有 webui 驱动回合时明确 409，不排队不双驾驶。
@@ -1648,6 +1833,18 @@ class ProjectRuntime {
   }
 
   async abort(sessionId: string): Promise<void> {
+    // 启动期排队撤回（engine-ux-visibility 任务 5）：排队消息尚未投递，abort 即撤回
+    //（不碰引擎——不走 ensure 链，排队本就发生在引擎未就绪期）；无排队走原路径。
+    // 按 sessionPath 判（同会话 durable/别名任一身份发 abort 都能撤自己的排队消息）。
+    const queuedRow = await this.resolveSession(sessionId);
+    if (this.dequeueStartupPrompt(queuedRow.path)) {
+      log.info("gw", "queued_prompt.cancelled", {
+        session: sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        rid: currentRid(),
+      });
+      return;
+    }
     const state = await this.ensureForSession(sessionId);
     // r11 todo 11（task-10 spike §2.2 定向）：权限等待态的中止在引擎面是静默 no-op
     // ——abort 200/11ms 后零帧、回合悬起 >5min、仅引擎重建可解除（实测取证：
@@ -2039,7 +2236,7 @@ export class EngineRuntimeRegistry implements EngineGateway {
       thinkingLevel?: EngineThinkingLevel
       streamingBehavior?: EnginePromptInput["streamingBehavior"]
     },
-  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string }> {
+  ): Promise<{ disposition: string; durableSessionId?: string; appliedModel?: string; queued?: boolean }> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.prompt(sessionId, input);
   }
