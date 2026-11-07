@@ -22,6 +22,7 @@ import { NoteInlineEditor } from "@/components/notes/note-inline-editor";
 import { deriveDisplayTitle } from "@/components/notes/notes-logic";
 import { OverviewPlan } from "@/components/layout/overview-plan";
 import { OverviewEngine } from "@/components/layout/overview-engine";
+import { EngineDiagnosticsFold } from "@/components/engines/engine-diagnostics-fold";
 
 const OVERVIEW_SECTION_CLASS = "border-b px-3 py-2.5 last:border-b-0";
 const OVERVIEW_TITLE_CLASS = "mb-1.5 text-xs font-medium text-muted-foreground";
@@ -383,6 +384,7 @@ export function OverviewPanel({ sessionId }: { sessionId: string | null }) {
     <div data-testid="overview-panel" className="h-full overflow-y-auto">
       <OverviewPlan sessionId={sessionId} />
       <OverviewEngine sessionId={sessionId} />
+      <EngineDiagnosticsFold />
       <OverviewTasks sessionId={sessionId} />
       <OverviewBackgroundTasks sessionId={sessionId} />
       <OverviewNotes />
