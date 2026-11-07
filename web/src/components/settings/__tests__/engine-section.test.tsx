@@ -50,7 +50,7 @@ vi.mock("@/components/notes/notes-logic", () => ({ relTime: (iso: string) => iso
 
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { EngineSection, ENGINE_IDLE_TIMEOUT_KV } = await import("@/components/settings/engine-section");
+const { EngineSection, ENGINE_IDLE_TIMEOUT_KV, ENGINE_ACTIVITY_WINDOW_KV } = await import("@/components/settings/engine-section");
 
 function mount() {
   const container = document.createElement("div");
@@ -102,6 +102,66 @@ describe("引擎分区（2026-11-04）", () => {
     });
     await flush();
     expect(putSettingsFn).toHaveBeenCalledWith({ [ENGINE_IDLE_TIMEOUT_KV]: "never" });
+  });
+
+  // —— 探活窗档位（session-polish T2）——
+  const activitySelect = (container: Element) =>
+    container.querySelector('[data-testid="engine-activity-window-select"]') as HTMLSelectElement;
+
+  function changeSelect(sel: HTMLSelectElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  test("(h) 探活窗档位渲染：kv 缺省选中 5 分钟；六档选项齐全", async () => {
+    const { container } = mount();
+    await flush();
+    const sel = activitySelect(container);
+    expect(sel).toBeTruthy();
+    expect([...sel.options].map((o) => o.value)).toEqual(["1", "5", "15", "30", "60", "never"]);
+    expect(sel.value).toBe("5");
+    expect(sel.disabled).toBe(false);
+  });
+
+  test("(i) kv=15 → 当前档 15 选中；换档 60 恰调一次 putSettings 且键值正确", async () => {
+    getSettingsFn.mockResolvedValue({ settings: { [ENGINE_ACTIVITY_WINDOW_KV]: "15" } });
+    const { container } = mount();
+    await flush();
+    const sel = activitySelect(container);
+    expect(sel.value).toBe("15");
+    changeSelect(sel, "60");
+    await flush();
+    expect(putSettingsFn).toHaveBeenCalledTimes(1);
+    expect(putSettingsFn).toHaveBeenCalledWith({ [ENGINE_ACTIVITY_WINDOW_KV]: "60" });
+  });
+
+  test("(j) never 口径：kv=never 与 kv=0 均选中永不；同值不写库，改选 never 落库 never", async () => {
+    getSettingsFn.mockResolvedValue({ settings: { [ENGINE_ACTIVITY_WINDOW_KV]: "never" } });
+    let mounted = mount();
+    await flush();
+    expect(activitySelect(mounted.container).value).toBe("never");
+    mounted.root.unmount();
+
+    getSettingsFn.mockResolvedValue({ settings: { [ENGINE_ACTIVITY_WINDOW_KV]: "0" } });
+    mounted = mount();
+    await flush();
+    const sel = activitySelect(mounted.container);
+    expect(sel.value).toBe("never");
+    // 已是 never：同值改选不写库
+    changeSelect(sel, "never");
+    await flush();
+    expect(putSettingsFn).not.toHaveBeenCalled();
+    // 换档后改选 never 落库一次
+    changeSelect(sel, "1");
+    await flush();
+    changeSelect(sel, "never");
+    await flush();
+    expect(putSettingsFn).toHaveBeenCalledTimes(2);
+    expect(putSettingsFn).toHaveBeenNthCalledWith(1, { [ENGINE_ACTIVITY_WINDOW_KV]: "1" });
+    expect(putSettingsFn).toHaveBeenNthCalledWith(2, { [ENGINE_ACTIVITY_WINDOW_KV]: "never" });
   });
 
   test("(d) 进程列表每会话一行：项目·会话短显；inactive 行灰显不误报 ready", async () => {
