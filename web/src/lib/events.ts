@@ -57,6 +57,8 @@ const HANDLED_EVENT_TYPES: readonly string[] = [
   "compaction_progress", // 压缩进度帧：同上（主通道按未知类型容错忽略，注册为后续消费预留通路）
   "compaction_end", // 压缩结束帧：同上
   "extension_event", // 引擎扩展事件帧（r10 todo 11）：omo.task.updated 后台任务全量快照，分发层按 data.parent_session_id 路由进 tasks store
+  "engine_state", // 引擎状态帧（engine-ux-visibility 任务 4）：服务端 state_changed 进桥后到达，信封 sessionPath 定位，engines store 消费（就绪即隐的状态条）
+  "engine_permissions_invalidated", // 引擎死亡/回收/显式停墓碑（W1 #4）：重放过滤在服务端；分发层另据此事件驱动重取引擎快照（任务 4）
 ];
 
 /** CONNECTING 停留超过该时长视为僵死，回前台时强制重建 */
