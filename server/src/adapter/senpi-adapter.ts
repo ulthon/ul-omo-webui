@@ -331,6 +331,26 @@ export function isSessionReopenableError(err: unknown): boolean {
   return [e.message, e.errorCode, e.code].some(hit)
 }
 
+/** prompt 等待超时族判定（session-polish 任务 1，2026-11-07 01:27 事故）：SDK
+ *  RpcClient 请求期限（REQUEST_DEADLINE_MS 30s）到期抛 RpcRequestTimeoutError
+ *  （message=\"Timeout waiting for response to prompt. Stderr: …\"）；排队 prompt
+ *  停滞变体（promptStalledMessage：\"prompt was received by the host but not
+ *  accepted within 5 minutes\"）同族。引擎随后可能迟到补跑——据此在 engine-runtime
+ *  映射独立 ApiError 码 prompt_timeout（前端出「勿立即重发」文案）。
+ *  鸭子判定（与 isSessionReopenableError 同款纪律，不 import SDK 内部类）：code/name
+ *  二选一锚定 RpcRequestTimeoutError 身份，消息按前缀锚定 prompt 命令——期限消息
+ *  携可变 Stderr 后缀无法全等；前缀锚定防 list_sessions 等兄弟命令超时误入 prompt 族。 */
+export function isPromptWaitTimeoutError(err: unknown): boolean {
+  const e = err as { name?: unknown; code?: unknown; message?: unknown } | null | undefined
+  if (!e || typeof e !== "object") return false
+  if (e.code !== "rpc_request_timeout" && e.name !== "RpcRequestTimeoutError") return false
+  const m = typeof e.message === "string" ? e.message : ""
+  return (
+    m.startsWith("Timeout waiting for response to prompt") ||
+    m.startsWith("prompt was received by the host but not accepted")
+  )
+}
+
 export class SenpiAdapter implements EngineAdapter {
   readonly capabilities: EngineCapabilities = {
     // 实证：agent 枚举无协议面（docs/verification/05 P1-5）；UI 按 docs/01 预案降级

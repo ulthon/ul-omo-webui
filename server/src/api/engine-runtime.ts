@@ -44,7 +44,7 @@ import {
   type EngineTurnSpeed,
   type EngineUsageStats,
 } from "../adapter/engine-adapter";
-import { SenpiAdapter, encodeCwdToSessionDirName, isSessionReopenableError, type SenpiRpcClient } from "../adapter/senpi-adapter";
+import { SenpiAdapter, encodeCwdToSessionDirName, isPromptWaitTimeoutError, isSessionReopenableError, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineManagerEvent, EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
 import { debugPerfOn } from "../conf/diagnostics-flags";
@@ -1777,6 +1777,17 @@ class ProjectRuntime {
             409,
             "already_processing",
             `会话文件被外部回合占用：${state.sessionPath}（等外部回合落定，或去 CLI 侧中断）`,
+          );
+        }
+        // prompt 等待超时族（session-polish 任务 1，2026-11-07 01:27 事故）：网关
+        // RpcClient 请求期限 30s 到期（引擎可能迟到补跑）→ 独立码 prompt_timeout。
+        // HTTP 仍 500（与今日 generic internal 兕底同状态，仅 code+server message 变化），
+        // 409 already_processing 与其余错误语义不变；前端命中注册表出「勿立即重发」文案。
+        if (isPromptWaitTimeoutError(err)) {
+          throw new ApiError(
+            500,
+            "prompt_timeout",
+            `prompt 等待响应超时（引擎可能仍在处理并迟到投递）：${state.sessionPath}，请稍候查看输出，勿立即重发`,
           );
         }
         throw err;
