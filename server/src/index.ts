@@ -33,6 +33,12 @@ import { sessionBackgroundRunning } from "./api/background-tasks";
 import { sseRoutes, setEventBus, sseConnectionCount } from "./api/sse";
 import { createDiagnosticsRoutes } from "./api/routes-diagnostics";
 import { buildEngineAdminRows, createEngineAdminRoutes, type EngineAdminRow } from "./api/routes-engines";
+import {
+  createEngineMetricsRoutes,
+  deriveRecentErrors,
+  makeBoundSessionResolver,
+} from "./api/routes-engine-metrics";
+import { ProcMetricsSampler } from "./engine/proc-metrics";
 import { createUpdateRoutes } from "./api/routes-update";
 import { log } from "./obs/logger";
 import { createSessionRoutes } from "./api/routes-session";
@@ -71,7 +77,10 @@ const projectConfigs = createProjectConfigStores(configs);
 // 组合根订阅 manager engine_event 维护会话粒度集合后注入同步谓词；引擎退出
 // ready（回收/崩溃/停止）即清键，防陈旧键永久卡死同会话后续引擎的重拉回收
 // （换代重开会话时引擎 restore 会重发 queue_update，空队自然解锁）。
-const queuedWorkSessions = new Set<string>();
+// 任务 7 第四判据 + engine-ux-visibility 任务 1：会话排队深度（Map 化，既供
+// 排队豁免谓词（>0 即忙，语义与原 Set 版等价）也供 metrics 端点 rpcQueueDepth
+// 透出）。queue_update 帧维护，引擎退出 ready 清键。被动事件驱动，非采样。
+const queueDepth = new Map<string, number>();
 const manager = new EngineProcessManager({
   // W2 spawn 规范：显式 OMO_CODING_AGENT_DIR（缺省 ~/.pi/agent，见 process-manager）
   agentDir: agentDir(),
@@ -93,7 +102,7 @@ const manager = new EngineProcessManager({
   // 按计划不取）。mtime+size 指纹缓存摊销，回收判定读到的是当前落盘态非快照。
   sessionBackgroundRunning,
   // 任务 7 第四判据：排队中视为忙不回收（集合由下方 detachQueueTracking 订阅维护）
-  sessionQueuedWork: (sessionPath) => queuedWorkSessions.has(sessionPath),
+  sessionQueuedWork: (sessionPath) => (queueDepth.get(sessionPath) ?? 0) > 0,
 });
 // 2026-11-04：空闲回收时长配置化（meta_kv engine.idleTimeoutMinutes：分钟数或 "never"；
 // 缺省 7 天见 process-manager DEFAULTS）。启动时读一次，设置页改档经
@@ -185,20 +194,21 @@ setEventBus(eventBus, {
     manager.getAllStatus().some((s) => s.projectPath === projectPath && s.state === "ready"),
 });
 
-// 任务 7 第四判据维护面：queue_update 帧更新会话排队集合（非空入集/全空出集）；
-// 引擎退出 ready 清键（state_changed 全部退出路径覆盖：崩溃退 backoff/回收停
-// stopping→stopped/unavailable），关停时随其余订阅一并退订
+// 任务 7 第四判据维护面 + 任务 1 队列深度：queue_update 帧更新会话排队深度
+// （ordered/steering/followUp 三列合计；全零出键）；引擎退出 ready 清键
+// （state_changed 全部退出路径覆盖：崩溃退 backoff/回收停 stopping→stopped/
+// unavailable），关停时随其余订阅一并退订
 const detachQueueTracking = manager.onEvent((e) => {
   if (e.type === "engine_event") {
     const wire = e.event as { type?: string; ordered?: unknown[]; steering?: unknown[]; followUp?: unknown[] };
     if (wire?.type !== "queue_update") return;
-    const queued =
-      (wire.ordered?.length ?? 0) > 0 || (wire.steering?.length ?? 0) > 0 || (wire.followUp?.length ?? 0) > 0;
-    if (queued) queuedWorkSessions.add(e.sessionPath);
-    else queuedWorkSessions.delete(e.sessionPath);
+    const depth =
+      (wire.ordered?.length ?? 0) + (wire.steering?.length ?? 0) + (wire.followUp?.length ?? 0);
+    if (depth > 0) queueDepth.set(e.sessionPath, depth);
+    else queueDepth.delete(e.sessionPath);
     return;
   }
-  if (e.type === "state_changed" && e.to !== "ready") queuedWorkSessions.delete(e.sessionPath);
+  if (e.type === "state_changed" && e.to !== "ready") queueDepth.delete(e.sessionPath);
 });
 
 // 权限失效墓碑（W1 #4）：引擎进程死亡/回收/显式停止后向事件桥发一条
@@ -370,6 +380,21 @@ app.route(
     stopEngine: (sessionPath) => manager.stop(sessionPath),
     stopProject: (projectPath) => manager.stopProject(projectPath),
     isKnownProject: (projectPath) => meta.listProjectMeta().some((p) => p.projectPath === projectPath),
+  }),
+);
+// 引擎指标采样面（engine-ux-visibility 任务 1）：一次性纯读采样，每引擎一行。
+// 采样器为进程级单例（cpuPct 基线跨请求保持，请求驱动刷新，无定时器）。
+// 全部依赖纯读：getAllStatus 内存快照 / /proc / 会话 jsonl 首块 / meta 直查 /
+// log 环 / queue 跟踪 Map——零 ensure/spawn。
+app.route(
+  "/",
+  createEngineMetricsRoutes({
+    listStatuses: () => manager.getAllStatus(),
+    sampler: new ProcMetricsSampler(),
+    resolveBoundSession: makeBoundSessionResolver(meta),
+    recentErrors: (sessionPath) => deriveRecentErrors(log.entries(), sessionPath),
+    rpcQueueDepth: (sessionPath) => queueDepth.get(sessionPath) ?? 0,
+    now: () => Date.now(),
   }),
 );
 app.route("/api", sseRoutes);
