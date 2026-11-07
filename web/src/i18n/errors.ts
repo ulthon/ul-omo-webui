@@ -83,6 +83,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   old_store_not_found: "errors.oldStoreNotFound",
   path_escape: "errors.pathEscape",
   plan_not_bound: "errors.planNotBound",
+  // 会话小夹心批次（session-polish 任务 1：prompt 等待超时映射新增 1 码）
+  prompt_timeout: "errors.promptTimeout",
   project_not_found: "errors.projectNotFound",
   project_not_registered: "errors.projectNotRegistered",
   // 引擎进程管理（2026-11-04 批次 routes-engines stop 新增 1 码）
