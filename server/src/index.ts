@@ -38,6 +38,7 @@ import {
   deriveRecentErrors,
   makeBoundSessionResolver,
 } from "./api/routes-engine-metrics";
+import { ReclaimRing, createEngineReclaimsRoutes } from "./api/routes-engine-reclaims";
 import { ProcMetricsSampler } from "./engine/proc-metrics";
 import { createUpdateRoutes } from "./api/routes-update";
 import { log } from "./obs/logger";
@@ -401,6 +402,16 @@ app.route(
     now: () => Date.now(),
   }),
 );
+// 引擎回收历史（engine-ux-visibility 任务 6）：订阅既有 engine_reclaimed 发射点喂数
+// 有界内存环——纯旁路记录，零回收路径改动；路由纯读环，无定时器无引擎交互，重启
+// 即清空（易失观测面）。总览折叠诊断区「最近 N 次回收」数据源。
+const reclaimRing = new ReclaimRing();
+const detachReclaimHistory = manager.onEvent((e) => {
+  if (e.type === "engine_reclaimed") {
+    reclaimRing.push({ sessionPath: e.sessionPath, reason: e.reason });
+  }
+});
+app.route("/", createEngineReclaimsRoutes({ listReclaims: () => reclaimRing.list() }));
 app.route("/api", sseRoutes);
 
 // 静态资源匿名可访问：SPA 是单页壳，index.html 与 assets 同时承担登录页，
@@ -529,6 +540,7 @@ async function shutdown(): Promise<void> {
   detachTaskLedger();
   detachTombstones();
   detachQueueTracking();
+  detachReclaimHistory();
   try {
     await scheduleSupervisor?.stop();
   } catch {
