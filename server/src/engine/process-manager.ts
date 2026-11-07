@@ -82,7 +82,7 @@ export interface EngineManagerOptions {
   /** spawn 时的默认 provider/model（成对生效；多会话模式下 open_session 可逐会话覆盖）。 */
   defaultProvider?: string
   defaultModel?: string
-  /** 空闲回收超时（默认 30 分钟，可配置）。 */
+  /** 空闲回收超时（默认 3 天，可配置）。 */
   idleTimeoutMs?: number
   /** 探活窗档（任务 7，C4-B）：未发过消息的引擎（纯看/仅 RPC 面拉起）按 wire 活动
    *  时钟判收——wire 静默 ≥ activityWindowMs 且非真忙即回收（双门，单门静默不算
@@ -218,9 +218,10 @@ const ENGINE_SESSION_IDLE_EVICTION_DEFAULT_MS = 30 * 60_000
 const DEFAULTS = {
   // 2026-11-04 用户定版：对齐 openchamber 常驻理念（它不回收引擎进程）。旧值 30 分钟
   // 曾误杀安静后台长任务（诊断实锤：另一机器 ai-chuangzuo 后台任务跑 3h53m 后被
-  // idle_timeout 回收连根杀）。默认 7 天，可经 meta_kv engine.idleTimeoutMinutes 配置，
-  // "never"（=0）永不回收；设置页改档即时生效（setIdleTimeoutMs）。
-  idleTimeoutMs: 7 * 24 * 60 * 60 * 1000,
+  // idle_timeout 回收连根杀）。2026-11-07 用户定版：加 3 天档并改默认 3 天，可经
+  // meta_kv engine.idleTimeoutMinutes 配置，"never"（=0）永不回收；设置页改档
+  // 即时生效（setIdleTimeoutMs）。
+  idleTimeoutMs: 3 * 24 * 60 * 60 * 1000,
   // 任务 7（C4-B）探活窗：纯看引擎 5 分钟 wire 静默即收（双门之一；另一门是
   // isIdle 四判据）。发过消息（markUserActivity）即转正常档 idleTimeoutMs 梯子。
   // meta_kv engine.activityWindowMinutes 可调/可关（"never"=0 关闭回落正常档）。

@@ -269,6 +269,7 @@ export const login = {
     engineIdle1h: "1 hour",
     engineIdle4h: "4 hours",
     engineIdle1d: "1 day",
+    engineIdle3d: "3 days",
     engineIdle7d: "7 days",
     engineIdleNever: "Never",
     engineIdleSaveFailed: "Failed to save idle reclaim setting",

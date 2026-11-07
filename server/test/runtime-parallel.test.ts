@@ -491,17 +491,27 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
       )
 
       // kill -9 形态：A 进程从 /proc 消失 → supervisor pid 轮询检出 process_crashed
-      //（事件回声驱动，非时序押注）
+      //（事件回声驱动，非时序押注）。注：#22 后冷态补投成功也会合成 queue_update 清帧
+      //（A/B 两路均可能先到），与 crash 收尾无固定先后——按类型等收尾帧再过滤断言。
       h.probe.procs.delete(rpcFor(h, h.pathA).pid)
-      await waitForCondition(() => h.synthetic.length > 0)
+      await waitForCondition(() =>
+        h.synthetic.some((e) => e.event.type === "agent_settled"),
+      )
 
       // 仅 A 一条合成收尾，reason engine_crash，sessionId 为 durable id
-      expect(h.synthetic).toEqual([
+      const settles = h.synthetic.filter((e) => e.event.type === "agent_settled");
+      expect(settles).toEqual([
         {
           projectPath: h.project,
           event: { type: "agent_settled", synthetic: true, sessionId: SESSION_A, reason: "engine_crash" },
         },
       ])
+      // #22 顺带验证：A 的冷态补投成功合成过 queue_update 清帧（ordered:[]，durable id 路由）
+      await waitForCondition(() =>
+        h.synthetic.some(
+          (e) => e.event.type === "queue_update" && e.event.sessionId === SESSION_A && (((e.event as { ordered?: unknown[] }).ordered ?? []).length === 0),
+        ),
+      )
       // crashSettle 排除 onRoundSettled（正常结算口径不触发）
       expect(h.settled).toEqual([])
       // B 存活：回合行仍在且 running；B 引擎零受扰（无 abort/stop 搅动）

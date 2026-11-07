@@ -22,7 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
-import { sendTrace } from "@/lib/diag";
+import { diag, sendTrace } from "@/lib/diag";
 import { useT } from "@/i18n/i18n";
 import { isSendKey } from "@/lib/shortcuts";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -335,6 +335,29 @@ export function Composer({
   const frameFresh = lastFrameAt !== undefined && Date.now() - lastFrameAt < WAITING_HINT_SILENCE_MS;
   const showWaitingHint =
     runState === "waiting" && !waitingHintHidden && (frameFresh || hasPendingQuestion || permissionLocked);
+  // 发送可用性（原在权限锁提前返回之后定义；#23 埋点 effect 需引用，整体上移——
+  // 下方 JSX 引用不变，计算与返回路径无关）
+  const canSend =
+    (text.trim().length > 0 || images.length > 0 || attachments.length > 0 || sendableFileChipCount(fileChips) > 0) &&
+    !sending &&
+    !hydrationLocked;
+  // #23 观测埋点：输入组件状态机迁移——locked/sending/canSend/等待提示显隐任一
+  // 变化即记一行（info 级默认可见）。等待提示取证四元组随行携带（帧新鲜/待答提问/
+  // 权限锁/最终显隐）：「提示条在不该出现的时机亮起」的幽灵等待态由此定位。
+  // fresh 在 effect 内按当下时钟计算（lastFrameAt 每帧都变，进依赖数组会退化为逐帧日志）。
+  useEffect(() => {
+    diag.info("composer", "state", {
+      s: sessionId.slice(0, 8),
+      locked: permissionLocked || hydrationLocked,
+      sending,
+      canSend,
+      hint: showWaitingHint,
+      fresh: lastFrameAt !== undefined && Date.now() - lastFrameAt < WAITING_HINT_SILENCE_MS,
+      q: hasPendingQuestion,
+      perm: permissionLocked,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 逐帧量不进依赖，见上注
+  }, [sessionId, permissionLocked, hydrationLocked, sending, canSend, showWaitingHint, hasPendingQuestion]);
   const waitingHintNode = showWaitingHint ? (
     <div
       data-testid="composer-waiting-hint"
@@ -997,10 +1020,6 @@ export function Composer({
     );
   }
 
-  const canSend =
-    (text.trim().length > 0 || images.length > 0 || attachments.length > 0 || sendableFileChipCount(fileChips) > 0) &&
-    !sending &&
-    !hydrationLocked;
   // 发送中忙碌态（docs08-r7 任务 13）：POST 在途时发送钮呼吸（busy-pulse），
   // 桌面/手机双分支同源；禁用态语义不变，仅叠加视觉节奏
   const sendBusyCls = sending ? " animate-busy-pulse" : "";

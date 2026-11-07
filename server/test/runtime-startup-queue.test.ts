@@ -250,8 +250,14 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       expect(occurrencesInSessionFile(h.sessionPath, TEXT)).toBe(1)
       // 投递完成即退订：零常驻排队监听
       expect(queuedListenerActive(h.registry)).toBe(false)
-      // 超时定时器已随取走清掉：静置后无 timeout 事件（不会有迟到的误报）
-      expect(h.syntheticEvents).toHaveLength(0)
+      // 超时定时器已随取走清掉：静置后无 timeout 误报；但补投成功会合成一帧
+      // queue_update（#22：ordered:[] 清前端乐观占位）——恰一帧且形状正确
+      await vi.waitFor(() => expect(h.syntheticEvents.length).toBe(1), { timeout: 5000 });
+      expect(h.syntheticEvents[0]).toMatchObject({
+        type: "queue_update",
+        sessionId: DURABLE_ID,
+        ordered: [],
+      });
     } finally {
       rmSync(h.root, { recursive: true, force: true })
     }
@@ -270,9 +276,14 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       await vi.waitFor(() => expect(h.rpc.promptCalls).toBe(1), { timeout: 5000 })
       expect(h.rpc.prompts[0]).toBe("race-ready")
       expect(occurrencesInSessionFile(h.sessionPath, "race-ready")).toBe(1)
-      // 立即投递后无残留订阅与超时误报
+      // 立即投递后无残留订阅与超时误报；补投成功恰一帧 queue_update 清占位（#22）
       expect(queuedListenerActive(h.registry)).toBe(false)
-      expect(h.syntheticEvents).toHaveLength(0)
+      await vi.waitFor(() => expect(h.syntheticEvents.length).toBe(1), { timeout: 5000 });
+      expect(h.syntheticEvents[0]).toMatchObject({
+        type: "queue_update",
+        sessionId: DURABLE_ID,
+        ordered: [],
+      });
     } finally {
       rmSync(h.root, { recursive: true, force: true })
     }
@@ -417,7 +428,13 @@ describe("启动期 prompt 排队与就绪自动补投（engine-ux-visibility �
       expect(h.rpc.prompts[0]).toBe(TEXT)
       expect(occurrencesInSessionFile(h.sessionPath, TEXT)).toBe(1)
       expect(queuedListenerActive(h.registry)).toBe(false)
-      expect(h.syntheticEvents).toHaveLength(0)
+      // 冷态补投成功同样合成 queue_update 清占位（#22）
+      await vi.waitFor(() => expect(h.syntheticEvents.length).toBe(1), { timeout: 5000 });
+      expect(h.syntheticEvents[0]).toMatchObject({
+        type: "queue_update",
+        sessionId: DURABLE_ID,
+        ordered: [],
+      });
     } finally {
       rmSync(h.root, { recursive: true, force: true })
     }

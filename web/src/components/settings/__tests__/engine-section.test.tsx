@@ -78,12 +78,12 @@ describe("引擎分区（2026-11-04）", () => {
     stopEngineFn.mockClear();
   });
 
-  test("(a) 六档单选渲染；kv 缺省时默认 7 天选中", async () => {
+  test("(a) 七档单选渲染；kv 缺省时默认 3 天选中", async () => {
     const { container } = mount();
     await flush();
     const values = [...container.querySelectorAll('input[name="engine-idle-timeout"]')].map((i) => i.value);
-    expect(values).toEqual(["30", "60", "240", "1440", "10080", "never"]);
-    expect(radio(container, "10080").checked).toBe(true);
+    expect(values).toEqual(["30", "60", "240", "1440", "4320", "10080", "never"]);
+    expect(radio(container, "4320").checked).toBe(true);
   });
 
   test("(b) kv=never → 「永不」选中", async () => {

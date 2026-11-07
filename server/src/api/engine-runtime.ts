@@ -1634,8 +1634,21 @@ class ProjectRuntime {
           session: entry.sessionId.slice(0, 8),
           proj: projHash8(this.projectPath),
           disposition: receipt.disposition,
+          ...(receipt.appliedModel !== undefined ? { model: receipt.appliedModel } : {}),
           waitedMs: Date.now() - entry.queuedAt,
           rid: currentRid(),
+        });
+        // 补投成功即合成 queue_update（ordered:[]）清前端乐观占位（2026-11-07 #22）：
+        // 补投走直投开回合、全程不进引擎队列，引擎永不发 queue_update（ordered 全量
+        // 真相只在真入队/出队时宣布），而占位清除只认这帧——用户在线不重连时待发卡
+        // 永挂。合成帧语义正确且幂等：该会话引擎队列此刻确实为空；sessionId 用
+        // durable id（SSE 信封无 sessionPath，前端回退 wire sessionId 路由恰好落对
+        // 会话），前端既有分流零改动直接清占位+顺带触发会话列表刷新（delivered 检测）。
+        this.opts.publishSyntheticEvent?.(this.projectPath, {
+          type: "queue_update",
+          synthetic: true,
+          sessionId: entry.sessionId,
+          ordered: [],
         });
       },
       (err: unknown) => {

@@ -272,6 +272,7 @@ export const login = {
     engineIdle1h: "1 小时",
     engineIdle4h: "4 小时",
     engineIdle1d: "1 天",
+    engineIdle3d: "3 天",
     engineIdle7d: "7 天",
     engineIdleNever: "永不",
     engineIdleSaveFailed: "保存空闲回收档位失败",

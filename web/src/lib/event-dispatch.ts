@@ -782,6 +782,12 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
     const m = wire.model as { id?: unknown } | undefined;
     const model = typeof m === "object" && m !== null && typeof m.id === "string" && m.id ? m.id : "";
     const detail = typeof wire.detail === "string" && wire.detail ? wire.detail : "";
+    // #23 观测埋点：引擎拒绝帧可观测（与 run/model 成功帧对偶）
+    diag.info("run", "model_rejected", {
+      session: sessionId.slice(0, 8),
+      model,
+      reason: typeof wire.reason === "string" && wire.reason ? wire.reason : "-",
+    });
     useUiStore.getState().showToast(t("common.lib.modelChangeRejected", { model, detail }), "error");
   }
 

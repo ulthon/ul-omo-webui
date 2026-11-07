@@ -6,7 +6,9 @@
 // 撤销：引擎只有整队 clearQueue 协议面，单条撤销由 UI 层"清空 + 保留项重新入队"实现，
 // 本 store 只负责列表真相的维护。
 import { create } from "zustand";
+import { diag } from "@/lib/diag";
 import type { QueueItem, QueueSnapshot } from "@/lib/api";
+
 
 interface SessionQueue {
   items: QueueItem[];
@@ -66,8 +68,10 @@ function reconcile(prev: QueueItem[], engine: Array<{ text: string; mode: "steer
 export const useQueueStore = create<QueueState>()((set) => ({
   bySession: {},
 
-  addPending: (sessionId, text, mode) =>
-    set((s) => {
+  addPending: (sessionId, text, mode) => {
+    // #23 观测埋点：占位动作（只记长度不记正文，隐私口径同 diag 纪律）
+    diag.info("queue", "pending_add", { s: sessionId.slice(0, 8), len: text.length, mode });
+    return set((s) => {
       const cur = s.bySession[sessionId] ?? { items: [] };
       const now = Date.now();
       // SSE enqueue 帧可能先于 HTTP 回执到达（QA 实测 +2ms 级竞态）：近窗口内已有
@@ -77,10 +81,13 @@ export const useQueueStore = create<QueueState>()((set) => ({
       if (dup) return s;
       const item: QueueItem = { text, mode, enqueueOrder: null, enqueuedAt: now };
       return { bySession: { ...s.bySession, [sessionId]: { items: [...cur.items, item] } } };
-    }),
+    });
+  },
 
-  applyUpdate: (sessionId, ordered) =>
-    set((s) => {
+  applyUpdate: (sessionId, ordered) => {
+    // #23 观测埋点：queue_update 增量到达（含 #22 补投成功合成清帧）
+    diag.info("queue", "apply", { s: sessionId.slice(0, 8), ordered: Array.isArray(ordered) ? ordered.length : 0 });
+    return set((s) => {
       const cur = s.bySession[sessionId] ?? { items: [] };
       const engine = (Array.isArray(ordered) ? ordered : []).map((raw) => ({
         text: textOf(raw?.text),
@@ -88,10 +95,17 @@ export const useQueueStore = create<QueueState>()((set) => ({
         enqueueOrder: orderOf(raw?.enqueueOrder),
       }));
       return { bySession: { ...s.bySession, [sessionId]: { items: reconcile(cur.items, engine) } } };
-    }),
+    });
+  },
 
-  setSnapshot: (sessionId, snapshot) =>
-    set((s) => {
+  setSnapshot: (sessionId, snapshot) => {
+    // #23 观测埋点：快照对账（断线重连/初次渲染）
+    diag.info("queue", "snapshot", {
+      s: sessionId.slice(0, 8),
+      steering: snapshot.steering.length,
+      followUp: snapshot.followUp.length,
+    });
+    return set((s) => {
       const cur = s.bySession[sessionId] ?? { items: [] };
       // 执行序：steering 在下一 turn 边界并入，先于 followUp（spike (b)/(c) 实证）
       const engine = [
@@ -99,7 +113,8 @@ export const useQueueStore = create<QueueState>()((set) => ({
         ...snapshot.followUp.map((text) => ({ text, mode: "followUp" as const, enqueueOrder: null })),
       ];
       return { bySession: { ...s.bySession, [sessionId]: { items: reconcile(cur.items, engine) } } };
-    }),
+    });
+  },
 
   clearSession: (sessionId) =>
     set((s) => {

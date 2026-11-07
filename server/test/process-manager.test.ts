@@ -751,7 +751,7 @@ describe("空闲回收第三判据：background_running（multi-session-parallel
     }
   })
 
-  test("(e) 默认档仍 7 天（IS-6 证明）：缺省构造 spawn env 携带 7 天空闲自退对齐", async () => {
+  test("(e) 默认档 3 天（2026-11-07 #25）：缺省构造 spawn env 携带 3 天空闲自退对齐", async () => {
     // T2 只增第三判据不动档位：缺省（不传 idleTimeoutMs）spawn env 的宿主自退对齐值
     // 仍为 7 天（604800000ms），证明 2026-11-04 定版档位未被本任务漂移
     const fakes: FakeRpcClient[] = []
@@ -778,8 +778,9 @@ describe("空闲回收第三判据：background_running（multi-session-parallel
     })
     try {
       await manager.ensureRunning(SESS_A1, PROJ)
+      // 2026-11-07 #25：默认档改 3 天（用户定版；旧 7 天档仍在选项中，显式配置不变）
       expect(fakes[0].spawnOpts.env?.SENPI_RPC_HOST_IDLE_EXIT_MS).toBe(
-        String(7 * 24 * 60 * 60 * 1000),
+        String(3 * 24 * 60 * 60 * 1000),
       )
     } finally {
       await manager.stopAll().catch(() => {})

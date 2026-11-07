@@ -1,8 +1,8 @@
 // 引擎分区（2026-11-04 用户定版）：设置页「引擎」两块——空闲回收档位 + 进程管理。
-// - 空闲回收：meta_kv engine.idleTimeoutMinutes（"30"|"60"|"240"|"1440"|"10080"|"never"），
+// - 空闲回收：meta_kv engine.idleTimeoutMinutes（"30"|"60"|"240"|"1440"|"4320"|"10080"|"never"），
 //   走既有 PUT /api/settings；服务端 onSettingsChanged 钩子即时重排已拉起引擎的
-//   回收定时器，免重启生效。缺省 7 天（process-manager DEFAULTS，对齐 openchamber
-//   常驻理念；30 分钟旧值曾误杀安静后台长任务，诊断 2026-11-04 实锤）。
+//   回收定时器，免重启生效。缺省 3 天（process-manager DEFAULTS；2026-11-07 用户定版
+//   加 3 天档并改默认，旧档位与显式配置不受影响）。
 // - 探活窗档位（2026-11-07 session-polish T2）：meta_kv engine.activityWindowMinutes
 //   （"1"|"5"|"15"|"30"|"60"|"never"，缺省 5 分钟，"0" 读作 never）。纯看（未发过
 //   消息）引擎按此档判收，正在跑回合不受影响；never 关窗回落上方空闲回收档。
@@ -22,14 +22,15 @@ import { relTime } from "@/components/notes/notes-logic";
 import { Button } from "@/components/ui/button";
 
 export const ENGINE_IDLE_TIMEOUT_KV = "engine.idleTimeoutMinutes";
-export type EngineIdleValue = "30" | "60" | "240" | "1440" | "10080" | "never";
-const DEFAULT_IDLE: EngineIdleValue = "10080";
+export type EngineIdleValue = "30" | "60" | "240" | "1440" | "4320" | "10080" | "never";
+const DEFAULT_IDLE: EngineIdleValue = "4320";
 
 const IDLE_OPTIONS: ReadonlyArray<{ value: EngineIdleValue; labelKey: MessageKey }> = [
   { value: "30", labelKey: "login.settingsPage.engineIdle30m" },
   { value: "60", labelKey: "login.settingsPage.engineIdle1h" },
   { value: "240", labelKey: "login.settingsPage.engineIdle4h" },
   { value: "1440", labelKey: "login.settingsPage.engineIdle1d" },
+  { value: "4320", labelKey: "login.settingsPage.engineIdle3d" },
   { value: "10080", labelKey: "login.settingsPage.engineIdle7d" },
   { value: "never", labelKey: "login.settingsPage.engineIdleNever" },
 ];

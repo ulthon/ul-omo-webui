@@ -13,6 +13,7 @@
 //   与引擎 Allow always 并存：引擎记忆是会话内权限模式的权威（选 Allow always 后引擎
 //   本会话不再询问）；此 kv 是前端层兜底（防引擎重复问），二者互不替代。
 import { create } from "zustand";
+import { diag } from "@/lib/diag";
 import { api } from "@/lib/api";
 
 export type PermissionMethod = "select" | "confirm" | "input" | "editor";
@@ -71,29 +72,53 @@ export const usePermissionsStore = create<PermissionsState>()((set) => ({
   bySession: {},
   autoAllow: {},
 
-  pushRequest: (sessionId, request) =>
-    set((s) => {
+  pushRequest: (sessionId, request) => {
+    // #23 观测埋点：等待卡入队（去重后真新增才记；触发源均为 wire 帧，重放窗口内
+    // 同 id 去重不虚增）
+    const known = usePermissionsStore.getState().bySession[sessionId] ?? [];
+    if (!known.some((r) => r.id === request.id)) {
+      diag.info("perm", "wait_enter", {
+        s: sessionId.slice(0, 8),
+        id: request.id.slice(0, 8),
+        m: request.method,
+        q: known.length + 1,
+      });
+    }
+    return set((s) => {
       const queue = s.bySession[sessionId] ?? [];
       if (queue.some((r) => r.id === request.id)) return s;
       return { bySession: { ...s.bySession, [sessionId]: [...queue, request] } };
-    }),
+    });
+  },
 
-  removeRequest: (sessionId, id) =>
-    set((s) => {
+  removeRequest: (sessionId, id) => {
+    const queue = usePermissionsStore.getState().bySession[sessionId];
+    if (queue?.some((r) => r.id === id)) {
+      // #23 观测埋点：等待卡出队（应答/忽略/自动放行均经此，统称 respond）
+      diag.info("perm", "wait_exit", { s: sessionId.slice(0, 8), id: id.slice(0, 8), reason: "respond" });
+    }
+    return set((s) => {
       const queue = s.bySession[sessionId];
       if (!queue) return s;
       const next = queue.filter((r) => r.id !== id);
       if (next.length === queue.length) return s;
       return { bySession: { ...s.bySession, [sessionId]: next } };
-    }),
+    });
+  },
 
-  clearSession: (sessionId) =>
-    set((s) => {
+  clearSession: (sessionId) => {
+    const queue = usePermissionsStore.getState().bySession[sessionId];
+    if (queue && queue.length > 0) {
+      // #23 观测埋点：回合落定整队清空（幽灵等待态取证：清空时机与残留条数）
+      diag.info("perm", "wait_clear", { s: sessionId.slice(0, 8), n: queue.length, reason: "turn_settled" });
+    }
+    return set((s) => {
       if (!(sessionId in s.bySession)) return s;
       const bySession = { ...s.bySession };
       delete bySession[sessionId];
       return { bySession };
-    }),
+    });
+  },
 
   markAutoAllow: (sessionId, tool) =>
     set((s) => ({ autoAllow: { ...s.autoAllow, [autoAllowKey(sessionId, tool)]: true as const } })),
