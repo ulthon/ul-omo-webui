@@ -299,6 +299,13 @@ function rpcFor(h: Harness, sessionPath: string): FakeEngineRpc {
   return rpc
 }
 
+/** 引擎 fake prompts 安全取（FIXUP：绑定 open 完成前返回空数组——冷态排队后
+ *  kick 的 ensure/open 链尚在途，waitForCondition 条件首次评估时 fake 可能还未
+ *  绑定路径；空数组命中条件的 length 检查自然等待，不抛错） */
+function promptsFor(h: Harness, sessionPath: string): string[] {
+  return h.rpcs.find((r) => r["currentSessionPath"] === sessionPath)?.prompts ?? []
+}
+
 /** 有界条件等待（禁真睡：事件回声条件驱动 + 硬截止，不用固定时长赌定时器） */
 async function waitForCondition(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -354,11 +361,19 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
   test("① 同项目两会话 ensure 后双引擎并存（engines Map 两键）", async () => {
     const h = await setup()
     try {
-      // 生产路径进入：两会话各自 prompt 触发各自 ensure（registry → manager 全链路）
+      // 生产路径进入：两会话各自 prompt 触发各自 ensure（registry → manager 全链路）。
+      // FIXUP（engine-ux-visibility 任务 5）：冷态 prompt 改为立即接住排队（disposition
+      // "queued"），kick 的 ensure 链拉起引擎、ready 事件后自动补投——冷态同步直投
+      // 回执不再存在；以引擎 fake 收到 prompt 为确定性信号等补投落定后再断言存量不变式
       const ra = await h.registry.prompt(SESSION_A, { text: "A 首问" })
       const rb = await h.registry.prompt(SESSION_B, { text: "B 首问" })
-      expect(ra.disposition).toBe("started")
-      expect(rb.disposition).toBe("started")
+      expect(ra.disposition).toBe("queued")
+      expect(rb.disposition).toBe("queued")
+      await waitForCondition(
+        () => promptsFor(h, h.pathA).length === 1 && promptsFor(h, h.pathB).length === 1,
+      )
+      expect(rpcFor(h, h.pathA).prompts).toEqual(["A 首问"])
+      expect(rpcFor(h, h.pathB).prompts).toEqual(["B 首问"])
 
       // engines Map 公共镜像：两键（每会话一引擎），记录对 projectPath+sessionPath 齐全
       const rows = h.manager.getAllStatus()
@@ -383,13 +398,17 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
   test("② 两会话同时 prompt 真并发（Promise.all，双 runningTurns 行）", async () => {
     const h = await setup()
     try {
-      // 真并发进入运行时（非顺序注册后假装并行）：两回合同时发起
+      // 真并发进入运行时（非顺序注册后假装并行）：两回合同时发起（FIXUP：冷态
+      // 回执 queued，双路各自 kick/补投，以引擎 fake 收到 prompt 为落定信号）
       const [ra, rb] = await Promise.all([
         h.registry.prompt(SESSION_A, { text: "A 回合" }),
         h.registry.prompt(SESSION_B, { text: "B 回合" }),
       ])
-      expect(ra.disposition).toBe("started")
-      expect(rb.disposition).toBe("started")
+      expect(ra.disposition).toBe("queued")
+      expect(rb.disposition).toBe("queued")
+      await waitForCondition(
+        () => promptsFor(h, h.pathA).length === 1 && promptsFor(h, h.pathB).length === 1,
+      )
       // 路径键控路由正确：双引擎各自只收到自己会话的 prompt
       expect(rpcFor(h, h.pathA).prompts).toEqual(["A 回合"])
       expect(rpcFor(h, h.pathB).prompts).toEqual(["B 回合"])
@@ -410,14 +429,18 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
   test("③ A 回合进行中 B 发起不被 409（跨会话放行，互斥按 sessionPath 判定）", async () => {
     const h = await setup()
     try {
-      await h.registry.prompt(SESSION_A, { text: "A 回合" })
+      // FIXUP：冷态回执 queued，等 A 补投落定（runningTurn 成立的前提）
+      const ra0 = await h.registry.prompt(SESSION_A, { text: "A 回合" })
+      expect(ra0.disposition).toBe("queued")
+      await waitForCondition(() => promptsFor(h, h.pathA).length === 1)
       // A 在途真值：此刻仅 A 一行 running
       let states = await h.registry.peekRunStates(h.project)
       expect([...states!.keys()]).toEqual([h.pathA])
 
-      // A 在途期间 B 发起：不 409（无跨会话互斥），正常 started
+      // A 在途期间 B 发起：不 409（无跨会话互斥），B 冷态排队后 ready 补投正常投出
       const rb = await h.registry.prompt(SESSION_B, { text: "B 回合" })
-      expect(rb.disposition).toBe("started")
+      expect(rb.disposition).toBe("queued")
+      await waitForCondition(() => promptsFor(h, h.pathB).length === 1)
 
       // A 回合不被 B 的发起打断：双行并行 running
       states = await h.registry.peekRunStates(h.project)
@@ -431,7 +454,9 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
   test("④ 同会话二发仍 409 already_processing（session_path_in_use 族），带 streamingBehavior 入队 queued", async () => {
     const h = await setup()
     try {
+      // FIXUP：冷态回执 queued，等首投落定（回合占用成立的前提）后再验 409 半边
       await h.registry.prompt(SESSION_A, { text: "A 第一发" })
+      await waitForCondition(() => promptsFor(h, h.pathA).length === 1)
 
       // 同会话二发：结构化 409（IS-2 的 409 半边；文案携被占会话路径，T7 常驻错误卡呈现面）
       const err = await h.registry.prompt(SESSION_A, { text: "A 第二发" }).catch((e: unknown) => e)
@@ -461,6 +486,9 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
         h.registry.prompt(SESSION_A, { text: "A 回合" }),
         h.registry.prompt(SESSION_B, { text: "B 回合" }),
       ])
+      await waitForCondition(
+        () => promptsFor(h, h.pathA).length === 1 && promptsFor(h, h.pathB).length === 1,
+      )
 
       // kill -9 形态：A 进程从 /proc 消失 → supervisor pid 轮询检出 process_crashed
       //（事件回声驱动，非时序押注）
@@ -496,6 +524,9 @@ describe("双会话并行集成证明（multi-session-parallel T8：真管理器
         h.registry.prompt(SESSION_A, { text: "A 回合" }),
         h.registry.prompt(SESSION_B, { text: "B 回合" }),
       ])
+      await waitForCondition(
+        () => promptsFor(h, h.pathA).length === 1 && promptsFor(h, h.pathB).length === 1,
+      )
       expect(h.manager.getAllStatus()).toHaveLength(2)
 
       // 定向停：仅 A 的会话引擎

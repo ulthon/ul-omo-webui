@@ -349,6 +349,53 @@ export interface EngineAdminRow {
   lastActivityAt: number | null;
 }
 
+/** 引擎指标行（engine-ux-visibility 任务 1，GET /api/engines/metrics）：镜像
+ *  server/src/api/routes-engine-metrics.ts EngineMetricsRow——字段不缺键，进程死/
+ *  不可得为 null；行只覆盖管理器内引擎（无 inactive 补行）。
+ *  remainingIdleMs/activityWindowExempt 为任务 2 落地字段：调用方按可选防御渲染。 */
+export interface EngineMetricError {
+  t: string;
+  ev: string;
+  detail: string;
+}
+
+export interface EngineMetricsRow {
+  projectPath: string;
+  sessionPath: string;
+  state: string;
+  pid: number | null;
+  rssBytes: number | null;
+  /** 自身+全部后代 RSS 合计 */
+  treeRssBytes: number | null;
+  /** 后代进程数（不含自身） */
+  childCount: number;
+  /** 树合计 CPU 占比（单核=100%；首次采样无基线为 null） */
+  cpuPct: number | null;
+  /** 树合计 utime+stime（ms） */
+  cpuTotalMs: number | null;
+  ioBytes: { readBytes: number; writeBytes: number } | null;
+  startedAt: number | null;
+  /** starting 进行中为当前差值，否则为上次完成值 */
+  startupMs: number | null;
+  lastStartupMs: number | null;
+  /** ready 起算存活时长（未就绪态 null） */
+  uptimeMs: number | null;
+  boundSession: { id: string; title: string; fileSizeBytes: number } | null;
+  workerRestartCount: number;
+  rpcQueueDepth: number;
+  recentErrors: EngineMetricError[];
+  /** 探活窗剩余存活（任务 2 落地中）：缺席即不渲染，不崩 */
+  remainingIdleMs?: number | null;
+  activityWindowExempt?: boolean;
+}
+
+/** 引擎回收历史条目（engine-ux-visibility 任务 6，GET /api/engines/reclaims；at = epoch ms，服务重启即清空） */
+export interface EngineReclaimRecord {
+  at: number;
+  sessionPath: string;
+  reason: "idle_timeout" | "activity_window";
+}
+
 export interface TipItem {
   id: string;
   text: string;
@@ -935,6 +982,13 @@ export const api = {
   /** 停止引擎（T6 双形态）：{sessionPath} 定向停单会话引擎；{project} 停该项目全部会话引擎。 */
   async stopEngine(target: { sessionPath: string } | { project: string }): Promise<{ ok: boolean }> {
     return request("/api/engines/stop", jsonInit("POST", target));
+  },
+  // ---- 引擎指标采样与回收历史（engine-ux-visibility 任务 1/6；纯读不 spawn，采样由面板展开/请求驱动；引擎缺席 = { engines: [] }）----
+  async getEngineMetrics(): Promise<{ engines: EngineMetricsRow[] }> {
+    return request("/api/engines/metrics");
+  },
+  async getEngineReclaims(): Promise<{ reclaims: EngineReclaimRecord[] }> {
+    return request("/api/engines/reclaims");
   },
 
   // ---- 用法提示（docs08-2026-10-22 批次任务 25）----

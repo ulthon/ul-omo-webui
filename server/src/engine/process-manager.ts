@@ -145,11 +145,33 @@ export interface EngineStatusSnapshot {
   state: EngineState
   pid: number | undefined
   consecutiveRestarts: number
+  /** 换件累计计数（engine-ux-visibility 任务 1）：每次实际进入换件调度
+ * （scheduleRestart 计数处）+1，成功 ready 不清零——区别于 consecutiveRestarts
+ * 的“连续失败”语义，服务监控面板“状态+换件次数”展示。 */
+  restartCount: number
   lastError: string | undefined
   startedAt: number | undefined
+  /** 最近一次 starting→ready 启动耗时（ms）；未完成过一次启动为 undefined */
+  lastStartupMs: number | undefined
+  /** 当前/最近一次进入 starting 的时刻（startupMs 差分用） */
+  startingAt: number | undefined
   lastActivityAt: number
   runningSessions: string[]
   pendingPermissions: string[]
+}
+
+/** 空闲回收事实面（engine-ux-visibility 任务 2）：reclaimTier/isIdle 判定的只读
+ *  输入子集，供 metrics 派生剩余存活倒计时/豁免态。派生逻辑在 metrics 侧镜像
+ *  判定序，本体（双门/豁免）零改动——本接口只是暴露面，不是行为面。 */
+export interface EngineReclaimFacts {
+  /** 本进程生命周期内已收到用户消息回执（任务 7）：true = 正常档 */
+  userPrompted: boolean
+  /** 真实运行回合计数（agentRunning；探活窗档忙判据之一） */
+  agentRunningCount: number
+  /** 探活窗档窗长（meta_kv engine.activityWindowMinutes；<=0 = 关窗回落正常档） */
+  activityWindowMs: number
+  /** 正常档窗长（meta_kv engine.idleTimeoutMinutes；<=0 = never 总逃生口） */
+  idleTimeoutMs: number
 }
 
 /** 引擎管理器事件。sessionPath = 引擎键（标识哪个引擎）；projectPath = 所属项目
@@ -227,8 +249,14 @@ interface ProjectEngine {
   pid: number | undefined
   startPromise: Promise<void> | null
   consecutiveRestarts: number
+  /** 换件累计计数（不清零；见 EngineStatusSnapshot.restartCount） */
+  restartCount: number
   lastError: string | undefined
   startedAt: number | undefined
+  /** 最近一次 starting 进入时刻（启动耗时差分） */
+  startingAt: number | undefined
+  /** 最近一次完成的 starting→ready 耗时（ms） */
+  lastStartupMs: number | undefined
   lastActivityAt: number
   runningSessions: Set<string>
   /** 真实运行回合标记（agent_start 派生）。runningSessions 含 reportSessionActive
@@ -422,6 +450,21 @@ export class EngineProcessManager {
     return [...this.engines.values()].map((e) => this.snapshot(e))
   }
 
+  /** 空闲回收事实面只读 getter（engine-ux-visibility 任务 2）：metrics 派生
+   *  remainingIdleMs/豁免态的输入子集（档位配置 + userPrompted/agentRunning），
+   *  与回收判定同源。纯读：不触发重排、不改任何回收行为；键不存在返回
+   *  undefined（行已列出的引擎在同同步块内必命中）。 */
+  getReclaimFacts(sessionPath: string): EngineReclaimFacts | undefined {
+    const engine = this.engines.get(sessionPath)
+    if (!engine) return undefined
+    return {
+      userPrompted: engine.userPrompted,
+      agentRunningCount: engine.agentRunning.size,
+      activityWindowMs: this.opts.activityWindowMs,
+      idleTimeoutMs: this.opts.idleTimeoutMs,
+    }
+  }
+
   /** 运行时调整空闲回收时长（2026-11-04 设置页引擎分区）：ms<=0 为永不回收；
    * 已拉起引擎的既有定时器按新值重排（非空闲引擎无定时器，下次转空闲时自然用新值）。 */
   setIdleTimeoutMs(ms: number): void {
@@ -506,7 +549,7 @@ export class EngineProcessManager {
       .then(() => hook(engine.projectPath, client as unknown as RpcClient))
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
-        log.warn("engine", "warmup_fail", { proj: engine.projectPath, msg: msg.slice(0, 300) })
+        log.warn("engine", "warmup_fail", { proj: engine.projectPath, sess: engine.sessionPath, msg: msg.slice(0, 300) })
       })
   }
 
@@ -581,8 +624,11 @@ export class EngineProcessManager {
       pid: undefined,
       startPromise: null,
       consecutiveRestarts: 0,
+      restartCount: 0,
       lastError: undefined,
       startedAt: undefined,
+      startingAt: undefined,
+      lastStartupMs: undefined,
       lastActivityAt: this.now(),
       runningSessions: new Set(),
       agentRunning: new Set(),
@@ -725,6 +771,10 @@ export class EngineProcessManager {
       engine.lastActivityAt = this.now()
       engine.consecutiveRestarts = 0
       engine.lastError = undefined
+      // 启动耗时落账（任务 1 指标面）：starting→ready 差值在标 ready 前现算
+      if (engine.startingAt !== undefined) {
+        engine.lastStartupMs = Math.max(this.now() - engine.startingAt, 0)
+      }
       this.transition(engine, "ready")
       this.startSupervisor(engine)
       this.fireWarmup(engine)
@@ -765,23 +815,23 @@ export class EngineProcessManager {
       // 响应严格校验（malformed-input 类：垃圾/HTML/非 JSON 形态在此一律失败）
       const env = res as { success?: unknown; data?: { sessionId?: unknown; state?: unknown } | null } | null | undefined
       if (!env || env.success !== true || typeof env.data !== "object" || env.data === null) {
-        log.warn("engine", "probe_gate", { step: "响应非成功帧", detail: JSON.stringify(env)?.slice(0, 300) })
+        log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "响应非成功帧", detail: JSON.stringify(env)?.slice(0, 300) })
         return false
       }
       const state = env.data.state
       if (typeof state !== "object" || state === null) {
-        log.warn("engine", "probe_gate", { step: "state 缺失/非对象", detail: JSON.stringify(state)?.slice(0, 200) })
+        log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "state 缺失/非对象", detail: JSON.stringify(state)?.slice(0, 200) })
         return false
       }
       const claimedId = (state as { sessionId?: unknown }).sessionId
       const claimedPath = (state as { sessionFile?: unknown }).sessionFile
       if (typeof claimedId !== "string" || claimedId === "") {
-        log.warn("engine", "probe_gate", { step: "sessionId 非法", detail: JSON.stringify(claimedId)?.slice(0, 100) })
+        log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "sessionId 非法", detail: JSON.stringify(claimedId)?.slice(0, 100) })
         return false
       }
       // 认领路径必须是本探针路径（防误导性成功：引擎拿其它会话文件充数）
       if (typeof claimedPath !== "string" || resolve(claimedPath) !== resolve(probePath)) {
-        log.warn("engine", "probe_gate", { step: "sessionFile 不匹配", claimed: String(claimedPath).slice(0, 200), probe: probePath })
+        log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "sessionFile 不匹配", claimed: String(claimedPath).slice(0, 200), probe: probePath })
         return false
       }
       // 有界等待探针文件落盘（t6 同族判定：磁盘为准，不以口头认领为准）
@@ -790,12 +840,12 @@ export class EngineProcessManager {
         await this.probe.sleep(25)
       }
       if (!existsSync(probePath)) {
-        log.warn("engine", "probe_gate", { step: "探针文件未落盘", waited: this.opts.probeWriteTimeoutMs, probe: probePath })
+        log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "探针文件未落盘", waited: this.opts.probeWriteTimeoutMs, probe: probePath })
         return false
       }
       return true
     } catch (e) {
-      log.warn("engine", "probe_gate", { step: "异常", detail: (e instanceof Error ? e.message : String(e)).slice(0, 300) })
+      log.warn("engine", "probe_gate", { proj: engine.projectPath, sess: engine.sessionPath, step: "异常", detail: (e instanceof Error ? e.message : String(e)).slice(0, 300) })
       return false
     } finally {
       // 即焚：引擎侧关会话 + 本地探针文件删除（成功失败两向都清，防残留）
@@ -1024,6 +1074,9 @@ export class EngineProcessManager {
   private scheduleRestart(engine: ProjectEngine): void {
     if (engine.state === "backoff" || engine.state === "unavailable") return
     engine.consecutiveRestarts += 1
+    // 换件累计（任务 1 指标面）：实际进入换件调度即计（含达上限 unavailable），
+    // 与连续失败计数同点位、不同生命周期（永不清零）
+    engine.restartCount += 1
     if (engine.consecutiveRestarts >= this.opts.maxConsecutiveFailures) {
       this.transition(engine, "unavailable")
       this.emit({
@@ -1337,6 +1390,8 @@ export class EngineProcessManager {
     if (engine.state === to) return
     const from = engine.state
     engine.state = to
+    // 启动计时锚点（任务 1 指标面）：每次进入 starting 刷新（换代重拉同锚重计）
+    if (to === "starting") engine.startingAt = this.now()
     this.emit({ type: "state_changed", projectPath: engine.projectPath, sessionPath: engine.sessionPath, from, to })
   }
 
@@ -1347,8 +1402,11 @@ export class EngineProcessManager {
       state: engine.state,
       pid: engine.pid,
       consecutiveRestarts: engine.consecutiveRestarts,
+      restartCount: engine.restartCount,
       lastError: engine.lastError,
       startedAt: engine.startedAt,
+      lastStartupMs: engine.lastStartupMs,
+      startingAt: engine.startingAt,
       lastActivityAt: engine.lastActivityAt,
       runningSessions: [...engine.runningSessions],
       pendingPermissions: [...engine.pendingPermissions],

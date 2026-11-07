@@ -12,6 +12,10 @@ export const composer = {
   imageLimitKept: { one: "最多 {n} 张图片，已保留前 {kept} 张", other: "最多 {n} 张图片，已保留前 {kept} 张" },
   lockedHint: "会话处理中，暂不能发送",
   waitingHint: "等待提问 / 权限应答中…",
+  // 引擎条件状态条（engine-ux-visibility 任务 4）：三态文案，就绪/未知一律不显示
+  engineStateStopped: "引擎未启动，发送消息将自动拉起",
+  engineStateStarting: "引擎启动中…",
+  engineStateBackoff: "引擎启动失败，自动重试中…",
   stopGeneration: "停止生成",
   stopTitle: "停止当前回合（排队项保留，将在下次发送时执行）",
   backgroundTaskHint: "有后台任务运行中：停止钮只作用于当前回合，不影响后台任务；任务完成后状态自动回落",

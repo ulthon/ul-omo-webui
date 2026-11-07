@@ -25,6 +25,7 @@ import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
 import { broadcastUsageRefresh } from "@/components/chat/compact-run";
 import { useMessagesStore, type WireEvent } from "@/stores/messages";
+import { useEnginesStore } from "@/stores/engines";
 import { usePermissionsStore, type PermissionMethod, type PermissionRequest } from "@/stores/permissions";
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
@@ -464,9 +465,9 @@ function orphanEndTarget(routeKey: string): string | "resync" | null {
  */
 export function dispatchSseEvent(eventType: string, data: string, cursor: number | null): void {
   armRunStateSweep(); // 首帧布防运行态清扫（幂等）
-  let frame: { event?: unknown; durableSessionId?: unknown };
+  let frame: { event?: unknown; durableSessionId?: unknown; sessionPath?: unknown };
   try {
-    frame = JSON.parse(data) as { event?: unknown; durableSessionId?: unknown };
+    frame = JSON.parse(data) as { event?: unknown; durableSessionId?: unknown; sessionPath?: unknown };
   } catch {
     return; // 非 JSON 帧容错忽略
   }
@@ -507,6 +508,27 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   const event = frame.event;
   if (event === null || typeof event !== "object") return;
   const wire = event as WireEvent;
+  // 信封 sessionPath（源引擎绑定键，仅引擎直发帧携带；墓碑/心跳/合成帧缺席）。
+  // engine-ux-visibility 任务 4：引擎条件状态条三路信号共用（engine_state 帧 / 存活推导）。
+  const envelopeSessionPath =
+    typeof frame.sessionPath === "string" && frame.sessionPath !== "" ? frame.sessionPath : null;
+  // 引擎状态帧（engine-ux-visibility 任务 4）：{type:"engine_state", from, to}，无 wire
+  // sessionId，不能走下方会话路由门——在此分流后即返回。服务端 state_changed 进桥后
+  // 即活（当前服务端尚未发布，帧契约见 stores/engines.ts 头注释）；to 非法值在 store 侧
+  // 静默忽略。
+  if (wire.type === "engine_state") {
+    if (envelopeSessionPath !== null && typeof wire.to === "string") {
+      useEnginesStore.getState().applyEngineStateEvent(envelopeSessionPath, wire.to);
+    }
+    return;
+  }
+  // 墓碑（引擎死亡/回收/显式停，项目级帧无会话身份）：事件驱动对账——force 重取一次
+  // 引擎快照（崩溃退避中的引擎行如实带 backoff，快照比猜测准），不进消息主通道。
+  // 原路径同样在下方无 sessionId 门静默返回，此处行为严格加法。
+  if (wire.type === "engine_permissions_invalidated") {
+    void useEnginesStore.getState().refresh(true);
+    return;
+  }
   // r10 todo 11：omo.task.updated extension_event 帧分流（后台活动条数据源）。
   // wire sessionId 是连接 handle（rpc-N）非会话身份，通用路由键不适用——直接取
   // data.parent_session_id（durable id）进 tasks store；帧语义为全量快照，整包替换。
@@ -553,6 +575,11 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   useSessionsStore.getState().noteSessionFrame(sessionId);
   // 采集增强批：发送链首帧/收尾钩子（message_start 首帧计时；收尾帧三型皆结算）
   if (wire.type === "message_start") sendTrace.firstFrame(sessionId);
+
+  // 引擎存活推导（engine-ux-visibility 任务 4）：信封带 sessionPath 的帧 = 引擎子进程
+  // 直发（墓碑/合成帧无此字段）→ 该引擎此刻在发帧即已就绪，状态条即刻隐去（就绪即
+  // 消失的帧级保障，快照/状态帧之前先行）。同值 no-op 不触发渲染。
+  if (envelopeSessionPath !== null) useEnginesStore.getState().markEngineReady(envelopeSessionPath);
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
   const sessions = useSessionsStore.getState();

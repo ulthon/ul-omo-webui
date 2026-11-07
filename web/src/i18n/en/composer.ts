@@ -10,6 +10,10 @@ export const composer = {
   imageLimitKept: { one: "At most {n} image; kept the first {kept}", other: "At most {n} images; kept the first {kept}" },
   lockedHint: "Session is processing; sending is unavailable for now",
   waitingHint: "Waiting for a question / permission response…",
+  // Engine conditional status bar (engine-ux-visibility task 4): three visible states; ready/unknown never renders
+  engineStateStopped: "Engine not started; sending a message will start it automatically",
+  engineStateStarting: "Engine starting…",
+  engineStateBackoff: "Engine failed to start; retrying automatically…",
   stopGeneration: "Stop generating",
   stopTitle: "Stop the current turn (queued items are kept and will run on the next send)",
   backgroundTaskHint: "Background task running: the stop button only affects the current turn, not the background task; the state settles automatically on completion",
