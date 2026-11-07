@@ -33,15 +33,26 @@ ul-omo-webui
 
 The server listens on `0.0.0.0:7788` by default; open <http://localhost:7788> in a browser. On first start, if `UL_OMO_WEBUI_PASSWORD` is not set, a random password is generated, printed to the console and written to the `password` file in the data directory — use it to sign in.
 
-Run as a daemon (systemd-managed, auto-start on boot, auto-restart on crash):
+Run as a daemon (systemd-managed, auto-start on boot, auto-restart on crash) — a user-level service under your normal account is the recommended form; no root required:
 
 ```bash
-sudo ul-omo-webui startup enable --system     # system-level service (recommended for servers)
-ul-omo-webui startup status --system          # check service status
-sudo ul-omo-webui startup disable --system    # stop and remove the service
+ul-omo-webui startup enable     # user-level service; enable also tries to turn on lingering
+ul-omo-webui startup status     # check service status
+ul-omo-webui startup disable    # stop and remove
 ```
 
-A user-level service (`ul-omo-webui startup enable`, without `sudo`) suits personal machines; `enable` automatically attempts `loginctl enable-linger` so it survives logout, printing a warning if that fails (run it manually in that case).
+- Auto-start at boot (running with no one logged in) needs lingering enabled: if `enable` prints a linger warning, run `sudo loginctl enable-linger $USER` once — the only sudo step, and it is system configuration; the service itself keeps running as your user.
+- The service runs as your user with data in your home directory (Linux default `~/.local/share/ul-omo-webui`). The web panel includes file management and command execution, so a normal user account keeps its reach limited to what that user can access.
+
+A system-level service (`--system`, running as root) is for cases that genuinely need root ownership — note that a web panel running as root widens the security exposure. When npm's global prefix lives under a user directory (nvm, custom prefix), sudo's fixed PATH cannot find the command; call it by absolute path:
+
+```bash
+sudo "$(which ul-omo-webui)" startup enable --system
+ul-omo-webui startup status --system
+sudo "$(which ul-omo-webui)" startup disable --system
+```
+
+A system-level service keeps its data under `/root/.local/share/ul-omo-webui` (get the login password from first-start logs or the `password` file there); re-run `enable` after a Node version switch (nvm changes paths) or env var changes.
 
 Upgrading: check and self-update in one click from the Settings page (npm global reinstall + self-healing restart); or from a terminal, `npm install -g @ulthon/ul-omo-webui@latest` then `systemctl restart ul-omo-webui` (system-level service; for a user-level service use `systemctl --user restart ul-omo-webui`).
 

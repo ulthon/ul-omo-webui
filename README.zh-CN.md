@@ -33,15 +33,26 @@ ul-omo-webui
 
 默认监听 `0.0.0.0:7788`，浏览器打开 <http://localhost:7788>。首次启动若未设置 `UL_OMO_WEBUI_PASSWORD`，服务器会生成随机密码打印到控制台并写入数据目录的 `password` 文件，用它登录即可。
 
-常驻运行（守护进程，systemd 托管、开机自启、崩溃自动拉起）：
+常驻运行（守护进程，systemd 托管、开机自启、崩溃自动拉起）——推荐普通用户身份的用户级服务，无需 root：
 
 ```bash
-sudo ul-omo-webui startup enable --system     # 系统级服务（推荐服务器部署）
-ul-omo-webui startup status --system          # 查看服务状态
-sudo ul-omo-webui startup disable --system    # 停用并移除服务
+ul-omo-webui startup enable     # 用户级服务；enable 时会自动尝试开启 linger
+ul-omo-webui startup status     # 查看服务状态
+ul-omo-webui startup disable    # 停用并移除
 ```
 
-用户级服务（`ul-omo-webui startup enable`，不加 `sudo`）适合个人机器；enable 时会自动尝试 `loginctl enable-linger` 保持登出后常驻，失败仅告警（此时手动补跑一次即可）。
+- 开机自启（无人登录也常驻）依赖 linger：若 enable 输出 linger 告警，补跑一次 `sudo loginctl enable-linger $USER`（唯一一次 sudo，属系统配置动作，服务本身仍以普通用户运行）。
+- 服务以当前用户运行，数据在用户家目录（Linux 默认 `~/.local/share/ul-omo-webui`）；Web 面板带文件管理与命令执行能力，普通用户身份把权限边界限制在该用户可访问的文件内。
+
+系统级服务（以 root 运行，`--system`）：仅适合确需 root 托管的场景，注意 Web 面板以 root 运行会放大安全暴露面。npm 全局装在用户目录（nvm、自定义 prefix 等）时，sudo 使用固定 PATH 找不到命令，必须绝对路径调用：
+
+```bash
+sudo "$(which ul-omo-webui)" startup enable --system
+ul-omo-webui startup status --system
+sudo "$(which ul-omo-webui)" startup disable --system
+```
+
+系统级数据目录在 `/root/.local/share/ul-omo-webui`（登录密码从首启日志或该目录 password 文件拿）；nvm 升级/切换 Node 版本或修改环境变量后需重新 enable 生成单元。
 
 升级：设置页「更新」区一键检查并自更新（npm 全局重装 + 服务自愈重启）；或在终端 `npm install -g @ulthon/ul-omo-webui@latest` 后 `systemctl restart ul-omo-webui`（系统级服务；用户级服务用 `systemctl --user restart ul-omo-webui`）。
 
