@@ -520,7 +520,7 @@ export class EngineProcessManager {
       .then(() => hook(engine.projectPath, client as unknown as RpcClient))
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err)
-        log.warn("engine", "warmup_fail", { proj: engine.projectPath, msg: msg.slice(0, 300) })
+        log.warn("engine", "warmup_fail", { proj: engine.projectPath, sess: engine.sessionPath, msg: msg.slice(0, 300) })
       })
   }
 

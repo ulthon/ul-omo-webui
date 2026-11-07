@@ -42,7 +42,7 @@ import {
 } from "../src/api/routes-engine-metrics"
 import { EngineProcessManager, type EngineStatusSnapshot } from "../src/engine/process-manager"
 import { FakeRpcClient, MemProbe } from "./mocks"
-import type { LogEntry } from "../src/obs/logger"
+import { log, type LogEntry } from "../src/obs/logger"
 
 /** 内存 /proc 度量表（可变：测试中途推进 ticks 模拟 CPU 累积） */
 class FakeProcSource implements ProcMetricsSource {
@@ -477,6 +477,29 @@ describe("冷态零 spawn 与生命周期跟踪（真 EngineProcessManager）", 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ engines: [] })
     expect(h.spawns()).toBe(0)
+  })
+
+  test("warmup_fail 发射点带 sess（回归：日志环按引擎过滤可命中，pre-fix 缺 sess 必败）", async () => {
+    const h = managerHarness()
+    try {
+      h.manager.setWarmupHook(() => {
+        throw new Error("warmup boom")
+      })
+      await h.manager.ensureRunning(SESS, PROJ)
+      // fireWarmup 为微任务 fire-and-forget，等日志落环
+      await waitForFn(() => log.entries().some((e) => e.ev === "warmup_fail"))
+      const entry = [...log.entries()].reverse().find((e) => e.ev === "warmup_fail")
+      // 发射点自带引擎键（修复前 f.sess 为 undefined → deriveRecentErrors 过滤不到）
+      expect(entry?.mod).toBe("engine")
+      expect(entry?.lvl).toBe("warn")
+      expect(entry?.f?.sess).toBe(SESS)
+      // 端到端：真实发射的条目经 deriveRecentErrors 对该引擎可见
+      const errs = deriveRecentErrors(log.entries(), SESS)
+      expect(errs.some((e) => e.ev === "warmup_fail" && e.detail === "warmup boom")).toBe(true)
+    } finally {
+      await h.manager.stopAll()
+      rmSync(h.registryPath, { force: true })
+    }
   })
 
   test("启动落 lastStartupMs；崩溃换件 restartCount+1 且成功后不清零", async () => {
