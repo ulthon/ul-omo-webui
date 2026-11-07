@@ -3,6 +3,11 @@
 //   走既有 PUT /api/settings；服务端 onSettingsChanged 钩子即时重排已拉起引擎的
 //   回收定时器，免重启生效。缺省 7 天（process-manager DEFAULTS，对齐 openchamber
 //   常驻理念；30 分钟旧值曾误杀安静后台长任务，诊断 2026-11-04 实锤）。
+// - 探活窗档位（2026-11-07 session-polish T2）：meta_kv engine.activityWindowMinutes
+//   （"1"|"5"|"15"|"30"|"60"|"never"，缺省 5 分钟，"0" 读作 never）。纯看（未发过
+//   消息）引擎按此档判收，正在跑回合不受影响；never 关窗回落上方空闲回收档。
+//   写路径与空闲回收同走既有 PUT /api/settings（零新端点），服务端 onSettingsChanged
+//   钩子即时重排挂起定时器。
 // - 进程管理（2026-11-05 multi-session-parallel T6）：GET /api/engines 每会话引擎一行
 //   （项目·会话/状态/pid/运行回合/最后活动；无引擎已知项目灰显 inactive 行）+
 //   POST /api/engines/stop 手动停（行内 {sessionPath} 定向停单会话；头部「全部停止」
@@ -28,6 +33,26 @@ const IDLE_OPTIONS: ReadonlyArray<{ value: EngineIdleValue; labelKey: MessageKey
   { value: "10080", labelKey: "login.settingsPage.engineIdle7d" },
   { value: "never", labelKey: "login.settingsPage.engineIdleNever" },
 ];
+
+// 探活窗档位：值口径镜像 server applyActivityWindowFromKv（"never"/0 关窗；分钟数直接入 kv）
+export const ENGINE_ACTIVITY_WINDOW_KV = "engine.activityWindowMinutes";
+export type EngineActivityValue = "1" | "5" | "15" | "30" | "60" | "never";
+const DEFAULT_ACTIVITY: EngineActivityValue = "5";
+
+const ACTIVITY_OPTIONS: ReadonlyArray<{ value: EngineActivityValue; labelKey: MessageKey }> = [
+  { value: "1", labelKey: "login.settingsPage.engineActivity1m" },
+  { value: "5", labelKey: "login.settingsPage.engineActivity5m" },
+  { value: "15", labelKey: "login.settingsPage.engineActivity15m" },
+  { value: "30", labelKey: "login.settingsPage.engineActivity30m" },
+  { value: "60", labelKey: "login.settingsPage.engineActivity60m" },
+  { value: "never", labelKey: "login.settingsPage.engineActivityNever" },
+];
+
+/** kv 原值 → 档位（"0"=never 同义；非档位值/缺席回落缺省 5 分钟） */
+function parseActivityValue(raw: string | undefined): EngineActivityValue {
+  if (raw === "0") return "never";
+  return ACTIVITY_OPTIONS.some((o) => o.value === raw) ? (raw as EngineActivityValue) : DEFAULT_ACTIVITY;
+}
 
 const STATE_KEY: Record<string, MessageKey> = {
   ready: "login.settingsPage.engineStateReady",
@@ -55,6 +80,9 @@ export function EngineSection() {
   // ---- 空闲回收档位 ----
   const [idle, setIdle] = useState<EngineIdleValue | null>(null);
   const [savingIdle, setSavingIdle] = useState(false);
+  // ---- 探活窗档位（与空闲回收同一次 getSettings 读两个键） ----
+  const [activity, setActivity] = useState<EngineActivityValue | null>(null);
+  const [savingActivity, setSavingActivity] = useState(false);
   useEffect(() => {
     let alive = true;
     api
@@ -63,8 +91,13 @@ export function EngineSection() {
         if (!alive) return;
         const raw = r.settings[ENGINE_IDLE_TIMEOUT_KV];
         setIdle(IDLE_OPTIONS.some((o) => o.value === raw) ? (raw as EngineIdleValue) : DEFAULT_IDLE);
+        setActivity(parseActivityValue(r.settings[ENGINE_ACTIVITY_WINDOW_KV]));
       })
-      .catch(() => alive && setIdle(DEFAULT_IDLE));
+      .catch(() => {
+        if (!alive) return;
+        setIdle(DEFAULT_IDLE);
+        setActivity(DEFAULT_ACTIVITY);
+      });
     return () => {
       alive = false;
     };
@@ -80,6 +113,19 @@ export function EngineSection() {
       showToast(apiErrorMessage(err, "login.settingsPage.engineIdleSaveFailed"), "error");
     } finally {
       setSavingIdle(false);
+    }
+  };
+
+  const changeActivity = async (mode: EngineActivityValue) => {
+    if (mode === activity || savingActivity) return;
+    setSavingActivity(true);
+    try {
+      await api.putSettings({ [ENGINE_ACTIVITY_WINDOW_KV]: mode });
+      setActivity(mode);
+    } catch (err) {
+      showToast(apiErrorMessage(err, "login.settingsPage.engineActivitySaveFailed"), "error");
+    } finally {
+      setSavingActivity(false);
     }
   };
 
@@ -171,6 +217,27 @@ export function EngineSection() {
             </label>
           ))}
         </div>
+      </div>
+      {/* 探活窗档位（session-polish T2）：小号 select，档位口径见上方选项表 */}
+      <div className="mt-4 space-y-1.5">
+        <label htmlFor="settings-engine-activity-window" className="text-sm font-medium">
+          {t("login.settingsPage.engineActivityHeading")}
+        </label>
+        <select
+          id="settings-engine-activity-window"
+          data-testid="engine-activity-window-select"
+          value={activity ?? ""}
+          disabled={savingActivity || activity === null}
+          onChange={(e) => void changeActivity(e.target.value as EngineActivityValue)}
+          className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {ACTIVITY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {t(opt.labelKey)}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">{t("login.settingsPage.engineActivityNote")}</p>
       </div>
       {/* 进程管理 */}
       <div className="mt-4 space-y-1.5">
