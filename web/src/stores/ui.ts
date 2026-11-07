@@ -44,6 +44,16 @@ export const TAG_DISPLAY_MODE_KV = "tags.displayMode";
  * （UL_OMO_WEBUI_SITE_NAME 降为部署默认）；留空/缺省回退 env 注入值。 */
 export const SITE_NAME_KV = "ui.siteName";
 
+/** 总览笔记块显示条数（2026-11-07 平铺直编批）：meta_kv 键，整数 1..20，缺省 3；
+ * 块内步进器就地调节，全局生效（换端不丢，服务端 kv 持久化）。 */
+export const OVERVIEW_NOTES_COUNT_KV = "ui.overviewNotesCount";
+export const DEFAULT_OVERVIEW_NOTES_COUNT = 3;
+export const MAX_OVERVIEW_NOTES_COUNT = 20;
+export function parseOverviewNotesCount(raw: string | null | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= MAX_OVERVIEW_NOTES_COUNT ? n : DEFAULT_OVERVIEW_NOTES_COUNT;
+}
+
 /** 站点名消费取值：kv 优先（trim 后非空）> env 注入默认；两者皆无 → null（不渲染） */
 export function resolveSiteName(kv: string | null | undefined, injected: string | null): string | null {
   const fromKv = kv?.trim();
@@ -143,6 +153,8 @@ interface UiState {
   /** 站点名覆盖（kv ui.siteName，缺省 null=回退 env 注入默认）；
    * 顶栏小字/标签页标题与设置页共同消费（resolveSiteName 取值）。 */
   siteName: string | null;
+  /** 总览笔记块显示条数（kv ui.overviewNotesCount，缺省 3，上限 20）：平铺直编批 */
+  overviewNotesCount: number;
   toasts: Toast[];
   notifications: ToastNotification[];
 
@@ -173,6 +185,7 @@ interface UiState {
   setTipsEnabled(enabled: boolean): void;
   setPasteImageMode(mode: PasteImageMode): void;
   setSiteName(name: string | null): void;
+  setOverviewNotesCount(n: number): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
   clearNotifications(): void;
@@ -221,6 +234,7 @@ export const useUiStore = create<UiState>()((set) => ({
   tipsEnabled: true,
   pasteImageMode: "auto",
   siteName: null,
+  overviewNotesCount: DEFAULT_OVERVIEW_NOTES_COUNT,
   toasts: [],
   notifications: [],
 
@@ -247,6 +261,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
   setPasteImageMode: (pasteImageMode) => set({ pasteImageMode }),
   setSiteName: (siteName) => set({ siteName }),
+  setOverviewNotesCount: (overviewNotesCount) => set({ overviewNotesCount }),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

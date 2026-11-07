@@ -53,6 +53,8 @@ export const errors = {
   invalidText: "Invalid text",
   invalidThinkingLevel: "Invalid thinking level",
   invalidTitle: "Invalid title",
+  invalidIds: "Invalid ordering parameters",
+  duplicateIds: "Duplicate entries in ordering parameters",
   // 路径与文件系统
   pathEscape: "Path escape rejected",
   attachmentEscape: "Attachment path escape rejected",

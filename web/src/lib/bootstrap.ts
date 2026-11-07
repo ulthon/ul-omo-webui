@@ -3,7 +3,7 @@
 import { api, ApiError } from "@/lib/api";
 import type { EngineDefaultModel, ModelInfo, ProjectMeta } from "@/lib/api";
 import { PROJECT_ORDER_KV, PROJECT_SORT_KV, parseManualProjectOrder, parseProjectSort } from "@/components/session-list/global-list-data";
-import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parsePasteImageMode, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, OVERVIEW_NOTES_COUNT_KV, parseOverviewNotesCount, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parsePasteImageMode, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
 import { LANGUAGE_KV, parseLocale, useLocaleStore, t } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
 
@@ -140,6 +140,8 @@ export async function bootstrap(): Promise<void> {
     ui.setPasteImageMode(parsePasteImageMode(settings[PASTE_IMAGE_MODE_KV]));
     // 站点名覆盖（小修 A）：键缺失/空串回退 null（顶栏 resolveSiteName 退 env 注入默认）
     ui.setSiteName(settings[SITE_NAME_KV]?.trim() || null);
+    // 总览笔记显示条数（平铺直编批）：键缺失/非法回退 3
+    ui.setOverviewNotesCount(parseOverviewNotesCount(settings[OVERVIEW_NOTES_COUNT_KV]));
     // 界面语言（任务2）：kv 为准——键存在且合法才 setLocale（同步 document.lang 并回写
     // localStorage 镜像）；键缺失/非法值不动当前语言（保留 localStorage/navigator 先行值）
     const kvLocale = parseLocale(settings[LANGUAGE_KV]);

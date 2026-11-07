@@ -37,6 +37,8 @@ export interface NoteInlineEditorProps {
   noteId: string | null;
   project: string;
   dirtyRef: { current: boolean };
+  /** 初始数据（2026-11-07 平铺直编批）：列表已携带全文时传入，免详情 GET 直进编辑 */
+  initial?: NoteData | null;
   /** 保存成功（created=true 表示新建）后回调：宿主刷新列表并收起本行 */
   onSaved: (noteId: string, created: boolean) => void;
   /** 新建全空取消（零请求）：宿主直接移除空行 */
@@ -45,7 +47,7 @@ export interface NoteInlineEditorProps {
   onDeleted: () => void;
 }
 
-export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel, onDeleted }: NoteInlineEditorProps) {
+export function NoteInlineEditor({ noteId, project, dirtyRef, initial = null, onSaved, onCancel, onDeleted }: NoteInlineEditorProps) {
   const t = useT();
   const draft = noteId === null;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -67,10 +69,20 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
   const [versions, setVersions] = useState<NoteVersionInfo[] | null>(null);
   const [versionsError, setVersionsError] = useState<string | null>(null);
 
-  // 存量笔记载入：挂载即拉详情（列表项不含 content）。key 重挂保证初始干净，
-  // effect 只发请求不同步 setState（oxlint set-state-in-effect 消警模式）
+  // 存量笔记载入：initial 已提供（列表带全文）则免 GET 直用；否则拉详情。
+  // key 重挂保证初始干净，effect 只发请求不同步 setState（oxlint set-state-in-effect 消警模式）
+  const [initialApplied, setInitialApplied] = useState(initial === null);
   useEffect(() => {
-    if (noteId === null) return;
+    if (noteId === null || initial === null || initialApplied) return;
+    const r = initial;
+    const init = { title: r.title, content: r.content, tagsText: tagsToInput(r.tags) };
+    setNote(r);
+    setEdit(init);
+    setBaseline(init);
+    setInitialApplied(true);
+  }, [noteId, initial, initialApplied]);
+  useEffect(() => {
+    if (noteId === null || initial !== null) return;
     let stale = false;
     notesApi
       .get(noteId)
@@ -320,7 +332,8 @@ export function NoteInlineEditor({ noteId, project, dirtyRef, onSaved, onCancel,
             placeholder={t("notes.edit.contentPlaceholder")}
             aria-label={t("notes.edit.contentAria")}
             data-testid="note-content-input"
-            className={`${inputCls} min-h-28 resize-y p-2.5 font-mono text-xs leading-relaxed`}
+            rows={Math.min(Math.max(edit.content.split("\n").length, 4), 24)}
+            className={`${inputCls} resize-y p-2.5 font-mono text-xs leading-relaxed`}
           />
           <input
             value={edit.tagsText}

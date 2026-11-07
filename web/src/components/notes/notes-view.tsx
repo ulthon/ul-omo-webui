@@ -1,21 +1,23 @@
-// 笔记页签主视图（右栏窄栏版；r11 todo7 重构为行内直接编辑）：列表态行点击就地
-// 展开行内编辑器（note-inline-editor），收起/点外部自动保存，无详情页两级导航。
-// 新建 = 列表顶插入空行，全空收起零请求无痕取消。行内「···」菜单收版本历史与删除。
-// 数据流不变：全量列表（chips 数据源）+ 激活标签单独 GET ?tag=（计划钉死走服务端过滤），
-// 响应落地后按当前激活 chip 再过滤一次（filterNotesByTag 防竞态展示错行）。
-// 空态各自明确提示：加载失败 / 暂无笔记 / 标签无匹配。
+// 笔记页签主视图（右栏窄栏版；2026-11-07 平铺直编批）：列表即全文平铺卡片流
+//（note-flat-card，标题+content 全文直出，无折叠无摘要），单击卡片任意处就地展开
+// 行内编辑器（note-inline-editor，initial 携列表全文免二次 GET），保存后留原位收起。
+// 拖拽手柄排序：全量视图（无标签过滤）可拖，乐观重排本地 + PUT /api/notes/reorder
+// 落库，失败 toast 回滚重取；标签过滤视图禁拖（子序列重排语义不明）。
+// 新建 = 列表顶插空行编辑器，全空收起零请求无痕取消。行内动作钮：复制全文 /
+// 复制标题+内容 / 导出 .md / 删除；「···」菜单保留回收站。回收站/标签 chips 不动。
 // key={project} 重挂重置全部选中/过滤/回收站态；重取（onChanged）保留旧数据不闪 loading。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
+import { ArrowLeft, GripVertical, MoreVertical, NotebookPen, StickyNote, Trash2 } from "lucide-react";
 import { useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { apiErrorMessage } from "@/i18n/errors";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NoteInlineEditor } from "./note-inline-editor";
-import { notesApi, type NoteListItem } from "./notes-api";
+import { NoteFlatCard } from "./note-flat-card";
+import { notesApi, type NoteData, type NoteListItem } from "./notes-api";
 import { TrashList } from "./notes-trash";
 import { CenteredHint, EmptyState } from "./notes-empty";
-import { collectTags, deriveDisplayTitle, filterNotesByTag, relTime } from "./notes-logic";
+import { collectTags, deriveDisplayTitle, filterNotesByTag } from "./notes-logic";
 
 type LoadState =
   | { phase: "loading" }
@@ -33,6 +35,20 @@ const HEADER_BTN =
 const ICON_BTN =
   "flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
 
+/** 列表项 → 编辑器 initial（列表已带全文，免详情 GET 直进编辑） */
+function toInitialData(note: NoteListItem, project: string): NoteData {
+  return {
+    id: note.id,
+    project,
+    title: note.title,
+    content: note.content,
+    tags: note.tags,
+    deletedAt: note.deletedAt,
+    createdAt: null,
+    updatedAt: note.updatedAt,
+  };
+}
+
 function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { current: boolean } }) {
   const showToast = useUiStore((s) => s.showToast);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
@@ -42,6 +58,9 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   const [trashMode, setTrashMode] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [tagNotes, setTagNotes] = useState<NoteListItem[] | null>(null);
+  /** 拖拽排序（HTML5 DnD，同 session-list 模式）：拖起 id 与悬停目标 id */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const tagReqRef = useRef(0);
 
   // 主列表加载：初始/重挂即 loading 态，重取（onChanged）不闪 loading（保留旧数据直至新数据落地）
@@ -67,6 +86,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   const t = useT();
   const selectTag = async (tag: string | null) => {
     setActiveTag(tag);
+    setExpandedId(null);
     if (tag === null) {
       setTagNotes(null);
       return;
@@ -80,6 +100,27 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
     }
   };
+
+  /** 拖拽落点提交：乐观重排本地全量列表 + 整序落库；失败 toast 并重取（服务端序为准） */
+  const commitReorder = useCallback(
+    (fromId: string, toId: string) => {
+      if (fromId === toId || state.phase !== "ready") return;
+      const notes = [...state.notes];
+      const from = notes.findIndex((n) => n.id === fromId);
+      const to = notes.findIndex((n) => n.id === toId);
+      if (from < 0 || to < 0) return;
+      const [moved] = notes.splice(from, 1);
+      notes.splice(to, 0, moved);
+      setState({ phase: "ready", notes });
+      notesApi
+        .reorder(project, notes.map((n) => n.id))
+        .catch((err: unknown) => {
+          showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+          onChanged();
+        });
+    },
+    [state, project, showToast, onChanged],
+  );
 
   const removeNote = async (note: NoteListItem) => {
     if (!window.confirm(t("notes.deleteConfirm", { title: note.title }))) return;
@@ -126,6 +167,8 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
   const allNotes = ready ? state.notes : [];
   const tags = ready ? collectTags(allNotes) : [];
   const visibleNotes = activeTag === null ? allNotes : filterNotesByTag(tagNotes ?? [], activeTag);
+  // 拖拽仅全量视图开放（过滤子序列重排语义不明）；拖起/展开中禁其余手柄防抢事件
+  const dragEnabled = activeTag === null;
 
   // 回收站屏：独占整栏（恢复/彻底删除行内完成，无详情栏）
   if (trashMode) {
@@ -205,7 +248,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto py-1" data-testid="notes-list">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2" data-testid="notes-list">
             {expandedId === "draft" && (
               <NoteInlineEditor
                 noteId={null}
@@ -232,6 +275,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
                     noteId={note.id}
                     project={project}
                     dirtyRef={dirtyRef}
+                    initial={toInitialData(note, project)}
                     onSaved={() => {
                       setExpandedId(null);
                       onChanged();
@@ -243,29 +287,73 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
                     }}
                   />
                 ) : (
-                  <div key={note.id} className="flex min-h-11 items-center gap-2 pl-3 pr-1.5 transition-colors hover:bg-muted/40">
-                    <button
-                      type="button"
+                  <div
+                    key={note.id}
+                    onDragOver={
+                      dragEnabled && dragId !== null && dragId !== note.id
+                        ? (e) => {
+                            e.preventDefault();
+                            setOverId(note.id);
+                          }
+                        : undefined
+                    }
+                    onDrop={
+                      dragEnabled && dragId !== null && dragId !== note.id
+                        ? (e) => {
+                            e.preventDefault();
+                            const from = dragId;
+                            setDragId(null);
+                            setOverId(null);
+                            commitReorder(from, note.id);
+                          }
+                        : undefined
+                    }
+                    className={overId === note.id && dragId !== null && dragId !== note.id ? "rounded-lg ring-1 ring-primary/60" : undefined}
+                  >
+                    <NoteFlatCard
+                      note={note}
                       onClick={() => setExpandedId(note.id)}
-                      className="flex min-h-11 min-w-0 flex-1 flex-col justify-center py-1 text-left"
-                      data-testid="note-item"
-                      data-note-id={note.id}
-                    >
-                      <span className="truncate text-sm">
-                        {deriveDisplayTitle(note.title, note.preview, t("notes.view.untitled"))}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        {note.tags.slice(0, 3).map((tag) => (
-                          <span key={tag} className="rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
-                            {tag}
+                      footerExtra={
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void removeNote(note);
+                          }}
+                          aria-label={t("notes.view.deleteItem", { title: deriveDisplayTitle(note.title, note.preview, t("notes.view.untitled")) })}
+                          data-testid={`note-delete-${note.id}`}
+                          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-destructive"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      }
+                      dragHandle={
+                        dragEnabled ? (
+                          <span
+                            draggable={dragId === null}
+                            onDragStart={(e) => {
+                              setDragId(note.id);
+                              e.dataTransfer.effectAllowed = "move";
+                              try {
+                                e.dataTransfer.setData("text/plain", note.id);
+                              } catch {
+                                /* IE 型 setData 异常不阻断拖拽本体 */
+                              }
+                            }}
+                            onDragEnd={() => {
+                              setDragId(null);
+                              setOverId(null);
+                            }}
+                            aria-label={t("notes.view.dragSort")}
+                            title={t("notes.view.dragSort")}
+                            data-testid={`note-drag-handle-${note.id}`}
+                            className="mt-px flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/50 transition-colors hover:text-foreground"
+                          >
+                            <GripVertical className="size-3.5" />
                           </span>
-                        ))}
-                        <span className="text-[10px] text-muted-foreground">{relTime(note.updatedAt)}</span>
-                      </span>
-                    </button>
-                    <button type="button" onClick={() => void removeNote(note)} aria-label={t("notes.view.deleteItem", { title: deriveDisplayTitle(note.title, note.preview, t("notes.view.untitled")) })} className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-destructive">
-                      <Trash2 className="size-3.5" />
-                    </button>
+                        ) : undefined
+                      }
+                    />
                   </div>
                 ),
               )

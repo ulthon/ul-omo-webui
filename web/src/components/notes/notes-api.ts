@@ -2,8 +2,9 @@
 // api.ts（lib）在本任务禁改名单内，故在此自建 request——错误形状与 401 跳转
 // 复用 lib/api 已导出的 ApiError / redirectToLogin，行为与其 request 一致
 // （网络错 code=network、401 跳 /login、{error:{code,message}} 解析、非 JSON 保留 HTTP 文案）。
-// 端点契约见 server/src/api/routes-notes.ts（todo 5）：列表 {notes:[...]} 无 content、
-// 创建 201、详情 {note:{...}}（projectPath 以 project 键输出）、updatedAt/createdAt 可 null。
+// 端点契约见 server/src/api/routes-notes.ts（todo 5）：列表 {notes:[...]} 含 content 全文
+// （2026-11-07 平铺直编批）、创建 201、详情 {note:{...}}（projectPath 以 project 键输出）、
+// 手动排序 PUT /api/notes/reorder；updatedAt/createdAt 可 null。
 import { ApiError, redirectToLogin } from "@/lib/api";
 import { t } from "@/i18n/i18n";
 
@@ -12,6 +13,8 @@ export interface NoteListItem {
   title: string;
   /** 首行摘要（r11 todo7，服务端列表输出）：空标题行的展示兜底数据源，不含全文 */
   preview: string;
+  /** 全文（2026-11-07 平铺直编批：列表即全文的数据源，单条 64KB 上限不变） */
+  content: string;
   tags: string[];
   updatedAt: string | null;
   deletedAt: string | null;
@@ -88,6 +91,10 @@ export const notesApi = {
     patch: { title?: string; content?: string; tags?: string[] },
   ): Promise<{ note: NoteData }> {
     return request(`/api/notes/${encodeURIComponent(id)}`, jsonInit("PUT", patch));
+  },
+  /** 手动排序落库（2026-11-07 平铺直编批）：按数组位置写 sort，未列出条目不动 */
+  async reorder(project: string, ids: string[]): Promise<{ ok: boolean; count: number }> {
+    return request("/api/notes/reorder", jsonInit("PUT", { project, ids }));
   },
   /** 删除：缺省软删；purge=true 彻底删除（仅软删状态允许，否则 409） */
   async remove(id: string, purge?: boolean): Promise<{ ok: boolean; deleted?: string; purged?: string }> {

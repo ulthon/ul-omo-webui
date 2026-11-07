@@ -9,17 +9,18 @@
 // 条目点击就地展开编辑器，收起/点外部自动保存；其余四块各自限高（max-h-64）内部滚动、
 // 独立空态文案（zh/en 词条在 login.rightRail.overview），块间 border-b 分隔。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useTasksStore, type BackgroundTask } from "@/stores/tasks";
-import { useUiStore } from "@/stores/ui";
+import { MAX_OVERVIEW_NOTES_COUNT, OVERVIEW_NOTES_COUNT_KV, useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
 import { collectSubagentCalls, summaryOfCall } from "@/components/chat/subagent-data";
 import { toUsageStats, type UsageStats } from "@/components/chat/status-bar-data";
 import { notesApi, type NoteListItem } from "@/components/notes/notes-api";
 import { NoteInlineEditor } from "@/components/notes/note-inline-editor";
-import { deriveDisplayTitle } from "@/components/notes/notes-logic";
+import { NoteFlatCard } from "@/components/notes/note-flat-card";
 import { OverviewPlan } from "@/components/layout/overview-plan";
 import { OverviewEngine } from "@/components/layout/overview-engine";
 import { EngineDiagnosticsFold } from "@/components/engines/engine-diagnostics-fold";
@@ -163,6 +164,18 @@ function OverviewNotes() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reloadSeq, setReloadSeq] = useState(0);
   const dirtyRef = useRef(false);
+  // 显示条数（2026-11-07 平铺直编批）：kv ui.overviewNotesCount 全局持久，块内步进器就地调节
+  const count = useUiStore((s) => s.overviewNotesCount);
+  const setOverviewNotesCount = useUiStore((s) => s.setOverviewNotesCount);
+  const showToast = useUiStore((s) => s.showToast);
+  const changeCount = (dir: 1 | -1) => {
+    const next = Math.min(Math.max(count + dir, 1), MAX_OVERVIEW_NOTES_COUNT);
+    if (next === count) return;
+    setOverviewNotesCount(next);
+    api
+      .putSettings({ [OVERVIEW_NOTES_COUNT_KV]: String(next) })
+      .catch(() => showToast(t("login.rightRail.overview.notesCountSaveFailed"), "error"));
+  };
 
   useEffect(() => {
     if (!project) return;
@@ -187,7 +200,34 @@ function OverviewNotes() {
 
   return (
     <section data-testid="overview-notes" className={OVERVIEW_SECTION_CLASS}>
-      <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.notesTitle")}</h3>
+      <div className="mb-1.5 flex items-center justify-between">
+        <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.notesTitle")}</h3>
+        <span className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => changeCount(-1)}
+            disabled={count <= 1}
+            aria-label={t("login.rightRail.overview.notesCountDec")}
+            data-testid="overview-notes-count-dec"
+            className="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+          >
+            <Minus className="size-3.5" />
+          </button>
+          <span className="min-w-4 text-center text-xs tabular-nums text-muted-foreground" data-testid="overview-notes-count">
+            {count}
+          </span>
+          <button
+            type="button"
+            onClick={() => changeCount(1)}
+            disabled={count >= MAX_OVERVIEW_NOTES_COUNT}
+            aria-label={t("login.rightRail.overview.notesCountInc")}
+            data-testid="overview-notes-count-inc"
+            className="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </span>
+      </div>
       <div className={OVERVIEW_BODY_CLASS}>
         {!project || failed || notes === null ? (
           <OverviewEmpty
@@ -208,14 +248,24 @@ function OverviewNotes() {
               <span className="mx-1">·</span>
               {t("login.rightRail.overview.notesEditHint")}
             </p>
-            <ul>
-              {notes.slice(0, 5).map((note) =>
+            <ul className="space-y-1.5">
+              {notes.slice(0, count).map((note) =>
                 editingId === note.id ? (
-                  <li key={note.id} className="py-1">
+                  <li key={note.id}>
                     <NoteInlineEditor
                       noteId={note.id}
                       project={project}
                       dirtyRef={dirtyRef}
+                      initial={{
+                        id: note.id,
+                        project,
+                        title: note.title,
+                        content: note.content,
+                        tags: note.tags,
+                        deletedAt: note.deletedAt,
+                        createdAt: null,
+                        updatedAt: note.updatedAt,
+                      }}
                       onSaved={() => {
                         setEditingId(null);
                         onChanged();
@@ -229,22 +279,7 @@ function OverviewNotes() {
                   </li>
                 ) : (
                   <li key={note.id}>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(note.id)}
-                      data-testid="overview-note-item"
-                      data-note-id={note.id}
-                      title={t("login.rightRail.overview.notesEditHint")}
-                      className="block w-full min-w-0 py-0.5 text-left transition-colors hover:bg-muted/40"
-                    >
-                      <span className="block truncate text-sm leading-relaxed text-foreground">
-                        {deriveDisplayTitle(note.title, note.preview, t("notes.view.untitled"))}
-                      </span>
-                      {/* 标题非空才展示首行摘要，避免空标题兜底后两行重复 */}
-                      {note.title.trim() !== "" && note.preview !== "" && (
-                        <span className="block truncate text-xs leading-relaxed text-muted-foreground">{note.preview}</span>
-                      )}
-                    </button>
+                    <NoteFlatCard note={note} testid="overview-note-item" onClick={() => setEditingId(note.id)} />
                   </li>
                 ),
               )}

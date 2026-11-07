@@ -150,13 +150,14 @@ describe("全回路（建/改/版本/软删/恢复/硬删）", () => {
     const versions3 = await app.request(`/api/notes/${note.id}/versions`);
     expect((await versions3.json()).versions).toHaveLength(3);
 
-    // 列表：不含 content 字段、唯一一条
+    // 列表：含 content 全文（2026-11-07 平铺直编批）、唯一一条
     const list = await app.request(`/api/notes?project=${encodeURIComponent(projectDir)}`);
     expect(list.status).toBe(200);
     const listed = (await list.json()).notes;
     expect(listed).toHaveLength(1);
-    expect(Object.keys(listed[0]).sort()).toEqual(["deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
+    expect(Object.keys(listed[0]).sort()).toEqual(["content", "deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
     expect(listed[0].id).toBe(note.id);
+    expect(listed[0].content).toBe("第一版内容");
 
     // 软删：deleted=0 不可见、deleted=1 可见且带 deletedAt
     const del = await app.request(`/api/notes/${note.id}`, { method: "DELETE" });
@@ -199,8 +200,9 @@ describe("GET /api/notes 列表", () => {
     const body = await res.json();
     expect(body.notes).toHaveLength(1);
     const item = body.notes[0];
-    expect(Object.keys(item).sort()).toEqual(["deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
+    expect(Object.keys(item).sort()).toEqual(["content", "deletedAt", "id", "preview", "tags", "title", "updatedAt"]);
     expect(item.title).toBe("T");
+    expect(item.content).toBe("正文不应出现在列表");
     expect(item.tags).toEqual(["a"]);
     expect(item.deletedAt).toBeNull();
     expect(typeof item.updatedAt).toBe("string");
@@ -385,16 +387,56 @@ describe("空标题合法（r11 todo7：标题可选语义）", () => {
     expect(renamed.status).toBe(200);
     expect((await renamed.json()).note.title).toBe("");
 
-    // 列表：返回空标题行，preview 为正文首行截断（不含 content）
+    // 列表：返回空标题行，preview 为正文首行截断，content 携带全文（平铺直编批）
     const list = await app.request("/api/notes?project=" + encodeURIComponent(projectDir));
     expect(list.status).toBe(200);
     const row = (await list.json()).notes.find((n: { id: string }) => n.id === note.id);
     expect(row.title).toBe("");
     expect(row.preview).toBe("首行摘要");
-    expect(row.content).toBeUndefined();
+    expect(row.content).toBe("首行摘要\n第二行");
 
     // 全空笔记（空标题+空正文）：preview 为空串
     const blank = await createNote({ title: "", content: "" });
     expect(blank.status).toBe(201);
+  });
+});
+
+describe("PUT /api/notes/reorder 手动排序（2026-11-07 平铺直编批）", () => {
+  test("落库按位置生效；未列出条目不动；已有手动序后新建插最前；校验 400/404；不动 updated_at", async () => {
+    const { app, meta, projectDir, register, createNote } = setup();
+    register();
+    const ids: string[] = [];
+    for (const t of ["c1", "c2", "c3"]) {
+      const res = await createNote({ title: t, content: t, tags: [] });
+      ids.push(((await res.json()) as { note: { id: string } }).note.id);
+    }
+    const listIds = async () => {
+      const res = await app.request(`/api/notes?project=${encodeURIComponent(projectDir)}`);
+      return ((await res.json()) as { notes: Array<{ id: string }> }).notes.map((n) => n.id);
+    };
+
+    // 排序不动 updated_at（排序不是内容变更）：重排前后基线比对
+    const beforeAt = meta.getNote(ids[1])?.updatedAt ?? null;
+    // 重排：c2 → c1（c3 未列出，保持 null 落尾部按时间序）
+    const re = await app.request("/api/notes/reorder", json({ project: projectDir, ids: [ids[1], ids[0]] }, "PUT"));
+    expect(re.status).toBe(200);
+    expect(((await re.json()) as { count: number }).count).toBe(2);
+    expect(await listIds()).toEqual([ids[1], ids[0], ids[2]]);
+    expect(meta.getNote(ids[1])?.updatedAt ?? null).toBe(beforeAt);
+
+    // 项目已有手动排序条目 → 新建自动插最前（min-1）
+    const created = await createNote({ title: "new", content: "n", tags: [] });
+    const newId = ((await created.json()) as { note: { id: string } }).note.id;
+    expect(await listIds()).toEqual([newId, ids[1], ids[0], ids[2]]);
+
+    // 校验：空数组 400；重复 id 400；跨项目/不存在 id 404；非法 project 400
+    expect((await app.request("/api/notes/reorder", json({ project: projectDir, ids: [] }, "PUT"))).status).toBe(400);
+    expect(
+      (await app.request("/api/notes/reorder", json({ project: projectDir, ids: [ids[0], ids[0]] }, "PUT"))).status,
+    ).toBe(400);
+    expect(
+      (await app.request("/api/notes/reorder", json({ project: projectDir, ids: ["01dead-note"] }, "PUT"))).status,
+    ).toBe(404);
+    expect((await app.request("/api/notes/reorder", json({ project: "rel/path", ids: [ids[0]] }, "PUT"))).status).toBe(400);
   });
 });

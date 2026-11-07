@@ -84,7 +84,8 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
   }
 
   // 列表：project 必填（读不要求已注册）；deleted=0 活动 |1 回收站（其他值 400）；
-  // tag 可选包含过滤；列表项不含 content（避免 64KB×N 负载，正文走详情）。
+  // tag 可选包含过滤；列表项含 content 全文（2026-11-07 平铺直编批：列表即全文的
+  // 数据源；单条 64KB 上限不变，项目内条数有限可接受，preview 保留兼容既有展示）。
   app.get("/api/notes", route(async (c: Context) => {
     const project = normalizeProjectKey(c.req.query("project"));
     const deleted = c.req.query("deleted") ?? "0";
@@ -100,6 +101,7 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
         id: n.id,
         title: n.title,
         preview: firstLinePreview(n.content),
+        content: n.content,
         tags: n.tags,
         updatedAt: n.updatedAt,
         deletedAt: n.deletedAt,
@@ -130,6 +132,30 @@ export function createNotesRoutes(deps: ApiDeps): Hono {
     });
     deps.meta.appendNoteVersion(note.id, content);
     return c.json({ note: toNotePayload(note) }, 201);
+  }));
+
+  // 手动排序落库（2026-11-07 平铺直编批）：PUT body {project, ids}——按数组位置写
+  // sort（0 起），未列出的活动笔记不动。ids 必须非空、不重复、均属该项目的活动笔记；
+  // 部分列表合法（标签过滤视图局部重排），完整顺序应传全量 ids。
+  // 注册序必须在 PUT /api/notes/:id 之前（Hono 按注册序匹配，:id 会吞掉字面量 reorder）。
+  app.put("/api/notes/reorder", route(async (c: Context) => {
+    const body = await parseJsonBody(c);
+    const project = normalizeProjectKey(body.project);
+    if (!Array.isArray(body.ids) || body.ids.length === 0 || body.ids.some((id: unknown) => typeof id !== "string")) {
+      throw new ApiError(400, "invalid_ids", "ids 必须是非空字符串数组");
+    }
+    const ids = body.ids as string[];
+    if (new Set(ids).size !== ids.length) {
+      throw new ApiError(400, "duplicate_ids", "ids 不得重复");
+    }
+    const known = new Set(deps.meta.listNotes(project).map((n) => n.id));
+    for (const id of ids) {
+      if (!known.has(id)) {
+        throw new ApiError(404, "note_not_found", `笔记不存在或不属于该项目：${id}`);
+      }
+    }
+    deps.meta.reorderNotes(project, ids);
+    return c.json({ ok: true, count: ids.length });
   }));
 
   app.get("/api/notes/:id", route(async (c: Context) => {

@@ -281,6 +281,9 @@ export interface MetaDb {
   listTrashedNotes(projectPath: string): NoteMeta[];
   /** 部分更新；笔记不存在时抛错 */
   updateNote(id: string, patch: NotePatch): NoteMeta;
+  /** 手动排序落库（2026-11-07 平铺直编批）：按数组位置写 sort（0 起，同事务）；
+   * 未列出的活动笔记不动（null 尾部按 updated_at 降序）。 */
+  reorderNotes(projectPath: string, orderedIds: string[]): void;
   softDeleteNote(id: string): void;
   restoreNote(id: string): void;
   /** 硬删除：同事务级联删除全部版本 */
@@ -590,6 +593,18 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
 
     createNote(input) {
       const now = nowIso();
+      // 平铺直编批（2026-11-07）：仅当项目已有手动排序条目时，新建自动插到已排序组
+      // 最前（min-1）——手动序语义下新建笔记「插最前」（待办事项体感）；项目从未
+      // 手动排序过则保持 null（时间序不变，既有语义与测试不变）。显式 input.sort 优先。
+      const sort =
+        input.sort ??
+        (() => {
+          const row = get<{ minSort: number | null }>(
+            "SELECT MIN(sort) AS minSort FROM meta_note WHERE project_path = ? AND deleted_at IS NULL AND sort IS NOT NULL",
+            input.projectPath,
+          );
+          return row === null || row.minSort === null ? null : row.minSort - 1;
+        })();
       immediate(() => {
         run(
           `INSERT INTO meta_note (id, project_path, title, content, tags, sort, deleted_at, created_at, updated_at)
@@ -599,7 +614,7 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
           input.title,
           input.content,
           JSON.stringify(input.tags ?? []),
-          input.sort ?? null,
+          sort,
           now,
           now,
         );
@@ -649,6 +664,21 @@ export function openMetaDb(options: OpenMetaDbOptions = {}): MetaDb {
         const row = get<NoteRow>("SELECT * FROM meta_note WHERE id = ?", id);
         if (!row) throw new Error(`meta_note update failed for ${id}`);
         return toNoteMeta(row);
+      });
+    },
+
+    reorderNotes(projectPath, orderedIds) {
+      // 同事务逐条写 sort（位置 0 起）；不动 updated_at（排序不是内容变更，版本
+      // 历史与时间戳均不受影响）；未列出的活动笔记保持原状（null 落尾部按更新时间）
+      immediate(() => {
+        orderedIds.forEach((id, index) => {
+          run(
+            "UPDATE meta_note SET sort = ? WHERE id = ? AND project_path = ? AND deleted_at IS NULL",
+            index,
+            id,
+            projectPath,
+          );
+        });
       });
     },
 

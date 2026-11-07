@@ -82,6 +82,7 @@ function listItem(overrides: Partial<Record<string, unknown>> = {}): Record<stri
     id: "n1",
     title: "已有笔记",
     preview: "首行摘要",
+    content: "第一行\n第二行",
     tags: [],
     updatedAt: "2026-10-29T00:00:00.000Z",
     deletedAt: null,

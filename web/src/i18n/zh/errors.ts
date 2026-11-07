@@ -55,6 +55,8 @@ export const errors = {
   invalidText: "文本内容无效",
   invalidThinkingLevel: "思考级别无效",
   invalidTitle: "标题无效",
+  invalidIds: "排序参数无效",
+  duplicateIds: "排序参数存在重复",
   // 路径与文件系统
   pathEscape: "路径越界被拒绝",
   attachmentEscape: "附件路径越界被拒绝",

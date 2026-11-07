@@ -82,6 +82,7 @@ function listItem(overrides: Partial<Record<string, unknown>> = {}): Record<stri
     id: "n1",
     title: "已有笔记",
     preview: "",
+    content: "第一行\n第二行",
     tags: [],
     updatedAt: "2026-10-29T00:00:00.000Z",
     deletedAt: null,
@@ -146,7 +147,7 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("r11 todo7 笔记行内编辑", () => {
-  test("展开：点行就地展开行内编辑器并载入详情（GET），无详情页两级导航", async () => {
+  test("展开：点行就地展开行内编辑器（2026-11-07 平铺直编：列表全文直进，免详情 GET），无详情页两级导航", async () => {
     installRoutes([
       {
         method: "GET",

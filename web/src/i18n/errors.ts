@@ -59,6 +59,8 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   invalid_purge: "errors.invalidPurge",
   invalid_renamed_title: "errors.invalidRenamedTitle",
   invalid_request: "errors.invalidRequest",
+  invalid_ids: "errors.invalidIds",
+  duplicate_ids: "errors.duplicateIds",
   invalid_scope: "errors.invalidScope",
   invalid_session: "errors.invalidSession",
   invalid_session_ids: "errors.invalidSessionIds",

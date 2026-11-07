@@ -59,6 +59,7 @@ const SCANNED_CODES = [
   "cursor_invalid",
   "discover_bad_listing",
   "discover_upstream_failed",
+  "duplicate_ids",
   "engine_busy",
   "engine_not_ready",
   "exists",
@@ -80,6 +81,7 @@ const SCANNED_CODES = [
   "invalid_event",
   "invalid_every",
   "invalid_hidden",
+  "invalid_ids",
   "invalid_images",
   "invalid_import",
   "invalid_json",
@@ -199,12 +201,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（109 个：活扫 == 留痕清单 == 映射键集，含计数断言）", () => {
+  test("映射恰好覆盖 server 扫描集（111 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(109);
+    expect(scanned).toHaveLength(111);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(109);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(111);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {
