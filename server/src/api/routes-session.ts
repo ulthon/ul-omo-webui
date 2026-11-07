@@ -519,6 +519,10 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       sessionId: id,
       disposition: receipt.disposition,
       streaming: receipt.disposition !== "handled",
+      // 启动期排队标志（engine-ux-visibility 任务 5）：disposition="queued" +
+      // queued=true 表示消息被服务端持有、引擎就绪后自动补投（字节级原样一次）；
+      // 前端可据此渲染排队文案与撤回口（任务 4 接线），等待期 abort 即撤回
+      ...(receipt.queued === true ? { queued: true } : {}),
       // setModel 成功的模型行归一 "provider/model"（docs08-r6 任务 8 ②：切换结果回执可观测）；
       // 排队/未携带 model 时缺省（排队剥模型铁律——模型不随排队请求生效）
       ...(typeof receipt.appliedModel === "string" && receipt.appliedModel ? { appliedModel: receipt.appliedModel } : {}),
