@@ -1,4 +1,7 @@
-// 右栏"文件"页签面板（files-panel-oc 任务 1）：窄栏纵向布局，能力与独立文件页
+// 右栏"文件"页签面板（files-panel-oc 任务 1；#36 响应式改版）：窄容器（≤600，实测
+// ResizeObserver）保持纵向堆叠（树/列表/预览上下三层）；>600 切 OC 考据横向形态——
+// 左树固定 14rem + 右侧内容区，601-899 列表/预览上下分，≥900 三列横排。能力与独立
+// 文件页
 // （pages/files.tsx）对齐——树浏览 + 列表 + 预览 + 在线编辑（CodeMirror + 乐观锁）
 // + 上传（逐个排队 + 进度）+ 删除 + 重命名/移动，冲突三选/保存冲突弹窗同源复用
 // fs-dialogs。窄栏简化：右键菜单收进列表行内图标钮（能力不缺），排序固定目录
@@ -118,6 +121,17 @@ function compareEntries(a: ListEntry, b: ListEntry): number {
   const dirDelta = Number(b.type === "directory") - Number(a.type === "directory");
   if (dirDelta !== 0) return dirDelta;
   return a.name.localeCompare(b.name);
+}
+
+export type FilesRailLayout = "stacked" | "split" | "columns";
+
+/** 纯函数：容器宽 → 布局档（#36）：≤600 纵向堆叠（树/列表/预览上下三层，原形态）；
+ *  601-899 两栏（OC 考据形态：左树固定 14rem + 右侧内容区，列表/预览上下分）；
+ *  ≥900 三列横排（树 | 列表 | 预览）。容器宽由 ResizeObserver 实测驱动。 */
+export function filesRailLayout(width: number): FilesRailLayout {
+  if (width <= 600) return "stacked";
+  if (width < 900) return "split";
+  return "columns";
 }
 
 export function RailFilesPanel() {
@@ -421,6 +435,22 @@ export function RailFilesPanel() {
 
   const breadcrumbs = useMemo(() => dir.split("/").filter(Boolean), [dir]);
 
+  // 容器宽实测（#36）：ResizeObserver（nav-rail 先例）→ 布局档。观察不到时维持 0（窄档），
+  // 既有窄栏形态不受影响；happy-dom 等无实现环境同样落窄档。
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((observed) => {
+      const rect = observed[0]?.contentRect;
+      setContainerWidth(rect ? Math.round(rect.width) : el.clientWidth);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const layout = filesRailLayout(containerWidth);
+
   const editAction = (data: FsFileResponse) => {
     const label = t("files.edit.button");
     if (!isEditableFile(data)) {
@@ -545,8 +575,116 @@ export function RailFilesPanel() {
     </Dialog>
   ) : null;
 
+  const treeContent = (
+    <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} />
+  );
+  const listContent = (
+    <>
+      {listError ? (
+        <div data-testid="rail-files-list-error" className="py-3 text-center text-xs text-destructive">
+          {t("files.list.loadFailed")}
+        </div>
+      ) : null}
+      {sorted?.length === 0 ? (
+        <div data-testid="rail-files-list-empty" className="py-3 text-center text-xs text-muted-foreground">
+          {t("files.list.empty")}
+        </div>
+      ) : null}
+      {sorted?.map((entry) => {
+        const path = joinRel(dir, entry.name);
+        const isDir = entry.type === "directory";
+        const iconBtn =
+          "flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
+        return (
+          <div key={entry.name} data-testid={`rail-files-row-${entry.name}`} className="flex items-center gap-1 border-b border-border/40 py-0.5">
+            <button
+              type="button"
+              data-testid={`rail-files-row-name-${entry.name}`}
+              onClick={() => openEntry(entry)}
+              className="min-w-0 flex-1 truncate rounded text-left text-sm transition-colors hover:text-primary"
+              title={path}
+            >
+              {isDir ? <span className="mr-1" aria-hidden>▸</span> : null}
+              {entry.name}
+            </button>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {entry.size == null ? t(TYPE_KEY[entry.type]) : formatSize(entry.size)}
+            </span>
+            {isDir ? (
+              <button
+                type="button"
+                data-testid={`rail-files-upload-here-${entry.name}`}
+                aria-label={t("files.menu.uploadHere")}
+                title={t("files.menu.uploadHere")}
+                onClick={() => openUploadPicker(path)}
+                className={iconBtn}
+              >
+                <Upload className="size-3.5" aria-hidden />
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid={`rail-files-download-${entry.name}`}
+                aria-label={t("files.menu.download")}
+                title={t("files.menu.download")}
+                onClick={() => downloadEntry(path)}
+                className={iconBtn}
+              >
+                <Download className="size-3.5" aria-hidden />
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid={`rail-files-rename-${entry.name}`}
+              aria-label={t("files.menu.rename")}
+              title={t("files.menu.rename")}
+              onClick={() => setDialog({ kind: "rename", from: path, value: baseName(path) })}
+              className={iconBtn}
+            >
+              <Pencil className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              data-testid={`rail-files-move-${entry.name}`}
+              aria-label={t("files.menu.move")}
+              title={t("files.menu.move")}
+              onClick={() => setDialog({ kind: "move", from: path, value: path })}
+              className={iconBtn}
+            >
+              <ArrowRightLeft className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              data-testid={`rail-files-delete-${entry.name}`}
+              aria-label={t("files.menu.remove")}
+              title={t("files.menu.remove")}
+              onClick={() => {
+                setDeleteChildCount(null);
+                setDeleteConfirm({ path, isDir });
+              }}
+              className={iconBtn}
+            >
+              <Trash2 className="size-3.5" aria-hidden />
+            </button>
+          </div>
+        );
+      })}
+    </>
+  );
+  const previewContent = selected ? (
+    editingPath === selected ? (
+      <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={saveEditingFile} />
+    ) : (
+      <FilePreview key={selected} project={project} path={selected} renderActions={editAction} enableImageInline />
+    )
+  ) : (
+    <div className="flex flex-1 items-center justify-center p-2 text-sm text-muted-foreground">
+      {t("files.preview.empty")}
+    </div>
+  );
+
   return (
-    <div data-testid="rail-files-panel" className="flex h-full min-h-0 flex-col">
+    <div ref={rootRef} data-testid="rail-files-panel" data-layout={layout} className="flex h-full min-h-0 flex-col">
       {toolbar}
       {/* 当前路径面包屑：根（项目名）+ 逐段可点回跳 */}
       <nav
@@ -577,118 +715,44 @@ export function RailFilesPanel() {
       </nav>
       {uploadPanel}
       {project ? (
-        <>
-          {/* 目录树：约 1/3 高度，可滚动；写操作后 key 重挂载自取最新 */}
-          <div data-testid="rail-files-tree-pane" className="max-h-64 min-h-32 shrink-0 overflow-y-auto border-b p-1">
-            <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} />
-          </div>
-          {/* 文件列表：名称 + 大小 + 行内操作钮（下载/重命名/移动/删除） */}
-          <div data-testid="rail-files-list-pane" className="min-h-0 shrink overflow-y-auto px-2 py-1">
-            {listError ? (
-              <div data-testid="rail-files-list-error" className="py-3 text-center text-xs text-destructive">
-                {t("files.list.loadFailed")}
+        layout === "stacked" ? (
+          <>
+            {/* 窄档（容器 ≤600）：树约 1/3 高度，可滚动；写操作后 key 重挂载自取最新 */}
+            <div data-testid="rail-files-tree-pane" className="max-h-64 min-h-32 shrink-0 overflow-y-auto border-b p-1">
+              {treeContent}
+            </div>
+            {/* 文件列表：名称 + 大小 + 行内操作钮（下载/重命名/移动/删除） */}
+            <div data-testid="rail-files-list-pane" className="min-h-0 shrink overflow-y-auto px-2 py-1">
+              {listContent}
+            </div>
+            {/* 预览/编辑：编辑态替换预览（与 files.tsx 同判据），空态文案复用 */}
+            <div data-testid="rail-files-preview-pane" className="min-h-0 flex-1 overflow-y-auto border-t p-2">
+              {previewContent}
+            </div>
+          </>
+        ) : (
+          /* 宽档（>600）：OC 考据形态——左树固定 14rem + 右侧内容区自适应；
+             split（601-899）内容区上下分，columns（≥900）列表/预览横排三列 */
+          <div data-testid="rail-files-columns" className="flex min-h-0 flex-1">
+            <div data-testid="rail-files-tree-pane" className="w-56 shrink-0 overflow-y-auto border-r p-1">
+              {treeContent}
+            </div>
+            <div className={`flex min-h-0 min-w-0 flex-1 ${layout === "columns" ? "flex-row" : "flex-col"}`}>
+              <div
+                data-testid="rail-files-list-pane"
+                className={`min-h-0 min-w-0 flex-1 overflow-y-auto px-2 py-1 ${layout === "columns" ? "border-r" : ""}`}
+              >
+                {listContent}
               </div>
-            ) : null}
-            {sorted?.length === 0 ? (
-              <div data-testid="rail-files-list-empty" className="py-3 text-center text-xs text-muted-foreground">
-                {t("files.list.empty")}
+              <div
+                data-testid="rail-files-preview-pane"
+                className={`min-h-0 flex-1 overflow-y-auto p-2 ${layout === "columns" ? "" : "border-t"}`}
+              >
+                {previewContent}
               </div>
-            ) : null}
-            {sorted?.map((entry) => {
-              const path = joinRel(dir, entry.name);
-              const isDir = entry.type === "directory";
-              const iconBtn =
-                "flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
-              return (
-                <div key={entry.name} data-testid={`rail-files-row-${entry.name}`} className="flex items-center gap-1 border-b border-border/40 py-0.5">
-                  <button
-                    type="button"
-                    data-testid={`rail-files-row-name-${entry.name}`}
-                    onClick={() => openEntry(entry)}
-                    className="min-w-0 flex-1 truncate rounded text-left text-sm transition-colors hover:text-primary"
-                    title={path}
-                  >
-                    {isDir ? <span className="mr-1" aria-hidden>▸</span> : null}
-                    {entry.name}
-                  </button>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {entry.size == null ? t(TYPE_KEY[entry.type]) : formatSize(entry.size)}
-                  </span>
-                  {isDir ? (
-                    <button
-                      type="button"
-                      data-testid={`rail-files-upload-here-${entry.name}`}
-                      aria-label={t("files.menu.uploadHere")}
-                      title={t("files.menu.uploadHere")}
-                      onClick={() => openUploadPicker(path)}
-                      className={iconBtn}
-                    >
-                      <Upload className="size-3.5" aria-hidden />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      data-testid={`rail-files-download-${entry.name}`}
-                      aria-label={t("files.menu.download")}
-                      title={t("files.menu.download")}
-                      onClick={() => downloadEntry(path)}
-                      className={iconBtn}
-                    >
-                      <Download className="size-3.5" aria-hidden />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    data-testid={`rail-files-rename-${entry.name}`}
-                    aria-label={t("files.menu.rename")}
-                    title={t("files.menu.rename")}
-                    onClick={() => setDialog({ kind: "rename", from: path, value: baseName(path) })}
-                    className={iconBtn}
-                  >
-                    <Pencil className="size-3.5" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`rail-files-move-${entry.name}`}
-                    aria-label={t("files.menu.move")}
-                    title={t("files.menu.move")}
-                    onClick={() => setDialog({ kind: "move", from: path, value: path })}
-                    className={iconBtn}
-                  >
-                    <ArrowRightLeft className="size-3.5" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`rail-files-delete-${entry.name}`}
-                    aria-label={t("files.menu.remove")}
-                    title={t("files.menu.remove")}
-                    onClick={() => {
-                      setDeleteChildCount(null);
-                      setDeleteConfirm({ path, isDir });
-                    }}
-                    className={iconBtn}
-                  >
-                    <Trash2 className="size-3.5" aria-hidden />
-                  </button>
-                </div>
-              );
-            })}
+            </div>
           </div>
-          {/* 预览/编辑：编辑态替换预览（与 files.tsx 同判据），空态文案复用 */}
-          <div data-testid="rail-files-preview-pane" className="min-h-0 flex-1 overflow-y-auto border-t p-2">
-            {selected ? (
-              editingPath === selected ? (
-                <FileEditor key={selected} project={project} path={selected} dirtyRef={editDirtyRef} onBack={leaveEdit} onSave={saveEditingFile} />
-              ) : (
-                <FilePreview key={selected} project={project} path={selected} renderActions={editAction} enableImageInline />
-              )
-            ) : (
-              <div className="flex flex-1 items-center justify-center p-2 text-sm text-muted-foreground">
-                {t("files.preview.empty")}
-              </div>
-            )}
-          </div>
-        </>
+        )
       ) : (
         <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
           {t("files.project.empty")}

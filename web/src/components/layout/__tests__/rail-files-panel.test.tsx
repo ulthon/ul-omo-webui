@@ -9,6 +9,31 @@ if (!(globalThis as { window?: unknown }).window) {
 }
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// ResizeObserver 桩（#36 响应式测试）：happy-dom 不自动触发，装可控桩——挂载时记录
+// 回调，测试用 fireResize 直发容器宽（contentRect）。未 fire 时宽为 0（窄档），
+// 既有窄栏用例不受影响。
+type RoEntry = { contentRect: { width: number } };
+type RoCallback = (entries: RoEntry[]) => void;
+const roInstances: { cb: RoCallback }[] = [];
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+  cb: RoCallback;
+  constructor(cb: RoCallback) {
+    this.cb = cb;
+    roInstances.push(this);
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+};
+async function fireResize(width: number): Promise<void> {
+  const ro = roInstances[roInstances.length - 1];
+  if (!ro) throw new Error("no ResizeObserver registered");
+  await act(async () => {
+    ro.cb([{ contentRect: { width } }]);
+    await Promise.resolve();
+  });
+}
+
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement } = await import("react");
@@ -174,5 +199,58 @@ describe("rail files panel", () => {
     await clickButton("rail-files-rename-README.md");
     const input = q("[data-testid='rail-files-dialog-input']") as HTMLInputElement | null;
     expect(input?.value).toBe("README.md");
+  });
+});
+
+describe("rail files panel responsive layout (#36)", () => {
+  test("纯函数：宽度档与拖宽钳制计算", async () => {
+    const { filesRailLayout } = await import("@/components/layout/rail-files-panel");
+    const { clampRailWidth, railWidthMax } = await import("@/components/layout/rail-resize");
+    expect(filesRailLayout(0)).toBe("stacked");
+    expect(filesRailLayout(600)).toBe("stacked");
+    expect(filesRailLayout(601)).toBe("split");
+    expect(filesRailLayout(899)).toBe("split");
+    expect(filesRailLayout(900)).toBe("columns");
+    // 上限 = min(视口 70%, 1400, 视口-360)，下限 320 兜底
+    expect(railWidthMax(1024)).toBe(664);
+    expect(railWidthMax(1920)).toBe(1344);
+    expect(railWidthMax(2400)).toBe(1400);
+    expect(clampRailWidth(800, 1024)).toBe(664);
+    expect(clampRailWidth(100, 1920)).toBe(320);
+    expect(clampRailWidth(384.4, 1920)).toBe(384);
+    expect(clampRailWidth(9999, 1920)).toBe(1344);
+  });
+
+  test("宽容器 601-899：切横向两栏（新 testid rail-files-columns），原有结构 testid 保留", async () => {
+    await renderPanelDirectly();
+    await fireResize(700);
+    const panel = q("[data-testid='rail-files-panel']");
+    expect(panel?.getAttribute("data-layout")).toBe("split");
+    expect(q("[data-testid='rail-files-columns']")).not.toBeNull();
+    // 窄档结构 testid 全保留
+    for (const id of ["rail-files-tree-pane", "rail-files-list-pane", "rail-files-preview-pane", "rail-files-row-src", "rail-files-row-README.md"]) {
+      expect(q(`[data-testid='${id}']`)).not.toBeNull();
+    }
+    // 树列固定宽档（14rem = w-56）
+    expect(q("[data-testid='rail-files-tree-pane']")?.className).toContain("w-56");
+  });
+
+  test("宽容器 ≥900：三列横排，列表列带右边框分隔", async () => {
+    await renderPanelDirectly();
+    await fireResize(950);
+    const panel = q("[data-testid='rail-files-panel']");
+    expect(panel?.getAttribute("data-layout")).toBe("columns");
+    expect(q("[data-testid='rail-files-columns']")).not.toBeNull();
+    expect(q("[data-testid='rail-files-list-pane']")?.className).toContain("border-r");
+  });
+
+  test("回窄 ≤600：回到纵向堆叠，横向容器 testid 移除", async () => {
+    await renderPanelDirectly();
+    await fireResize(700);
+    expect(q("[data-testid='rail-files-columns']")).not.toBeNull();
+    await fireResize(400);
+    expect(q("[data-testid='rail-files-panel']")?.getAttribute("data-layout")).toBe("stacked");
+    expect(q("[data-testid='rail-files-columns']")).toBeNull();
+    expect(q("[data-testid='rail-files-preview-pane']")?.className).toContain("border-t");
   });
 });

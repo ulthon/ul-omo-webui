@@ -2,10 +2,11 @@
 // 三处宿主由本组件统一渲染：桌面展开（lg 常驻，带拖宽分隔条）、桌面折叠窄条（w-10）、
 // 手机固定右缘抽屉（<lg，勿套 --app-height，镜像左栏模式）；开合状态与记忆
 // （ul-omo-webui:todo-panel-open）沿用既有契约由宿主（shell）持有传入。
-// 宽度（桌面展开档）：默认 384、可拖 320-560——主区与右栏间指针拖拽分隔条
+// 宽度（桌面展开档）：默认 384、下限 320、上限视口相对（#36：min(视口 70%, 1400)，
+// 且保证中间会话区 ≥360px）——主区与右栏间指针拖拽分隔条
 // （pointerdown/move/up + setPointerCapture），拖动中实时钳制，pointerup 才写
 // localStorage ul-omo-webui:right-rail-width；读取时缺失/非数值/越界一律落回默认
-// 384（钳制兜底：渲染层永远拿不到范围外宽度）。
+// 384（钳制兜底：渲染层永远拿不到范围外宽度）。边界与读写助手在 rail-resize.ts。
 // dirty 契约（原 shell 页签切换 guard 迁入）：NotesView 经 dirtyRef 上报编辑未保存，
 // 切走时弹确认、取消停留原页签；页面刷新路径由 note-detail 的 beforeunload 承担未变。
 // 页签面板 lazy：变更/笔记按需加载（react-diff-view / notes 组件本体不进首屏），
@@ -23,6 +24,13 @@ import { SubagentPanel } from "@/components/chat/subagent-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { OverviewPanel } from "@/components/layout/overview-panel";
 import { RailFilesPanel } from "@/components/layout/rail-files-panel";
+import {
+  RAIL_WIDTH_MIN,
+  clampRailWidth,
+  railWidthMax,
+  readRailWidthPreference,
+  writeRailWidthPreference,
+} from "@/components/layout/rail-resize";
 import { useUiStore } from "@/stores/ui";
 import { useT, type MessageKey } from "@/i18n/i18n";
 
@@ -71,12 +79,6 @@ function writeRailTabPreference(tab: RightRailTab): void {
     // storage 不可用：忽略（页面生命周期内 state 仍生效）
   }
 }
-
-/** 宽度记忆 localStorage 键与拖宽边界（px） */
-const RAIL_WIDTH_KEY = "ul-omo-webui:right-rail-width";
-const RAIL_WIDTH_MIN = 320;
-const RAIL_WIDTH_MAX = 560;
-const RAIL_WIDTH_DEFAULT = 384;
 
 const TAB_CLASS = (active: boolean) =>
   `min-h-11 shrink-0 whitespace-nowrap rounded-lg px-1.5 py-1.5 text-sm transition-colors lg:min-h-9 lg:px-2 ${
@@ -128,33 +130,6 @@ function DrawerExternalLinks() {
   );
 }
 
-/** 宽度记忆读取：无记录返回默认；手写异常值（9999/0/非数值等）落回默认 384 */
-export function readRailWidthPreference(): number {
-  try {
-    const raw = window.localStorage.getItem(RAIL_WIDTH_KEY);
-    if (raw === null) return RAIL_WIDTH_DEFAULT;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < RAIL_WIDTH_MIN || value > RAIL_WIDTH_MAX) {
-      return RAIL_WIDTH_DEFAULT;
-    }
-    return value;
-  } catch {
-    return RAIL_WIDTH_DEFAULT;
-  }
-}
-
-/** 宽度记忆写入：仅在拖拽结束（pointerup）与键盘微调路径调用；storage 不可用静默降级 */
-export function writeRailWidthPreference(width: number): void {
-  try {
-    window.localStorage.setItem(RAIL_WIDTH_KEY, String(width));
-  } catch {
-    // storage 不可用：忽略（页面生命周期内 state 仍生效）
-  }
-}
-
-function clampRailWidth(width: number): number {
-  return Math.min(RAIL_WIDTH_MAX, Math.max(RAIL_WIDTH_MIN, Math.round(width)));
-}
 
 function RailLoading({ text }: { text: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{text}</div>;
@@ -225,7 +200,14 @@ export function RightRail({
   const [tab, setTab] = useState<RightRailTab>(() => readRailTabPreference() ?? "overview");
   // 笔记编辑未保存标记：NotesView 编辑态写入，切页签时读取做确认（契约自 shell 迁入）
   const notesDirtyRef = useRef(false);
-  const [width, setWidth] = useState(() => readRailWidthPreference());
+  const [width, setWidth] = useState(() => clampRailWidth(readRailWidthPreference(window.innerWidth), window.innerWidth));
+  // 视口宽：拖宽上限随视口（#36），resize 监听保持同源（aria-valuemax 同源更新）
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   // 拖拽中的实时宽度镜像：pointerup 写记忆需要最终值，state 异步读不到
   const widthRef = useRef(width);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
@@ -260,7 +242,7 @@ export function RightRail({
   const onHandlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag) return;
-    const next = clampRailWidth(drag.startWidth + (drag.startX - e.clientX));
+    const next = clampRailWidth(drag.startWidth + (drag.startX - e.clientX), viewportWidth);
     widthRef.current = next;
     setWidth(next);
   };
@@ -280,7 +262,7 @@ export function RightRail({
   const onHandleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    const next = clampRailWidth(widthRef.current + (e.key === "ArrowLeft" ? 16 : -16));
+    const next = clampRailWidth(widthRef.current + (e.key === "ArrowLeft" ? 16 : -16), viewportWidth);
     widthRef.current = next;
     setWidth(next);
     writeRailWidthPreference(next);
@@ -303,7 +285,7 @@ export function RightRail({
             aria-label={t("login.rightRail.resizeHandle")}
             aria-valuenow={width}
             aria-valuemin={RAIL_WIDTH_MIN}
-            aria-valuemax={RAIL_WIDTH_MAX}
+            aria-valuemax={railWidthMax(viewportWidth)}
             tabIndex={0}
             onPointerDown={onHandlePointerDown}
             onPointerMove={onHandlePointerMove}
