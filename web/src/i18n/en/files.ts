@@ -120,6 +120,10 @@ export const files = {
     cancel: "Cancel",
     keepBothDisabled: "Upload does not support auto-rename yet, cannot keep both",
   },
+  resize: {
+    leftAriaLabel: "Resize left pane",
+    rightAriaLabel: "Resize right pane",
+  },
   op: {
     createFileFailed: "Failed to create file",
     createDirFailed: "Failed to create folder",

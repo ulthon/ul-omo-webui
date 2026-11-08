@@ -137,6 +137,10 @@ export const files = {
     cancel: "取消",
     keepBothDisabled: "上传暂不支持自动改名，无法保留两者",
   },
+  resize: {
+    leftAriaLabel: "拖动调整左栏宽度",
+    rightAriaLabel: "拖动调整右栏宽度",
+  },
   // 操作结果 toast 兜底文案（成功/失败）
   op: {
     createFileFailed: "新建文件失败",

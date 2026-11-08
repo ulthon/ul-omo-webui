@@ -329,9 +329,6 @@ export function FilesPage() {
     writeFilesRightWidthPreference(FILES_RIGHT_DEFAULT);
   };
 
-  // 桌面三栏拖宽记忆（files-panel-oc 任务 2）：仿 shell.tsx 侧栏手柄模式——state +
-  // ref 镜像，pointer capture 拖拽实时钳制，pointerup 落记忆，双击重置默认；
-  // 左栏手柄右移变宽，右栏手柄左移变宽。移动端三态切换不消费。
   const [selected, setSelected] = useState<string | null>(null);
   // 在线编辑态（任务 8）：editingPath = 正在编辑的文件；editDirtyRef 为编辑器脏态
   // 上报（FileEditor 契约，NotesView dirtyRef 先例）。所有切走路径先过 guardDirty。
@@ -1088,7 +1085,7 @@ export function FilesPage() {
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="拖动调整左栏宽度"
+            aria-label={t("files.resize.leftAriaLabel")}
             aria-valuenow={leftWidth}
             aria-valuemin={FILES_LEFT_MIN}
             aria-valuemax={FILES_LEFT_MAX}
@@ -1106,7 +1103,7 @@ export function FilesPage() {
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="拖动调整右栏宽度"
+            aria-label={t("files.resize.rightAriaLabel")}
             aria-valuenow={rightWidth}
             aria-valuemin={FILES_RIGHT_MIN}
             aria-valuemax={FILES_RIGHT_MAX}
