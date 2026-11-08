@@ -1,6 +1,8 @@
 // 虚拟化消息列表（todo 16）：TanStack Virtual 动态测量（measureElement + ResizeObserver），
-// 长会话手机端只挂载可视区。自动滚底不经 React：直接订阅 store，在底部时 rAF 跟随滚动；
-// 用户上滚即暂停跟随并浮出"回到底部"。顶部触顶触发增量同步（游标分页钩子，ChatView 提供）。
+// 长会话手机端只挂载可视区。自动跟随不经 React：直接订阅 store，在底部时 rAF 跟随滚动；
+// 用户上滚即暂停跟随并浮出"回到底部"。在底部判定与恢复定位均按消息锚点（#26）：锚点=
+// 流内最新条目 key（存 store），渲染窗覆盖锚点即"在底部"，恢复用 scrollToIndex(锚点)；
+// 不再用 scrollHeight/scrollTop 像素比较（虚拟列表测量异步下不可靠）。顶部触顶触发增量同步。
 // 记忆标记（docs08-r4 任务 13）：entries 中白名单 memory 条目经 mergeMemoryItems 并入 items，
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
@@ -14,7 +16,7 @@ import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
+import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
@@ -246,7 +248,7 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
   return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
 });
 
-/** 距底部小于该值视为"在底部"（跟随流式内容增长） */
+/** 触顶增量同步阈值（scrollTop 小于该值触发向上翻页） */
 const BOTTOM_THRESHOLD = 80;
 
 /** 滚动容器 py-4 顶垫（粘性判定把测量缓存偏移换算到视口坐标用） */
@@ -278,6 +280,9 @@ export function MessageList({
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
+  // 程序滚动护栏（#26）：程序滚锚（跟随/恢复/回底）期间的滚动事件不把跟随态翻为解除
+  //（虚拟列表动态测量下中速帧锚点暂不在渲染窗，避免误解除）；窗口内也不闪回底钮。
+  const programmaticUntilRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
 
   // 白名单 memory 条目与 compaction 条目并入 items（docs08-r4 任务 13 / 任务 18 ③）：
@@ -324,6 +329,22 @@ export function MessageList({
     getItemKey: (index) => mergedItems[index].key,
   });
 
+  // 滚动跟随锚点（#26）：跟随态锚定到流内最新一条条目（key 存 store 每会话槽）。
+  // 在底部判定 = 渲染窗覆盖锚点下标（isAnchorCoveredByRange），不再用像素高度比较；
+  // 恢复/切会话/回前台用 scrollToIndex(锚点) 对齐。锚点随 mergedItems 尾部变化同步写入。
+  const anchorId = useMessagesStore((s) => s.followAnchors[sessionId] ?? null);
+  const setFollowAnchor = useMessagesStore((s) => s.setFollowAnchor);
+  const lastItemKey = mergedItems.length > 0 ? mergedItems[mergedItems.length - 1].key : null;
+  useEffect(() => {
+    if (lastItemKey !== null && lastItemKey !== anchorId) setFollowAnchor(sessionId, lastItemKey);
+  }, [lastItemKey, anchorId, sessionId, setFollowAnchor]);
+  const anchorIndex = useMemo(() => {
+    if (lastItemKey === null) return -1;
+    if (anchorId === null) return mergedItems.length - 1;
+    const idx = mergedItems.findIndex((it) => it.key === anchorId);
+    return idx >= 0 ? idx : mergedItems.length - 1;
+  }, [mergedItems, anchorId, lastItemKey]);
+
   // 待答提问卡定位（r11 todo 6d）：提示条点击 → 流内卡 scrollIntoView；虚拟化窗外
   // （未挂载）先 scrollToIndex 挂载该行，下一帧再定位
   const scrollToQuestion = useCallback(
@@ -345,54 +366,68 @@ export function MessageList({
   );
   useImperativeHandle(ref, () => ({ scrollToQuestion }), [scrollToQuestion]);
 
-  const scrollToBottom = useCallback((smooth = false) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    // 滚动跟随域埋点（速清批 26d，第五域）：每次程序滚底执行即记起点，校验器退出时记落点
-    // （距离/高度）——#26 停在旧位置复现时一行定位是哪条路径没走到/被顶走。
-    diag.info("scroll", "to_bottom", { src: smooth ? "smooth" : "auto", distance: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight), scrollHeight: el.scrollHeight, scrollTop: Math.round(el.scrollTop) });
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-    if (!smooth) return;
-    // 平滑滚动途中与落底后,虚拟化行测量都可能增长总高使点击时目标失效,落点未到底
-    // (docs08-r7 任务 11 回底打磨;手机档实测涨约 239px):2s 窗口内每 300ms 校验,
-    // 仍在底部阈值外则补瞬时对底;用户主动上滚(位置回退>50px)即退出不抢滚动。
-    // 非 smooth 路径(会话打开两段式)不变。
-    let lastTop = -1;
-    const started = Date.now();
-    const timer = window.setInterval(() => {
-      const el2 = scrollRef.current;
-      if (!el2 || Date.now() - started > 2000) {
-        window.clearInterval(timer);
-        if (el2) diag.info("scroll", "to_bottom_settled", { ended: "timeout", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
-        return;
-      }
-      const top = el2.scrollTop;
-      if (lastTop >= 0 && top < lastTop - 50) {
-        window.clearInterval(timer);
-        diag.info("scroll", "to_bottom_settled", { ended: "user_scroll_back", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
-        return;
-      }
-      lastTop = top;
-      if (el2.scrollHeight - top - el2.clientHeight > BOTTOM_THRESHOLD) {
-        el2.scrollTo({ top: el2.scrollHeight, behavior: "auto" });
+  // 滚动对齐锚点（#26）：跟随/恢复/回底统一走 scrollToIndex(锚点, align:end)，不再
+  // scrollTo(scrollHeight)——虚拟列表测量异步完成时 scrollHeight 是旧值，#26 停在旧
+  // 位置的直接根因。锚点缺席（空列表/未同步）兑底直接滚底。smooth 路径保留落点校验环
+  //（手机档测量涨高补滚，docs08-r7 任务 11）：校验判据同锚点覆盖，用户上滚即退出。
+  const scrollToAnchor = useCallback(
+    (smooth = false) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      // 滚动跟随域埋点（速清批 26d，第五域）：每次程序滚锚执行即记起点，校验器退出时记落点
+      diag.info("scroll", "to_anchor", { src: smooth ? "smooth" : "auto", anchorIndex, items: mergedItems.length, distance: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) });
+      programmaticUntilRef.current = Date.now() + (smooth ? 2500 : 600);
+      if (anchorIndex >= 0) {
+        virtualizer.scrollToIndex(anchorIndex, { align: "end", behavior: smooth ? "smooth" : "auto" });
       } else {
-        window.clearInterval(timer);
-        diag.info("scroll", "to_bottom_settled", { ended: "settled", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
+        el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
       }
-    }, 300);
-  }, []);
+      if (!smooth) return;
+      // 平滑滚动途中与落底后,虚拟化行测量都可能增长总高使点击时目标失效,落点未到底
+      // (docs08-r7 任务 11 回底打磨;手机档实测涨约 239px):2s 窗口内每 300ms 校验,
+      // 锚点仍未入渲染窗则补瞬时对锚;用户主动上滚(位置回退>50px)即退出不抢滚动。
+      let lastTop = -1;
+      const started = Date.now();
+      const timer = window.setInterval(() => {
+        const el2 = scrollRef.current;
+        if (!el2 || Date.now() - started > 2000) {
+          window.clearInterval(timer);
+          if (el2) diag.info("scroll", "to_anchor_settled", { ended: "timeout", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
+          return;
+        }
+        const top = el2.scrollTop;
+        if (lastTop >= 0 && top < lastTop - 50) {
+          window.clearInterval(timer);
+          diag.info("scroll", "to_anchor_settled", { ended: "user_scroll_back", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
+          return;
+        }
+        lastTop = top;
+        if (!isAnchorCoveredByRange(virtualizer.getVirtualItems(), anchorIndex)) {
+          virtualizer.scrollToIndex(anchorIndex, { align: "end", behavior: "auto" });
+        } else {
+          window.clearInterval(timer);
+          diag.info("scroll", "to_anchor_settled", { ended: "settled", distance: Math.round(el2.scrollHeight - el2.scrollTop - el2.clientHeight) });
+        }
+      }, 300);
+    },
+    [virtualizer, anchorIndex, mergedItems.length],
+  );
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distance < BOTTOM_THRESHOLD;
-    // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带像素快照与触发源 scroll
-    if (followRef.current !== atBottom) {
-      diag.info("scroll", "follow_flip", { from: followRef.current, to: atBottom, src: "scroll", distance: Math.round(distance), scrollTop: Math.round(el.scrollTop), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, items: mergedItems.length });
+    // 在底部判定（#26）：渲染窗覆盖锚点下标，不再用 scrollHeight/scrollTop 像素比较
+    const atBottom = isAnchorCoveredByRange(virtualizer.getVirtualItems(), anchorIndex);
+    const programmatic = Date.now() < programmaticUntilRef.current;
+    // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带锚点快照与触发源 scroll；
+    // 程序滚动护栏窗口内不解除跟随（中速帧锚点暂不在渲染窗属正常，误解除会打断跟随）
+    if (!programmatic) {
+      if (followRef.current !== atBottom) {
+        diag.info("scroll", "follow_flip", { from: followRef.current, to: atBottom, src: "scroll", anchorIndex, items: mergedItems.length, scrollTop: Math.round(el.scrollTop) });
+      }
+      followRef.current = atBottom;
+      setShowJump(!atBottom);
     }
-    followRef.current = atBottom;
-    setShowJump(!atBottom);
     // 粘性用户条（r9 wave1 视口锚定）：候选=视口上缘上方最近含文本 user 气泡，随滚动
     // 实时反查（不再恒取尾部）；回底消失判据不变。测量缺失（未挂载/计数未同步）不钉。
     const measurements = virtualizer.measurementsCache;
@@ -411,23 +446,30 @@ export function MessageList({
       setStickyUser(null);
     }
     if (el.scrollTop < BOTTOM_THRESHOLD) onReachTop();
-  }, [onReachTop, mergedItems, entries, virtualizer]);
+  }, [onReachTop, mergedItems, entries, virtualizer, anchorIndex]);
 
-  // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚底，不经 React 渲染路径
+  // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚锚，不经 React 渲染路径
   useEffect(() => {
     let raf = 0;
     const unsub = useMessagesStore.subscribe(() => {
       if (!followRef.current || raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        if (followRef.current) scrollToBottom();
+        if (followRef.current) scrollToAnchor();
       });
     });
     return () => {
       unsub();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [scrollToBottom]);
+  }, [scrollToAnchor]);
+
+  // 切会话恢复跟随（#26）：跟随标志不跨会话携带——上一会话上滚解除的跟随态不得压住
+  // 新会话的回底定位；回底钮随之复位。组件未按 sessionId 重挂，必须显式复位。
+  useEffect(() => {
+    followRef.current = true;
+    setShowJump(false);
+  }, [sessionId]);
 
   // 打开会话 / 从空到有内容：定位到底部（测量异步完成，两段式补齐）
   const t = useT();
@@ -438,12 +480,12 @@ export function MessageList({
     // 只在首条到达/会话切换时跑，不为新消息重跑——避免把两段式定位变成强拉滚底）
     diag.info("scroll", "session_open", { follow: followRef.current, items: mergedItems.length, sessionId: sessionId.slice(0, 8) });
     const raf = requestAnimationFrame(() => {
-      scrollToBottom();
-      window.setTimeout(() => scrollToBottom(), 100);
+      scrollToAnchor();
+      window.setTimeout(() => scrollToAnchor(), 100);
     });
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mergedItems.length 仅快照读取，入 deps 会改变定位触发语义（见上注）
-  }, [hasItems, sessionId, scrollToBottom]);
+  }, [hasItems, sessionId, scrollToAnchor]);
 
   // 页面重新可见（手机切出再切回）：原本贴底则回底——防止系统滚动恢复/SSE 重连重排后停在旧位置
   useEffect(() => {
@@ -452,11 +494,11 @@ export function MessageList({
       if (document.visibilityState === "visible") {
         diag.info("scroll", "visibility", { follow: followRef.current, scrolled: followRef.current });
       }
-      if (document.visibilityState === "visible" && followRef.current) scrollToBottom();
+      if (document.visibilityState === "visible" && followRef.current) scrollToAnchor();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [scrollToBottom]);
+  }, [scrollToAnchor]);
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -542,7 +584,7 @@ export function MessageList({
           onClick={() => {
             followRef.current = true;
             setShowJump(false);
-            scrollToBottom(true);
+            scrollToAnchor(true);
           }}
         >
           <ArrowDown className="size-3.5" />

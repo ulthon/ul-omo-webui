@@ -111,6 +111,14 @@ export interface DeltaPatch {
 interface MessagesState {
   bySession: Record<string, SessionMessages>;
 
+  /** 滚动跟随锚点（#26）：每会话最新流内条目 key，由 MessageList 在 mergedItems 变化时
+   *  写入；跟随判定（渲染窗覆盖锚点）与恢复定位（scrollToIndex 锚点）的单一真相源，
+   *  应用生命周期内存态。 */
+  followAnchors: Record<string, string>;
+
+  /** 滚动跟随锚点写入（#26）：同值幂等 no-op（流式 delta 高频触发不重渲染） */
+  setFollowAnchor(sessionId: string, anchorId: string): void;
+
   /** 单次恢复窗口（docs08-r5 任务 5）：服务端 SSE 重放路径以 replay_begin/replay_done
    * 桥级帧包夹重放序列（event-dispatch 转译置位/复位；EventsClient 建连时清陈旧窗口）。
    * 窗口内对"已落库段的无 id start 重播"抑制流式重建；实时帧恒在窗口外（服务端
@@ -524,7 +532,14 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
 
   return {
     bySession: {},
+    followAnchors: {},
     replayRecovering: false,
+
+    setFollowAnchor: (sessionId, anchorId) =>
+      set((s) => {
+        if (s.followAnchors[sessionId] === anchorId) return s;
+        return { followAnchors: { ...s.followAnchors, [sessionId]: anchorId } };
+      }),
 
     beginReplayRecovery: () => set({ replayRecovering: true }),
 
@@ -1085,6 +1100,12 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         if (!oldSlot) return s;
         const newSlot = s.bySession[newId];
         const bySession = { ...s.bySession };
+        // 满足锚点随槽迁移（#26）：换 key 后恢复定位仍指向同一会话的最新条目
+        const followAnchors = { ...s.followAnchors };
+        if (followAnchors[oldId] !== undefined) {
+          followAnchors[newId] = followAnchors[oldId];
+          delete followAnchors[oldId];
+        }
         if (!newSlot) {
           // 直接搬家（常见路径：换 key 先于任何真实 id 事件到达）
           bySession[newId] = oldSlot;
@@ -1107,7 +1128,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           };
         }
         delete bySession[oldId];
-        return { bySession };
+        return { bySession, followAnchors };
       }),
   };
 });

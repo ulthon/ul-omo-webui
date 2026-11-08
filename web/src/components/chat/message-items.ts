@@ -485,6 +485,19 @@ export function shouldShowStickyUser(
   return rowBottom <= viewportTop || rowTop >= viewportBottom;
 }
 
+/** 滚动跟随锚点覆盖判定（#26 滚动跟随改锚点制）：虚拟列表渲染窗（含 overscan）是否
+ *  覆盖锚点行下标——覆盖即“在底部”（跟随态），不覆盖即用户已上滚离开锚点（解除跟随）。
+ *  取代旧 scrollHeight/scrollTop 像素比较：虚拟列表与动态测量下总高异步变化，像素判定
+ *  不可靠；渲染窗覆盖锚点是“锚点行可见”的直接事实，不依赖总高同步完成。
+ *  纯函数：无时序、不改入参。锚点下标非法（-1）或窗为空返回 false（宁解除勿误跟）。 */
+export function isAnchorCoveredByRange(
+  virtualItems: ReadonlyArray<{ index: number }>,
+  anchorIndex: number,
+): boolean {
+  if (anchorIndex < 0 || virtualItems.length === 0) return false;
+  return virtualItems.some((vi) => vi.index >= anchorIndex);
+}
+
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
  *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
  *  interrupted 标记挂最后一个 assistant 条目。
