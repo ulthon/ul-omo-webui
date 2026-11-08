@@ -47,6 +47,7 @@ import {
 import { SenpiAdapter, encodeCwdToSessionDirName, isPromptWaitTimeoutError, isSessionReopenableError, type SenpiRpcClient } from "../adapter/senpi-adapter";
 import type { EngineManagerEvent, EngineProcessManager } from "../engine/process-manager";
 import { ApiError } from "./http";
+import { THINKING_LEVEL_VALUES, type PreferredThinkingLevel } from "../conf/config-store";
 import { debugPerfOn } from "../conf/diagnostics-flags";
 import { logPerfSpan, projHash8, type PerfSpan } from "./perf";
 import { log, type LogVal } from "../obs/logger";
@@ -151,6 +152,9 @@ export interface EngineGateway {
   /** CLI 收藏（settings.json favoriteModels，归一 "provider/model"）。可选面：
    * 真实注册表实现直读 agent 目录；测试 fake 可省略（路由层降级空数组）。 */
   favoriteModels?(): string[];
+  /** CLI 收藏带档位（思考档三链 C）：模型 + 收藏时的思考档（无后缀 null）。可选面：
+   * 测试 fake 可省略（路由层降级空映射）。 */
+  favoriteModelsWithLevel?(): FavoriteModelEntry[];
   /** 引擎 native 默认模型（settings.json defaultProvider/defaultModel/defaultThinkingLevel，
    * docs08-r5 任务 2）。可选面：真实注册表实现直读 agent 目录；测试 fake 可省略
    * （路由层降级 null——前端回退链跳过引擎默认档，与旧服务端未下发字段同口径）。 */
@@ -239,6 +243,10 @@ export interface EngineRuntimeOptions {
   settlePollMs?: number;
   /** 引擎空闲观察到真实收尾事件缺席时，合成前的宽限毫秒（默认 5000）。 */
   settleGraceMs?: number;
+  /** 项目偏好思考档（思考档三链 A：ensureForSession 重开既有会话时，会话 jsonl 无
+   *  落定记录则取此档随 open 下发；组合根接 readProjectPreferences）。可选面：
+   *  测试 fake 可省略——缺席时跳过项目偏好档。 */
+  projectThinkingLevel?(projectPath: string): PreferredThinkingLevel | null;
 }
 
 function defaultAgentDir(): string {
@@ -410,6 +418,69 @@ export function mergeUpstreamIds(rows: EngineModelInfo[], agentDir: string): Eng
     const up = upstream.get(`${r.provider}/${r.id}`);
     return up !== undefined && r.upstreamId !== up ? { ...r, upstreamId: up } : r;
   });
+}
+
+/** 会话 jsonl 落定思考档直读（思考档三链 A）：取最后一条 thinking_level_change 条目
+ *  的 level（合法档 ∈ THINKING_LEVEL_VALUES）；文件缺失/无记录/损坏返回 undefined。
+ *  导出供单测。 */
+export function readSessionThinkingLevel(sessionPath: string): EngineThinkingLevel | undefined {
+  try {
+    if (!existsSync(sessionPath)) return undefined;
+    let level: EngineThinkingLevel | undefined;
+    for (const line of readFileSync(sessionPath, "utf8").split("\n")) {
+      if (!line.includes("thinking_level_change")) continue;
+      try {
+        const parsed = JSON.parse(line) as { type?: unknown; thinkingLevel?: unknown };
+        if (
+          parsed?.type === "thinking_level_change" &&
+          typeof parsed.thinkingLevel === "string" &&
+          (THINKING_LEVEL_VALUES as readonly string[]).includes(parsed.thinkingLevel)
+        ) {
+          level = parsed.thinkingLevel as EngineThinkingLevel;
+        }
+      } catch {
+        // 损坏行跳过（同 session-preview 容错口径）
+      }
+    }
+    return level;
+  } catch {
+    return undefined;
+  }
+}
+
+/** CLI 收藏条目（思考档三链 C）：模型归一 "provider/model" + 收藏时的思考档（无后缀
+ *  或档位非法为 null）。去重保序（同模型取首个档位）；文件缺失/格式异常返回空列表。
+ *  导出供单测。 */
+export interface FavoriteModelEntry {
+  model: string;
+  level: string | null;
+}
+
+export function readFavoriteModelsWithLevel(agentDir: string): FavoriteModelEntry[] {
+  const file = join(agentDir, "settings.json");
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { favoriteModels?: unknown };
+    if (!Array.isArray(parsed.favoriteModels)) return [];
+    const out: FavoriteModelEntry[] = [];
+    const seen = new Set<string>();
+    for (const raw of parsed.favoriteModels) {
+      if (typeof raw !== "string") continue;
+      const slash = raw.indexOf("/");
+      if (slash <= 0) continue;
+      const colon = raw.lastIndexOf(":");
+      const value = colon > slash ? raw.slice(0, colon) : raw;
+      const levelRaw = colon > slash ? raw.slice(colon + 1) : null;
+      const level =
+        levelRaw !== null && (THINKING_LEVEL_VALUES as readonly string[]).includes(levelRaw) ? levelRaw : null;
+      if (seen.has(value)) continue;
+      seen.add(value);
+      out.push({ model: value, level });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** settings.json favoriteModels 直读（CLI 收藏）。条目形如 "provider/model:thinkingLevel"
@@ -883,7 +954,15 @@ class ProjectRuntime {
    * 引擎即会话，无切换 RPC）。未知会话按 resolveSession 原语义 404。 */
   private async ensureForSession(sessionId: string): Promise<SessionEngine> {
     const row = await this.resolveSession(sessionId);
-    return this.openLane(row.path, { durableHint: row.id });
+    // 思考档三链 A（修复 max 被引擎默认 high 覆盖的根因一）：重开既有会话显式带档——
+    // 会话 jsonl 落定记录（最后一条 thinking_level_change）> 项目偏好 preferredThinkingLevel
+    // > 不传（引擎自身 settings.json 默认）。链前位命中即不再后探。
+    const level =
+      readSessionThinkingLevel(row.path) ?? this.opts.projectThinkingLevel?.(this.projectPath) ?? undefined;
+    return this.openLane(row.path, {
+      durableHint: row.id,
+      ...(level !== undefined ? { open: { thinkingLevel: level } } : {}),
+    });
   }
 
   /** assistant 消息条目落地 → unread+1；按 entry id 幂等（同一 entry 只计一次）。
@@ -2349,6 +2428,10 @@ export class EngineRuntimeRegistry implements EngineGateway {
 
   favoriteModels(): string[] {
     return readFavoriteModels(this.opts.agentDir ?? defaultAgentDir());
+  }
+
+  favoriteModelsWithLevel(): FavoriteModelEntry[] {
+    return readFavoriteModelsWithLevel(this.opts.agentDir ?? defaultAgentDir());
   }
 
   defaultModel(): { provider: string; model: string; thinkingLevel: string | null } | null {

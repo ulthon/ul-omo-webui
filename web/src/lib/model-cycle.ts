@@ -3,7 +3,7 @@
 // 内 wrap 循环。nextFavoriteModel 是纯函数（无 store 依赖，单测直测）；selectModel 是
 // chips.tsx 弹层选中内联逻辑油出的共用过程——chip 点击与键盘循环走同一条
 // 「写 selectedModel + 防抖持久化」路径（同值不重复写、不触发持久化）。
-import { scheduleModelPreferencePersist } from "@/lib/preferences";
+import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
 import { useUiStore } from "@/stores/ui";
 
 export type CycleDirection = 1 | -1;
@@ -36,4 +36,17 @@ export function selectModel(value: string): void {
   if (ui.selectedModel === value) return;
   ui.setSelectedModel(value);
   scheduleModelPreferencePersist();
+}
+
+/** 收藏切换（思考档三链 C）：模型写入 + 收藏档位填思考档（pickThinkingLevel 显式
+ * 手选路径置位，引擎回显不再覆盖）；档位随下次 prompt 生效，同 composer 手选一条
+ * 持久化链。收藏无档位（旧服务端/无后缀条目）不动当前档位。 */
+export function selectFavoriteModel(value: string): void {
+  selectModel(value);
+  const ui = useUiStore.getState();
+  const level = ui.favoriteLevels[value];
+  if (level) {
+    ui.pickThinkingLevel(level);
+    scheduleThinkingPreferencePersist();
+  }
 }

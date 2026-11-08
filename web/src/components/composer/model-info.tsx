@@ -15,7 +15,7 @@ import { shortModelName } from "@/lib/api";
 import { thinkingLevelOptions } from "@/lib/thinking-level";
 import { diag } from "@/lib/diag";
 import { scheduleThinkingPreferencePersist } from "@/lib/preferences";
-import { selectModel } from "@/lib/model-cycle";
+import { selectModel, selectFavoriteModel } from "@/lib/model-cycle";
 import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
 import { Input } from "@/components/ui/input";
@@ -89,7 +89,7 @@ export function ModelPickerBody({ close }: { close: () => void }) {
                 data-value={value}
                 title={value}
                 onClick={() => {
-                  selectModel(value);
+                  selectFavoriteModel(value);
                   close();
                 }}
                 className="flex min-h-9 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-none transition-colors hover:bg-accent"
@@ -200,9 +200,11 @@ export function ComposerModelInfo({ pendingEffect = false }: { pendingEffect?: b
   const selectedModelInfo = models.find((m) => `${m.provider}/${m.id}` === selectedModel) ?? null;
   const levelOptions = useMemo(() => thinkingLevelOptions(selectedModelInfo), [selectedModelInfo]);
   const selectLevel = (level: string) => {
-    // #23 观测埋点：思考档变更动作（档位随下次 prompt 生效，无引擎拒绝概念）
+    // #23 观测埋点：思考档变更动作（档位随下次 prompt 生效，无引擎拒绝概念）。
+    // 思考档三链 B：显式手选路径（pickThinkingLevel 置位）——引擎 thinking_level_changed
+    // 回显不再覆盖手选显示。
     diag.info("run", "thinking", { level });
-    useUiStore.getState().setSelectedThinkingLevel(level);
+    useUiStore.getState().pickThinkingLevel(level);
     scheduleThinkingPreferencePersist();
   };
 

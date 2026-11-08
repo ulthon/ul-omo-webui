@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readDefaultModel, readFavoriteModels, readModelsFallback, mergeUpstreamIds } from "../src/api/engine-runtime";
+import { readDefaultModel, readFavoriteModels, readFavoriteModelsWithLevel, readModelsFallback, mergeUpstreamIds } from "../src/api/engine-runtime";
 
 describe("readModelsFallback", () => {
   test("目录缓存与自定义合并：同 id 自定义覆盖、独有项各自并入", () => {
@@ -125,6 +125,47 @@ describe("readFavoriteModels", () => {
       expect(readFavoriteModels(dir)).toEqual([]);
       writeFileSync(join(dir, "settings.json"), "{broken");
       expect(readFavoriteModels(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// 思考档三链 C（服务端侧）：收藏条目对象化——模型归一 + 收藏时的思考档透传，
+// 供 routes-meta favoriteLevels 下发、前端收藏切换填档位。
+describe("readFavoriteModelsWithLevel", () => {
+  test("档位透传 + 去重保序取首个档位 + 无后缀/非法档 null", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fav-lv-"));
+    try {
+      writeFileSync(
+        join(dir, "settings.json"),
+        JSON.stringify({
+          favoriteModels: [
+            "zai-coding-cn/glm-5.3:max",
+            "zai-coding-cn/glm-5.3-flash",
+            "zai-coding-cn/glm-5.3:low",
+            "commandcode/deepseek/deepseek-v4.1-flash:not-a-level",
+            "no-slash-entry",
+            42,
+          ],
+        }),
+      );
+      expect(readFavoriteModelsWithLevel(dir)).toEqual([
+        { model: "zai-coding-cn/glm-5.3", level: "max" },
+        { model: "zai-coding-cn/glm-5.3-flash", level: null },
+        { model: "commandcode/deepseek/deepseek-v4.1-flash", level: null },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("文件缺失/损坏：空列表不抛", () => {
+    const dir = mkdtempSync(join(tmpdir(), "models-fav-lv-"));
+    try {
+      expect(readFavoriteModelsWithLevel(dir)).toEqual([]);
+      writeFileSync(join(dir, "settings.json"), "{broken");
+      expect(readFavoriteModelsWithLevel(dir)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

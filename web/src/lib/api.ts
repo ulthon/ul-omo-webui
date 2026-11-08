@@ -319,6 +319,9 @@ export interface ModelsResponse {
   /** CLI 收藏（服务端读 settings.json favoriteModels 归一 "provider/model"）；
    * 旧服务端未下发时缺省（undefined → 空） */
   favorites?: string[];
+  /** CLI 收藏档位映射（思考档三链 C）："provider/model" → 收藏时的思考档（无后缀
+   * null）；旧服务端未下发时缺省（undefined → 空映射，收藏切换不动档位） */
+  favoriteLevels?: Record<string, string | null>;
   /** 引擎 native 默认模型（新会话回退链中位：项目偏好 > defaults > 列表首项）；
    * 旧服务端未下发或引擎未配置时缺省（undefined/null → 跳过该档） */
   defaults?: EngineDefaultModel | null;

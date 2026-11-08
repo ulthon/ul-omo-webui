@@ -108,6 +108,9 @@ interface UiState {
   /** CLI 收藏（GET /api/models favorites，"provider/model" 归一）；
    * 模型弹层顶部收藏组数据源（webui 侧收藏管理暂缺，只读展示 CLI 侧收藏）。 */
   favoriteModels: string[];
+  /** CLI 收藏档位映射（思考档三链 C）："provider/model" → 收藏时的思考档（无后缀 null）。
+   * 旧服务端未下发时为空映射（收藏切换不动档位，与旧口径同） */
+  favoriteLevels: Record<string, string | null>;
   /** 专属提示词映射（GET /api/models promptPresets，"provider/model" → preset 名）：
    * 输入框模型区专属提示词徽标数据源；旧服务端未下发时为空对象（无徽标）。 */
   promptPresets: Record<string, string | null>;
@@ -167,11 +170,17 @@ interface UiState {
   toggleDrawer(): void;
   setProjects(projects: ProjectMeta[]): void;
   setModels(models: ModelInfo[], promptPresets?: Record<string, string | null>): void;
-  setFavoriteModels(models: string[]): void;
+  setFavoriteModels(models: string[], favoriteLevels?: Record<string, string | null>): void;
   /** 列表进入加载中/加载失败的中性态：清空且不标记"确认为空"（发送防呆 fail-open） */
   resetModels(): void;
   setSelectedModel(model: string | null): void;
   setSelectedThinkingLevel(level: string | null): void;
+  /** 思考档三链 B：显式手选路径（档位弹层/收藏档位）——置位 userPickedThinking */
+  pickThinkingLevel(level: string | null): void;
+  /** 程序化档位链落定后清手选标记（回显恢复同步） */
+  clearUserPickedThinking(): void;
+  /** 引擎回显不覆盖手选的判定位（思考档三链 B） */
+  userPickedThinking: boolean;
   setModelPickerOpen(open: boolean): void;
   setShortcutsHelpOpen(open: boolean): void;
   setSettingsPageOpen(open: boolean): void;
@@ -223,8 +232,10 @@ export const useUiStore = create<UiState>()((set) => ({
   modelsLoaded: false,
   promptPresets: {},
   favoriteModels: [],
+  favoriteLevels: {},
   selectedModel: null,
   selectedThinkingLevel: null,
+  userPickedThinking: false,
   modelPickerOpen: false,
   shortcutsHelpOpen: false,
   settingsPageOpen: false,
@@ -249,10 +260,15 @@ export const useUiStore = create<UiState>()((set) => ({
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
   setProjects: (projects) => set({ projects }),
   setModels: (models, promptPresets = {}) => set({ models, modelsLoaded: true, promptPresets }),
-  setFavoriteModels: (favoriteModels) => set({ favoriteModels }),
-  resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [], promptPresets: {} }),
+  setFavoriteModels: (favoriteModels, favoriteLevels = {}) => set({ favoriteModels, favoriteLevels }),
+  resetModels: () => set({ models: [], modelsLoaded: false, favoriteModels: [], favoriteLevels: {}, promptPresets: {} }),
   setSelectedModel: (model) => set({ selectedModel: model }),
   setSelectedThinkingLevel: (level) => set({ selectedThinkingLevel: level }),
+  // 思考档三链 B：显式手选路径（composer 档位弹层 / 收藏档位填充）置位——引擎
+  // thinking_level_changed 回显不再覆盖显示；程序化链（回退链/项目偏好/引擎默认）
+  // 走 setSelectedThinkingLevel + clearUserPickedThinking，回显照常同步
+  pickThinkingLevel: (level) => set({ selectedThinkingLevel: level, userPickedThinking: true }),
+  clearUserPickedThinking: () => set({ userPickedThinking: false }),
   setModelPickerOpen: (open) => set({ modelPickerOpen: open }),
   setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),
   setSettingsPageOpen: (open) => set({ settingsPageOpen: open }),

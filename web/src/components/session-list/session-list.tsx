@@ -251,6 +251,8 @@ export function SessionList() {
       const meta = ui.projects.find((p) => p.projectPath === project);
       ui.setSelectedModel(meta?.preferredModel ?? null);
       ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
+      // 思考档三链 B：程序化落定后清手选标记（与 applyProjectDecision 同口径）
+      ui.clearUserPickedThinking();
       await loadProjectModels(project);
       const { selectedModel, selectedThinkingLevel } = useUiStore.getState();
       const tCreate = performance.now();

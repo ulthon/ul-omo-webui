@@ -42,7 +42,7 @@ import { SettingsPage } from "@/pages/settings";
 import { FilesPage } from "@/pages/files";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { isModelCycleBackward, isModelCycleForward, isModelPickerTrigger } from "@/lib/shortcuts";
-import { nextFavoriteModel, selectModel } from "@/lib/model-cycle";
+import { nextFavoriteModel, selectFavoriteModel } from "@/lib/model-cycle";
 import { useShortcutsHelp } from "@/lib/use-shortcuts-help";
 
 /** 复制到剪贴板（toast 复制钮）：优先 navigator.clipboard（https/localhost），
@@ -157,8 +157,9 @@ function useAppHeight(): void {
  * chip，快捷键在遮罩下触发等于失效；无可用模型（确认为空）时同样不动。
  * preventDefault 压掉浏览器默认（打印面板 / 地址栏聚焦，含焦点在 textarea 时压字符）。
  * 循环每次按键即时重读 getState——收藏列表两次按键间变化（SSE/刷新）不会用到旧快照；
- * 无收藏时 toast 提示并打开弹层兜底；选中与持久化走 lib/model-cycle.selectModel
- * （与 chip 点击同一条「写 selectedModel + 防抖持久化」路径）。
+ * 无收藏时 toast 提示并打开弹层兜底；选中与持久化走 lib/model-cycle.selectFavoriteModel
+ * （与 chip 点击同一条「写 selectedModel + 防抖持久化」路径；收藏带档位时同步填思考档，
+ * 思考档三链 C）。
  * 独立导出成 hook：shell 挂载用，单测可挂最小探针组件验证（不牵起整个 shell 的引导链）。
  * docs08-r7 任务 12：键位判定收拢 lib/shortcuts 注册表（唯一来源）。 */
 export function useModelShortcuts(): void {
@@ -179,7 +180,7 @@ export function useModelShortcuts(): void {
           ui.setModelPickerOpen(true);
           return;
         }
-        selectModel(next);
+        selectFavoriteModel(next);
         return;
       }
       ui.setModelPickerOpen(true);

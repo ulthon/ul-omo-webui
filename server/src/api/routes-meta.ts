@@ -34,6 +34,13 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
     // CLI 收藏（settings.json favoriteModels 归一 "provider/model"）：引擎无关的
     // agent 级设置，测试 fake 未实现可选面时降级空数组。
     const favorites = deps.engines.favoriteModels?.() ?? [];
+    // CLI 收藏档位映射（思考档三链 C）："provider/model" → 收藏时的思考档（无后缀
+    // null）。favoriteModelsWithLevel 未实现（旧 fake）时降级空映射——前端收藏切换
+    // 不动档位，与旧口径同。
+    const favoriteLevels: Record<string, string | null> = {};
+    for (const entry of deps.engines.favoriteModelsWithLevel?.() ?? []) {
+      favoriteLevels[entry.model] = entry.level;
+    }
     // 引擎 native 默认模型（settings.json defaultProvider/defaultModel/defaultThinkingLevel，
     // docs08-r5 任务 2）：同为 agent 级设置，测试 fake 未实现可选面时降级 null——
     // 前端回退链跳过引擎默认档，与旧服务端未下发字段同口径。
@@ -41,7 +48,7 @@ export function createMetaRoutes(deps: ApiDeps): Hono {
     // 专属提示词映射（"provider/model" → preset 名，未命中 null）：引擎会话侧
     // prompt-preset 扩展的只读镜像，web 端输入框模型区徽标消费。
     const promptPresets = promptPresetMap(models);
-    return c.json({ project, capabilities: { modelsList: true }, models, favorites, defaults, promptPresets });
+    return c.json({ project, capabilities: { modelsList: true }, models, favorites, favoriteLevels, defaults, promptPresets });
   }));
 
   // 模型发现：provider 清单（GET）与发现/导入（POST，docs08-2026-10-22 批次任务 23）。

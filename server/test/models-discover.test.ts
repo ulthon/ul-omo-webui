@@ -378,3 +378,45 @@ describe("并发导入串行与 provider 清单", () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("invalid_provider");
   });
 });
+
+// 思考档三链 C（路由透传面）：/api/models 下发 favoriteLevels（"provider/model" →
+// 收藏时的思考档）；favoriteModelsWithLevel 未实现（旧 fake）降级空映射。
+describe("GET /api/models favoriteLevels 透传", () => {
+  function makeAppWithEngines(engines: Record<string, unknown>): Hono {
+    const dir = mkdtempSync(join(tmpdir(), "t-favlevels-"));
+    tempRoots.push(dir);
+    const modelsPath = join(dir, "models.json");
+    return new Hono().route(
+      "/",
+      createMetaRoutes({
+        meta: { listProjectMeta: () => [{ projectPath: "/proj" }] } as never,
+        engines: { modelsList: async () => [], ...engines } as never,
+        modelsPath,
+      }),
+    );
+  }
+
+  test("favoriteModelsWithLevel 命中：favorites 归一列表 + favoriteLevels 映射下发", async () => {
+    const app = makeAppWithEngines({
+      favoriteModels: () => ["zai-coding-cn/glm-5.3", "zai-coding-cn/glm-5.3-flash"],
+      favoriteModelsWithLevel: () => [
+        { model: "zai-coding-cn/glm-5.3", level: "max" },
+        { model: "zai-coding-cn/glm-5.3-flash", level: null },
+      ],
+    });
+    const res = await app.request("/api/models");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { favorites: string[]; favoriteLevels: Record<string, string | null> };
+    expect(body.favorites).toEqual(["zai-coding-cn/glm-5.3", "zai-coding-cn/glm-5.3-flash"]);
+    expect(body.favoriteLevels).toEqual({ "zai-coding-cn/glm-5.3": "max", "zai-coding-cn/glm-5.3-flash": null });
+  });
+
+  test("仅 favoriteModels（旧 fake）：favoriteLevels 降级空映射", async () => {
+    const app = makeAppWithEngines({ favoriteModels: () => ["p/m"] });
+    const res = await app.request("/api/models");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { favorites: string[]; favoriteLevels: Record<string, string | null> };
+    expect(body.favorites).toEqual(["p/m"]);
+    expect(body.favoriteLevels).toEqual({});
+  });
+});

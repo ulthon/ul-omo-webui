@@ -918,7 +918,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           const level = typeof event.level === "string" ? event.level : null;
           if (level === null) break;
           if (useSessionsStore.getState().selectedId !== sessionId) break;
-          useUiStore.getState().setSelectedThinkingLevel(level);
+          // 思考档三链 B：用户显式手选过的档位不被引擎回显覆盖（引擎自身 settings.json
+          // 默认 high 会把手选 max 打回）；未手选（回退链/程序化链）照常同步。
+          const ui = useUiStore.getState();
+          if (!ui.userPickedThinking) ui.setSelectedThinkingLevel(level);
           break;
         }
 

@@ -20,6 +20,7 @@ import {
   createProjectConfigStores,
   migrateProjectPreferences,
   permissionPresetSpawnArgs,
+  readProjectPreferences,
   toolsSpawnArgsFromConfig,
 } from "./api/config-migration";
 import { EngineRuntimeRegistry } from "./api/engine-runtime";
@@ -159,6 +160,9 @@ const engines = new EngineRuntimeRegistry(manager, {
   recordUnread: (_projectPath, durableSessionId) => {
     meta.incrementUnread(durableSessionId);
   },
+  // 思考档三链 A：既有会话重开时若会话 jsonl 无落定记录，取项目偏好档随 open 下发
+  //（损坏降级 null = 不传，与 routes-project 同一合并读链）
+  projectThinkingLevel: (projectPath) => readProjectPreferences(projectConfigs, meta, projectPath).preferredThinkingLevel,
   // 回合落定 → 自动生成标题（正常事件路径 + watchdog 合成路径，crashSettle 排除）。
   // 强制 .catch：Bun 未处理 rejection 默认退出进程（凭证缺失/超时/断网皆常见）
   onRoundSettled: (projectPath, settleInfo, reason) => {

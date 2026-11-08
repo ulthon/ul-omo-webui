@@ -181,12 +181,17 @@ class SpyManager {
   async stopAll(): Promise<void> {}
 }
 
-function makeRegistry(manager: SpyManager, agentDir: string): EngineRuntimeRegistry {
+function makeRegistry(
+  manager: SpyManager,
+  agentDir: string,
+  extraOpts: Record<string, unknown> = {},
+): EngineRuntimeRegistry {
   return new EngineRuntimeRegistry(manager as unknown as EngineProcessManager, {
     listProjects: () => [PROJECT],
     agentDir,
     // 收尾监视轮询远长于测试生命期：用例结算不依赖真实时序
     settlePollMs: 3_600_000,
+    ...extraOpts,
   })
 }
 
@@ -404,6 +409,62 @@ describe("createSession 参数随车道直达首开（收编验证）", () => {
       expect(rpc.openCalls).toBe(1)
       expect(rpc.lastOpenOptions).toMatchObject({ provider: "prov-x", modelId: "m-1" })
       expect(rpc.pathInUseRejections).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// 思考档三链 A（修复 max 被引擎默认 high 覆盖的根因一）：ensureForSession 重开既有
+// 会话显式带档——会话 jsonl 落定记录 > 项目偏好 > 不传。断言源 = rpc.lastOpenOptions。
+describe("ensureForSession 重开带落定思考档（思考档三链 A）", () => {
+  const LEVEL_ENTRY = JSON.stringify({
+    type: "thinking_level_change",
+    id: "t1",
+    parentId: null,
+    timestamp: "2026-01-01T00:00:02.000Z",
+    thinkingLevel: "max",
+    thinkingSelection: { level: "max", source: "explicit" },
+  })
+
+  function setupWithSessionBody(body: string, extraOpts: Record<string, unknown> = {}) {
+    const rpc = new FakeLaneRpc()
+    const root = mkdtempSync(join(tmpdir(), "rt-open-lane-level-"))
+    const agentDir = join(root, "agent")
+    const sessionPath = join(agentDir, "sessions", encodeCwdToSessionDirName(PROJECT), `${DURABLE_ID}.jsonl`)
+    mkdirSync(dirname(sessionPath), { recursive: true })
+    writeFileSync(sessionPath, body)
+    const manager = new SpyManager(rpc)
+    const registry = makeRegistry(manager, agentDir, extraOpts)
+    return { root, rpc, registry }
+  }
+
+  test("会话 jsonl 落定档随 open 下发（无项目偏好钩子也命中记录档）", async () => {
+    const { root, rpc, registry } = setupWithSessionBody(SESSION_FILE_BODY + LEVEL_ENTRY + "\n")
+    try {
+      const page = await registry.messages(DURABLE_ID)
+      expect(page.entries).toEqual([])
+      expect(rpc.lastOpenOptions).toMatchObject({ sessionPath: expect.any(String), thinkingLevel: "max" })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("无落定记录时取项目偏好 preferredThinkingLevel", async () => {
+    const { root, rpc, registry } = setupWithSessionBody(SESSION_FILE_BODY, { projectThinkingLevel: () => "high" })
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.lastOpenOptions).toMatchObject({ thinkingLevel: "high" })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("两者皆无：open 不带 thinkingLevel（引擎自身默认接管）", async () => {
+    const { root, rpc, registry } = setupWithSessionBody(SESSION_FILE_BODY, { projectThinkingLevel: () => null })
+    try {
+      await registry.messages(DURABLE_ID)
+      expect(rpc.lastOpenOptions.thinkingLevel).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

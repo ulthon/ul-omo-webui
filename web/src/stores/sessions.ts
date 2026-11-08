@@ -245,6 +245,9 @@ function applyProjectDecision(sessionId: string, targetProject: string): void {
   const pref = ui.projects.find((p) => p.projectPath === targetProject);
   ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
   ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
+  // 思考档三链 B：程序化落定后清手选标记——新会话/新项目的引擎回显照常同步（
+  // 手选语义只对当次选择态成立，跨会话不残留）
+  ui.clearUserPickedThinking();
   void loadProjectModels(targetProject);
 }
 
