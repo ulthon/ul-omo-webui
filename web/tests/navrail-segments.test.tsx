@@ -5,7 +5,7 @@
 // 顶部圆钮按 before 游标（store 最旧 id）翻页。渲染走真实组件（happy-dom +
 // createRoot，旧 harness 同款）；virtualizer 以最小桩满足只读消费面；store 直注；
 // 翻页经 fetchPage 注入桩。测试语言锁 zh-CN（setup-locale.ts）。
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { MessagesPage, WireEntry } from "@/lib/api";
 
@@ -421,5 +421,79 @@ describe("nav-rail 指示器带（组件）", () => {
     // 取回更早消息成新段（2→3 段），无更多后钮消失
     expect(harness.segments().length).toBe(3);
     expect(harness.loadEarlier()).toBeNull();
+  });
+
+  test("carousel 悬停边缘步进 tape 窗口偏移，不触消息列滚动；离开带体归零", async () => {
+    const entries = Array.from({ length: 35 }, (_, i) => userEntry(`第${i + 1}条`));
+    seedStore({ entries });
+    const scrollEl = document.createElement("div");
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    try {
+      harness = await mountRail(
+        entries,
+        entries.map((_, i) => i * 200),
+        scrollEl,
+      );
+      const tape = () =>
+        harness!.host.querySelector<HTMLElement>('[data-testid="nav-rail-band"] > div')!;
+      expect(tape().style.transform).toBe("translateY(0px)");
+
+      // 悬停底缘（y 远超 18px 边缘区）→ 80ms/格向下步进窗口；消息列 scrollTop 不动
+      harness.hoverBand(350);
+      act(() => {
+        vi.advanceTimersByTime(240);
+      });
+      expect(tape().style.transform).toBe("translateY(-36px)"); // 3 格 × 12px
+      expect(scrollEl.scrollTop).toBe(0);
+      expect(callLog.filter((l) => l.startsWith("scrollToOffset"))).toEqual([]);
+
+      // 偏移期间指针映射计入 carousel 偏移：格 0 → 段 3（首行即段首，1:1）
+      harness.hoverBand(4);
+      const rows = harness.rows();
+      expect(rows[3]!.querySelector("[data-hl=true]")).not.toBeNull();
+      expect(rows[2]!.querySelector("[data-hl=true]")).toBeNull();
+
+      // 离开带体：窗口偏移归零，tape 回到活动段居中起点；消息列仍未被滚动
+      act(() => {
+        harness!.band().dispatchEvent(new MouseEvent("pointerout", { bubbles: true }));
+      });
+      expect(tape().style.transform).toBe("translateY(0px)");
+      expect(scrollEl.scrollTop).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("活动段 index 空间稳定：悬停沿带移动不改 data-active 所指段，ticks/segments 同序", async () => {
+    const entries = Array.from({ length: 35 }, (_, i) => userEntry(`第${i + 1}条`));
+    seedStore({ entries });
+    harness = await mountRail(
+      entries,
+      entries.map((_, i) => i * 200),
+    );
+
+    const activeKey = () =>
+      harness!
+        .segments()
+        .filter((s) => s.dataset.active === "true")
+        .map((s) => s.dataset.segKey);
+    const allKeys = () => harness!.segments().map((s) => s.dataset.segKey);
+    // 35 段不合并，与 ticks 同源同序（u1..u35）
+    expect(harness.segments().length).toBe(35);
+    expect(allKeys()).toEqual(entries.map((e) => e.id));
+    // 顶部判定：只有段 0 活动
+    expect(activeKey()).toEqual(["u1"]);
+
+    // 悬停沿带从底到顶移动（无点击、无滚动），data-active 始终指向同一段键
+    for (const y of [350, 200, 100, 50, 4]) {
+      harness.hoverBand(y);
+      expect(activeKey()).toEqual(["u1"]);
+    }
   });
 });

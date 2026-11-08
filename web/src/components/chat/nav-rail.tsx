@@ -5,8 +5,9 @@
 //    ease-out（2px 圆头条），宽普通 10px / active 14px / 悬停聚焦 20px 邻近衰减
 //    [1,0.6,0.35,0.15]；颜色 active 前景色全不透明、普通 /30、悬停 /80。带体
 //    translateY 滑动 tape（transition-transform duration-300 ease-out，key=首段 id
-//    防 prepend 假动画）+ overscan 4；悬停指针 Y/12 取整映射最近刻度；停上/下
-//    18px 边缘区 80ms 间隔 carousel 滚动。
+//    防 prepend 假动画）；悬停指针 Y/12 取整映射最近刻度；停上/下
+//    18px 边缘区 80ms 间隔 carousel：步进 tape 窗口起点遍历更多段（只动
+//    刻度带窗口，聊天内容绝不动）。
 // 2. 悬停面板：固定贴 gutter 左侧（right-full mr-3 不跟指针），全部用户消息预览的
 //    迷你滚动列表（见 nav-rail-segment-card.tsx），离开 160ms 隐藏、移入取消隐藏。
 // 3. 「加载更早」：gutter 顶部独立圆钮（size-5 + arrow-up / loader），不再放面板内。
@@ -100,6 +101,9 @@ export function NavRail({
   const [viewStart, setViewStart] = useState(0);
   const panelHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const carouselTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // carousel 偏移（格）：tapeStartOf(viewIdx) 基础上的独立窗口步进量，离开带体/点击后归零
+  const [carouselOff, setCarouselOff] = useState(0);
+  const segLenRef = useRef(0);
   // 命中区宽（ResizeObserver：容器被消息列挤压时缩 12px）
   const [hitW, setHitW] = useState(BAND_HIT_W_PX);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -114,9 +118,14 @@ export function NavRail({
     return buildTicks(items, entries);
   }, [items, sessionId]);
 
-  // 段聚合：每条用户刻度一格，段数超出带体上限（30 格）时相邻段合并（权和最小对，
-  // buildSegments 纯逻辑）。显示条件：段数 ≥ 2。
-  const segments = useMemo<NavSegmentSpec[]>(() => buildSegments(ticks), [ticks]);
+  // 段聚合：每条用户刻度一段（不合并，buildSegments 纯逻辑传 max=段数）；段数超出
+  // 带容量（30 格）时带体显示 30 格窗口，由 tape 滑动 + carousel 边缘步进遍历。
+  // 显示条件：段数 ≥ 2。
+  const segments = useMemo<NavSegmentSpec[]>(
+    () => buildSegments(ticks, Math.max(ticks.length, 1)),
+    [ticks],
+  );
+  segLenRef.current = segments.length;
 
   // 段顶边（内容坐标系，测量缓存 start）：活动段判定与点击映射共用
   const segOffsets = useMemo(
@@ -244,7 +253,8 @@ export function NavRail({
     }, PANEL_HIDE_DELAY_MS);
   };
 
-  // carousel：悬停停在带上/下 18px 边缘区时按 80ms 间隔滚动消息列
+  // carousel：悬停停在带上/下 18px 边缘区时按 80ms 间隔步进 tape 窗口起点
+  //（+1/-1 格，铳在 [0, 段数-可视格数]；只动刻度带窗口，消息列绝不滚动）
   const stopCarousel = () => {
     if (carouselTimerRef.current !== null) {
       clearInterval(carouselTimerRef.current);
@@ -254,11 +264,22 @@ export function NavRail({
   const startCarousel = (dir: 1 | -1) => {
     if (carouselTimerRef.current !== null) return;
     carouselTimerRef.current = setInterval(() => {
-      const el = scrollRef.current;
-      if (!el) return;
-      el.scrollBy({ top: dir * Math.max(120, el.clientHeight * 0.8) });
+      const maxOff = Math.max(
+        0,
+        segLenRef.current - Math.min(segLenRef.current, BAND_MAX_SEGMENTS),
+      );
+      setCarouselOff((c) => clamp(c + dir, 0, maxOff));
     }, CAROUSEL_STEP_MS);
   };
+
+  // 有效 tape 起点 = 活动段居中起点 + carousel 偏移，铳在窗口范围内
+  const visCount = Math.min(segments.length, BAND_MAX_SEGMENTS);
+  const maxOff = Math.max(0, segments.length - visCount);
+  const effTapeStart = clamp(
+    tapeStartOf(segments.length, viewIdx) + carouselOff,
+    0,
+    maxOff,
+  );
 
   // 指针 → 段下标：Y/12 取整映射最近格 + tape 起点偏移（钳段界）
   const segIdxFromPointer = (clientY: number): number => {
@@ -266,7 +287,7 @@ export function NavRail({
     if (!band) return 0;
     const y = clientY - band.getBoundingClientRect().top;
     const cell = clamp(Math.floor(y / PITCH_PX), 0, Math.min(segments.length, BAND_MAX_SEGMENTS) - 1);
-    return clamp(cell + tapeStartOf(segments.length, viewIdx), 0, segments.length - 1);
+    return clamp(cell + effTapeStart, 0, segments.length - 1);
   };
   const onBandMove = (ev: React.PointerEvent<HTMLDivElement>) => {
     const band = bandRef.current;
@@ -282,6 +303,7 @@ export function NavRail({
   };
   const onBandLeave = () => {
     stopCarousel();
+    setCarouselOff(0);
     setHoverIdx(null);
     closePanelSoon();
   };
@@ -291,6 +313,7 @@ export function NavRail({
   // 点击：按指针 Y 选最近段跳转 + 活动指示 pin 2500ms 防回拖 + 面板关闭
   const onBandClick = (ev: React.MouseEvent<HTMLDivElement>) => {
     stopCarousel();
+    setCarouselOff(0);
     const segIdx = segIdxFromPointer(ev.clientY);
     const seg = segments[segIdx];
     if (!seg) return;
@@ -327,8 +350,7 @@ export function NavRail({
   if (ticks.length === 0 || segments.length < 2) return null;
 
   const viewIdxSafe = clamp(viewIdx, 0, segments.length - 1);
-  const bandH = Math.min(segments.length, BAND_MAX_SEGMENTS) * PITCH_PX;
-  const tapeStart = tapeStartOf(segments.length, viewIdxSafe);
+  const bandH = visCount * PITCH_PX;
   const panelWindowH = winRows * PANEL_ROW_PX;
   const offsetY = -viewStart * PANEL_ROW_PX;
 
@@ -371,7 +393,7 @@ export function NavRail({
         <div
           key={segments[0]!.key}
           className="flex flex-col items-center transition-transform duration-300 ease-out"
-          style={{ transform: `translateY(${-tapeStart * PITCH_PX}px)` }}
+          style={{ transform: `translateY(${-effTapeStart * PITCH_PX}px)` }}
         >
           {segments.map((seg, i) => {
             const isActive = i === viewIdxSafe;
