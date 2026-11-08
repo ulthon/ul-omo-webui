@@ -24,7 +24,9 @@ function runGit(project: string, args: string[], maxBuffer: number): { status: n
 }
 
 function requireRepo(project: string, stderr: string, status: number): void {
-  if (stderr.includes("not a git repository") || stderr.includes("not a worktree")) {
+  // exit 128 = 仓库级错误（非仓库/损坏/环境异常）；git 本地化环境下 stderr 文案不保证英文，
+  // 诊断包（2026-11-08）旧版对未知文案落 500 刷噪声，一律归入 409 非仓库态。
+  if (stderr.includes("not a git repository") || stderr.includes("not a worktree") || status === 128) {
     throw new ApiError(409, "not_a_git_repo", `目录不是 git 仓库：${project}`);
   }
   if (status !== 0) {

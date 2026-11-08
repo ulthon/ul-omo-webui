@@ -14,7 +14,7 @@ import { ApiError, parseJsonBody, route } from "./http";
 import { THINKING_LEVEL_VALUES, type PreferredThinkingLevel } from "../conf/config-store";
 import type { ApiDeps } from "./deps";
 import type { ProjectMeta } from "../db/meta";
-import { validateProjectInput, createProjectInput } from "./paths";
+import { validateProjectInput, registerProjectInput, createProjectInput } from "./paths";
 
 /** meta 行 + 合并偏好响应（preferredModel/permissionPreset/preferredThinkingLevel/tools/excludedTools
  *  为合并值；损坏降级时附 configError；tools 显式空集附 degradedNoTools） */
@@ -69,7 +69,7 @@ export function createProjectRoutes(deps: ApiDeps & { projectConfigs: ProjectCon
     const project =
       body.create === true
         ? createProjectInput(body.path)
-        : validateProjectInput(body.path);
+        : registerProjectInput(body.path);
     deps.meta.updateProjectMeta(project, { lastOpenedAt: new Date().toISOString() });
     const meta = deps.meta.getProjectMeta(project);
     return c.json({ ok: true, project: meta ? projectResponse(meta, viewOf(project)) : null });

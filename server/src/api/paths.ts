@@ -5,7 +5,7 @@
 // posix 只认 / 开头，跨平台伪绝对形态在 Linux 上仍被拒）；包含性判定用平台分隔符，
 // win32 下大小写不敏感（用户输入大小写与 realpath 规范形态不一致时不得误判逃逸）。
 import { accessSync, constants, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { ApiError } from "./http";
 
 const IS_WIN = process.platform === "win32";
@@ -44,6 +44,26 @@ export function validateProjectInput(raw: unknown): string {
 }
 
 /**
+ * 注册面口径（#33，2026-11-08 诊断包定案）：validateProjectInput 全部校验 + 根目录拒收 +
+ * 可写探测。仅 POST /api/projects 与 createProjectInput 复核使用；读路径（?project= 查询、
+ * memory 全局兜底等）继续走 validateProjectInput 原口径，不拒根。
+ * 根目录拒收：根作为工作目录的会话曾把项目列表污染成 "/"（旧版诊断包），偏好写必失败；
+ * 只读拒收：偏好/配置写落在项目目录内，只读目录注册后每次写都会 500。
+ */
+export function registerProjectInput(raw: unknown): string {
+  const real = validateProjectInput(raw);
+  if (real === parse(real).root) {
+    throw new ApiError(400, "invalid_project_root", "不能以文件系统根目录作为项目：请注册具体项目目录");
+  }
+  try {
+    accessSync(real, constants.W_OK);
+  } catch {
+    throw new ApiError(400, "project_not_writable", `项目目录不可写：${real}`);
+  }
+  return real;
+}
+
+/**
  * create:true 分支（docs08-r3 任务 20"新建并添加"）：路径不存在时建目录再注册。
  * 安全口径（与 browse/validateProjectInput 同源，不做软链接解析放宽）：
  * 1. 形状校验（绝对路径、无 NUL、≤4096——对齐 routes-fs browse 口径）后 resolve 规范化；
@@ -76,7 +96,7 @@ export function createProjectInput(raw: unknown): string {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") exists = false;
   }
-  if (exists) return validateProjectInput(target);
+  if (exists) return registerProjectInput(target);
 
   let parent = dirname(target);
   for (;;) {
@@ -108,7 +128,7 @@ export function createProjectInput(raw: unknown): string {
     const reason = err instanceof Error ? err.message : String(err);
     throw new ApiError(400, "mkdir_failed", `创建目录失败：${raw}（${reason}）`);
   }
-  return validateProjectInput(target);
+  return registerProjectInput(target);
 }
 
 /**
