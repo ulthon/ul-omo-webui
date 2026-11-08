@@ -12,7 +12,7 @@
 // 跨目录路径）；操作成功后重取当前目录与树（不做乐观更新）；失败 toast
 // （apiErrorMessage 错误码词典文案）。无拖拽、无批量勾选（后续任务也不做，计划 Must NOT）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ChevronRight, Pencil, RefreshCw, Upload, X } from "lucide-react";
 import { api, ApiError, FsUploadConflictError } from "@/lib/api";
 import type { FsFileResponse, FsTreeEntry } from "@/lib/api";
@@ -26,6 +26,20 @@ import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
+import {
+  FILES_LEFT_DEFAULT,
+  FILES_LEFT_MAX,
+  FILES_LEFT_MIN,
+  FILES_RIGHT_DEFAULT,
+  FILES_RIGHT_MAX,
+  FILES_RIGHT_MIN,
+  clampFilesLeftWidth,
+  clampFilesRightWidth,
+  readFilesLeftWidthPreference,
+  readFilesRightWidthPreference,
+  writeFilesLeftWidthPreference,
+  writeFilesRightWidthPreference,
+} from "./files-resize";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -230,6 +244,94 @@ export function FilesPage() {
   }, [pickedProject, projects, activeProject]);
 
   const [dir, setDir] = useState("");
+
+  // 桌面三栏拖宽记忆（files-panel-oc 任务 2）：仿 shell.tsx 侧栏手柄模式——state +
+  // ref 镜像，pointer capture 拖拽实时钳制，pointerup 落记忆，双击重置默认；
+  // 左栏手柄右移变宽，右栏手柄左移变宽。移动端三态切换不消费。
+  const [leftWidth, setLeftWidth] = useState(() => readFilesLeftWidthPreference());
+  const [rightWidth, setRightWidth] = useState(() => readFilesRightWidthPreference());
+  const leftWidthRef = useRef(leftWidth);
+  const rightWidthRef = useRef(rightWidth);
+  const leftDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const rightDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+
+  const applyLeftWidth = (next: number) => {
+    leftWidthRef.current = next;
+    setLeftWidth(next);
+  };
+  const applyRightWidth = (next: number) => {
+    rightWidthRef.current = next;
+    setRightWidth(next);
+  };
+  const onLeftPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    leftDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: leftWidthRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onRightPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    rightDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: rightWidthRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  // 左栏手柄右移变宽；右栏手柄左移变宽（方向相反，delta 取负）
+  const onLeftPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = leftDragRef.current;
+    if (!drag) return;
+    applyLeftWidth(clampFilesLeftWidth(drag.startWidth + (e.clientX - drag.startX)));
+  };
+  const onRightPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = rightDragRef.current;
+    if (!drag) return;
+    applyRightWidth(clampFilesRightWidth(drag.startWidth - (e.clientX - drag.startX)));
+  };
+  // pointerup：落记忆；pointercancel：只终止拖拽（宽度已实时钳制，记忆留给下次完整拖拽）
+  const onLeftPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!leftDragRef.current) return;
+    leftDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    writeFilesLeftWidthPreference(leftWidthRef.current);
+  };
+  const onRightPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!rightDragRef.current) return;
+    rightDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    writeFilesRightWidthPreference(rightWidthRef.current);
+  };
+  const onLeftPointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    leftDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const onRightPointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    rightDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  // 键盘微调（可聚焦分隔条）：左右方向键 ±16px 并即时记忆
+  const onLeftKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = clampFilesLeftWidth(leftWidthRef.current + (e.key === "ArrowLeft" ? -16 : 16));
+    applyLeftWidth(next);
+    writeFilesLeftWidthPreference(next);
+  };
+  const onRightKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = clampFilesRightWidth(rightWidthRef.current + (e.key === "ArrowLeft" ? 16 : -16));
+    applyRightWidth(next);
+    writeFilesRightWidthPreference(next);
+  };
+  const onLeftDoubleClick = () => {
+    applyLeftWidth(FILES_LEFT_DEFAULT);
+    writeFilesLeftWidthPreference(FILES_LEFT_DEFAULT);
+  };
+  const onRightDoubleClick = () => {
+    applyRightWidth(FILES_RIGHT_DEFAULT);
+    writeFilesRightWidthPreference(FILES_RIGHT_DEFAULT);
+  };
+
+  // 桌面三栏拖宽记忆（files-panel-oc 任务 2）：仿 shell.tsx 侧栏手柄模式——state +
+  // ref 镜像，pointer capture 拖拽实时钳制，pointerup 落记忆，双击重置默认；
+  // 左栏手柄右移变宽，右栏手柄左移变宽。移动端三态切换不消费。
   const [selected, setSelected] = useState<string | null>(null);
   // 在线编辑态（任务 8）：editingPath = 正在编辑的文件；editDirtyRef 为编辑器脏态
   // 上报（FileEditor 契约，NotesView dirtyRef 先例）。所有切走路径先过 guardDirty。
@@ -975,10 +1077,50 @@ export function FilesPage() {
           </div>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[16rem_1fr_22rem]">
+        <div
+          className="relative grid min-h-0 flex-1"
+          style={{ gridTemplateColumns: `${leftWidth}px 1fr ${rightWidth}px` }}
+        >
           <div className="min-h-0 border-r p-2">{treePane}</div>
           <div className="min-h-0 overflow-y-auto p-3">{listPane}</div>
           <div className="min-h-0 border-l p-3">{previewPane}</div>
+          {/* 两根拖宽手柄：骑跨栏缘边框（w-1.5 命中区，绝对定位），仅桌面渲染 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整左栏宽度"
+            aria-valuenow={leftWidth}
+            aria-valuemin={FILES_LEFT_MIN}
+            aria-valuemax={FILES_LEFT_MAX}
+            tabIndex={0}
+            data-testid="files-resize-handle-left"
+            onPointerDown={onLeftPointerDown}
+            onPointerMove={onLeftPointerMove}
+            onPointerUp={onLeftPointerUp}
+            onPointerCancel={onLeftPointerCancel}
+            onKeyDown={onLeftKeyDown}
+            onDoubleClick={onLeftDoubleClick}
+            style={{ left: leftWidth - 3 }}
+            className="absolute inset-y-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none"
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整右栏宽度"
+            aria-valuenow={rightWidth}
+            aria-valuemin={FILES_RIGHT_MIN}
+            aria-valuemax={FILES_RIGHT_MAX}
+            tabIndex={0}
+            data-testid="files-resize-handle-right"
+            onPointerDown={onRightPointerDown}
+            onPointerMove={onRightPointerMove}
+            onPointerUp={onRightPointerUp}
+            onPointerCancel={onRightPointerCancel}
+            onKeyDown={onRightKeyDown}
+            onDoubleClick={onRightDoubleClick}
+            style={{ right: rightWidth - 3 }}
+            className="absolute inset-y-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none"
+          />
         </div>
       )}
       {/* 隐藏文件选择器（多选；目标目录由 openUploadPicker 预置） */}
