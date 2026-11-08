@@ -698,8 +698,13 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       sessions.setRunState(sessionId, "waiting");
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
-    // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点
+    // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点。
+    // 文本进常驻错误卡（#31：429 限流等引擎错误帧此前只亮状态点、文本被丢弃致 UI 展示为空）——
+    // 对齐“错误类提示合成进会话消息流常驻错误卡”约定；无文本帧仅置状态点（重连快照对账
+    // 不含错误卡，重放面不存在重复入卡路径）
     sessions.setRunState(sessionId, "error");
+    const errorText = typeof wire.message === "string" ? wire.message.trim() : "";
+    if (errorText) useMessagesStore.getState().pushError(sessionId, errorText);
   }
 
   // 帧序纪元记账（缺陷 B 帧序窗口判据）：本帧分发落定后，该会话 runState 为

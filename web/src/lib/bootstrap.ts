@@ -80,7 +80,7 @@ export async function bootstrap(): Promise<void> {
     ui.setTagDisplayMode(parseTagDisplayMode(settings[TAG_DISPLAY_MODE_KV]));
     // 用法提示开关（docs08 2026-10-22 批次任务 25）：键缺失/非 "false" 一律开启（缺省开）
     ui.setTipsEnabled(parseTipsEnabled(settings[TIPS_ENABLED_KV]));
-    // 粘贴图片发送方式（任务 20）：键缺失/非法值回退 auto（现状行为）
+    // 粘贴图片发送方式（任务 20，#29 改档）：键缺失/非法值回退 attach（优先不进模型）
     ui.setPasteImageMode(parsePasteImageMode(settings[PASTE_IMAGE_MODE_KV]));
     // 站点名覆盖（小修 A）：键缺失/空串回退 null（顶栏 resolveSiteName 退 env 注入默认）
     ui.setSiteName(settings[SITE_NAME_KV]?.trim() || null);

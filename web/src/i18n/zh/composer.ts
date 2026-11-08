@@ -27,6 +27,8 @@ export const composer = {
   fileRefTitle: "引用文件（插入 @路径）",
   imageAddAria: "添加图片",
   imageAddTitle: "添加图片（可粘贴截图）",
+  attachAddTitle: "上传附件（任意文件，作为附件发送不进模型）",
+  attachAddAria: "上传附件",
   snippetButton: "常用语",
   moreAria: "更多",
   moreTitle: "更多：历史、@、图片",

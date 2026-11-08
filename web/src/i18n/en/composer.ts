@@ -25,6 +25,8 @@ export const composer = {
   fileRefTitle: "Reference file (insert @path)",
   imageAddAria: "Add image",
   imageAddTitle: "Add image (paste a screenshot)",
+  attachAddTitle: "Upload attachment (any file, sent as attachment, not fed to the model)",
+  attachAddAria: "Upload attachment",
   snippetButton: "Snippets",
   moreAria: "More",
   moreTitle: "More: history, @, images",

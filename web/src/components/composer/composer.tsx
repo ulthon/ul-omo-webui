@@ -19,7 +19,7 @@
 // 原文插入输入框（内容永不丢）+toast。三按钮选择条退役；占位符改语法教学（桌面长版/
 // 手机短版按视口）。
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
 import { diag, sendTrace } from "@/lib/diag";
@@ -171,6 +171,8 @@ export function Composer({
   const modelPendingEffect = pendingModelBadgeVisible(queueAvailable, selectedModelForBadge, appliedModel);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // #29：上传附件入口（任意文件全部走二进制附件 chip，不进模型；含图片也作附件）
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
 
   // 竞态防护判据（草稿回填用）：输入框为空（还没打字）或非焦点（没在打）才允许回填，
   // 绝不覆盖用户正在输入的内容。useDraft 的恢复是网络异步回调，判定函数挂载即就绪。
@@ -1243,6 +1245,16 @@ export function Composer({
       </button>
       <button
         type="button"
+        data-testid="attach-btn"
+        aria-label={t("composer.attachAddAria")}
+        title={t("composer.attachAddTitle")}
+        onClick={() => attachInputRef.current?.click()}
+        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+      >
+        <Paperclip className="size-5" />
+      </button>
+      <button
+        type="button"
         data-testid="image-btn"
         aria-label={t("composer.imageAddAria")}
         title={t("composer.imageAddTitle")}
@@ -1302,6 +1314,21 @@ export function Composer({
         const others = files.filter((f) => !f.type.startsWith("image/"));
         if (images.length > 0) void addImageFiles(images);
         if (others.length > 0) void addFileFiles(others);
+      }}
+    />
+  );
+  const attachInputNode = (
+    <input
+      ref={attachInputRef}
+      type="file"
+      multiple
+      data-testid="composer-attach-input"
+      className="hidden"
+      onChange={(e) => {
+        // #29：附件入口选中的一切（含图片）都走二进制附件 chip，不进模型
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = "";
+        if (files.length > 0) addFileFiles(files);
       }}
     />
   );
@@ -1516,6 +1543,7 @@ export function Composer({
           </div>
         </div>
         {fileInputNode}
+        {attachInputNode}
         {errorLine}
         {filePickerNode}
         {/* snippetDropdownNode 已在上方条区渲染（docs08-r5 任务 9），不重复挂载 */}
@@ -1546,6 +1574,7 @@ export function Composer({
         className="max-h-48 min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
       />
       {fileInputNode}
+        {attachInputNode}
       <div className="flex items-center gap-1">
         <div className="flex shrink-0 items-center gap-1">
           {toolButtons}

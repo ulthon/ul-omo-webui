@@ -9,7 +9,7 @@
 // 条目点击就地展开编辑器，收起/点外部自动保存；其余四块各自限高（max-h-64）内部滚动、
 // 独立空态文案（zh/en 词条在 login.rightRail.overview），块间 border-b 分隔。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useTasksStore, type BackgroundTask } from "@/stores/tasks";
@@ -205,6 +205,18 @@ function OverviewNotes() {
       <div className="mb-1.5 flex items-center justify-between">
         <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.notesTitle")}</h3>
         <span className="flex items-center gap-0.5">
+          {/* #32：新增入口（照搬右栏 draft 顶插空行编辑器）；软删可恢复放回收站 */}
+          <button
+            type="button"
+            onClick={() => setEditingId("draft")}
+            disabled={!project || failed || notes === null || editingId !== null}
+            aria-label={t("login.rightRail.overview.notesAddAria")}
+            title={t("login.rightRail.overview.notesAddTitle")}
+            data-testid="overview-notes-add"
+            className="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
+          >
+            <Plus className="size-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => changeCount(-1)}
@@ -230,7 +242,8 @@ function OverviewNotes() {
           </button>
         </span>
       </div>
-      <div className={OVERVIEW_BODY_CLASS}>
+      <div>
+        {/* #32：去单块限高（不限高不内部滚动，随面板整页滚动） */}
         {!project || failed || notes === null ? (
           <OverviewEmpty
             text={
@@ -250,6 +263,22 @@ function OverviewNotes() {
               <span className="mx-1">·</span>
               {t("login.rightRail.overview.notesEditHint")}
             </p>
+            {editingId === "draft" && (
+              <NoteInlineEditor
+                noteId={null}
+                project={project}
+                dirtyRef={dirtyRef}
+                onSaved={() => {
+                  setEditingId(null);
+                  onChanged();
+                }}
+                onCancel={() => setEditingId(null)}
+                onDeleted={() => {
+                  setEditingId(null);
+                  onChanged();
+                }}
+              />
+            )}
             <ul className="space-y-1.5">
               {notes.slice(0, count).map((note) =>
                 editingId === note.id ? (
@@ -281,7 +310,34 @@ function OverviewNotes() {
                   </li>
                 ) : (
                   <li key={note.id}>
-                    <NoteFlatCard note={note} testid="overview-note-item" onClick={() => setEditingId(note.id)} />
+                    <NoteFlatCard
+                      note={note}
+                      testid="overview-note-item"
+                      onClick={() => setEditingId(note.id)}
+                      footerExtra={
+                        <button
+                          type="button"
+                          aria-label={t("login.rightRail.overview.notesDeleteAria")}
+                          title={t("login.rightRail.overview.notesDeleteAria")}
+                          data-testid={`overview-note-delete-${note.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void notesApi
+                              .remove(note.id)
+                              .then(() => onChanged())
+                              .catch((err: unknown) =>
+                                showToast(
+                                  err instanceof Error && err.message ? err.message : t("login.rightRail.overview.notesDeleteFailed"),
+                                  "error",
+                                ),
+                              );
+                          }}
+                          className="flex size-6 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted/50 hover:text-destructive"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      }
+                    />
                   </li>
                 ),
               )}
@@ -420,13 +476,14 @@ export function OverviewPanel({ sessionId }: { sessionId: string | null }) {
   return (
     <div data-testid="overview-panel" className="h-full overflow-y-auto">
       <OverviewPlan sessionId={sessionId} />
-      <OverviewEngine sessionId={sessionId} />
-      <EngineDiagnosticsFold />
       <OverviewTasks sessionId={sessionId} />
       <OverviewBackgroundTasks sessionId={sessionId} />
       <OverviewNotes />
       <OverviewStats sessionId={sessionId} />
       <OverviewAgents sessionId={sessionId} />
+      {/* #30：引擎状态/引擎诊断两块下移至面板尾部（用户定调不置顶；业务区块在前） */}
+      <OverviewEngine sessionId={sessionId} />
+      <EngineDiagnosticsFold />
     </div>
   );
 }
