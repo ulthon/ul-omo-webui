@@ -281,7 +281,6 @@ export const chat = {
     yesterday: "Yesterday",
     loadEarlier: "Load earlier",
     noMore: "No more",
-    locating: "Locating…",
   },
   // permission-queue.tsx
   permissionQueue: {

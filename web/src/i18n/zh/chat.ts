@@ -282,7 +282,6 @@ export const chat = {
     yesterday: "昨天",
     loadEarlier: "加载更早",
     noMore: "无更多",
-    locating: "定位中",
   },
   // permission-queue.tsx 权限队列容器
   permissionQueue: {

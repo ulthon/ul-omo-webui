@@ -1,6 +1,7 @@
-// nav-rail 分段指示器纯逻辑（openchamber 同款右缘分段轨）：用户刻度按自然日聚合成段，
-// 段高 ∝ 段内用户消息量（渲染侧 flex 比例分配 + 最小可点高 12px 承担），段日期标签
-// 「今天/昨天/M月D日」（更早日期走 Intl 月-日，zh-CN「10月30日」形态，同 i18n.ts
+// nav-rail 分段指示器纯逻辑（#27b，openchamber 同款右缘分段轨）：每条用户刻度自成一段
+//（用户消息簇），段高 ∝ 段内用户消息量（渲染侧 flex 比例分配 + 最小可点高 12px 承担），
+// 段多时相邻段合并保持可辨识密度（buildSegments maxSegments），段标签取段首刻度所在
+// 自然日「今天/昨天/M月D日」（更早日期走 Intl 月-日，zh-CN「10月30日」形态，同 i18n.ts
 // formatRelativeTime 的 Intl 口径）。now/locale/今日昨日文案由调用侧注入（测试确定性），
 // 本模块无副作用无 store 依赖。
 import type { ChatListItem } from "./message-items";
@@ -31,12 +32,12 @@ export interface NavSegmentRow {
   summary: string;
 }
 
-/** 段：一个自然日的用户刻度聚合（段键 = 自然日键，全无效时间戳段为 ""） */
+/** 段：用户消息簇（一条用户消息自成一段；段多时相邻段合并显示，段键 = 段首刻度 key） */
 export interface NavSegmentSpec {
   key: string;
-  /** 日期标签（今天/昨天/Intl 月-日；无效日键为 "—"） */
+  /** 日期标签（段首刻度所在自然日：今天/昨天/Intl 月-日；无效日键为 "—"） */
   label: string;
-  /** 段内用户消息数（段高权重，≥1） */
+  /** 段内用户消息数（段高权重，≥1；合并段为被并入各簇之和） */
   count: number;
   /** 段首刻度 items 下标与行 key（点击段落位/高亮锚点；行 key 即条目 id，跨重排稳定） */
   firstIndex: number;
@@ -127,8 +128,15 @@ export function dayLabelOf(
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(at);
 }
 
-/** 刻度按自然日聚合成段（时间线旧→新）：无效日键（""）刻度并入前段，流首无前段时
- *  并入次个真实日段，全无效自成一段（标签 "—"）。complete = 非首段，或首段无更早历史。 */
+/** 相邻段合并后单段的最小占轨高度（px）：minHeight 12px + my-px 间隙 2px。
+ *  调用侧按轨高换算 maxSegments = floor(railH / SEG_MIN_TRACK_PX)，段数超出即合并。 */
+export const SEG_MIN_TRACK_PX = 14;
+
+/** 刻度按用户消息簇聚合成段（#27b，时间线旧→新）：每条用户刻度自成一段；段数超出
+ *  maxSegments（轨高÷单段最小占轨高度，保持可辨识密度）时相邻段合并——每轮选权和
+ *  最小的相邻对（并列取最左）并入左段（段键/段首/标签随左段，行清单顺序拼接）。
+ *  complete = 非首段，或首段无更早历史。maxSegments 缺省不合并（轨高未知时先按簇
+ *  展示，测得轨高后随重渲染收敛）。 */
 export function buildSegments(
   ticks: readonly NavTick[],
   opts: {
@@ -136,45 +144,37 @@ export function buildSegments(
     now: number;
     locale: string;
     labels: { today: string; yesterday: string };
+    maxSegments?: number;
   },
 ): NavSegmentSpec[] {
-  const groups: Array<{ dayKey: string; ticks: NavTick[] }> = [];
-  let pending: NavTick[] = []; // 无效日键缓冲：有前段并前段，否则并入下一个真实日段
-  for (const tick of ticks) {
-    if (tick.dayKey === "") {
-      pending.push(tick);
-      continue;
-    }
-    const last = groups[groups.length - 1];
-    if (!last) {
-      groups.push({ dayKey: tick.dayKey, ticks: [...pending, tick] });
-    } else {
-      if (pending.length > 0) {
-        last.ticks.push(...pending);
-        pending = [];
+  const segments: NavSegmentSpec[] = ticks.map((tick, i) => ({
+    key: tick.key,
+    label: dayLabelOf(tick.dayKey, opts.now, opts.locale, opts.labels),
+    count: 1,
+    firstIndex: tick.index,
+    firstKey: tick.key,
+    rows: [{ key: tick.key, time: tick.time, summary: tick.summary }],
+    complete: i > 0 || !opts.hasMore,
+  }));
+  const max = opts.maxSegments ?? Number.POSITIVE_INFINITY;
+  while (segments.length > max) {
+    let best = 0;
+    let bestSum = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const sum = segments[i]!.count + segments[i + 1]!.count;
+      if (sum < bestSum) {
+        bestSum = sum;
+        best = i;
       }
-      if (last.dayKey === tick.dayKey) {
-        last.ticks.push(tick);
-      } else {
-        groups.push({ dayKey: tick.dayKey, ticks: [tick] });
-      }
     }
-  }
-  if (pending.length > 0) {
-    const last = groups[groups.length - 1];
-    if (last) last.ticks.push(...pending);
-    else groups.push({ dayKey: "", ticks: pending });
-  }
-  return groups.map((g, i) => {
-    const head = g.ticks[0]; // 组入列时必带首刻度
-    return {
-      key: g.dayKey,
-      label: dayLabelOf(g.dayKey, opts.now, opts.locale, opts.labels),
-      count: g.ticks.length,
-      firstIndex: head.index,
-      firstKey: head.key,
-      rows: g.ticks.map((tk) => ({ key: tk.key, time: tk.time, summary: tk.summary })),
-      complete: i > 0 || !opts.hasMore,
+    const left = segments[best]!;
+    const right = segments[best + 1]!;
+    segments[best] = {
+      ...left,
+      count: left.count + right.count,
+      rows: [...left.rows, ...right.rows],
     };
-  });
+    segments.splice(best + 1, 1);
+  }
+  return segments;
 }

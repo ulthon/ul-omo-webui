@@ -1,25 +1,24 @@
-// 右缘对话导航轨（A7，docs08-r3 任务 16）：openchamber 同款分段指示器——用户刻度按
-// 自然日聚合成段（nav-rail-segments.ts 纯逻辑），段高 ∝ 段内用户消息量（flex 比例分
-// 配，最小可点高 12px），段日期标签进悬停弹卡（受控显隐沿用原浮卡：进入即显、移出
-// 100ms 内隐藏，弹卡自身悬停续期供「加载更早」钮点按）。刻度仍按 TanStack Virtual
-// 测量缓存 itemStart/totalSize 比例定位（只读内存测量缓存，不破坏虚拟化）。点击刻度
-// 定位到该条 + 目标行 1.5s 一次性高亮（data 属性 + index.css 动画，沿用）；点击段定
-// 位到段首条——段不完整（首段且窗外还有更早历史）时先经 messages store 的
-// fetchEarlierPage（backfillModelTimeline 同款 fetchPage 注入翻页通道）按 before 游标
-//（store 最旧 id，同触顶翻页通道）逐窗回溯取到该段日界证据再落位，定位中段内显示
-// spinner（弹卡头部「定位中」）。弹卡显示该段最近用户消息（时间 + 60 字单行摘要，默
-// 认 3 条，「加载更早」一次 10 条，无更多时隐藏）。视口指示块按
+// 右缘对话导航轨（A7，docs08-r3 任务 16；#27b 簇分段升级）：openchamber 同款分段指示
+// 器——每条用户刻度自成一段（用户消息簇），段高 ∝ 段内用户消息量（flex 比例分配，
+// 最小可点高 12px），段多时相邻段合并（maxSegments = 轨高÷14px，ResizeObserver 测得
+// 轨高后收敛）保持可辨识密度；段标签（段首刻度所在自然日）进悬停弹卡（受控显隐沿用
+// 原浮卡：进入即显、移出 100ms 内隐藏，弹卡自身悬停续期供「加载更早」钮点按）。当前
+// 视口所在段 data-active 高亮（指示块中点落在哪段轨区即点亮，随 scroll rAF 直写）。
+// 刻度仍按 TanStack Virtual 测量缓存 itemStart/totalSize 比例定位（只读内存测量缓存，
+// 不破坏虚拟化）。点击刻度/段定位到段首 + 目标行 1.5s 一次性高亮（data 属性 +
+// index.css 动画，沿用）——簇分段语义下段由已加载消息构建，目标段必然已在窗内，
+// 无需先翻页预拉（向上分页由弹卡「加载更早」承担）。弹卡显示该段用户消息预览（时间 +
+// 两行截断摘要，默认 3 条，「加载更早」一次 10 条，无更多时隐藏）。视口指示块按
 // scrollTop..scrollTop+clientHeight 区间映射，rAF 节流直写 style（不进 React 渲染路
 // 径，同自动滚底订阅范式）。hidden lg:flex 手机不显示（触屏无悬停，段/刻度点按即跳）；
 // 不替代原生滚动条（容器 pointer-events-none，段/刻度按钮才可点，段间隙点击穿透）。
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import type { MessagesPage } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { NavRailSegmentCard } from "./nav-rail-segment-card";
-import { buildSegments, buildTicks, dayKeyOf, type NavSegmentSpec, type NavTick } from "./nav-rail-segments";
+import { buildSegments, buildTicks, SEG_MIN_TRACK_PX, type NavSegmentSpec, type NavTick } from "./nav-rail-segments";
 import { useNavRailHover } from "./use-nav-rail-hover";
 import { useNavRailJump } from "./use-nav-rail-jump";
 import type { ChatListItem } from "./message-items";
@@ -29,9 +28,6 @@ const CARD_INITIAL_ROWS = 3;
 
 /** 「加载更早」一次展开的条数 */
 const CARD_MORE_STEP = 10;
-
-/** 段落位回溯翻页安全闸（正常 1-2 窗即越过日界；防异常服务端分页无限循环） */
-const MAX_BACKFILL_PAGES = 50;
 
 export function NavRail({
   items,
@@ -44,24 +40,18 @@ export function NavRail({
   sessionId: string;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   virtualizer: Virtualizer<HTMLDivElement, Element>;
-  /** 翻页注入面（backfillModelTimeline 同款）：段回溯与「加载更早」共用，测试传桩免 mock api 模块 */
+  /** 翻页注入面（backfillModelTimeline 同款）：「加载更早」窗外翻页共用，测试传桩免 mock api 模块 */
   fetchPage: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage>;
 }) {
   const railRef = useRef<HTMLDivElement | null>(null);
   const indicatorRef = useRef<HTMLDivElement | null>(null);
-
-  // items 最新引用：段回溯取数是异步流，落位时按提交后的 items 重找段首下标
-  //（commit 后同步写入，回溯续体在读之前必已经过至少一次 commit）
-  const itemsRef = useRef(items);
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
+  // 轨高（窗口/容器变化时随 ResizeObserver 更新）：换算段数上限，超出即相邻段合并
+  const [railHeight, setRailHeight] = useState(0);
 
   // 悬停弹卡：受控显隐状态机抽离至 use-nav-rail-hover（进入即显、移出 100ms 内隐藏、
   // 弹卡悬停续期、翻页展开数随段切换重置）
   const { hover, pages, setPages, openCard, closeCardSoon, clearHideTimer, cardTopFromEvent } =
     useNavRailHover(railRef);
-  const [locating, setLocating] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const t = useT();
@@ -73,9 +63,10 @@ export function NavRail({
     return buildTicks(items, entries);
   }, [items, sessionId]);
 
-  // 段聚合：按自然日分组（buildSegments 纯逻辑），段高权重 = 段内用户消息数。
-  // now 取渲染时刻（标签只需日粒度；跨日陈旧随下一次 entries 变化自愈），与刻度的
-  // 非响应式 store 快照读同一风类。
+  // 段聚合：按用户消息簇分段（每条用户刻度一段，#27b），段数上限 = 轨高÷单段最小
+  // 占轨高度，超出即相邻段合并（buildSegments 纯逻辑）。轨高未测得时先不合并，测得
+  // 后随重渲染收敛。now 取渲染时刻（标签只需日粒度），与刻度的非响应式 store 快照
+  // 读同一风类。
   const segments = useMemo<NavSegmentSpec[]>(
     () =>
       buildSegments(ticks, {
@@ -83,28 +74,64 @@ export function NavRail({
         now: Date.now(),
         locale: useLocaleStore.getState().locale,
         labels: { today: t("chat.navRail.today"), yesterday: t("chat.navRail.yesterday") },
+        maxSegments:
+          railHeight > 0 ? Math.max(1, Math.floor(railHeight / SEG_MIN_TRACK_PX)) : undefined,
       }),
-    [ticks, sessionId, t],
+    [ticks, sessionId, t, railHeight],
   );
 
-  // 视口指示块：scroll 事件 rAF 节流后直写 transform/height；rail 尺寸变化（窗口改宽高）
-  // 经 ResizeObserver 走同一路径。deps 带 ticks.length：空→有刻度翻转时 refs 才挂上，需重挂监听。
+  // 视口指示块：scroll 事件 rAF 节流后直写 transform/height，并点亮当前视口所在段
+  // （#27b：指示块中点落在哪段轨区，该段 data-active 高亮；段界以段钮真实 offsetTop
+  // 为准，minHeight 托底造成的非纯比例分布不失准）。rail 尺寸变化（窗口改宽高）经
+  // ResizeObserver 走同一路径并同步 railHeight（段合并密度随轨高收敛）。deps 带
+  // ticks.length：空→有刻度翻转时 refs 才挂上，需重挂监听。
+  const segmentsRef = useRef(segments);
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
   useEffect(() => {
     const scrollEl = scrollRef.current;
     const railEl = railRef.current;
     const indicator = indicatorRef.current;
     if (!scrollEl || !railEl || !indicator) return;
     let raf = 0;
+    let activeKey: string | null = null;
     const paint = () => {
       raf = 0;
-      const total = virtualizer.getTotalSize();
       const railH = railEl.clientHeight;
+      if (railH > 0 && railHeight !== railH) setRailHeight(railH);
+      const total = virtualizer.getTotalSize();
       if (total <= 0 || railH <= 0) return;
       const ratio = railH / total;
       const height = Math.max(12, Math.min(scrollEl.clientHeight * ratio, railH));
       const top = Math.max(0, Math.min(scrollEl.scrollTop * ratio, railH - height));
       indicator.style.transform = `translateY(${top}px)`;
       indicator.style.height = `${height}px`;
+      const mid = top + height / 2;
+      const segs = segmentsRef.current;
+      const totalWeight = segs.reduce((acc, s) => acc + s.count, 0);
+      let nextKey: string | null = null;
+      if (totalWeight > 0) {
+        // 段界按权重比例划分（与渲染侧 flexGrow 同一公式；minHeight 托底造成的偏差
+        // 在合并密度下受限，软指示可接受）。末段兜底吸收指示块中点恰在轨底界的浮点边界。
+        let acc = 0;
+        for (let i = 0; i < segs.length; i++) {
+          acc += segs[i]!.count;
+          const bottom = (acc / totalWeight) * railH;
+          if (mid <= bottom || i === segs.length - 1) {
+            nextKey = segs[i]!.key;
+            break;
+          }
+        }
+      }
+      if (nextKey !== activeKey) {
+        activeKey = nextKey;
+        railEl
+          .querySelectorAll<HTMLElement>('[data-testid="nav-rail-segment"]')
+          .forEach((el) => {
+            el.dataset.active = el.dataset.segKey === activeKey ? "true" : "false";
+          });
+      }
     };
     const schedule = () => {
       if (raf) return;
@@ -119,44 +146,17 @@ export function NavRail({
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [virtualizer, scrollRef, ticks.length]);
+    // railHeight 进 deps：合并密度随轨高收敛后段钮重排，需重算当前段
+  }, [virtualizer, scrollRef, ticks.length, railHeight, segments]);
 
   // 定位与高亮抽离至 use-nav-rail-jump（刻度点击与段落位共用）
   const jumpToKey = useNavRailJump(scrollRef, virtualizer);
 
-  // 点击段：完整段直接落位段首；不完整段（首段且窗外还有更早历史）先按 before 游标
-  //（store 最旧 id，同触顶翻页通道）逐窗回溯，直到窗顶越过本日日界或历史取尽，再按提
-  // 交后的 items 重找段首下标落位（行 key 即条目 id 跨重排稳定；取数合并是 store 流，
-  // React 提交滞后一拍，等一帧后读 itemsRef）。回溯失败与触顶翻页同口径静默（段保持
-  // 原位可重试）；定位中忽略重复点击。
+  // 点击段：定位段首（scrollToIndex 到测量起点 + 目标行高亮）。簇分段语义下段由已
+  // 加载消息构建，目标段必然已在窗内，无需先翻页预拉（向上分页由弹卡「加载更早」
+  // 承担）；行 key 即条目 id 跨重排稳定。
   const onSegmentClick = (seg: NavSegmentSpec) => {
-    if (seg.complete) {
-      jumpToKey(seg.firstKey, seg.firstIndex);
-      return;
-    }
-    if (locating !== null) return;
-    setLocating(seg.key);
-    const run = async () => {
-      for (let i = 0; i < MAX_BACKFILL_PAGES; i++) {
-        const st = useMessagesStore.getState().bySession[sessionId];
-        if (!st?.hasMore || st.oldestId === null) break;
-        await useMessagesStore.getState().fetchEarlierPage(sessionId, st.oldestId, fetchPage);
-        const next = useMessagesStore.getState().bySession[sessionId];
-        const oldestDay = next ? dayKeyOf(next.entries[0]?.timestamp) : null;
-        if (!next?.hasMore || (oldestDay !== null && oldestDay !== seg.key)) break;
-      }
-      // 等一帧让 prependEntries 触发的重排提交，再按最新 items 落位
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
-      const fresh = buildTicks(itemsRef.current, entries);
-      const idx = fresh.findIndex((tk) => tk.key === seg.firstKey);
-      if (idx >= 0) jumpToKey(seg.firstKey, idx);
-    };
-    run()
-      .catch(() => {
-        // 回溯失败静默（软增强，不打断浏览；定位态已由 finally 复位）
-      })
-      .finally(() => setLocating(null));
+    jumpToKey(seg.firstKey, seg.firstIndex);
   };
 
   // 弹卡行数：「加载更早」每次展开 CARD_MORE_STEP 条，钳在段内已加载行数
@@ -221,22 +221,18 @@ export function NavRail({
             key={seg.key}
             type="button"
             data-testid="nav-rail-segment"
+            data-seg-key={seg.key}
             aria-label={t("chat.navRail.jumpTo", { title: seg.label })}
-            aria-busy={locating === seg.key || undefined}
-            data-loading={locating === seg.key || undefined}
             onClick={() => onSegmentClick(seg)}
             onMouseEnter={(ev) => openCard(seg.key, cardTopFromEvent(ev))}
             onMouseLeave={closeCardSoon}
-            className="pointer-events-auto relative my-px rounded-full transition-colors hover:bg-border/60"
+            className="pointer-events-auto group relative my-px rounded-full transition-colors hover:bg-border/60"
             style={{ flexGrow: seg.count, flexBasis: 0, minHeight: 12 }}
           >
-            <span aria-hidden className="absolute inset-y-0 left-0.5 right-0.5 rounded-full bg-border/50" />
-            {locating === seg.key && (
-              <Loader2
-                aria-hidden
-                className="absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary"
-              />
-            )}
+            <span
+              aria-hidden
+              className="absolute inset-y-0 left-0.5 right-0.5 rounded-full bg-border/50 transition-colors group-data-[active=true]:bg-primary/60"
+            />
           </button>
         ))}
       </div>
@@ -273,7 +269,6 @@ export function NavRail({
           canMore={canMore(hoverSeg)}
           pagedOnce={pages > 0}
           loadingMore={loadingMore}
-          locating={locating === hoverSeg.key}
           onMore={() => onCardMore(hoverSeg)}
           onMouseEnter={clearHideTimer}
           onMouseLeave={closeCardSoon}

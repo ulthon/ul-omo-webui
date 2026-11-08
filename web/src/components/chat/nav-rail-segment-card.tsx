@@ -1,8 +1,7 @@
 // nav-rail 段悬停弹卡（openchamber 同款，仓库浮卡样式语言）：受控显隐由 nav-rail 持有
 //（进入即显、移出 100ms 内隐藏，弹卡自身悬停续期供「加载更早」钮点按），本组件纯展示
-// ——段日期标签（段落位翻页中显示「定位中」+ spinner）+ 段内用户消息行（时间 + 60 字
-// 单行摘要，展示尾部 N 条，默认 3 条）+ 底部「加载更早」钮（一次 10 条；无更多时隐藏
-// 钮，翻过页后显示「无更多」弱文案）。
+// ——段日期标签 + 段内用户消息行（时间 + 60 字摘要两行截断，展示尾部 N 条，默认 3 条）
+// + 底部「加载更早」钮（一次 10 条；无更多时隐藏钮，翻过页后显示「无更多」弱文案）。
 import { Loader2 } from "lucide-react";
 import { useT } from "@/i18n/i18n";
 import type { NavSegmentSpec } from "./nav-rail-segments";
@@ -14,7 +13,6 @@ export function NavRailSegmentCard({
   canMore,
   pagedOnce,
   loadingMore,
-  locating,
   onMore,
   onMouseEnter,
   onMouseLeave,
@@ -30,8 +28,6 @@ export function NavRailSegmentCard({
   pagedOnce: boolean;
   /** 「加载更早」取数中（钮禁用 + spinner） */
   loadingMore: boolean;
-  /** 段落位回溯翻页进行中（头部「定位中」+ spinner） */
-  locating: boolean;
   onMore: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -50,8 +46,7 @@ export function NavRailSegmentCard({
         data-testid="nav-rail-segment-label"
         className="mb-1 flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
       >
-        {locating ? t("chat.navRail.locating") : segment.label}
-        {locating && <Loader2 aria-hidden className="size-3 shrink-0 animate-spin" />}
+        {segment.label}
       </p>
       <ul className="space-y-1">
         {rows.map((row) => (
@@ -64,7 +59,7 @@ export function NavRailSegmentCard({
                 {row.time}
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate text-xs leading-snug">{row.summary}</span>
+            <span className="min-w-0 flex-1 text-xs leading-snug line-clamp-2">{row.summary}</span>
           </li>
         ))}
       </ul>
