@@ -9,14 +9,20 @@ import type { SessionListItem } from "@/lib/api";
 import {
   COLLAPSE_PREFIX,
   RECENT_LIMIT,
+  SESSION_ORDER_KV,
+  SESSION_SORT_KV,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
   latestModified,
+  orderSessions,
   parseManualProjectOrder,
+  parseManualSessionOrder,
   parseProjectSort,
+  parseSessionSort,
   readCollapsed,
   recentTop,
+  sessionActivityKey,
   writeCollapsed,
 } from "@/components/session-list/global-list-data";
 
@@ -238,5 +244,87 @@ describe("折叠记忆", () => {
     // 记忆展开的非当前项目
     writeCollapsed("/other", false, ls);
     expect(isGroupExpanded("/other", "/cur", undefined, ls)).toBe(true);
+  });
+});
+
+// ---- 会话排序三模式（2026-11-09）：auto/pin/manual ----
+
+describe("sessionActivityKey", () => {
+  test("lastActiveAt 优先，空串/缺席回退 modified（查看触发的非消息写不上浮）", () => {
+    expect(sessionActivityKey({ lastActiveAt: "2026-06-01T00:00:00.000Z", modified: "2026-01-01T00:00:00.000Z" })).toBe(
+      "2026-06-01T00:00:00.000Z",
+    );
+    expect(sessionActivityKey({ lastActiveAt: null, modified: "2026-01-01T00:00:00.000Z" })).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+    expect(sessionActivityKey({ lastActiveAt: "", modified: "2026-01-01T00:00:00.000Z" })).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+  });
+});
+
+describe("orderSessions 三模式语义", () => {
+  const mk = (id: string, modified: string, pinned = false, lastActiveAt?: string | null): SessionListItem => ({
+    ...({ id, modified, pinned } as unknown as SessionListItem),
+    ...(lastActiveAt !== undefined ? { lastActiveAt } : {}),
+  });
+
+  test("auto：仅按活跃键降序，置顶标记不参与（有消息才提前）", () => {
+    // a 的文件 mtime 最新但最后消息更旧；b 消息最新 → b 第一；c 置顶但不参与
+    const a = mk("a", "2026-06-10T00:00:00.000Z", true, "2026-05-01T00:00:00.000Z");
+    const b = mk("b", "2026-01-01T00:00:00.000Z", false, "2026-06-01T00:00:00.000Z");
+    const c = mk("c", "2026-05-02T00:00:00.000Z", true);
+    expect(orderSessions([a, b, c], "auto", []).map((s) => s.id)).toEqual(["b", "c", "a"]);
+  });
+
+  test("auto：纯查看不置顶——mtime 被查看刷新到最新但消息活跃更旧时不提前", () => {
+    // 服务端真实形态：纯查看会话 lastActiveAt = 最后一条消息时刻（旧），仅 mtime（modified）新
+    const viewed = mk("viewed", "2026-06-10T00:00:00.000Z", false, "2026-05-01T00:00:00.000Z");
+    const messaged = mk("messaged", "2026-01-01T00:00:00.000Z", false, "2026-06-01T00:00:00.000Z");
+    expect(orderSessions([viewed, messaged], "auto", []).map((s) => s.id)).toEqual(["messaged", "viewed"]);
+  });
+
+  test("pin：置顶优先，置顶组内按活跃序，非置顶活跃序", () => {
+    const p1 = mk("p1", "2026-01-01T00:00:00.000Z", true, "2026-05-01T00:00:00.000Z");
+    const p2 = mk("p2", "2026-01-02T00:00:00.000Z", true, "2026-06-01T00:00:00.000Z");
+    const n1 = mk("n1", "2026-01-03T00:00:00.000Z", false, "2026-04-01T00:00:00.000Z");
+    expect(orderSessions([n1, p1, p2], "pin", []).map((s) => s.id)).toEqual(["p2", "p1", "n1"]);
+  });
+
+  test("manual：按顺序数组，未列入（含新会话）按活跃序追加组尾，置顶不插队", () => {
+    const a = mk("a", "2026-06-01T00:00:00.000Z", true);
+    const b = mk("b", "2026-05-01T00:00:00.000Z");
+    const c = mk("c", "2026-04-01T00:00:00.000Z");
+    // c 最新消息但数组中排在最后；新会话 new 不在数组 → 尾部
+    expect(orderSessions([a, b, c], "manual", ["c", "a"]).map((s) => s.id)).toEqual(["c", "a", "b"]);
+  });
+
+  test("稳定性：同键行保持传入相对序", () => {
+    const a = mk("a", "2026-01-01T00:00:00.000Z");
+    const b = mk("b", "2026-01-01T00:00:00.000Z");
+    expect(orderSessions([a, b], "auto", []).map((s) => s.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("会话排序 kv 解析与键名", () => {
+  test("parseSessionSort：缺失/未知回退 auto；合法档透传", () => {
+    expect(parseSessionSort(null)).toBe("auto");
+    expect(parseSessionSort(undefined)).toBe("auto");
+    expect(parseSessionSort("")).toBe("auto");
+    expect(parseSessionSort("wat")).toBe("auto");
+    expect(parseSessionSort("pin")).toBe("pin");
+    expect(parseSessionSort("manual")).toBe("manual");
+  });
+
+  test("kv 键名与项目排序键同前缀不同名", () => {
+    expect(SESSION_SORT_KV).toBe("sidebar.sessionSort");
+    expect(SESSION_ORDER_KV).toBe("sidebar.sessionOrder");
+  });
+
+  test("parseManualSessionOrder 与项目序同一解析器：非法回退 null、去重", () => {
+    expect(parseManualSessionOrder(null)).toBeNull();
+    expect(parseManualSessionOrder("no-json")).toBeNull();
+    expect(parseManualSessionOrder(JSON.stringify(["a", "a", "b"]))).toEqual(["a", "b"]);
+    expect(parseManualProjectOrder(JSON.stringify(["x"]))).toEqual(["x"]);
   });
 });

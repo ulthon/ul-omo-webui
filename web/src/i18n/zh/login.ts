@@ -190,6 +190,12 @@ export const login = {
     sidebarHeading: "侧栏",
     projectSort: "项目分组排序",
     sortNote: "按添加时间排序时，注册时间相同的历史项目按列表顺序保持稳定；手动拖拽在侧栏分组头进行（桌面拖拽，手机用分组头菜单），顺序全设备同步。",
+    // 会话排序三模式（2026-11-09）：auto 活跃优先 / pin 手动提前 / manual 手动拖拽
+    sessionSort: "会话排序",
+    sessionSortAuto: "自动（活跃优先）",
+    sessionSortPin: "手动提前（置顶标记）",
+    sessionSortManual: "手动拖拽",
+    sessionSortNote: "自动档只按消息活跃排（纯查看不上浮，置顶标记不参与）；手动提前档用行菜单的置顶标记，置顶组内仍按活跃序；手动拖拽档顺序完全自定义（桌面组内拖拽，手机用行菜单上移/下移），新会话排组尾。",
     // 对话分区
     chatSaveFailed: "保存对话设置失败",
     chatHeading: "对话",

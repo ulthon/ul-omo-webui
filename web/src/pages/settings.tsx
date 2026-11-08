@@ -14,7 +14,7 @@ import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from 
 import type { SettingsGroupId } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
 import { useSessionsStore, useActiveProject, projectOfSession } from "@/stores/sessions";
-import { PROJECT_SORT_KV, type ProjectSortMode } from "@/components/session-list/global-list-data";
+import { PROJECT_SORT_KV, SESSION_SORT_KV, type ProjectSortMode, type SessionSortMode } from "@/components/session-list/global-list-data";
 import { ModelsDiscoverSection } from "@/components/models/models-discover-section";
 import { RebindSection } from "@/components/settings/rebind-section";
 import { ToolsSection } from "@/components/settings/tools-section";
@@ -480,6 +480,62 @@ export function SidebarSortSection() {
   );
 }
 
+/** 设置页"会话排序"分区（排序三模式 2026-11-09）：auto/pin/manual 三档单选。
+ * 档位存 meta_kv sidebar.sessionSort（走既有 PUT /api/settings，跨设备一致）；
+ * 改档即存即生效（session-list 从 ui store 读档位派生组内序）。手动顺序的拖拽/
+ * 上移下移交互在侧栏组内行（session-list.tsx），设置页只管档位。 */
+const SESSION_SORT_OPTIONS: ReadonlyArray<{ value: SessionSortMode; labelKey: MessageKey }> = [
+  { value: "auto", labelKey: "login.topbar.sessionSortAuto" },
+  { value: "pin", labelKey: "login.topbar.sessionSortPin" },
+  { value: "manual", labelKey: "login.topbar.sessionSortManual" },
+];
+
+export function SessionSortSection() {
+  const sessionSort = useUiStore((s) => s.sessionSort);
+  const [saving, setSaving] = useState(false);
+
+  const t = useT();
+  const changeSort = async (mode: SessionSortMode) => {
+    if (mode === sessionSort || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [SESSION_SORT_KV]: mode });
+      useUiStore.getState().setSessionSort(mode);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.sortSaveFailed"), "error");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">{t("login.topbar.sessionSort")}</p>
+        <div role="radiogroup" aria-label={t("login.topbar.sessionSort")} data-testid="session-sort-group" className="space-y-1">
+          {SESSION_SORT_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm hover:bg-accent/50 lg:min-h-7" data-testid={`session-sort-option-${opt.value}`}>
+              <input
+                type="radio"
+                name="session-sort"
+                value={opt.value}
+                checked={sessionSort === opt.value}
+                disabled={saving}
+                onChange={() => void changeSort(opt.value)}
+                className="size-4 accent-primary"
+              />
+              {t(opt.labelKey)}
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("login.topbar.sessionSortNote")}</p>
+      </div>
+    </div>
+  );
+}
+
 /** 设置页"站点名"分区（小修 A）：覆盖服务端 env 注入的站点名（UL_OMO_WEBUI_SITE_NAME
  * 降为部署默认）。存 meta_kv ui.siteName（走既有 PUT /api/settings，跨设备一致）；
  * 留空保存即清除覆盖（消费端 resolveSiteName 退回 env 注入默认）。改后顶栏小字/标签页
@@ -845,7 +901,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{
   {
     id: "appearance",
     labelKey: "login.settingsPage.group.appearance",
-    sections: [SiteNameSection, SidebarSortSection, TagDisplaySection, PasteImageModeSection, ConversationSection, TipsSection, LanguageSection],
+    sections: [SiteNameSection, SidebarSortSection, SessionSortSection, TagDisplaySection, PasteImageModeSection, ConversationSection, TipsSection, LanguageSection],
   },
   {
     id: "integration",

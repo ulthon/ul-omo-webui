@@ -73,6 +73,8 @@ export const sessionList = {
     sessionActions: "会话操作",
     unpin: "取消置顶",
     pin: "置顶",
+    moveUp: "上移",
+    moveDown: "下移",
     rename: "重命名",
     generating: "生成中…",
     generateTitle: "生成标题",

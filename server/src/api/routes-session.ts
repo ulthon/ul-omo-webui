@@ -28,7 +28,7 @@ import { convertImagesToAttachments, modelSupportsImages, referenceizeEntries } 
 import type { EngineGateway, ServerSessionRunState } from "./engine-runtime";
 import { sessionBackgroundRunning } from "./background-tasks";
 import { ledgerHasRunning as backgroundTaskLedgerHasRunning } from "./background-task-ledger";
-import { readSessionPreview } from "./session-preview";
+import { readSessionPreview, readSessionLastActive } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
@@ -206,11 +206,25 @@ type SessionListRow = ReturnType<typeof mergeSessionRow> & {
   /** 切换 sheet 最后消息预览（r10 todo 8）：尾读 jsonl 最后一条 user/assistant 文本
    *  截 60 字；无消息/文件缺失为空串（预览只在 sheet 行消费，桌面列表不渲染） */
   preview: string;
+  /** 真实活跃时刻（排序三模式 2026-11-09）：最后一条 user/assistant 消息 timestamp；
+   *  无消息/文件缺失为 null（消费方回退 modified） */
+  lastActiveAt: string | null;
 };
 
-/** 置顶优先，其余按最后活动时间倒序（todo 15 排序语义；聚合模式跨项目全局比较） */
-function byPinnedThenModified(a: { pinned: boolean; modified: string }, b: { pinned: boolean; modified: string }): number {
-  return Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified);
+/** 真实活跃键（排序三模式 2026-11-09）：优先 lastActiveAt（最后一条 user/assistant 消息
+ * 时刻），无消息行回退 modified。排序不再用文件 mtime——纯查看会话（引擎写 jsonl 非
+ * 消息条目）不再置顶，「有消息来往才提前」。 */
+export function activityKey(a: { lastActiveAt?: string | null; modified: string }): string {
+  return a.lastActiveAt && a.lastActiveAt !== "" ? a.lastActiveAt : a.modified;
+}
+
+/** 置顶优先，其余按真实活跃时间倒序（todo 15 排序语义；聚合模式跨项目全局比较）。
+ * 2026-11-09 排序键由 modified（文件 mtime）改换 activityKey。 */
+export function byPinnedThenModified(
+  a: { pinned: boolean; modified: string; lastActiveAt?: string | null },
+  b: { pinned: boolean; modified: string; lastActiveAt?: string | null },
+): number {
+  return Number(b.pinned) - Number(a.pinned) || activityKey(b).localeCompare(activityKey(a));
 }
 
 /** 单项目会话列表：store 直查 + 元数据合并 + 归档/搜索/标签过滤 + active 探询。
@@ -270,7 +284,9 @@ async function listProjectSessions(
           : probed;
     // 最后消息预览（r10 todo 8）：尾读 + LRU 缓存；文件缺失/损坏 → 空串不炸列表
     const preview = await readSessionPreview(s.path, s.id);
-    rows.push({ ...s, preview, active: activePaths ? activePaths.includes(s.path) : null, runState });
+    // 真实活跃时刻（排序三模式）：同款尾读独立缓存；无消息行 null（排序回退 modified）
+    const lastActiveAt = await readSessionLastActive(s.path, s.id);
+    rows.push({ ...s, preview, lastActiveAt: lastActiveAt === "" ? null : lastActiveAt, active: activePaths ? activePaths.includes(s.path) : null, runState });
   }
   return rows;
 }

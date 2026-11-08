@@ -73,6 +73,9 @@ export interface SessionListItem {
   /** 切换 sheet 最后消息预览（r10 todo 8）：服务端尾读最后一条 user/assistant 文本截
    *  60 字；无消息/旧服务端响应时缺席。仅 sheet 行消费，桌面列表不渲染 */
   preview?: string;
+  /** 真实活跃时刻（排序三模式 2026-11-09）：最后一条 user/assistant 消息 timestamp；
+   *  无消息/旧服务端响应时缺席，排序回退 modified（查看触发的非消息写不再置顶） */
+  lastActiveAt?: string | null;
 }
 
 /** 计划执行进度快照（r10 todo 12，GET /api/sessions/:id/plan-progress）：

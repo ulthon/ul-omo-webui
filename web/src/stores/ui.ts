@@ -1,7 +1,7 @@
 // UI 全局域：连接状态、抽屉开关、模型选择、轻提示。
 import { create } from "zustand";
 import type { ModelInfo, ProjectMeta } from "@/lib/api";
-import type { ProjectSortMode } from "@/components/session-list/global-list-data";
+import type { ProjectSortMode, SessionSortMode } from "@/components/session-list/global-list-data";
 import type { TagDisplayMode } from "@/components/session-list/tag-data";
 
 export type ConnectionStatus = "online" | "reconnecting";
@@ -140,6 +140,13 @@ interface UiState {
   /** 手动顺序（C16 todo 9）：meta_kv sidebar.projectOrder 的 JSON 路径数组解析结果；
    * 拖拽/上移下移后本地先行更新再异步落 kv。 */
   projectOrder: string[];
+  /** 会话排序档位（排序三模式 2026-11-09）：meta_kv sidebar.sessionSort 持久
+   * （缺省 auto）；bootstrap 读 GET /api/settings 填充，设置页改档即 PUT。
+   * auto=活跃优先（置顶标记不参与）；pin=置顶提前；manual=组内拖拽自定义序。 */
+  sessionSort: SessionSortMode;
+  /** 会话手动顺序：meta_kv sidebar.sessionOrder 的 JSON id 数组解析结果；
+   * 拖拽/上移下移后本地先行更新再异步落 kv（全局 id 数组，消费时按组过滤）。 */
+  sessionOrder: string[];
   /** 思考块默认展开（docs08-r5 任务 13）：meta_kv chat.thinkingDefaultExpanded 持久
    * （缺省 false）；ThinkingBlock 挂载时读快照，改设置不影响已挂载块（瞬态语义）。 */
   thinkingDefaultExpanded: boolean;
@@ -192,6 +199,8 @@ interface UiState {
   setExternalLinks(links: ExternalLinks): void;
   setProjectSort(sort: ProjectSortMode): void;
   setProjectOrder(order: string[]): void;
+  setSessionSort(sort: SessionSortMode): void;
+  setSessionOrder(order: string[]): void;
   setThinkingDefaultExpanded(expanded: boolean): void;
   setTagDisplayMode(mode: TagDisplayMode): void;
   setTipsEnabled(enabled: boolean): void;
@@ -244,6 +253,8 @@ export const useUiStore = create<UiState>()((set) => ({
   externalLinks: { gitUrl: null, filesUrl: null },
   projectSort: "activity",
   projectOrder: [],
+  sessionSort: "auto",
+  sessionOrder: [],
   thinkingDefaultExpanded: false,
   tagDisplayMode: "text",
   tipsEnabled: true,
@@ -277,6 +288,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setExternalLinks: (links) => set({ externalLinks: links }),
   setProjectSort: (sort) => set({ projectSort: sort }),
   setProjectOrder: (order) => set({ projectOrder: order }),
+  setSessionSort: (sort) => set({ sessionSort: sort }),
+  setSessionOrder: (order) => set({ sessionOrder: order }),
   setThinkingDefaultExpanded: (thinkingDefaultExpanded) => set({ thinkingDefaultExpanded }),
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),

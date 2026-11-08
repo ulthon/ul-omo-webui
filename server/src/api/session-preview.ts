@@ -136,7 +136,72 @@ export async function readSessionPreview(
   }
 }
 
-/** 清空预览缓存（单测隔离 / 服务端测试用） */
+// ---- 会话真实活跃时刻（排序三模式 2026-11-09）----
+// 排序键改用最后一条 user/assistant 消息的 timestamp（lastActiveAt）：纯查看会话即使
+// 触发引擎侧写文件（jsonl 出现非消息条目、mtime 变化）也不上浮——「有消息来往才提前」。
+// 与 preview 同款尾读 + 独立 LRU 缓存（mtimeMs+size 失效）；文件缺失/无消息返回 ""。
+
+/** 键 = 会话 id 的活跃时刻 LRU 缓存（与 preview 缓存同容量/同失效策略） */
+const activityCache = new Map<string, PreviewCacheEntry & { lastActiveAt: string }>();
+
+/** 尾块字节 → 最后一条 user/assistant 消息 timestamp：从末行向前找（与预览同解析
+ * 惯例：末行丢弃、尾块非整文件时首行跳过）；timestamp 缺失的命中行返回空串。 */
+export function extractLastActiveFromTailChunk(chunk: string, wholeFile: boolean): string {
+  let lines = chunk.split("\n");
+  lines.pop();
+  if (!wholeFile && lines.length > 1) lines = lines.slice(1);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const lineTxt = lines[i].trim();
+    if (!lineTxt) continue;
+    let entry: { type?: unknown; message?: { role?: unknown }; timestamp?: unknown };
+    try {
+      entry = JSON.parse(lineTxt) as typeof entry;
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
+    return typeof entry.timestamp === "string" ? entry.timestamp : "";
+  }
+  return "";
+}
+
+/** 单会话真实活跃时刻（最后一条 user/assistant 消息 timestamp）；缓存命中不重读。
+ * 任何异常（缺失/权限/损坏）→ ""（消费方回退 modified）。 */
+export async function readSessionLastActive(
+  sessionPath: string,
+  sessionId: string,
+  io: PreviewIo = defaultIo,
+): Promise<string> {
+  try {
+    const st = await io.stat(sessionPath);
+    const hit = activityCache.get(sessionId);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      activityCache.delete(sessionId);
+      activityCache.set(sessionId, hit);
+      return hit.lastActiveAt;
+    }
+    let lastActiveAt = "";
+    if (st.size > 0) {
+      const start = Math.max(0, st.size - PREVIEW_CHUNK_BYTES);
+      const bytes = await io.read(sessionPath, start, st.size - start);
+      const chunk = new TextDecoder("utf8", { fatal: false }).decode(bytes);
+      lastActiveAt = extractLastActiveFromTailChunk(chunk, start === 0);
+    }
+    activityCache.set(sessionId, { mtimeMs: st.mtimeMs, size: st.size, preview: "", lastActiveAt });
+    if (activityCache.size > PREVIEW_CACHE_CAPACITY) {
+      const oldest = activityCache.keys().next().value;
+      if (oldest !== undefined) activityCache.delete(oldest);
+    }
+    return lastActiveAt;
+  } catch {
+    return "";
+  }
+}
+
+/** 清空预览缓存（单测隔离 / 服务端测试用）；活跃时刻缓存同清 */
 export function clearSessionPreviewCache(): void {
   cache.clear();
+  activityCache.clear();
 }

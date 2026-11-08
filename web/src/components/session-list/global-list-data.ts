@@ -51,7 +51,6 @@ export function parseManualProjectOrder(raw: string | null | undefined): string[
 }
 
 type CollapseStorage = Pick<Storage, "getItem" | "setItem">;
-
 function defaultStorage(): CollapseStorage | null {
   if (typeof localStorage === "undefined") return null;
   return localStorage;
@@ -157,4 +156,69 @@ export function isGroupExpanded(
 export function locateProjectInSidebar(project: string): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent<string>(LOCATE_EVENT, { detail: project }));
+}
+
+// ---- 会话排序三模式（2026-11-09 定版）：auto（活跃优先）/pin（手动提前）/manual（手动拖拽）----
+// 档位与手动顺序存 meta_kv（sidebar.sessionSort / sidebar.sessionOrder），走既有
+// GET/PUT /api/settings，与项目排序同口径；manual 顺序为全局 session id 数组，
+// 消费时按组过滤（组间不动，组内拖拽）。
+
+/** 会话排序档位：auto=仅按真实活跃（lastActiveAt，无消息回退 modified）排，置顶标记
+ * 不参与；pin=时间序基础上置顶标记提前（置顶组内仍按活跃序）；manual=完全自定义序。
+ * 缺省 auto。 */
+export type SessionSortMode = "auto" | "pin" | "manual";
+
+export const SESSION_SORT_KV = "sidebar.sessionSort";
+export const SESSION_ORDER_KV = "sidebar.sessionOrder";
+
+/** 档位解析：缺失/未知值一律回退 auto（对抗 malformed input 不崩） */
+export function parseSessionSort(raw: string | null | undefined): SessionSortMode {
+  return raw === "pin" || raw === "manual" ? raw : "auto";
+}
+
+/** manual 顺序消费时复用路径数组解析器（去重/校验逻辑同一实现） */
+export const parseManualSessionOrder = parseManualProjectOrder;
+
+/** 真实活跃键：lastActiveAt 优先（消息级时刻），缺席/空串回退 modified（文件 mtime）。
+ * auto 档用本键排序——纯查看会话不再置顶（现状 bug：查看触发引擎写 jsonl 非
+ * 消息条目，mtime 置顶；消息级键对非消息写免疫）。 */
+export function sessionActivityKey(s: Pick<SessionListItem, "lastActiveAt" | "modified">): string {
+  return s.lastActiveAt && s.lastActiveAt !== "" ? s.lastActiveAt : s.modified;
+}
+
+/** 组内会话排序（三模式语义，纯函数）。
+ * auto：仅按 sessionActivityKey 降序（置顶标记忽略）。
+ * pin：置顶行优先，置顶组内按活跃序降序，其余活跃序降序。
+ * manual：manualOrder 中出现的行按数组序排在前，未列入（含新会话）按活跃序降序
+ * 追加在组尾；置顶标记忽略（顺序完全自定义，置顶不插队）。
+ * 稳定排序：同键行保持传入相对序。 */
+export function orderSessions(
+  sessions: SessionListItem[],
+  mode: SessionSortMode,
+  manualOrder: string[],
+): SessionListItem[] {
+  const byActivity = (a: SessionListItem, b: SessionListItem) =>
+    sessionActivityKey(b).localeCompare(sessionActivityKey(a));
+  const list = sessions.slice();
+  if (mode === "manual") {
+    const rank = new Map<string, number>();
+    manualOrder.forEach((id, i) => {
+      if (!rank.has(id)) rank.set(id, i);
+    });
+    list.sort((a, b) => {
+      const ra = rank.get(a.id);
+      const rb = rank.get(b.id);
+      if (ra !== undefined && rb !== undefined) return ra - rb;
+      if (ra !== undefined) return -1;
+      if (rb !== undefined) return 1;
+      return byActivity(a, b);
+    });
+    return list;
+  }
+  if (mode === "pin") {
+    list.sort((a, b) => Number(b.pinned) - Number(a.pinned) || byActivity(a, b));
+    return list;
+  }
+  list.sort(byActivity);
+  return list;
 }

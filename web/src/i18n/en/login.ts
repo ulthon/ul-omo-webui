@@ -189,6 +189,12 @@ export const login = {
     sidebarHeading: "Sidebar",
     projectSort: "Project group sorting",
     sortNote: "When sorting by time added, legacy projects sharing the same registration time keep a stable list order; manual dragging happens on sidebar group headers (drag on desktop, group-header menu on mobile), and the order syncs across devices.",
+    // Session sorting three modes (2026-11-09): auto activity-first / pin / manual drag
+    sessionSort: "Session sorting",
+    sessionSortAuto: "Auto (recent activity first)",
+    sessionSortPin: "Pinned first",
+    sessionSortManual: "Manual drag",
+    sessionSortNote: "Auto sorts by message activity only (viewing never floats a session; pin markers are ignored). Pinned first honors row-menu pin markers within an activity-ordered list. Manual drag gives full control (drag within a group on desktop, move up/down in the row menu on mobile); new sessions land at the group tail.",
     // 对话分区
     chatSaveFailed: "Failed to save chat settings",
     chatHeading: "Chat",

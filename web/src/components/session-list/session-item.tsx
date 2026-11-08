@@ -144,9 +144,15 @@ export interface SessionItemProps {
   selectable?: boolean;
   checked?: boolean;
   onToggleCheck?: (session: SessionListItem) => void;
+  /** 置顶切换显隐（排序三模式 2026-11-09）：仅 pin 档展示（auto 档置顶不参与排序、
+   * manual 档顺序完全自定义，两档下菜单项隐藏）；缺省 true（旧调用面/单测兼容）。 */
+  showPinToggle?: boolean;
+  /** manual 档键盘兜底（上移/下移菜单项）：onMove 由父级按组内序实现；canUp/canDown
+   * 控制边界禁用。缺省不渲染（非 manual 档不出现）。 */
+  manualMove?: { onMove: (session: SessionListItem, delta: -1 | 1) => void; canUp: boolean; canDown: boolean };
 }
 
-export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys, defs }: SessionItemProps) {
+export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSelect, onChanged, selectable, checked, onToggleCheck, definedKeys, defs, showPinToggle = true, manualMove }: SessionItemProps) {
   const runState = useSessionsStore((s) => s.runStates[session.id] ?? null);
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
@@ -318,10 +324,22 @@ export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSe
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem disabled={busy} onSelect={() => void patch({ pinned: !session.pinned })}>
-              {session.pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
-              {session.pinned ? t("sessionList.item.unpin") : t("sessionList.item.pin")}
-            </DropdownMenuItem>
+            {manualMove && (
+              <>
+                <DropdownMenuItem disabled={!manualMove.canUp} onSelect={() => manualMove.onMove(session, -1)}>
+                  {t("sessionList.item.moveUp")}
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={!manualMove.canDown} onSelect={() => manualMove.onMove(session, 1)}>
+                  {t("sessionList.item.moveDown")}
+                </DropdownMenuItem>
+              </>
+            )}
+            {showPinToggle && (
+              <DropdownMenuItem disabled={busy} onSelect={() => void patch({ pinned: !session.pinned })}>
+                {session.pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
+                {session.pinned ? t("sessionList.item.unpin") : t("sessionList.item.pin")}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled={busy} onSelect={() => onDialog("rename", session)}>
               <SquarePen className="mr-2 size-4" />
               {t("sessionList.item.rename")}

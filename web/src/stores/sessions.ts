@@ -579,10 +579,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         const idx = list.findIndex((item) => item.id === id);
         if (idx < 0) continue;
         const next = list.slice();
-        next[idx] = { ...next[idx], modified: now };
-        // 服务端 byPinnedThenModified 镜像（routes-session.ts:196）；Array.sort 稳定，
-        // 未动行保持既有（服务端）相对序，乐观位与刷新后位一致
-        next.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.modified.localeCompare(a.modified));
+        next[idx] = { ...next[idx], modified: now, lastActiveAt: now };
+        // 服务端 byPinnedThenModified 镜像（routes-session.ts activityKey 口径）：置顶优先
+        // + 真实活跃（lastActiveAt 回退 modified）降序；Array.sort 稳定，未动行保持既有
+        // （服务端）相对序，乐观位与刷新后位一致。lastActiveAt 同步写：纯消息级排序键
+        // 下发消息即上浮（查看触发的非消息写不上浮）。
+        const key = (r: (typeof next)[number]) => (r.lastActiveAt && r.lastActiveAt !== "" ? r.lastActiveAt : r.modified);
+        next.sort((a, b) => Number(b.pinned) - Number(a.pinned) || key(b).localeCompare(key(a)));
         return { byProject: { ...s.byProject, [project]: next } };
       }
       return s;

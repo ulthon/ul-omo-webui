@@ -44,9 +44,11 @@ import {
   GROUP_VISIBLE_STEP,
   LOCATE_EVENT,
   PROJECT_ORDER_KV,
+  SESSION_ORDER_KV,
   flattenSessions,
   groupOrder,
   isGroupExpanded,
+  orderSessions,
   recentTop,
   writeCollapsed,
 } from "./global-list-data";
@@ -103,6 +105,9 @@ export function SessionList() {
   const projects = useUiStore((s) => s.projects);
   const projectSort = useUiStore((s) => s.projectSort);
   const projectOrder = useUiStore((s) => s.projectOrder);
+  // 会话排序三模式（2026-11-09）：档位与手动顺序（ui store，bootstrap 自 kv 装载）
+  const sessionSort = useUiStore((s) => s.sessionSort);
+  const sessionOrder = useUiStore((s) => s.sessionOrder);
   const archived = useSessionsStore((s) => s.archived);
   const byProject = useSessionsStore((s) => s.byProject);
   const loading = useSessionsStore((s) => s.loading);
@@ -427,6 +432,45 @@ export function SessionList() {
   const manual = projectSort === "manual";
   const dragProjectRef = useRef<string | null>(null);
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+
+  // ---- 会话手动排序（排序三模式 2026-11-09，仅 manual 档）：本地先行 + kv 持久 ----
+  // 取舍说明：manual 顺序为全局 session id 数组（一条 kv），消费时按组过滤——组间
+  // 不动（会话不跨组），仅组内相对序生效；未列入顺序的行（含新会话）按活跃序追加
+  // 在组尾。拖拽仅在组内顶层行进行（桌面 HTML5 DnD + 行菜单上移/下移键盘兜底），
+  // 跨组拖拽不提供（会话归属项目由数据决定，不做组间移动）。
+  const persistManualSessionOrder = useCallback(async (nextOrder: string[]) => {
+    useUiStore.getState().setSessionOrder(nextOrder);
+    try {
+      await api.putSettings({ [SESSION_ORDER_KV]: JSON.stringify(nextOrder) });
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().showToast(t("sessionList.list.saveManualOrderFailed"), "error");
+      }
+    }
+  }, [t]);
+
+  /** 基准序 = 现有 kv 序 ∪ 该组展示序未列入项，再把该组新序整体替换（其余组条目
+   *  保位不動——消费时按组过滤，跨组相对序无语义）；src 移到 target/delta 的新位。 */
+  const moveSessionInGroup = useCallback(
+    (projectPath: string, srcId: string, targetId: string | null, delta: 0 | -1 | 1) => {
+      const list = orderSessions(useSessionsStore.getState().byProject[projectPath] ?? [], "manual", useUiStore.getState().sessionOrder);
+      const groupIds = list.map((s) => s.id);
+      const from = groupIds.indexOf(srcId);
+      const to = targetId !== null ? groupIds.indexOf(targetId) : from + delta;
+      if (from < 0 || to < 0 || to >= groupIds.length || from === to) return;
+      const groupSeq = groupIds.slice();
+      groupSeq.splice(from, 1);
+      groupSeq.splice(to, 0, srcId);
+      const order = useUiStore.getState().sessionOrder;
+      const next = [...order.filter((id) => !groupIds.includes(id)), ...groupSeq];
+      void persistManualSessionOrder(next);
+    },
+    [persistManualSessionOrder],
+  );
+
+  // 会话行拖拽状态（仅 manual 档组内顶层行）
+  const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
+  const manualDragSessionRef = useRef<string | null>(null);
   // 最近会话：跨项目按 modified 取最新 8 条（置顶自然参与）
   const recent = useMemo(() => recentTop(flattenSessions(byProject)), [byProject]);
   // fork 编号表（W3 todo 10）：列表加载时对整份数据一次算好缓存（byProject 引用不变即不重算），
@@ -862,6 +906,7 @@ export function SessionList() {
                 definedKeys={definedKeys}
                 defs={tagDefs}
                 onChanged={onChanged}
+                showPinToggle={sessionSort === "pin"}
                 {...itemBatchProps(s)}
               />
             ))
@@ -912,6 +957,7 @@ export function SessionList() {
                       definedKeys={definedKeys}
                       defs={tagDefs}
                       onChanged={onChanged}
+                      showPinToggle={sessionSort === "pin"}
                       {...itemBatchProps(s)}
                     />
                   ))}
@@ -932,7 +978,9 @@ export function SessionList() {
             </button>
 
             {sortedProjects.map((projectPath, index) => {
-              const sessions = byProject[projectPath];
+              // 组内会话按会话排序档位派生（2026-11-09 三模式）：auto/pin/manual 纯函数；
+              // manual 顺序为全局 id 数组按组过滤（组间不动）
+              const sessions = orderSessions(byProject[projectPath] ?? [], sessionSort, sessionOrder);
               const expanded = isGroupExpanded(projectPath, activeProject, groupOverrides[projectPath]);
               const isCurrent = projectPath === activeProject;
               // 唯一列表（W3 todo 10）：子会话按血缘归到父项下。
@@ -1091,19 +1139,70 @@ export function SessionList() {
                         </div>
                       ) : (
                         <>
-                          {shownTops.map((s) => (
-                            <SessionItem
-                              key={s.id}
-                              session={s}
-                              forkIndexes={forkIndexes}
-                              onSelect={selectSession}
-                              onDialog={handleItemDialog}
-                              definedKeys={definedKeys}
-                              defs={tagDefs}
-                              onChanged={onChanged}
-                              {...itemBatchProps(s)}
-                            />
-                          ))}
+                          {shownTops.map((s, sIndex) => {
+                            // manual 档：顶层行包拖拽 wrapper（落点指示 outline + 行菜单
+                            // 上移/下移键盘兜底）；auto/pin 档无 wrapper，行为不变
+                            const item = (
+                              <SessionItem
+                                session={s}
+                                forkIndexes={forkIndexes}
+                                onSelect={selectSession}
+                                onDialog={handleItemDialog}
+                                definedKeys={definedKeys}
+                                defs={tagDefs}
+                                onChanged={onChanged}
+                                showPinToggle={sessionSort === "pin"}
+                                manualMove={
+                                  sessionSort === "manual"
+                                    ? {
+                                        onMove: (row, delta) => moveSessionInGroup(projectPath, row.id, null, delta),
+                                        canUp: sIndex > 0,
+                                        canDown: sIndex < shownTops.length - 1,
+                                      }
+                                    : undefined
+                                }
+                                {...itemBatchProps(s)}
+                              />
+                            );
+                            if (sessionSort !== "manual") return item;
+                            return (
+                              <div
+                                key={s.id}
+                                draggable
+                                className={dragOverSessionId === s.id ? "rounded-md outline outline-1 outline-primary/50" : undefined}
+                                onDragStart={(e) => {
+                                  manualDragSessionRef.current = s.id;
+                                  e.dataTransfer.effectAllowed = "move";
+                                  e.dataTransfer.setData("text/plain", s.id);
+                                }}
+                                onDragOver={(e) => {
+                                  const src = e.dataTransfer.getData("text/plain") || manualDragSessionRef.current;
+                                  if (!src || src === s.id) return;
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "move";
+                                  setDragOverSessionId(s.id);
+                                }}
+                                onDragLeave={(e) => {
+                                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                                  setDragOverSessionId((cur) => (cur === s.id ? null : cur));
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  setDragOverSessionId(null);
+                                  const src = e.dataTransfer.getData("text/plain") || manualDragSessionRef.current;
+                                  manualDragSessionRef.current = null;
+                                  if (!src || src === s.id) return;
+                                  moveSessionInGroup(projectPath, src, s.id, 0);
+                                }}
+                                onDragEnd={() => {
+                                  manualDragSessionRef.current = null;
+                                  setDragOverSessionId(null);
+                                }}
+                              >
+                                {item}
+                              </div>
+                            );
+                          })}
                           {remainingTops > 0 && (
                             <button
                               type="button"

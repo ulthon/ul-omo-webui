@@ -13,12 +13,14 @@ import { Hono } from "hono";
 import {
   PREVIEW_MAX_CHARS,
   clearSessionPreviewCache,
+  extractLastActiveFromTailChunk,
   extractPreviewFromTailChunk,
+  readSessionLastActive,
   readSessionPreview,
   stripPreviewNoise,
   type PreviewIo,
 } from "../src/api/session-preview";
-import { createSessionRoutes } from "../src/api/routes-session";
+import { activityKey, byPinnedThenModified, createSessionRoutes } from "../src/api/routes-session";
 import type { ApiDeps } from "../src/api/deps";
 import type { EngineSessionSummary } from "../src/adapter/engine-adapter";
 
@@ -224,5 +226,86 @@ describe("GET /api/sessions 携带 preview 字段", () => {
       expect(row).toBeDefined();
       expect(row!.preview).toBe(i === 49 ? "" : `会话 ${i} 的最后消息`);
     }
+  });
+});
+
+// ------------------------------------ 真实活跃时刻（排序三模式 2026-11-09）
+
+/** 带时间戳的消息行 */
+function timedMsg(role: "user" | "assistant", text: string, timestamp: string): object {
+  return { ...msg(role, text), timestamp };
+}
+
+describe("lastActiveAt 提取与缓存", () => {
+  test("取最后一条 user/assistant 消息的 timestamp；非消息行（查看触发的写）不推进", () => {
+    const chunk =
+      line(JSON.stringify(timedMsg("user", "问题", "2026-06-01T08:00:00.000Z"))) +
+      line(JSON.stringify(timedMsg("assistant", "回答", "2026-06-01T08:01:00.000Z"))) +
+      line(JSON.stringify({ type: "toolCall", id: "t1", timestamp: "2026-06-01T08:02:00.000Z" })) +
+      line(JSON.stringify({ type: "session-opened", id: "o1", timestamp: "2026-06-09T09:00:00.000Z" }));
+    // 纯查看（打开会话写非消息条目，mtime 变化）不推进活跃时刻——修复查看即置顶
+    expect(extractLastActiveFromTailChunk(chunk, true)).toBe("2026-06-01T08:01:00.000Z");
+  });
+
+  test("无消息/空串/缺失文件 → 空串", async () => {
+    expect(extractLastActiveFromTailChunk(line(JSON.stringify({ type: "session", id: "h" })), true)).toBe("");
+    expect(extractLastActiveFromTailChunk("", true)).toBe("");
+    expect(await readSessionLastActive(join(dir, "missing.jsonl"), "la-missing")).toBe("");
+  });
+
+  test("缓存命中不重读：mtime+size 变化才失效重读", async () => {
+    const content = new TextEncoder().encode(
+      line(JSON.stringify(timedMsg("user", "你好", "2026-06-01T00:00:00.000Z"))),
+    );
+    const f = fakeIo(join(dir, "la1.jsonl"), content.length, 100, content);
+    expect(await readSessionLastActive("/x/la1.jsonl", "la1", f.io)).toBe("2026-06-01T00:00:00.000Z");
+    expect(await readSessionLastActive("/x/la1.jsonl", "la1", f.io)).toBe("2026-06-01T00:00:00.000Z");
+    expect(f.reads).toHaveLength(1); // 第二次命中缓存
+    // 查看触发非消息写：mtime 变化重读，但活跃时刻仍是最后消息时刻
+    f.grow(new TextEncoder().encode(line(JSON.stringify({ type: "session-opened", id: "o", timestamp: "2026-06-09T00:00:00.000Z" }))));
+    expect(await readSessionLastActive("/x/la1.jsonl", "la1", f.io)).toBe("2026-06-01T00:00:00.000Z");
+    expect(f.reads).toHaveLength(2);
+  });
+
+  test("GET /api/sessions 逐行携带 lastActiveAt（空会话 null）", async () => {
+    const withMsg = writeJsonl("la-route.jsonl", [timedMsg("user", "hi", "2026-06-05T00:00:00.000Z")]);
+    const empty = join(dir, "la-route-empty.jsonl");
+    writeFileSync(empty, "");
+    const meta = {
+      listSessionTags: () => [],
+      getSessionMeta: () => null,
+      getSessionGeneratedTitle: () => null,
+      getProjectMeta: () => null,
+    };
+    const engines = {
+      sessionsList: async () => [summary("la-1", withMsg), summary("la-2", empty)],
+      peekActiveSessionPaths: async () => [],
+    };
+    const app = new Hono().route("/", createSessionRoutes({ meta, engines } as unknown as ApiDeps));
+    const res = await app.request(`/api/sessions?project=${encodeURIComponent(dir)}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sessions: Array<{ id: string; lastActiveAt: string | null }> };
+    expect(body.sessions.find((s) => s.id === "la-1")!.lastActiveAt).toBe("2026-06-05T00:00:00.000Z");
+    expect(body.sessions.find((s) => s.id === "la-2")!.lastActiveAt).toBeNull();
+  });
+});
+
+describe("服务端排序键 activityKey / byPinnedThenModified", () => {
+  test("activityKey：lastActiveAt 优先，空串/null 回退 modified", () => {
+    expect(activityKey({ lastActiveAt: "2026-06-01T00:00:00.000Z", modified: "2026-01-01T00:00:00.000Z" })).toBe(
+      "2026-06-01T00:00:00.000Z",
+    );
+    expect(activityKey({ lastActiveAt: null, modified: "2026-01-01T00:00:00.000Z" })).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  test("置顶优先；非置顶按活跃键降序；纯查看行（仅 mtime 新）不提前", () => {
+    const viewed = { pinned: false, modified: "2026-06-10T00:00:00.000Z", lastActiveAt: "2026-05-01T00:00:00.000Z" };
+    const messaged = { pinned: false, modified: "2026-01-01T00:00:00.000Z", lastActiveAt: "2026-06-01T00:00:00.000Z" };
+    const pinned = { pinned: true, modified: "2026-01-01T00:00:00.000Z", lastActiveAt: "2026-04-01T00:00:00.000Z" };
+    expect([viewed, messaged, pinned].sort(byPinnedThenModified).map((r) => r.lastActiveAt)).toEqual([
+      pinned.lastActiveAt,
+      messaged.lastActiveAt,
+      viewed.lastActiveAt,
+    ]);
   });
 });

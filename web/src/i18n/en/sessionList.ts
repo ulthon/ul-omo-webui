@@ -72,6 +72,8 @@ export const sessionList = {
     sessionActions: "Session actions",
     unpin: "Unpin",
     pin: "Pin",
+    moveUp: "Move up",
+    moveDown: "Move down",
     rename: "Rename",
     generating: "Generating…",
     generateTitle: "Generate title",
