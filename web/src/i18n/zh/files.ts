@@ -140,6 +140,8 @@ export const files = {
   resize: {
     leftAriaLabel: "拖动调整左栏宽度",
     rightAriaLabel: "拖动调整右栏宽度",
+    railTreeAriaLabel: "拖动调整文件树列宽度",
+    railListAriaLabel: "拖动调整文件列表列宽度",
   },
   // 操作结果 toast 兜底文案（成功/失败）
   op: {

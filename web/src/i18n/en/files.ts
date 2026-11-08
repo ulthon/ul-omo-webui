@@ -123,6 +123,8 @@ export const files = {
   resize: {
     leftAriaLabel: "Resize left pane",
     rightAriaLabel: "Resize right pane",
+    railTreeAriaLabel: "Resize file tree pane",
+    railListAriaLabel: "Resize file list pane",
   },
   op: {
     createFileFailed: "Failed to create file",

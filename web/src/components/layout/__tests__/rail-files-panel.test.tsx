@@ -231,8 +231,8 @@ describe("rail files panel responsive layout (#36)", () => {
     for (const id of ["rail-files-tree-pane", "rail-files-list-pane", "rail-files-preview-pane", "rail-files-row-src", "rail-files-row-README.md"]) {
       expect(q(`[data-testid='${id}']`)).not.toBeNull();
     }
-    // 树列固定宽档（14rem = w-56）
-    expect(q("[data-testid='rail-files-tree-pane']")?.className).toContain("w-56");
+    // 树列默认宽（14rem = 224px，inline style，可拖拽记忆）
+    expect((q("[data-testid='rail-files-tree-pane']") as HTMLElement | null)?.style.width).toBe("224px");
   });
 
   test("宽容器 ≥900：三列横排，列表列带右边框分隔", async () => {
@@ -242,6 +242,28 @@ describe("rail files panel responsive layout (#36)", () => {
     expect(panel?.getAttribute("data-layout")).toBe("columns");
     expect(q("[data-testid='rail-files-columns']")).not.toBeNull();
     expect(q("[data-testid='rail-files-list-pane']")?.className).toContain("border-r");
+  });
+
+  test("横向档手柄存在性：split 仅树手柄，columns 双手柄，stacked 无手柄", async () => {
+    await renderPanelDirectly();
+    await fireResize(700);
+    expect(q("[data-testid='rail-files-resize-handle-tree']")).not.toBeNull();
+    expect(q("[data-testid='rail-files-resize-handle-list']")).toBeNull();
+    await fireResize(950);
+    expect(q("[data-testid='rail-files-resize-handle-tree']")).not.toBeNull();
+    expect(q("[data-testid='rail-files-resize-handle-list']")).not.toBeNull();
+    // 三列档：列表列默认 20rem（320px，inline style），预览列自适应
+    expect((q("[data-testid='rail-files-list-pane']") as HTMLElement | null)?.style.width).toBe("320px");
+    await fireResize(400);
+    expect(q("[data-testid='rail-files-resize-handle-tree']")).toBeNull();
+    expect(q("[data-testid='rail-files-resize-handle-list']")).toBeNull();
+  });
+
+  test("手柄记忆：越界记录读回归默认（默认档不受污染）", async () => {
+    const { RAIL_FILES_TREE_KEY, RAIL_FILES_TREE_DEFAULT } = await import("@/components/layout/rail-files-resize");
+    window.localStorage.setItem(RAIL_FILES_TREE_KEY, "9999");
+    const { readRailFilesTreeWidthPreference } = await import("@/components/layout/rail-files-resize");
+    expect(readRailFilesTreeWidthPreference()).toBe(RAIL_FILES_TREE_DEFAULT);
   });
 
   test("回窄 ≤600：回到纵向堆叠，横向容器 testid 移除", async () => {

@@ -10,6 +10,8 @@
 // 复用件（只读 import）：file-tree/file-preview、files/file-editor、files/fs-dialogs、
 // lib/api.ts fs 方法；不改右栏拖宽机制，不加服务端路由。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { HTMLAttributes } from "react";
 import {
   ArrowRightLeft,
   ChevronRight,
@@ -30,6 +32,20 @@ import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
+import {
+  RAIL_FILES_LIST_DEFAULT,
+  RAIL_FILES_LIST_MAX,
+  RAIL_FILES_LIST_MIN,
+  RAIL_FILES_TREE_DEFAULT,
+  RAIL_FILES_TREE_MAX,
+  RAIL_FILES_TREE_MIN,
+  clampRailFilesListWidth,
+  clampRailFilesTreeWidth,
+  readRailFilesListWidthPreference,
+  readRailFilesTreeWidthPreference,
+  writeRailFilesListWidthPreference,
+  writeRailFilesTreeWidthPreference,
+} from "@/components/layout/rail-files-resize";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -451,6 +467,119 @@ export function RailFilesPanel() {
   }, []);
   const layout = filesRailLayout(containerWidth);
 
+  // 宽档横向列宽拖拽记忆（rail-files-resize）：仿 pages/files.tsx 手柄模式——state +
+  // ref 镜像，pointer capture 拖拽实时钳制，pointerup 落记忆，双击重置默认；树手柄
+  // 右移变宽，列表手柄左移变宽（预览列恒为剩余宽自适应）。纵向堆叠档不消费。
+  const [treeWidth, setTreeWidth] = useState(() => readRailFilesTreeWidthPreference());
+  const [listWidth, setListWidth] = useState(() => readRailFilesListWidthPreference());
+  const treeWidthRef = useRef(treeWidth);
+  const listWidthRef = useRef(listWidth);
+  const treeDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const listDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+
+  const applyTreeWidth = (next: number) => {
+    treeWidthRef.current = next;
+    setTreeWidth(next);
+  };
+  const applyListWidth = (next: number) => {
+    listWidthRef.current = next;
+    setListWidth(next);
+  };
+  const onTreePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    treeDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: treeWidthRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onListPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    listDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: listWidthRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  // 树手柄右移变宽；列表手柄左移变宽（方向相反，delta 取负）
+  const onTreePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = treeDragRef.current;
+    if (!drag) return;
+    applyTreeWidth(clampRailFilesTreeWidth(drag.startWidth + (e.clientX - drag.startX)));
+  };
+  const onListPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = listDragRef.current;
+    if (!drag) return;
+    applyListWidth(clampRailFilesListWidth(drag.startWidth - (e.clientX - drag.startX)));
+  };
+  // pointerup：落记忆；pointercancel：只终止拖拽（宽度已实时钳制，记忆留给下次完整拖拽）
+  const onTreePointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!treeDragRef.current) return;
+    treeDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    writeRailFilesTreeWidthPreference(treeWidthRef.current);
+  };
+  const onListPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!listDragRef.current) return;
+    listDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    writeRailFilesListWidthPreference(listWidthRef.current);
+  };
+  const onTreePointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    treeDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const onListPointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    listDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  // 键盘微调（可聚焦分隔条）：方向键 ±16px 并即时记忆；方向随手柄拖向（树右宽/列表左宽）
+  const onTreeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowRight") {
+      applyTreeWidth(clampRailFilesTreeWidth(treeWidthRef.current + 16));
+      writeRailFilesTreeWidthPreference(treeWidthRef.current);
+    } else if (e.key === "ArrowLeft") {
+      applyTreeWidth(clampRailFilesTreeWidth(treeWidthRef.current - 16));
+      writeRailFilesTreeWidthPreference(treeWidthRef.current);
+    }
+  };
+  const onListKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowLeft") {
+      applyListWidth(clampRailFilesListWidth(listWidthRef.current + 16));
+      writeRailFilesListWidthPreference(listWidthRef.current);
+    } else if (e.key === "ArrowRight") {
+      applyListWidth(clampRailFilesListWidth(listWidthRef.current - 16));
+      writeRailFilesListWidthPreference(listWidthRef.current);
+    }
+  };
+  const onTreeDoubleClick = () => {
+    applyTreeWidth(RAIL_FILES_TREE_DEFAULT);
+    writeRailFilesTreeWidthPreference(RAIL_FILES_TREE_DEFAULT);
+  };
+  const onListDoubleClick = () => {
+    applyListWidth(RAIL_FILES_LIST_DEFAULT);
+    writeRailFilesListWidthPreference(RAIL_FILES_LIST_DEFAULT);
+  };
+  /** 骑跨栏缘的拖宽手柄（role=separator，w-1.5 命中区），属性同 files.tsx 形态 */
+  const resizeHandle = (
+    testId: string,
+    ariaLabel: string,
+    value: number,
+    min: number,
+    max: number,
+    handlers: Pick<
+      HTMLAttributes<HTMLDivElement>,
+      "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onKeyDown" | "onDoubleClick"
+    >,
+  ) => (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={ariaLabel}
+      aria-valuenow={value}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      data-testid={testId}
+      className="z-10 w-1.5 shrink-0 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none"
+      {...handlers}
+    />
+  );
+
   const editAction = (data: FsFileResponse) => {
     const label = t("files.edit.button");
     if (!isEditableFile(data)) {
@@ -731,19 +860,59 @@ export function RailFilesPanel() {
             </div>
           </>
         ) : (
-          /* 宽档（>600）：OC 考据形态——左树固定 14rem + 右侧内容区自适应；
-             split（601-899）内容区上下分，columns（≥900）列表/预览横排三列 */
+          /* 宽档（>600）：树列宽可拖拽记忆（rail-files-resize，默认 14rem）+ 右侧内容区；
+             split（601-899）内容区上下分（仅树手柄），columns（≥900）列表列宽可拖拽
+             记忆（默认 20rem），预览列恒为剩余宽自适应 */
           <div data-testid="rail-files-columns" className="flex min-h-0 flex-1">
-            <div data-testid="rail-files-tree-pane" className="w-56 shrink-0 overflow-y-auto border-r p-1">
+            <div
+              data-testid="rail-files-tree-pane"
+              style={{ width: treeWidth }}
+              className="shrink-0 overflow-y-auto p-1"
+            >
               {treeContent}
             </div>
+            {resizeHandle(
+              "rail-files-resize-handle-tree",
+              t("files.resize.railTreeAriaLabel"),
+              treeWidth,
+              RAIL_FILES_TREE_MIN,
+              RAIL_FILES_TREE_MAX,
+              {
+                onPointerDown: onTreePointerDown,
+                onPointerMove: onTreePointerMove,
+                onPointerUp: onTreePointerUp,
+                onPointerCancel: onTreePointerCancel,
+                onKeyDown: onTreeKeyDown,
+                onDoubleClick: onTreeDoubleClick,
+              },
+            )}
             <div className={`flex min-h-0 min-w-0 flex-1 ${layout === "columns" ? "flex-row" : "flex-col"}`}>
               <div
                 data-testid="rail-files-list-pane"
-                className={`min-h-0 min-w-0 flex-1 overflow-y-auto px-2 py-1 ${layout === "columns" ? "border-r" : ""}`}
+                style={layout === "columns" ? { width: listWidth } : undefined}
+                className={`min-h-0 min-w-0 overflow-y-auto px-2 py-1 ${
+                  layout === "columns" ? "shrink-0 border-r" : "flex-1"
+                }`}
               >
                 {listContent}
               </div>
+              {layout === "columns"
+                ? resizeHandle(
+                    "rail-files-resize-handle-list",
+                    t("files.resize.railListAriaLabel"),
+                    listWidth,
+                    RAIL_FILES_LIST_MIN,
+                    RAIL_FILES_LIST_MAX,
+                    {
+                      onPointerDown: onListPointerDown,
+                      onPointerMove: onListPointerMove,
+                      onPointerUp: onListPointerUp,
+                      onPointerCancel: onListPointerCancel,
+                      onKeyDown: onListKeyDown,
+                      onDoubleClick: onListDoubleClick,
+                    },
+                  )
+                : null}
               <div
                 data-testid="rail-files-preview-pane"
                 className={`min-h-0 flex-1 overflow-y-auto p-2 ${layout === "columns" ? "" : "border-t"}`}
