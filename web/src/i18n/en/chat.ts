@@ -277,10 +277,7 @@ export const chat = {
   // nav-rail.tsx
   navRail: {
     jumpTo: "Jump to: {title}",
-    today: "Today",
-    yesterday: "Yesterday",
     loadEarlier: "Load earlier",
-    noMore: "No more",
   },
   // permission-queue.tsx
   permissionQueue: {

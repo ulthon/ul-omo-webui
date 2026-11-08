@@ -1,82 +1,118 @@
-// nav-rail 段悬停弹卡（openchamber 同款，仓库浮卡样式语言）：受控显隐由 nav-rail 持有
-//（进入即显、移出 100ms 内隐藏，弹卡自身悬停续期供「加载更早」钮点按），本组件纯展示
-// ——段日期标签 + 段内用户消息行（时间 + 60 字摘要两行截断，展示尾部 N 条，默认 3 条）
-// + 底部「加载更早」钮（一次 10 条；无更多时隐藏钮，翻过页后显示「无更多」弱文案）。
-import { Loader2 } from "lucide-react";
-import { useT } from "@/i18n/i18n";
-import type { NavSegmentSpec } from "./nav-rail-segments";
+// nav-rail 悬停面板（OpenChamber v1.24.2 同款复刻）：固定贴 gutter 左侧（right-full
+// mr-3，不跟指针），内容为全部用户消息预览的迷你滚动列表（非单卡）：行高 54px 内缩
+// 4px 最多可见 8 行，行 rounded-lg border /40 悬停 /60；文本 line-clamp-2
+// overflow-wrap-anywhere meta 色 160 字符截断，活动行实心填充 selection 色；列表
+// translateY 200ms ease-out glide（高亮行居中，translateY 与窗口高由父级计算）+
+// 上下边缘 mask black 10%/90%。面板可交互：行悬停改高亮、滚轮 54px 步进（非 passive
+// 监听阻断外溢滚动）、移入取消隐藏；离开 160ms 隐藏。无时间行无头像（OC 无）。
+import { useEffect, useRef } from "react";
+
+/** 面板行高（px）：滚轮步进与 glide 位移的最小单位 */
+export const PANEL_ROW_PX = 54;
+
+export interface NavRailPanelRow {
+  key: string;
+  summary: string;
+  /** 所属段下标（活动段行实心填充判定） */
+  segIdx: number;
+}
 
 export function NavRailSegmentCard({
-  segment,
-  top,
-  shown,
-  canMore,
-  pagedOnce,
-  loadingMore,
-  onMore,
+  rows,
+  hl,
+  activeSegIdx,
+  offsetY,
+  windowH,
+  onRowEnter,
+  onWheelStep,
   onMouseEnter,
   onMouseLeave,
 }: {
-  segment: NavSegmentSpec;
-  /** 卡片垂直锚点（rail 内 px，已由调用侧钳制在 rail 视口内不溢出） */
-  top: number;
-  /** 当前展示行数（rows 尾部） */
-  shown: number;
-  /** 还能加载更早（本地有余量或窗外未完） */
-  canMore: boolean;
-  /** 本轮悬停是否翻过页（决定「无更多」弱文案显隐） */
-  pagedOnce: boolean;
-  /** 「加载更早」取数中（钮禁用 + spinner） */
-  loadingMore: boolean;
-  onMore: () => void;
+  rows: NavRailPanelRow[];
+  /** 高亮行下标（glide 目标；行悬停/滚轮步进改写） */
+  hl: number;
+  /** 活动段下标（该段行实心填充 selection 色） */
+  activeSegIdx: number;
+  /** 列表 translateY（px，负值上滚；父级按高亮行居中 + 上下 2 行死区计算） */
+  offsetY: number;
+  /** 可视窗高（px = min(行数, 8) * PANEL_ROW_PX） */
+  windowH: number;
+  onRowEnter: (index: number) => void;
+  onWheelStep: (dir: 1 | -1) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
-  const t = useT();
-  const rows = segment.rows.slice(Math.max(0, segment.rows.length - shown));
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // 滚轮步进：React onWheel 为 passive 根委托，preventDefault 无效；非 passive 监听
+  // 挂面板自身，阻断事件外溢（面板下不再触发消息列滚动），54px 一步
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const handler = (ev: WheelEvent) => {
+      ev.preventDefault();
+      onWheelStep(ev.deltaY > 0 ? 1 : -1);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [onWheelStep]);
+
   return (
     <div
       data-testid="nav-rail-hover-card"
-      className="pointer-events-auto absolute right-full z-50 mr-2 w-64 -translate-y-1/2 rounded-lg bg-popover p-2 text-popover-foreground shadow-md ring-1 ring-foreground/10"
-      style={{ top }}
+      className="pointer-events-auto absolute right-full top-1/2 z-50 mr-3 -translate-y-1/2 rounded-xl border border-border/60 bg-popover py-1 text-popover-foreground shadow-md"
+      style={{ width: "min(20rem, calc(100vw - 6rem))" }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <p
-        data-testid="nav-rail-segment-label"
-        className="mb-1 flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
+      <div
+        ref={listRef}
+        className="overflow-hidden"
+        style={{
+          height: windowH,
+          maskImage:
+            "linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, transparent 0%, black 10%, black 90%, transparent 100%)",
+        }}
       >
-        {segment.label}
-      </p>
-      <ul className="space-y-1">
-        {rows.map((row) => (
-          <li key={row.key} className="flex items-baseline gap-1.5">
-            {row.time && (
-              <span
-                data-testid="nav-rail-hover-time"
-                className="shrink-0 text-[10px] leading-snug text-muted-foreground tabular-nums"
-              >
-                {row.time}
-              </span>
-            )}
-            <span className="min-w-0 flex-1 text-xs leading-snug line-clamp-2">{row.summary}</span>
-          </li>
-        ))}
-      </ul>
-      {canMore ? (
-        <button
-          type="button"
-          data-testid="nav-rail-segment-more"
-          disabled={loadingMore}
-          onClick={onMore}
-          className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-60"
+        <div
+          data-testid="nav-rail-panel-list"
+          className="transition-transform duration-200 ease-out"
+          style={{ transform: `translateY(${offsetY}px)` }}
         >
-          {loadingMore && <Loader2 aria-hidden className="size-3 shrink-0 animate-spin" />}
-          {t("chat.navRail.loadEarlier")}
-        </button>
-      ) : pagedOnce ? (
-        <p className="mt-1 text-center text-[10px] text-muted-foreground">{t("chat.navRail.noMore")}</p>
-      ) : null}
+          {rows.map((row, i) => {
+            const isActive = row.segIdx === activeSegIdx;
+            return (
+              <div
+                key={row.key}
+                data-testid="nav-rail-hover-row"
+                data-active-row={isActive ? "true" : "false"}
+                className="h-[54px] p-1"
+                onMouseEnter={() => onRowEnter(i)}
+              >
+                <div
+                  data-hl={i === hl ? "true" : "false"}
+                  className={`flex h-full items-center rounded-lg border px-2 transition-colors duration-150 ${
+                    isActive
+                      ? "border-transparent bg-accent"
+                      : i === hl
+                        ? "border-border/60"
+                        : "border-border/40 hover:border-border/60"
+                  }`}
+                >
+                  <span
+                    className={`line-clamp-2 text-xs leading-snug [overflow-wrap:anywhere] ${
+                      isActive ? "text-accent-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    {row.summary}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

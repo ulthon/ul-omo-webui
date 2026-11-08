@@ -1,33 +1,74 @@
-// 右缘对话导航轨（A7，docs08-r3 任务 16；#27b 簇分段升级）：openchamber 同款分段指示
-// 器——每条用户刻度自成一段（用户消息簇），段高 ∝ 段内用户消息量（flex 比例分配，
-// 最小可点高 12px），段多时相邻段合并（maxSegments = 轨高÷14px，ResizeObserver 测得
-// 轨高后收敛）保持可辨识密度；段标签（段首刻度所在自然日）进悬停弹卡（受控显隐沿用
-// 原浮卡：进入即显、移出 100ms 内隐藏，弹卡自身悬停续期供「加载更早」钮点按）。当前
-// 视口所在段 data-active 高亮（指示块中点落在哪段轨区即点亮，随 scroll rAF 直写）。
-// 刻度仍按 TanStack Virtual 测量缓存 itemStart/totalSize 比例定位（只读内存测量缓存，
-// 不破坏虚拟化）。点击刻度/段定位到段首 + 目标行 1.5s 一次性高亮（data 属性 +
-// index.css 动画，沿用）——簇分段语义下段由已加载消息构建，目标段必然已在窗内，
-// 无需先翻页预拉（向上分页由弹卡「加载更早」承担）。弹卡显示该段用户消息预览（时间 +
-// 两行截断摘要，默认 3 条，「加载更早」一次 10 条，无更多时隐藏）。视口指示块按
-// scrollTop..scrollTop+clientHeight 区间映射，rAF 节流直写 style（不进 React 渲染路
-// 径，同自动滚底订阅范式）。hidden lg:flex 手机不显示（触屏无悬停，段/刻度点按即跳）；
-// 不替代原生滚动条（容器 pointer-events-none，段/刻度按钮才可点，段间隙点击穿透）。
+// 右缘对话导航轨（OpenChamber v1.24.2 源码级复刻）：
+// 1. 指示器带：右对齐 absolute right-1.5 top-1/2 -translate-y-1/2，命中区宽 28px
+//    （容器被消息列挤压时缩 12px，ResizeObserver 测得）；带高 = min(段数,30)*12px，
+//    每格 12px pitch；刻度 span h-0.5 rounded-full transition-all duration-200
+//    ease-out（2px 圆头条），宽普通 10px / active 14px / 悬停聚焦 20px 邻近衰减
+//    [1,0.6,0.35,0.15]；颜色 active 前景色全不透明、普通 /30、悬停 /80。带体
+//    translateY 滑动 tape（transition-transform duration-300 ease-out，key=首段 id
+//    防 prepend 假动画）+ overscan 4；悬停指针 Y/12 取整映射最近刻度；停上/下
+//    18px 边缘区 80ms 间隔 carousel 滚动。
+// 2. 悬停面板：固定贴 gutter 左侧（right-full mr-3 不跟指针），全部用户消息预览的
+//    迷你滚动列表（见 nav-rail-segment-card.tsx），离开 160ms 隐藏、移入取消隐藏。
+// 3. 「加载更早」：gutter 顶部独立圆钮（size-5 + arrow-up / loader），不再放面板内。
+// 4. 点击：按指针 Y 选最近段跳转（jumpToKey），活动指示 pin 目标 2500ms 防回拖，
+//    面板关闭。
+// 5. 活动段判定：pickActiveSegmentIndex（顶边 ≤ scrollTop+100px 的最后一段；距底
+//    ≤ max(48px, 10% viewport) 或粘底取最后段），scroll rAF 节流、值变才 setState。
+// 6. 显示条件：段数 ≥ 2。hidden lg:flex 手机不显示（触屏无悬停）。
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, Loader2 } from "lucide-react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import type { MessagesPage } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
-import { useLocaleStore, useT } from "@/i18n/i18n";
-import { NavRailSegmentCard } from "./nav-rail-segment-card";
-import { buildSegments, buildTicks, SEG_MIN_TRACK_PX, type NavSegmentSpec, type NavTick } from "./nav-rail-segments";
-import { useNavRailHover } from "./use-nav-rail-hover";
+import { useT } from "@/i18n/i18n";
+import { NavRailSegmentCard, PANEL_ROW_PX } from "./nav-rail-segment-card";
+import {
+  buildSegments,
+  buildTicks,
+  BAND_EDGE_ZONE_PX,
+  BAND_MAX_SEGMENTS,
+  PITCH_PX,
+  pickActiveSegmentIndex,
+  type NavSegmentSpec,
+  type NavTick,
+} from "./nav-rail-segments";
 import { useNavRailJump } from "./use-nav-rail-jump";
 import type { ChatListItem } from "./message-items";
 
-/** 弹卡默认展示的段内最近用户消息条数 */
-const CARD_INITIAL_ROWS = 3;
+/** 命中区宽度（px）；容器被消息列挤压时缩到 12px（ResizeObserver 测得） */
+const BAND_HIT_W_PX = 28;
+const BAND_HIT_W_NARROW_PX = 12;
 
-/** 「加载更早」一次展开的条数 */
-const CARD_MORE_STEP = 10;
+/** 悬停面板移出后的隐藏延迟（ms） */
+const PANEL_HIDE_DELAY_MS = 160;
+
+/** 点击 pin 活动段时长（ms）：防 scroll 判定立刻把活动指示拖回原段 */
+const PIN_MS = 2500;
+
+/** carousel 边缘滚动间隔（ms） */
+const CAROUSEL_STEP_MS = 80;
+
+/** 悬停聚焦宽度衰减系数（距离 0..3） */
+const HOVER_DECAY = [1, 0.6, 0.35, 0.15] as const;
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+/** 刻度宽度（px）：active 14 / 悬停聚焦 20 邻近衰减 / 普通 10 */
+export function tickWidthOf(i: number, activeIdx: number, hoverIdx: number | null): number {
+  if (i === activeIdx) return 14;
+  if (hoverIdx !== null) {
+    const d = Math.abs(i - hoverIdx);
+    if (d === 0) return 20;
+    if (d < HOVER_DECAY.length) return 10 + 10 * HOVER_DECAY[d]!;
+  }
+  return 10;
+}
+
+/** tape 滑动起点（格下标）：活动段尽量居中，overscan 4，钳在有效范围内 */
+export function tapeStartOf(segCount: number, focusIdx: number): number {
+  if (segCount <= BAND_MAX_SEGMENTS) return 0;
+  return clamp(focusIdx - BAND_MAX_SEGMENTS / 2, 0, segCount - BAND_MAX_SEGMENTS);
+}
 
 export function NavRail({
   items,
@@ -44,93 +85,96 @@ export function NavRail({
   fetchPage: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage>;
 }) {
   const railRef = useRef<HTMLDivElement | null>(null);
-  const indicatorRef = useRef<HTMLDivElement | null>(null);
-  // 轨高（窗口/容器变化时随 ResizeObserver 更新）：换算段数上限，超出即相邻段合并
-  const [railHeight, setRailHeight] = useState(0);
-
-  // 悬停弹卡：受控显隐状态机抽离至 use-nav-rail-hover（进入即显、移出 100ms 内隐藏、
-  // 弹卡悬停续期、翻页展开数随段切换重置）
-  const { hover, pages, setPages, openCard, closeCardSoon, clearHideTimer, cardTopFromEvent } =
-    useNavRailHover(railRef);
+  const bandRef = useRef<HTMLDivElement | null>(null);
+  // 活动段：scroll 判定值（activeIdx）+ 点击 pin（pinIdx，2500ms 内覆盖判定值）
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [pinIdx, setPinIdx] = useState<number | null>(null);
+  const activeIdxRef = useRef(0);
+  const computedIdxRef = useRef(0);
+  const pinIdxRef = useRef<number | null>(null);
+  const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 悬停：命中格（段下标）与面板（高亮行 + glide 视窗起点 + 160ms 隐藏定时器）
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [hl, setHl] = useState(0);
+  const [viewStart, setViewStart] = useState(0);
+  const panelHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const carouselTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 命中区宽（ResizeObserver：容器被消息列挤压时缩 12px）
+  const [hitW, setHitW] = useState(BAND_HIT_W_PX);
   const [loadingMore, setLoadingMore] = useState(false);
+  const hasMore = useMessagesStore((s) => s.bySession[sessionId]?.hasMore ?? false);
 
   const t = useT();
   // 刻度集合：items 里 kind==="entry" 且 store 条目 role==="user" 的项（纯逻辑见
-  // buildTicks）。items 身份随 entries 任何变化而重建（chat-view useMemo），store 条目
-  // 快照非响应式读即可覆盖新增/换 id 场景。
+  // buildTicks）。items 身份随 entries 任何变化而重建，store 条目快照非响应式读即可
+  // 覆盖新增/换 id 场景。
   const ticks = useMemo<NavTick[]>(() => {
     const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
     return buildTicks(items, entries);
   }, [items, sessionId]);
 
-  // 段聚合：按用户消息簇分段（每条用户刻度一段，#27b），段数上限 = 轨高÷单段最小
-  // 占轨高度，超出即相邻段合并（buildSegments 纯逻辑）。轨高未测得时先不合并，测得
-  // 后随重渲染收敛。now 取渲染时刻（标签只需日粒度），与刻度的非响应式 store 快照
-  // 读同一风类。
-  const segments = useMemo<NavSegmentSpec[]>(
+  // 段聚合：每条用户刻度一格，段数超出带体上限（30 格）时相邻段合并（权和最小对，
+  // buildSegments 纯逻辑）。显示条件：段数 ≥ 2。
+  const segments = useMemo<NavSegmentSpec[]>(() => buildSegments(ticks), [ticks]);
+
+  // 段顶边（内容坐标系，测量缓存 start）：活动段判定与点击映射共用
+  const segOffsets = useMemo(
     () =>
-      buildSegments(ticks, {
-        hasMore: useMessagesStore.getState().bySession[sessionId]?.hasMore ?? false,
-        now: Date.now(),
-        locale: useLocaleStore.getState().locale,
-        labels: { today: t("chat.navRail.today"), yesterday: t("chat.navRail.yesterday") },
-        maxSegments:
-          railHeight > 0 ? Math.max(1, Math.floor(railHeight / SEG_MIN_TRACK_PX)) : undefined,
-      }),
-    [ticks, sessionId, t, railHeight],
+      segments.map((s) => virtualizer.measurementsCache[s.firstIndex]?.start ?? 0),
+    [segments, virtualizer],
+  );
+  const segOffsetsRef = useRef(segOffsets);
+  segOffsetsRef.current = segOffsets;
+
+  // 刻度 → 段下标（段占 ticks 连续区间，按段权展开）与段 → 面板行首下标
+  const tickSegIdx = useMemo(() => {
+    const arr: number[] = [];
+    segments.forEach((s, si) => {
+      for (let k = 0; k < s.count; k++) arr.push(si);
+    });
+    return arr;
+  }, [segments]);
+  const segStartRow = useMemo(() => {
+    let acc = 0;
+    return segments.map((s) => {
+      const v = acc;
+      acc += s.count;
+      return v;
+    });
+  }, [segments]);
+  const rowsFlat = useMemo(
+    () =>
+      ticks.map((tk, i) => ({
+        key: tk.key,
+        summary: tk.summary,
+        segIdx: tickSegIdx[i] ?? 0,
+      })),
+    [ticks, tickSegIdx],
   );
 
-  // 视口指示块：scroll 事件 rAF 节流后直写 transform/height，并点亮当前视口所在段
-  // （#27b：指示块中点落在哪段轨区，该段 data-active 高亮；段界以段钮真实 offsetTop
-  // 为准，minHeight 托底造成的非纯比例分布不失准）。rail 尺寸变化（窗口改宽高）经
-  // ResizeObserver 走同一路径并同步 railHeight（段合并密度随轨高收敛）。deps 带
-  // ticks.length：空→有刻度翻转时 refs 才挂上，需重挂监听。
-  const segmentsRef = useRef(segments);
-  useEffect(() => {
-    segmentsRef.current = segments;
-  }, [segments]);
+  // 视口活动段（pin 生效值优先）：viewIdx 供刻度宽度/颜色与 tape 滑动消费
+  const viewIdx = pinIdx ?? Math.min(activeIdx, segments.length - 1);
+
+  // scroll 通道：rAF 节流跑 pickActiveSegmentIndex，值变才 setState；pin 生效期间只
+  // 记录判定值不写 state（防回拖），pin 到期再落。
   useEffect(() => {
     const scrollEl = scrollRef.current;
-    const railEl = railRef.current;
-    const indicator = indicatorRef.current;
-    if (!scrollEl || !railEl || !indicator) return;
+    if (!scrollEl) return;
     let raf = 0;
-    let activeKey: string | null = null;
     const paint = () => {
       raf = 0;
-      const railH = railEl.clientHeight;
-      if (railH > 0 && railHeight !== railH) setRailHeight(railH);
-      const total = virtualizer.getTotalSize();
-      if (total <= 0 || railH <= 0) return;
-      const ratio = railH / total;
-      const height = Math.max(12, Math.min(scrollEl.clientHeight * ratio, railH));
-      const top = Math.max(0, Math.min(scrollEl.scrollTop * ratio, railH - height));
-      indicator.style.transform = `translateY(${top}px)`;
-      indicator.style.height = `${height}px`;
-      const mid = top + height / 2;
-      const segs = segmentsRef.current;
-      const totalWeight = segs.reduce((acc, s) => acc + s.count, 0);
-      let nextKey: string | null = null;
-      if (totalWeight > 0) {
-        // 段界按权重比例划分（与渲染侧 flexGrow 同一公式；minHeight 托底造成的偏差
-        // 在合并密度下受限，软指示可接受）。末段兜底吸收指示块中点恰在轨底界的浮点边界。
-        let acc = 0;
-        for (let i = 0; i < segs.length; i++) {
-          acc += segs[i]!.count;
-          const bottom = (acc / totalWeight) * railH;
-          if (mid <= bottom || i === segs.length - 1) {
-            nextKey = segs[i]!.key;
-            break;
-          }
-        }
-      }
-      if (nextKey !== activeKey) {
-        activeKey = nextKey;
-        railEl
-          .querySelectorAll<HTMLElement>('[data-testid="nav-rail-segment"]')
-          .forEach((el) => {
-            el.dataset.active = el.dataset.segKey === activeKey ? "true" : "false";
-          });
+      const offs = segOffsetsRef.current;
+      if (offs.length === 0) return;
+      const idx = pickActiveSegmentIndex(offs, {
+        scrollTop: scrollEl.scrollTop,
+        viewportH: scrollEl.clientHeight,
+        totalSize: virtualizer.getTotalSize(),
+      });
+      computedIdxRef.current = idx;
+      if (pinIdxRef.current === null && idx !== activeIdxRef.current) {
+        activeIdxRef.current = idx;
+        setActiveIdx(idx);
       }
     };
     const schedule = () => {
@@ -139,48 +183,139 @@ export function NavRail({
     };
     paint();
     scrollEl.addEventListener("scroll", schedule, { passive: true });
-    const ro = new ResizeObserver(schedule);
-    ro.observe(railEl);
     return () => {
       scrollEl.removeEventListener("scroll", schedule);
-      ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-    // railHeight 进 deps：合并密度随轨高收敛后段钮重排，需重算当前段
-  }, [virtualizer, scrollRef, ticks.length, railHeight, segments]);
+  }, [virtualizer, scrollRef, segments]);
 
-  // 定位与高亮抽离至 use-nav-rail-jump（刻度点击与段落位共用）
-  const jumpToKey = useNavRailJump(scrollRef, virtualizer);
+  // pin 状态镜像 ref（scroll 回调读）与到期清理
+  useEffect(() => {
+    pinIdxRef.current = pinIdx;
+  }, [pinIdx]);
+  useEffect(() => {
+    return () => {
+      if (pinTimerRef.current !== null) clearTimeout(pinTimerRef.current);
+      if (panelHideTimerRef.current !== null) clearTimeout(panelHideTimerRef.current);
+      if (carouselTimerRef.current !== null) clearInterval(carouselTimerRef.current);
+    };
+  }, []);
 
-  // 点击段：定位段首（scrollToIndex 到测量起点 + 目标行高亮）。簇分段语义下段由已
-  // 加载消息构建，目标段必然已在窗内，无需先翻页预拉（向上分页由弹卡「加载更早」
-  // 承担）；行 key 即条目 id 跨重排稳定。
-  const onSegmentClick = (seg: NavSegmentSpec) => {
-    jumpToKey(seg.firstKey, seg.firstIndex);
+  // 命中区宽：ResizeObserver 测容器，被消息列挤压（< 28px）时缩 12px
+  useEffect(() => {
+    const railEl = railRef.current;
+    if (!railEl) return;
+    const ro = new ResizeObserver(() => {
+      setHitW(railEl.clientWidth < BAND_HIT_W_PX ? BAND_HIT_W_NARROW_PX : BAND_HIT_W_PX);
+    });
+    ro.observe(railEl);
+    return () => ro.disconnect();
+  }, []);
+
+  // 面板 glide：高亮行居中，上下各 2 行死区（hl 越界才滑），钳在有效视窗范围
+  const winRows = Math.min(rowsFlat.length, 8);
+  useEffect(() => {
+    if (!panelOpen) return;
+    setViewStart((vs) => {
+      let next = vs;
+      if (hl < next + 2) next = hl - 2;
+      if (hl > next + winRows - 3) next = hl - winRows + 3;
+      return clamp(next, 0, Math.max(0, rowsFlat.length - winRows));
+    });
+  }, [hl, panelOpen, winRows, rowsFlat.length]);
+
+  // 面板显隐：进入（band 或面板自身）取消隐藏定时器；离开 160ms 后隐藏
+  const clearPanelHideTimer = () => {
+    if (panelHideTimerRef.current !== null) {
+      clearTimeout(panelHideTimerRef.current);
+      panelHideTimerRef.current = null;
+    }
+  };
+  const openPanel = (segIdx: number) => {
+    clearPanelHideTimer();
+    setHl(segStartRow[segIdx] ?? 0);
+    setPanelOpen(true);
+  };
+  const closePanelSoon = () => {
+    clearPanelHideTimer();
+    panelHideTimerRef.current = setTimeout(() => {
+      panelHideTimerRef.current = null;
+      setPanelOpen(false);
+    }, PANEL_HIDE_DELAY_MS);
   };
 
-  // 弹卡行数：「加载更早」每次展开 CARD_MORE_STEP 条，钳在段内已加载行数
-  const shownCount = (seg: NavSegmentSpec) =>
-    Math.min(seg.rows.length, CARD_INITIAL_ROWS + pages * CARD_MORE_STEP);
-  // 还能加载更早：本地有余量，或段不完整（首段且窗外可能有该日更早条目）
-  const canMore = (seg: NavSegmentSpec) => shownCount(seg) < seg.rows.length || !seg.complete;
-
-  // 「加载更早」：先展开本地已加载的更早消息（一次 10 条）；本地余量取尽且段不完整时
-  // 经 fetchEarlierPage 按 before 游标（store 最旧 id）取一窗并入（段行随 store 重算）
-  // 再展开。取数失败静默（钮由 finally 复位可重试，页数不前跳）。
-  const onCardMore = (seg: NavSegmentSpec) => {
-    if (loadingMore) return;
-    if (shownCount(seg) < seg.rows.length) {
-      setPages((n) => n + 1);
-      return;
+  // carousel：悬停停在带上/下 18px 边缘区时按 80ms 间隔滚动消息列
+  const stopCarousel = () => {
+    if (carouselTimerRef.current !== null) {
+      clearInterval(carouselTimerRef.current);
+      carouselTimerRef.current = null;
     }
+  };
+  const startCarousel = (dir: 1 | -1) => {
+    if (carouselTimerRef.current !== null) return;
+    carouselTimerRef.current = setInterval(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollBy({ top: dir * Math.max(120, el.clientHeight * 0.8) });
+    }, CAROUSEL_STEP_MS);
+  };
+
+  // 指针 → 段下标：Y/12 取整映射最近格 + tape 起点偏移（钳段界）
+  const segIdxFromPointer = (clientY: number): number => {
+    const band = bandRef.current;
+    if (!band) return 0;
+    const y = clientY - band.getBoundingClientRect().top;
+    const cell = clamp(Math.floor(y / PITCH_PX), 0, Math.min(segments.length, BAND_MAX_SEGMENTS) - 1);
+    return clamp(cell + tapeStartOf(segments.length, viewIdx), 0, segments.length - 1);
+  };
+  const onBandMove = (ev: React.PointerEvent<HTMLDivElement>) => {
+    const band = bandRef.current;
+    if (!band) return;
+    const rect = band.getBoundingClientRect();
+    const y = ev.clientY - rect.top;
+    const segIdx = segIdxFromPointer(ev.clientY);
+    stopCarousel();
+    if (y < BAND_EDGE_ZONE_PX) startCarousel(-1);
+    else if (y > rect.height - BAND_EDGE_ZONE_PX) startCarousel(1);
+    setHoverIdx(segIdx);
+    openPanel(segIdx);
+  };
+  const onBandLeave = () => {
+    stopCarousel();
+    setHoverIdx(null);
+    closePanelSoon();
+  };
+
+  const jumpToKey = useNavRailJump(scrollRef, virtualizer);
+
+  // 点击：按指针 Y 选最近段跳转 + 活动指示 pin 2500ms 防回拖 + 面板关闭
+  const onBandClick = (ev: React.MouseEvent<HTMLDivElement>) => {
+    stopCarousel();
+    const segIdx = segIdxFromPointer(ev.clientY);
+    const seg = segments[segIdx];
+    if (!seg) return;
+    jumpToKey(seg.firstKey, seg.firstIndex);
+    setPanelOpen(false);
+    setPinIdx(segIdx);
+    if (pinTimerRef.current !== null) clearTimeout(pinTimerRef.current);
+    pinTimerRef.current = setTimeout(() => {
+      pinTimerRef.current = null;
+      setPinIdx(null);
+      setActiveIdx(computedIdxRef.current);
+      activeIdxRef.current = computedIdxRef.current;
+    }, PIN_MS);
+  };
+
+  // 「加载更早」：按 before 游标（store 最旧 id）向窗外取一窗并入。失败静默（钮由
+  // finally 复位可重试）。
+  const onLoadEarlier = () => {
+    if (loadingMore) return;
     setLoadingMore(true);
     const run = async () => {
       const st = useMessagesStore.getState().bySession[sessionId];
       if (st?.hasMore && st.oldestId !== null) {
         await useMessagesStore.getState().fetchEarlierPage(sessionId, st.oldestId, fetchPage);
       }
-      setPages((n) => n + 1);
     };
     run()
       .catch(() => {
@@ -189,89 +324,98 @@ export function NavRail({
       .finally(() => setLoadingMore(false));
   };
 
-  // 刻度所属段：正常按日键命中；无效日键并入段的场合（刻度 dayKey 为 "" 而段键为真实
-  // 日）按行 key 回查（rows 即本段刻度清单）
-  const segOfTick = (tick: NavTick): NavSegmentSpec | null => {
-    const byDay = segments.find((s) => s.key === tick.dayKey);
-    if (byDay) return byDay;
-    return segments.find((s) => s.rows.some((r) => r.key === tick.key)) ?? null;
-  };
-  const onTickEnter = (tick: NavTick, ev: React.MouseEvent<HTMLButtonElement>) => {
-    const seg = segOfTick(tick);
-    if (seg) openCard(seg.key, cardTopFromEvent(ev));
-  };
+  if (ticks.length === 0 || segments.length < 2) return null;
 
-  if (ticks.length === 0 || segments.length === 0) return null;
-
-  const totalSize = virtualizer.getTotalSize();
-  const measurements = virtualizer.measurementsCache;
-  const hoverSeg = hover !== null ? (segments.find((s) => s.key === hover.segKey) ?? null) : null;
+  const viewIdxSafe = clamp(viewIdx, 0, segments.length - 1);
+  const bandH = Math.min(segments.length, BAND_MAX_SEGMENTS) * PITCH_PX;
+  const tapeStart = tapeStartOf(segments.length, viewIdxSafe);
+  const panelWindowH = winRows * PANEL_ROW_PX;
+  const offsetY = -viewStart * PANEL_ROW_PX;
 
   return (
     <div
       ref={railRef}
       data-testid="nav-rail"
-      className="pointer-events-none absolute inset-y-1 right-0 hidden w-3.5 lg:flex"
+      className="pointer-events-none absolute inset-y-1 right-0 hidden w-7 lg:flex"
     >
-      {/* 段层：段高按段内用户消息量 flex 比例分配（flexBasis 0 + minHeight 12px 托底），
-          段间 my-px 间隙点击穿透给滚动条；点段=定位段首（不完整段先回溯取数） */}
-      <div className="absolute inset-y-0 left-0 right-0 flex flex-col">
-        {segments.map((seg) => (
-          <button
-            key={seg.key}
-            type="button"
-            data-testid="nav-rail-segment"
-            data-seg-key={seg.key}
-            aria-label={t("chat.navRail.jumpTo", { title: seg.label })}
-            onClick={() => onSegmentClick(seg)}
-            onMouseEnter={(ev) => openCard(seg.key, cardTopFromEvent(ev))}
-            onMouseLeave={closeCardSoon}
-            className="pointer-events-auto group relative my-px rounded-full transition-colors hover:bg-border/60"
-            style={{ flexGrow: seg.count, flexBasis: 0, minHeight: 12 }}
-          >
-            <span
-              aria-hidden
-              className="absolute inset-y-0 left-0.5 right-0.5 rounded-full bg-border/50 transition-colors group-data-[active=true]:bg-primary/60"
-            />
-          </button>
-        ))}
-      </div>
-      {/* 视口指示块：段层之上（后声明后绘制），按 scrollTop 区间映射 */}
+      {/* 「加载更早」独立圆钮：gutter 顶部，加载中 loader 旋转 + opacity-70 */}
+      {hasMore && (
+        <button
+          type="button"
+          data-testid="nav-rail-load-earlier"
+          aria-label={t("chat.navRail.loadEarlier")}
+          onClick={onLoadEarlier}
+          className="pointer-events-auto absolute right-1.5 top-1 z-10 flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
+        >
+          {loadingMore ? (
+            <Loader2 aria-hidden className="size-3.5 animate-spin opacity-70" />
+          ) : (
+            <ArrowUp aria-hidden className="size-3.5" />
+          )}
+        </button>
+      )}
+
+      {/* 指示器带：右对齐垂直居中，命中区 28px（挤压缩 12px）；点击按指针 Y 选最近段 */}
       <div
-        ref={indicatorRef}
-        data-testid="nav-rail-viewport"
-        aria-hidden
-        className="absolute inset-x-0 top-0 rounded-full bg-border/70"
-        style={{ height: 12, willChange: "transform" }}
-      />
-      {ticks.map((tick) => {
-        const m = measurements[tick.index];
-        if (!m || totalSize <= 0) return null;
-        return (
-          <button
-            key={tick.key}
-            type="button"
-            data-testid="nav-rail-tick"
-            aria-label={t("chat.navRail.jumpTo", { title: tick.title })}
-            onClick={() => jumpToKey(tick.key, tick.index)}
-            onMouseEnter={(ev) => onTickEnter(tick, ev)}
-            onMouseLeave={closeCardSoon}
-            className="pointer-events-auto absolute right-0.5 z-10 h-1.5 w-2 -translate-y-1/2 rounded-full bg-border transition-colors hover:bg-primary"
-            style={{ top: `${(m.start / totalSize) * 100}%` }}
-          />
-        );
-      })}
-      {hover !== null && hoverSeg !== null && (
+        ref={bandRef}
+        data-testid="nav-rail-band"
+        className="pointer-events-auto absolute right-1.5 top-1/2 -translate-y-1/2"
+        style={{ width: hitW, height: bandH }}
+        onPointerMove={onBandMove}
+        onPointerLeave={onBandLeave}
+        onClick={onBandClick}
+        role="navigation"
+        aria-label={t("chat.navRail.jumpTo", { title: ticks[0]?.title ?? "" })}
+      >
+        {/* tape：translateY 滑动（duration-300 ease-out），key=首段 id 防 prepend 假动画 */}
+        <div
+          key={segments[0]!.key}
+          className="flex flex-col items-center transition-transform duration-300 ease-out"
+          style={{ transform: `translateY(${-tapeStart * PITCH_PX}px)` }}
+        >
+          {segments.map((seg, i) => {
+            const isActive = i === viewIdxSafe;
+            const isHover = hoverIdx === i;
+            return (
+              <span
+                key={seg.key}
+                data-testid="nav-rail-segment"
+                data-seg-key={seg.key}
+                data-active={isActive ? "true" : "false"}
+                className="flex items-center justify-center"
+                style={{ height: PITCH_PX, width: "100%" }}
+              >
+                <span
+                  aria-hidden
+                  className={`block h-0.5 rounded-full transition-all duration-200 ease-out ${
+                    isActive
+                      ? "bg-foreground"
+                      : isHover
+                        ? "bg-foreground/80"
+                        : "bg-foreground/30"
+                  }`}
+                  style={{ width: tickWidthOf(i, viewIdxSafe, hoverIdx) }}
+                />
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 悬停面板：固定贴 gutter 左侧，全部用户消息迷你列表（可交互，见组件注释） */}
+      {panelOpen && rowsFlat.length > 0 && (
         <NavRailSegmentCard
-          segment={hoverSeg}
-          top={hover.top}
-          shown={shownCount(hoverSeg)}
-          canMore={canMore(hoverSeg)}
-          pagedOnce={pages > 0}
-          loadingMore={loadingMore}
-          onMore={() => onCardMore(hoverSeg)}
-          onMouseEnter={clearHideTimer}
-          onMouseLeave={closeCardSoon}
+          rows={rowsFlat}
+          hl={clamp(hl, 0, rowsFlat.length - 1)}
+          activeSegIdx={viewIdxSafe}
+          offsetY={offsetY}
+          windowH={panelWindowH}
+          onRowEnter={setHl}
+          onWheelStep={(dir) =>
+            setHl((h) => clamp(h + dir, 0, rowsFlat.length - 1))
+          }
+          onMouseEnter={clearPanelHideTimer}
+          onMouseLeave={closePanelSoon}
         />
       )}
     </div>
