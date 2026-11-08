@@ -14,7 +14,7 @@ import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
 import { diag } from "@/lib/diag";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import { useMessagesStore } from "@/stores/messages";
-import { resolveReachTopAction } from "./reach-top";
+import { runReachTopSync } from "./reach-top-sync";
 import { usePermissionsStore } from "@/stores/permissions";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
@@ -268,49 +268,24 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   // 顶部触顶：任务 16——hasMore 时向上翻页（?before= 后向拉更早窗，id 去重头插，
   // 拼缝零重复零丢失）；否则原游标增量同步（引擎 getEntries since 语义兜底补漏；
-  // 10s 冷却防贴顶滚动反复请求）
+  // 10s 冷却只门 cursor 增量分支防贴顶滚动反复请求，不门 before 翻页——#27a R1）。
+  // 行为主体在 reach-top-sync（可测）：含 409 cursor_invalid 升级 full=1 全量整替（R2）
   const onReachTop = useCallback(() => {
     if (syncInFlightRef.current) return;
-    if (Date.now() < syncingUntilRef.current) return;
-    const state = useMessagesStore.getState().bySession[sessionId];
-    const action = resolveReachTopAction(state);
-    if (!action) return;
-    syncInFlightRef.current = true;
-    setSyncing(true);
-    api
-      .listMessages(sessionId, action.kind === "before" ? { before: action.before } : { cursor: action.cursor })
-      .then((page) => {
-        const store = useMessagesStore.getState();
-        if (action.kind === "before") {
-          store.prependEntries(sessionId, page.entries, {
-            hasMore: page.hasMore ?? false,
-            oldestId: page.oldestId ?? null,
-          });
-        } else {
-          store.appendEntries(sessionId, page.entries);
-          store.setCursor(sessionId, page.cursor);
-        }
-      })
-      .catch((err) => {
-        // cursor 校准面同 t12：游标失效（cursor_invalid）升级全量重取整替；before 翻页
-        // 与其余错误保持静默（下次触顶/切回再兜底）。
-        if (action.kind === "cursor" && err instanceof ApiError && err.code === "cursor_invalid") {
-          return api
-            .listMessages(sessionId, { full: true })
-            .then((page) => {
-              useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId, {
-                hasMore: page.hasMore ?? false,
-                oldestId: page.oldestId ?? null,
-              });
-            })
-            .catch(() => {});
-        }
-      })
-      .finally(() => {
+    void runReachTopSync(sessionId, {
+      listMessages: (...args) => api.listMessages(...args),
+      coolingDown: () => Date.now() < syncingUntilRef.current,
+      begin: () => {
+        syncInFlightRef.current = true;
+        setSyncing(true);
+      },
+      finish: (kind) => {
         syncInFlightRef.current = false;
-        syncingUntilRef.current = Date.now() + 10_000;
+        // 冷却只针对 cursor 增量同步；before 翻页不进冷却（#27a R1）
+        if (kind === "cursor") syncingUntilRef.current = Date.now() + 10_000;
         setSyncing(false);
-      });
+      },
+    });
   }, [sessionId]);
 
   // 消息级归因表（2026-11-01 消息级模型归因补全）：回执模型 + 窗口外变更点回读

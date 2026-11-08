@@ -41,7 +41,10 @@ export async function runCompact(sessionId: string): Promise<CompactReceipt> {
       store.appendEntries(sessionId, page.entries);
       store.setCursor(sessionId, page.cursor);
     } else {
-      store.setEntries(sessionId, page.entries, page.cursor, page.leafId);
+      store.setEntries(sessionId, page.entries, page.cursor, page.leafId, {
+        hasMore: page.hasMore ?? false,
+        oldestId: page.oldestId ?? null,
+      });
     }
   } catch {
     // 消息刷新失败不阻塞压缩成功反馈（下次打开会话/触顶增量自然对齐）
