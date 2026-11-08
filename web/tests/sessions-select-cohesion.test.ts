@@ -154,7 +154,7 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     expect(useUiStore.getState().selectedThinkingLevel).toBe("high");
   });
 
-  test("appliedModels 命中：会话生效模型压过目标项目偏好，思考档置 null 交回退链；补拉仍发生", async () => {
+  test("appliedModels 命中：会话生效模型压过目标项目偏好，思考档取项目偏好（第四链修复：不置 null，防切模型回落引擎默认洗掉手选）；补拉仍发生", async () => {
     mockModelsFetch();
     seedStores({
       applied: { "sess-b": "prov/applied-model" },
@@ -162,8 +162,9 @@ describe("select 跨项目内聚（W2 任务 6）", () => {
     });
     useSessionsStore.getState().select("sess-b");
     expect(useUiStore.getState().selectedModel).toBe("prov/applied-model");
-    // appliedModels 无思考档信息：置 null 交回退链兜底，不跨会话携带残留
-    expect(useUiStore.getState().selectedThinkingLevel).toBeNull();
+    // 第四链（2026-11-09 日志实证）：appliedModels 无思考档，但置 null 会让切模型
+    // 的 prompt 不带档→引擎回落自身默认并记 explicit，手选被洗；取项目偏好兜位。
+    expect(useUiStore.getState().selectedThinkingLevel).toBe("high");
     expect(listModelsCalls.length).toBe(1);
     pendingModels!.resolve({
       project: "/p-b",

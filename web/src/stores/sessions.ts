@@ -244,7 +244,11 @@ function applyProjectDecision(sessionId: string, targetProject: string): void {
   const applied = s.appliedModels[sessionId] || null;
   const pref = ui.projects.find((p) => p.projectPath === targetProject);
   ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
-  ui.setSelectedThinkingLevel(applied !== null ? null : (pref?.preferredThinkingLevel ?? null));
+  // 思考档不置 null：applied 命中时取项目偏好（无则 null）——2026-11-09 日志实证
+  // （model_change 后紧跟 explicit high）：置 null 后切模型的 prompt 不带档，引擎对
+  // 未带档的切模型回落自身默认 high 并记 explicit，手选 max 被洗掉（三链修复漏的
+  // 第四链）。项目偏好是用户意图的最接近代理；引擎侧重开带档（三链 A）与此双保险。
+  ui.setSelectedThinkingLevel(pref?.preferredThinkingLevel ?? null);
   // 思考档三链 B：程序化落定后清手选标记——新会话/新项目的引擎回显照常同步（
   // 手选语义只对当次选择态成立，跨会话不残留）
   ui.clearUserPickedThinking();
