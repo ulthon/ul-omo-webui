@@ -634,6 +634,15 @@ export const api = {
     const qs = q.toString();
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ""}`);
   },
+  /** 模型归因轻量回读（首屏流量直做批）：服务端磁盘精筛只回 model_change 条目
+   *  （KB 级），取代 backfill 旧 full=1 全量拉取（长会话单开多至几十 MB、95%
+   *  流量来自彼处）；文件不在等场景回空列表。 */
+  async listModelChanges(sessionId: string): Promise<WireEntry[]> {
+    const body = await request<{ sessionId: string; entries: WireEntry[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/model-changes`,
+    );
+    return body.entries ?? [];
+  },
   async prompt(
     sessionId: string,
     body: {

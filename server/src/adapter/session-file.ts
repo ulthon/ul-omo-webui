@@ -204,6 +204,41 @@ export async function readAllEntries(sessionPath: string): Promise<FullReadResul
   }
 }
 
+/**
+ * 正向流式精筛读（首屏流量直做批）：只收集 type === "model_change" 的条目，供
+ * GET /api/sessions/:id/model-changes 轻量回读——前端模型归因 backfill 原以
+ * full=1 全量拉会话只为提取窗口外变更点（实测长会话单开 95% 流量来自该回读，
+ * 见台账 2026-11-08 #35）。流式约定与 readAllEntries 同源：分块顺序读、header 与
+ * 损坏行跳过、末尾无换行残行丢弃；区别仅在解析后按 type 过滤，内存只驻留命中
+ * 条目（变更点数量级几十条，KB 级）。
+ */
+export async function readModelChangeEntries(sessionPath: string): Promise<EngineEntry[]> {
+  const fh = await open(sessionPath, "r");
+  try {
+    const size = (await fh.stat()).size;
+    const entries: EngineEntry[] = [];
+    let pos = 0;
+    let carry = "";
+    while (pos < size) {
+      const step = Math.min(CHUNK_BYTES, size - pos);
+      const buf = Buffer.alloc(step);
+      const { bytesRead: read } = await fh.read(buf, 0, step, pos);
+      if (read <= 0) break;
+      pos += read;
+      const text = carry + buf.toString("utf8", 0, read);
+      const parts = text.split("\n");
+      carry = parts.pop() ?? "";
+      for (const part of parts) {
+        const entry = parseEntryLine(part);
+        if (entry && entry.type === "model_change") entries.push(entry);
+      }
+    }
+    return entries;
+  } finally {
+    await fh.close();
+  }
+}
+
 /** 前向增量读结果（任务 13 / F4 IS-2 切回校准磁盘优先）：entries 为 afterId 之后
  *  的条目（文件序）；cursor 为响应游标——读尽时即文件末条目 id（afterId 之后无新
  *  条目时即 afterId 本身，对齐引擎 getEntries(since) 增量 0 条回 leafId 的语义），

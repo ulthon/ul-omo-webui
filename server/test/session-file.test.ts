@@ -21,6 +21,7 @@ import {
   readAllEntries,
   readEntriesAfter,
   readEntriesBefore,
+  readModelChangeEntries,
   readTailEntries,
 } from "../src/adapter/session-file";
 import { EngineAdapterError } from "../src/adapter/engine-adapter";
@@ -636,5 +637,63 @@ describe("GET messages ?cursor= 磁盘优先（任务 13）", () => {
     expect(body.entries.map((e) => e.id)).toEqual(["x"]);
     expect(body.cursor).toBe("x");
     expect(engines.engineCalls).toBe(1);
+  });
+});
+
+// ---- 首屏流量直做批（台账 2026-11-08 #35）：model_change 轻量精筛 ----
+function mcLine(i: number, provider = "p", modelId = "m"): string {
+  return JSON.stringify({
+    type: "model_change",
+    id: `mc-${i}`,
+    provider,
+    modelId,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
+}
+
+describe("readModelChangeEntries 精筛读", () => {
+  test("只回 model_change 条目（文件序）；header/普通消息/损坏行跳过", async () => {
+    const dir = mkTemp("t-mc-");
+    const path = join(dir, "s.jsonl");
+    writeFileSync(
+      path,
+      [header("h"), line(0), mcLine(1), line(1), "{broken", mcLine(2, "zai-coding-cn", "glm-5.3"), line(2), ""].join("\n"),
+      "utf8",
+    );
+    const entries = await readModelChangeEntries(path);
+    expect(entries.map((e) => e.id)).toEqual(["mc-1", "mc-2"]);
+    expect(entries[1]).toMatchObject({ provider: "zai-coding-cn", modelId: "glm-5.3" });
+  });
+
+  test("空会话/无命中：空数组", async () => {
+    const dir = mkTemp("t-mc-");
+    const path = join(dir, "s.jsonl");
+    writeFileSync(path, [header("h"), line(0)].join("\n"), "utf8");
+    expect(await readModelChangeEntries(path)).toEqual([]);
+  });
+});
+
+describe("GET model-changes 轻量回读路由", () => {
+  test("磁盘精筛只回 model_change，引擎零参与", async () => {
+    const dir = mkTemp("t-mc-route-");
+    const path = join(dir, "s.jsonl");
+    writeFileSync(path, [header("h"), line(0), mcLine(1), line(1), mcLine(2), line(2)].join("\n"), "utf8");
+    const engines = new TailFakeGateway([row("s1", path)]);
+    const app = buildApp(engines);
+    const res = await app.request("/api/sessions/s1/model-changes");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sessionId: string; entries: Array<{ id: string; type: string }> };
+    expect(body.sessionId).toBe("s1");
+    expect(body.entries.map((e) => e.id)).toEqual(["mc-1", "mc-2"]);
+    expect(body.entries.every((e) => e.type === "model_change")).toBe(true);
+    expect(engines.engineCalls).toBe(0);
+  });
+
+  test("文件不在（未落盘/别名）：回空列表不报错", async () => {
+    const engines = new TailFakeGateway([row("s1", "/nonexistent/mc.jsonl")]);
+    const app = buildApp(engines);
+    const res = await app.request("/api/sessions/s1/model-changes");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { entries: unknown[] }).entries).toEqual([]);
   });
 });

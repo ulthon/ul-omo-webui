@@ -196,9 +196,10 @@ function ChatSession({ sessionId }: { sessionId: string }) {
             hasMore: page.hasMore ?? false,
             oldestId: page.oldestId ?? null,
           });
-          // 模型归因回读（2026-11-01 消息级模型归因补全）：首载尾窗缺 model_change
-          // 时全量回读窗口外变更点（动作内自判需要，只取 model_change 不参与渲染）
-          void store.backfillModelTimeline(sessionId, (opts) => api.listMessages(sessionId, opts));
+          // 模型归因回读（2026-11-01 消息级模型归因补全；首屏流量直做批改轻量端点）：
+          // 首载尾窗缺 model_change 时轻量回读窗口外变更点（只取 model_change 不参与
+          // 渲染，不再 full=1 全量拉会话——长会话单开 95% 流量曾来自彼处）
+          void store.backfillModelTimeline(sessionId, () => api.listModelChanges(sessionId));
         }
         setLoadState("done");
         diag.info("perf", "messages", {

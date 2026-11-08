@@ -88,9 +88,9 @@ export interface SessionMessages {
    *  receiptModel = 最近一次直发回执 appliedModel（composer 发送成功点写入，
    *  "provider/model" 形态；气泡解析与流式态就近消费；内存态，重启/重取后由
    *  modelBackfill 水合兑底）；
-   *  modelBackfill = 首载尾窗缺 model_change 时全量回读的窗口外变更点（只取
+   *  modelBackfill = 首载尾窗缺 model_change 时轻量回读的窗口外变更点（只取
    *  model_change 类型，不参与渲染），前插进解析时间线使归因覆盖全程；
-   *  modelBackfillDone = 回读闸（每会话至多一次全量拉取，失败也落闸防风暴）。 */
+   *  modelBackfillDone = 回读闸（每会话至多一次回读，失败也落闸防风暴）。 */
   receiptModel: string | null;
   modelBackfill: Array<WireEntry & { id: string }>;
   modelBackfillDone: boolean;
@@ -180,13 +180,15 @@ interface MessagesState {
   /** 直发回执 appliedModel 落归因表（2026-11-01 归因补全批，composer 发送成功点
    *  调用；会话槽缺席不建槽——发送必在查看态，槽已由首载建立） */
   markReceiptModel(sessionId: string, model: string): void;
-  /** 水合回读（2026-11-01 归因补全批）：首载尾窗不含任何 model_change 且还有更早
-   *  历史（hasMore）时，经 fetchPage 全量拉一次，挑出窗口外变更点入归因表并复用
-   *  水合口径写会话生效模型；fetchPage 注入（测试免 mock api 模块）。每会话至多
-   *  一次，失败落闸静默降级（归因是软增强）。 */
+  /** 水合回读（2026-11-01 归因补全批；首屏流量直做批改轻量取数）：首载尾窗不含任何
+   *  model_change 且还有更早历史（hasMore）时，经注入取数只拉 model_change 条目
+   *  （服务端 /model-changes 磁盘精筛 KB 级，取代原 full=1 全量拉取——长会话单开
+   *  流量 95% 曾来自彼处），挑出窗口外变更点入归因表并复用水合口径写会话生效模型；
+   *  fetchChanges 注入（测试免 mock api 模块）。每会话至多一次，失败落闸静默降级
+   *  （归因是软增强）。 */
   backfillModelTimeline(
     sessionId: string,
-    fetchPage: (opts: { full?: boolean }) => Promise<MessagesPage>,
+    fetchChanges: () => Promise<WireEntry[]>,
   ): Promise<void>;
   /** 段回溯取数（nav-rail 分段指示器）：按 before 游标拉一窗更早条目并头插合并（同
    *  触顶翻页通道 prependEntries，id 去重拼缝零重复零丢失；fetchPage 注入同
@@ -678,10 +680,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       });
     },
 
-    backfillModelTimeline: async (sessionId, fetchPage) => {
+    backfillModelTimeline: async (sessionId, fetchChanges) => {
       const cur = get().bySession[sessionId];
       if (!cur?.loaded || cur.modelBackfillDone) return;
-      // 时间线自足（尾窗已含变更点）或已是全量（无窗外可补）：只落闸，不拉全量
+      // 时间线自足（尾窗已含变更点）或已是全量（无窗外可补）：只落闸，不拉
       if (lastModelChangeOf(cur.entries) !== null || !cur.hasMore) {
         set((s) => {
           const st = s.bySession[sessionId];
@@ -690,10 +692,12 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         return;
       }
       try {
-        const page = await fetchPage({ full: true });
+        // 首屏流量直做批（台账 11-08 #35）：轻量端点只回 model_change 条目（KB 级），
+        // 取代原 full=1 全量拉取（长会话单开 95% 流量来自彼处）
+        const source = await fetchChanges();
         const now = get().bySession[sessionId];
         if (now === undefined) return; // 等待期间会话清理：放弃本轮
-        const changes = modelChangeBackfillOf(page.entries, now.entries);
+        const changes = modelChangeBackfillOf(source, now.entries);
         set((s) => ({
           bySession: {
             ...s.bySession,
@@ -703,7 +707,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         // 窗口外最末变更点即当前生效模型：复用水合写入口径（appliedModels + 选中对齐）
         if (changes.length > 0) hydrateAppliedModel(sessionId, changes);
       } catch {
-        // 全量拉取失败静默降级（归因是软增强，不报错不重试风暴）：落闸
+        // 回读失败静默降级（归因是软增强，不报错不重试风暴）：落闸
         set((s) => {
           const st = s.bySession[sessionId];
           return st ? { bySession: { ...s.bySession, [sessionId]: { ...st, modelBackfillDone: true } } } : s;

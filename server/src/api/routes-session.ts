@@ -4,6 +4,7 @@ import { Hono, type Context } from "hono";
 import { lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  EngineEntry,
   EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
@@ -31,7 +32,7 @@ import { readSessionPreview } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
-import { CursorInvalidError, readAllEntries, readEntriesAfter, readEntriesBefore, readTailEntries } from "../adapter/session-file";
+import { CursorInvalidError, readAllEntries, readEntriesAfter, readEntriesBefore, readModelChangeEntries, readTailEntries } from "../adapter/session-file";
 import { debugPerfOn } from "../conf/diagnostics-flags";
 import { logPerfHttp } from "./perf";
 
@@ -478,6 +479,29 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       if (debugPerfOn()) logPerfHttp(toErrorResponse(c, err).status, performance.now() - t0, undefined);
       throw err;
     }
+  }));
+
+  // 模型归因轻量回读（首屏流量直做批）：前端 backfillModelTimeline 原以 full=1
+  // 全量拉会话只为提取窗口外 model_change（实测长会话单开 95% 流量来自该回读）；
+  // 改本端点磁盘流式精筛只回 model_change 条目（KB 级）。文件不在（未落盘/别名）
+  // 或网关无直读面返回空列表——磁盘无条目即无可回读变更点，语义完备，不经引擎
+  // 不拉起（与尾窗直读同一路数）。
+  app.get("/api/sessions/:id/model-changes", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    let entries: EngineEntry[] = [];
+    const sessionPath = deps.engines.sessionPath ? await deps.engines.sessionPath(id) : null;
+    if (sessionPath) {
+      let stat: { size: number } | null = null;
+      try {
+        stat = statSync(sessionPath);
+      } catch {
+        stat = null;
+      }
+      if (stat && stat.size > 0) {
+        entries = await readModelChangeEntries(sessionPath);
+      }
+    }
+    return c.json({ sessionId: id, entries });
   }));
 
   // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、
