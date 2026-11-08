@@ -18,7 +18,7 @@
 // 立即插入光标处且 chip 消失（best-effort DELETE）；叉=移除+DELETE；POST 失败回退=
 // 原文插入输入框（内容永不丢）+toast。三按钮选择条退役；占位符改语法教学（桌面长版/
 // 手机短版按视口）。
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
@@ -326,8 +326,12 @@ export function Composer({
     [applyText, textRef],
   );
 
-  // 每次渲染后按内容校正高度（r9：共用 resizeComposerTextarea，先量后写）
-  useEffect(() => {
+  // 每次渲染后按内容校正高度（r9：共用 resizeComposerTextarea，先量后写）。
+  // composer-jitter 修复（2026-11-08）：校正从 useEffect 改为 useLayoutEffect——
+  // passive effect 在浏览器绘制之后才跑，值已更新的那帧先以旧高度绘制一遍（历史区
+  // 随之按旧布局跳一次），下一帧才被拉回，即旧档记录的打字/换行抖动；layout effect
+  // 在绘制前同步量写，量写与文本变更并入同一视觉帧。增长路径零写入语义不变。
+  useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     resizeComposerTextarea(el);

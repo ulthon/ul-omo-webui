@@ -149,3 +149,48 @@ describe("resizeComposerTextarea 发送后回缩（r10 任务 5）", () => {
     }
   });
 });
+
+describe("resizeComposerTextarea 高度单调无回跳（composer-jitter 修复回归）", () => {
+  it("增长→删减→清空全程：调用返回后 style.height 永不为 auto，终值随内容逐帧单调", () => {
+    const el = new FakeTextarea();
+    el.value = "";
+    el.render();
+    const trace: number[] = [];
+    for (let i = 1; i <= 8; i++) {
+      el.value = Array.from({ length: i }, (_, j) => `第 ${j} 行`).join("\n");
+      el.render();
+      expect(el.style.height).not.toBe("auto");
+      trace.push(parseFloat(el.style.height));
+    }
+    // 增长段严格单调增
+    for (let i = 1; i < trace.length; i++) expect(trace[i]).toBeGreaterThan(trace[i - 1]);
+    // 删减段逐帧精确回缩，无回跳
+    for (let i = 7; i >= 1; i--) {
+      el.value = Array.from({ length: i }, (_, j) => `第 ${j} 行`).join("\n");
+      el.render();
+      expect(el.style.height).not.toBe("auto");
+      expect(el.style.height).toBe(`${PAD + i * LINE_H}px`);
+    }
+    // 清空回单行基准，且空值反复渲染零写入（无回跳余震）
+    el.value = "";
+    el.render();
+    expect(el.style.height).toBe(`${PAD + LINE_H}px`);
+    el.writes.length = 0;
+    el.render();
+    el.render();
+    expect(el.writes).toEqual([]);
+  });
+
+  it("缩短路径量测中间态同帧闭合：写入序列里 auto 之后同帧紧跟终值，不存在 auto 终态", () => {
+    const el = new FakeTextarea();
+    el.value = Array.from({ length: 6 }, (_, j) => `第 ${j} 行`).join("\n");
+    el.render();
+    el.writes.length = 0;
+    el.value = "单行";
+    el.render();
+    // 同帧写入序列形如 [auto, 终值]，调用结束后绝不残留 auto
+    expect(el.writes[0]).toBe("auto");
+    expect(el.writes[el.writes.length - 1]).toBe(`${PAD + LINE_H}px`);
+    expect(el.style.height).not.toBe("auto");
+  });
+});
