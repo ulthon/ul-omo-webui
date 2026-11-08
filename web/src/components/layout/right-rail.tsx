@@ -22,6 +22,7 @@ import { StatPanel } from "@/components/chat/stat-panel";
 import { SubagentPanel } from "@/components/chat/subagent-panel";
 import { TodoPanel } from "@/components/chat/todo-panel";
 import { OverviewPanel } from "@/components/layout/overview-panel";
+import { RailFilesPanel } from "@/components/layout/rail-files-panel";
 import { useUiStore } from "@/stores/ui";
 import { useT, type MessageKey } from "@/i18n/i18n";
 
@@ -32,7 +33,7 @@ const NotesView = lazy(() =>
   import("@/components/notes/notes-view").then((m) => ({ default: m.NotesView })),
 );
 
-export type RightRailTab = "overview" | "todo" | "changes" | "notes" | "stats" | "memory" | "agents";
+export type RightRailTab = "overview" | "todo" | "changes" | "notes" | "files" | "stats" | "memory" | "agents";
 
 // 页签标签键：完整点分路径字面量映射（i18n 死键检测要求键以字面量被引用）
 const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
@@ -40,12 +41,13 @@ const TAB_LABEL_KEY: Record<RightRailTab, MessageKey> = {
   todo: "login.rightRail.tabTodo",
   changes: "login.rightRail.tabChanges",
   notes: "login.rightRail.tabNotes",
+  files: "login.rightRail.tabFiles",
   stats: "login.rightRail.tabStats",
   memory: "login.rightRail.tabMemory",
   agents: "login.rightRail.tabAgents",
 };
 
-const TAB_IDS: RightRailTab[] = ["overview", "todo", "changes", "notes", "stats", "memory", "agents"];
+const TAB_IDS: RightRailTab[] = ["overview", "todo", "changes", "notes", "files", "stats", "memory", "agents"];
 
 /** 页签记忆 localStorage 键（r9 w2-t8）：值为合法 RightRailTab 字符串；
  *  无记录 / 非法值回退默认总览（仅首次进入生效，存量偏好不覆盖）。 */
@@ -198,6 +200,7 @@ function RailBody({
   if (tab === "stats") return <StatPanel sessionId={sessionId} />;
   if (tab === "memory") return <MemoryPanel sessionId={sessionId} />;
   if (tab === "agents") return <SubagentPanel sessionId={sessionId} />;
+  if (tab === "files") return <RailFilesPanel />;
   return (
     <Suspense fallback={<RailLoading text={tab === "notes" ? t("login.rightRail.loadingNotes") : t("login.rightRail.loadingChanges")} />}>
       {tab === "notes" ? <NotesView dirtyRef={notesDirtyRef} /> : <ChangesView />}

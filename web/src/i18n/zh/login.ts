@@ -31,6 +31,7 @@ export const login = {
     tabTodo: "任务",
     tabChanges: "变更",
     tabNotes: "笔记",
+    tabFiles: "文件",
     tabStats: "统计",
     tabMemory: "记忆",
     tabAgents: "子代理",

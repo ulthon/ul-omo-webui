@@ -29,6 +29,7 @@ export const login = {
     tabTodo: "Tasks",
     tabChanges: "Changes",
     tabNotes: "Notes",
+    tabFiles: "Files",
     tabStats: "Stats",
     tabMemory: "Memory",
     tabAgents: "Agents",
