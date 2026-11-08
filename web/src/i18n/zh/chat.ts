@@ -275,10 +275,11 @@ export const chat = {
     next: "换一条",
     dismiss: "关闭",
   },
-  // nav-rail.tsx 右缘导航轨
+  // nav-rail.tsx 右缘导航（OC v2.7 角标+面板形态）
   navRail: {
     jumpTo: "跳转到：{title}",
-    loadEarlier: "加载更早",
+    loadMorePrompts: "加载更早消息",
+    earliestReached: "已到会话最早",
   },
   // permission-queue.tsx 权限队列容器
   permissionQueue: {

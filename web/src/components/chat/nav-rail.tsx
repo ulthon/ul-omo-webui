@@ -1,74 +1,53 @@
-// 右缘对话导航轨（OpenChamber v1.24.2 源码级复刻）：
-// 1. 指示器带：右对齐 absolute right-1.5 top-1/2 -translate-y-1/2，命中区宽 28px
-//    （容器被消息列挤压时缩 12px，ResizeObserver 测得）；带高 = min(段数,30)*12px，
-//    每格 12px pitch；刻度 span h-0.5 rounded-full transition-all duration-200
-//    ease-out（2px 圆头条），宽普通 10px / active 14px / 悬停聚焦 20px 邻近衰减
-//    [1,0.6,0.35,0.15]；颜色 active 前景色全不透明、普通 /30、悬停 /80。带体
-//    translateY 滑动 tape（transition-transform duration-300 ease-out，key=首段 id
-//    防 prepend 假动画）；悬停指针 Y/12 取整映射最近刻度；停上/下
-//    18px 边缘区 80ms 间隔 carousel：步进 tape 窗口起点遍历更多段（只动
-//    刻度带窗口，聊天内容绝不动）。
-// 2. 悬停面板：固定贴 gutter 左侧（right-full mr-3 不跟指针），全部用户消息预览的
-//    迷你滚动列表（见 nav-rail-segment-card.tsx），离开 160ms 隐藏、移入取消隐藏。
-// 3. 「加载更早」：gutter 顶部独立圆钮（size-5 + arrow-up / loader），不再放面板内。
-// 4. 点击：按指针 Y 选最近段跳转（jumpToKey），活动指示 pin 目标 2500ms 防回拖，
-//    面板关闭。
-// 5. 活动段判定：pickActiveSegmentIndex（顶边 ≤ scrollTop+100px 的最后一段；距底
-//    ≤ max(48px, 10% viewport) 或粘底取最后段），scroll rAF 节流、值变才 setState。
-// 6. 显示条件：段数 ≥ 2。hidden lg:flex 手机不显示（触屏无悬停）。
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+// 聊天右缘导航（OpenChamber v2.7.0 角标+面板形态复刻 + 用户改良交互）：
+// 1. 角标指示器：转写区顶端右上角固定五格刻度 glyph（bg-background/85 无边框无模糊
+//    衬底、圆角 8、每格 26x2px 圆头条、间距 5px）。亮格 = 当前阅读位置在已加载
+//    prompt 序列中等比映射（litCountOf，条数 ≤5 时亮 min(n,5)）。显示条件段数 ≥ 2。
+//    无悬停动画无跟随指针；滚动时亮格跟随（scroll rAF 节流，pickActiveSegmentIndex
+//    判当前段，值变才 setState）。点击 pin 2500ms 防亮格回拖。
+// 2. 面板：悬停角标 120ms 或点击角标打开（pointerleave 清定时）；原位覆盖角标展开
+//    （容器 pointer-events:none，面板显式 pointer-events:auto）；宽
+//    min(20rem, calc(100vw - 5rem))；surface-elevated（bg-popover）+border/60+
+//    rounded-xl+shadow。首行 = Load more prompts 按钮（居中 12px muted，加载中
+//    spinner 旋转 + disabled + cursor-wait；无更早时改尾注「已到会话最早」）。列表
+//    区原生滚动 max-h 24rem；每行 = 一条用户消息预览（160 字截断 line-clamp-2，
+//    title 全文）；当前选中行实心 accent 填充；打开时选中行滚到列表中央。
+// 3. 分页（OC 机制）：点 Load more → 循环调 fetchEarlierPage（before 游标，store
+//    链路）直到面板至少新增 1 条用户消息或 hasMore=false。加载中新消息前插后：
+//    选中行索引平移补偿（选中跟人走）+ 列表 scrollTop 锚定原首行（不跳）。
+// 4. 点击行：jumpToKey 跳转 + 目标 pin 高亮 2.5s（useNavRailJump）+ 活动 pin
+//    2500ms；面板不关，选中实心行 = 所点行并滚到中央。ESC / 点面板外关闭。
+// 5. 显示条件：段数 ≥ 2。hidden lg:block 手机不显示（触屏无悬停）。
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 import type { MessagesPage } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useT } from "@/i18n/i18n";
-import { NavRailSegmentCard, PANEL_ROW_PX } from "./nav-rail-segment-card";
 import {
-  buildSegments,
   buildTicks,
-  BAND_EDGE_ZONE_PX,
-  BAND_MAX_SEGMENTS,
-  PITCH_PX,
+  countUserPrompts,
+  INDICATOR_CELLS,
+  litCountOf,
   pickActiveSegmentIndex,
-  type NavSegmentSpec,
-  type NavTick,
 } from "./nav-rail-segments";
 import { useNavRailJump } from "./use-nav-rail-jump";
 import type { ChatListItem } from "./message-items";
 
-/** 命中区宽度（px）；容器被消息列挤压时缩到 12px（ResizeObserver 测得） */
-const BAND_HIT_W_PX = 28;
-const BAND_HIT_W_NARROW_PX = 12;
+/** 悬停角标开面板延迟（ms） */
+const PANEL_OPEN_DELAY_MS = 120;
 
-/** 悬停面板移出后的隐藏延迟（ms） */
-const PANEL_HIDE_DELAY_MS = 160;
-
-/** 点击 pin 活动段时长（ms）：防 scroll 判定立刻把活动指示拖回原段 */
+/** 点击 pin 活动位置时长（ms）：防 scroll 判定立刻把亮格拖回原位 */
 const PIN_MS = 2500;
-
-/** carousel 边缘滚动间隔（ms） */
-const CAROUSEL_STEP_MS = 80;
-
-/** 悬停聚焦宽度衰减系数（距离 0..3） */
-const HOVER_DECAY = [1, 0.6, 0.35, 0.15] as const;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-/** 刻度宽度（px）：active 14 / 悬停聚焦 20 邻近衰减 / 普通 10 */
-export function tickWidthOf(i: number, activeIdx: number, hoverIdx: number | null): number {
-  if (i === activeIdx) return 14;
-  if (hoverIdx !== null) {
-    const d = Math.abs(i - hoverIdx);
-    if (d === 0) return 20;
-    if (d < HOVER_DECAY.length) return 10 + 10 * HOVER_DECAY[d]!;
-  }
-  return 10;
-}
-
-/** tape 滑动起点（格下标）：活动段尽量居中，overscan 4，钳在有效范围内 */
-export function tapeStartOf(segCount: number, focusIdx: number): number {
-  if (segCount <= BAND_MAX_SEGMENTS) return 0;
-  return clamp(focusIdx - BAND_MAX_SEGMENTS / 2, 0, segCount - BAND_MAX_SEGMENTS);
+/** 分页锚点：前插后恢复选中行与列表滚动位（scrollTop 锚定原首行） */
+interface PageAnchor {
+  prevLen: number;
+  selIdx: number;
+  firstKey: string;
+  prevTop: number;
+  prevScrollTop: number;
 }
 
 export function NavRail({
@@ -82,88 +61,47 @@ export function NavRail({
   sessionId: string;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   virtualizer: Virtualizer<HTMLDivElement, Element>;
-  /** 翻页注入面（backfillModelTimeline 同款）：「加载更早」窗外翻页共用，测试传桩免 mock api 模块 */
+  /** 翻页注入面（backfillModelTimeline 同款）：面板内分页共用，测试传桩免 mock api 模块 */
   fetchPage: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage>;
 }) {
-  const railRef = useRef<HTMLDivElement | null>(null);
-  const bandRef = useRef<HTMLDivElement | null>(null);
-  // 活动段：scroll 判定值（activeIdx）+ 点击 pin（pinIdx，2500ms 内覆盖判定值）
+  // 活动位置：scroll 判定值（activeIdx）+ 点击 pin（pinIdx，2500ms 内覆盖判定值）
   const [activeIdx, setActiveIdx] = useState(0);
   const [pinIdx, setPinIdx] = useState<number | null>(null);
   const activeIdxRef = useRef(0);
-  const computedIdxRef = useRef(0);
   const pinIdxRef = useRef<number | null>(null);
-  const pinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 悬停：命中格（段下标）与面板（高亮行 + glide 视窗起点 + 160ms 隐藏定时器）
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // 面板：开态 / 选中行（实心 accent）/ 悬停定时 / 加载中
   const [panelOpen, setPanelOpen] = useState(false);
-  const [hl, setHl] = useState(0);
-  const [viewStart, setViewStart] = useState(0);
-  const panelHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const carouselTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // carousel 偏移（格）：tapeStartOf(viewIdx) 基础上的独立窗口步进量，离开带体/点击后归零
-  const [carouselOff, setCarouselOff] = useState(0);
-  const segLenRef = useRef(0);
-  // 命中区宽（ResizeObserver：容器被消息列挤压时缩 12px）
-  const [hitW, setHitW] = useState(BAND_HIT_W_PX);
+  const [selIdx, setSelIdx] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingRef = useRef(false);
+  const anchorRef = useRef<PageAnchor | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const hasMore = useMessagesStore((s) => s.bySession[sessionId]?.hasMore ?? false);
 
   const t = useT();
-  // 刻度集合：items 里 kind==="entry" 且 store 条目 role==="user" 的项（纯逻辑见
+  // 行集合：items 里 kind==="entry" 且 store 条目 role==="user" 的项（纯逻辑见
   // buildTicks）。items 身份随 entries 任何变化而重建，store 条目快照非响应式读即可
   // 覆盖新增/换 id 场景。
-  const ticks = useMemo<NavTick[]>(() => {
+  const ticks = useMemo<ReturnType<typeof buildTicks>>(() => {
     const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
     return buildTicks(items, entries);
   }, [items, sessionId]);
+  const ticksRef = useRef(ticks);
+  ticksRef.current = ticks;
 
-  // 段聚合：每条用户刻度一段（不合并，buildSegments 纯逻辑传 max=段数）；段数超出
-  // 带容量（30 格）时带体显示 30 格窗口，由 tape 滑动 + carousel 边缘步进遍历。
-  // 显示条件：段数 ≥ 2。
-  const segments = useMemo<NavSegmentSpec[]>(
-    () => buildSegments(ticks, Math.max(ticks.length, 1)),
-    [ticks],
+  // 行顶边（内容坐标系，测量缓存 start）：活动位置判定与点击落位共用
+  const rowOffsets = useMemo(
+    () => ticks.map((tk) => virtualizer.measurementsCache[tk.index]?.start ?? 0),
+    [ticks, virtualizer],
   );
-  segLenRef.current = segments.length;
+  const rowOffsetsRef = useRef(rowOffsets);
+  rowOffsetsRef.current = rowOffsets;
 
-  // 段顶边（内容坐标系，测量缓存 start）：活动段判定与点击映射共用
-  const segOffsets = useMemo(
-    () =>
-      segments.map((s) => virtualizer.measurementsCache[s.firstIndex]?.start ?? 0),
-    [segments, virtualizer],
-  );
-  const segOffsetsRef = useRef(segOffsets);
-  segOffsetsRef.current = segOffsets;
-
-  // 刻度 → 段下标（段占 ticks 连续区间，按段权展开）与段 → 面板行首下标
-  const tickSegIdx = useMemo(() => {
-    const arr: number[] = [];
-    segments.forEach((s, si) => {
-      for (let k = 0; k < s.count; k++) arr.push(si);
-    });
-    return arr;
-  }, [segments]);
-  const segStartRow = useMemo(() => {
-    let acc = 0;
-    return segments.map((s) => {
-      const v = acc;
-      acc += s.count;
-      return v;
-    });
-  }, [segments]);
-  const rowsFlat = useMemo(
-    () =>
-      ticks.map((tk, i) => ({
-        key: tk.key,
-        summary: tk.summary,
-        segIdx: tickSegIdx[i] ?? 0,
-      })),
-    [ticks, tickSegIdx],
-  );
-
-  // 视口活动段（pin 生效值优先）：viewIdx 供刻度宽度/颜色与 tape 滑动消费
-  const viewIdx = pinIdx ?? Math.min(activeIdx, segments.length - 1);
+  // 生效位置（pin 优先）：亮格与选中行跟随（选中行仅在无手动点选时跟随）
+  const viewIdx = pinIdx ?? Math.min(activeIdx, Math.max(ticks.length - 1, 0));
 
   // scroll 通道：rAF 节流跑 pickActiveSegmentIndex，值变才 setState；pin 生效期间只
   // 记录判定值不写 state（防回拖），pin 到期再落。
@@ -173,14 +111,13 @@ export function NavRail({
     let raf = 0;
     const paint = () => {
       raf = 0;
-      const offs = segOffsetsRef.current;
+      const offs = rowOffsetsRef.current;
       if (offs.length === 0) return;
       const idx = pickActiveSegmentIndex(offs, {
         scrollTop: scrollEl.scrollTop,
         viewportH: scrollEl.clientHeight,
         totalSize: virtualizer.getTotalSize(),
       });
-      computedIdxRef.current = idx;
       if (pinIdxRef.current === null && idx !== activeIdxRef.current) {
         activeIdxRef.current = idx;
         setActiveIdx(idx);
@@ -196,249 +133,247 @@ export function NavRail({
       scrollEl.removeEventListener("scroll", schedule);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [virtualizer, scrollRef, segments]);
+  }, [virtualizer, scrollRef, ticks]);
 
-  // pin 状态镜像 ref（scroll 回调读）与到期清理
+  // pin 状态镜像 ref（scroll 回调读）与到期落值
   useEffect(() => {
     pinIdxRef.current = pinIdx;
+    if (pinIdx === null) return;
+    const timer = setTimeout(() => {
+      setPinIdx(null);
+      setActiveIdx(activeIdxRef.current);
+    }, PIN_MS);
+    return () => clearTimeout(timer);
   }, [pinIdx]);
-  useEffect(() => {
-    return () => {
-      if (pinTimerRef.current !== null) clearTimeout(pinTimerRef.current);
-      if (panelHideTimerRef.current !== null) clearTimeout(panelHideTimerRef.current);
-      if (carouselTimerRef.current !== null) clearInterval(carouselTimerRef.current);
-    };
-  }, []);
 
-  // 命中区宽：ResizeObserver 测容器，被消息列挤压（< 28px）时缩 12px
-  useEffect(() => {
-    const railEl = railRef.current;
-    if (!railEl) return;
-    const ro = new ResizeObserver(() => {
-      setHitW(railEl.clientWidth < BAND_HIT_W_PX ? BAND_HIT_W_NARROW_PX : BAND_HIT_W_PX);
-    });
-    ro.observe(railEl);
-    return () => ro.disconnect();
-  }, []);
-
-  // 面板 glide：高亮行居中，上下各 2 行死区（hl 越界才滑），钳在有效视窗范围
-  const winRows = Math.min(rowsFlat.length, 8);
-  useEffect(() => {
-    if (!panelOpen) return;
-    setViewStart((vs) => {
-      let next = vs;
-      if (hl < next + 2) next = hl - 2;
-      if (hl > next + winRows - 3) next = hl - winRows + 3;
-      return clamp(next, 0, Math.max(0, rowsFlat.length - winRows));
-    });
-  }, [hl, panelOpen, winRows, rowsFlat.length]);
-
-  // 面板显隐：进入（band 或面板自身）取消隐藏定时器；离开 160ms 后隐藏
-  const clearPanelHideTimer = () => {
-    if (panelHideTimerRef.current !== null) {
-      clearTimeout(panelHideTimerRef.current);
-      panelHideTimerRef.current = null;
+  const clearHoverTimer = () => {
+    if (hoverTimerRef.current !== null) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
     }
   };
-  const openPanel = (segIdx: number) => {
-    clearPanelHideTimer();
-    setHl(segStartRow[segIdx] ?? 0);
+
+  const closePanel = useCallback(() => {
+    clearHoverTimer();
+    setPanelOpen(false);
+  }, []);
+
+  // 打开面板：选中行 = 当前阅读位置行（无 pin 时），滚到列表中央
+  const openPanel = () => {
+    clearHoverTimer();
+    setSelIdx(clamp(pinIdx ?? activeIdx, 0, Math.max(ticks.length - 1, 0)));
     setPanelOpen(true);
   };
-  const closePanelSoon = () => {
-    clearPanelHideTimer();
-    panelHideTimerRef.current = setTimeout(() => {
-      panelHideTimerRef.current = null;
-      setPanelOpen(false);
-    }, PANEL_HIDE_DELAY_MS);
+  const onIndicatorEnter = () => {
+    clearHoverTimer();
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null;
+      openPanel();
+    }, PANEL_OPEN_DELAY_MS);
   };
 
-  // carousel：悬停停在带上/下 18px 边缘区时按 80ms 间隔步进 tape 窗口起点
-  //（+1/-1 格，铳在 [0, 段数-可视格数]；只动刻度带窗口，消息列绝不滚动）
-  const stopCarousel = () => {
-    if (carouselTimerRef.current !== null) {
-      clearInterval(carouselTimerRef.current);
-      carouselTimerRef.current = null;
-    }
-  };
-  const startCarousel = (dir: 1 | -1) => {
-    if (carouselTimerRef.current !== null) return;
-    carouselTimerRef.current = setInterval(() => {
-      const maxOff = Math.max(
-        0,
-        segLenRef.current - Math.min(segLenRef.current, BAND_MAX_SEGMENTS),
-      );
-      setCarouselOff((c) => clamp(c + dir, 0, maxOff));
-    }, CAROUSEL_STEP_MS);
+  // ESC / 点面板外关闭（面板与角标内的按下不算外）
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") closePanel();
+    };
+    const onPointerDown = (ev: PointerEvent) => {
+      const root = containerRef.current;
+      const target = ev.target as Node | null;
+      if (root && target && root.contains(target)) return;
+      closePanel();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [panelOpen, closePanel]);
+
+  // 打开面板时：选中行滚到列表中央（双 rAF 等布局就绪；手动算 scrollTop，避免
+  // scrollIntoView 连带滚动聊天容器）。仅开态变更时触发，不随选中行变化重跑
+  // （点选/平移补偿各自显式控制滚动位）。
+  const selIdxRef = useRef(selIdx);
+  selIdxRef.current = selIdx;
+  useEffect(() => {
+    if (!panelOpen) return;
+    const list = listRef.current;
+    if (!list) return;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = list.querySelector<HTMLElement>(
+          `[data-row-key="${CSS.escape(ticksRef.current[selIdxRef.current]?.key ?? "")}"]`,
+        );
+        if (el) list.scrollTop = el.offsetTop - list.clientHeight / 2 + el.offsetHeight / 2;
+      }),
+    );
+  }, [panelOpen]);
+
+  /** 选中行滚到列表中央（点选时用） */
+  const centerRow = (i: number) => {
+    const list = listRef.current;
+    const el = list?.querySelector<HTMLElement>(
+      `[data-row-key="${CSS.escape(ticks[i]?.key ?? "")}"]`,
+    );
+    if (list && el) list.scrollTop = el.offsetTop - list.clientHeight / 2 + el.offsetHeight / 2;
   };
 
-  // 有效 tape 起点 = 活动段居中起点 + carousel 偏移，铳在窗口范围内
-  const visCount = Math.min(segments.length, BAND_MAX_SEGMENTS);
-  const maxOff = Math.max(0, segments.length - visCount);
-  const effTapeStart = clamp(
-    tapeStartOf(segments.length, viewIdx) + carouselOff,
-    0,
-    maxOff,
-  );
-
-  // 指针 → 段下标：Y/12 取整映射最近格 + tape 起点偏移（钳段界）
-  const segIdxFromPointer = (clientY: number): number => {
-    const band = bandRef.current;
-    if (!band) return 0;
-    const y = clientY - band.getBoundingClientRect().top;
-    const cell = clamp(Math.floor(y / PITCH_PX), 0, Math.min(segments.length, BAND_MAX_SEGMENTS) - 1);
-    return clamp(cell + effTapeStart, 0, segments.length - 1);
-  };
-  const onBandMove = (ev: React.PointerEvent<HTMLDivElement>) => {
-    const band = bandRef.current;
-    if (!band) return;
-    const rect = band.getBoundingClientRect();
-    const y = ev.clientY - rect.top;
-    const segIdx = segIdxFromPointer(ev.clientY);
-    stopCarousel();
-    if (y < BAND_EDGE_ZONE_PX) startCarousel(-1);
-    else if (y > rect.height - BAND_EDGE_ZONE_PX) startCarousel(1);
-    setHoverIdx(segIdx);
-    openPanel(segIdx);
-  };
-  const onBandLeave = () => {
-    stopCarousel();
-    setCarouselOff(0);
-    setHoverIdx(null);
-    closePanelSoon();
-  };
+  // 分页锚定：前插后（ticks 变长）选中行索引平移补偿 + scrollTop 锚定原首行
+  useEffect(() => {
+    const a = anchorRef.current;
+    if (!a) return;
+    anchorRef.current = null;
+    const delta = ticks.length - a.prevLen;
+    if (delta <= 0) return;
+    setSelIdx(clamp(a.selIdx + delta, 0, ticks.length - 1));
+    const list = listRef.current;
+    if (!list) return;
+    const el = list.querySelector<HTMLElement>(
+      `[data-row-key="${CSS.escape(a.firstKey)}"]`,
+    );
+    if (el) list.scrollTop = el.offsetTop - (a.prevTop - a.prevScrollTop);
+  }, [ticks]);
 
   const jumpToKey = useNavRailJump(scrollRef, virtualizer);
 
-  // 点击：按指针 Y 选最近段跳转 + 活动指示 pin 2500ms 防回拖 + 面板关闭
-  const onBandClick = (ev: React.MouseEvent<HTMLDivElement>) => {
-    stopCarousel();
-    setCarouselOff(0);
-    const segIdx = segIdxFromPointer(ev.clientY);
-    const seg = segments[segIdx];
-    if (!seg) return;
-    jumpToKey(seg.firstKey, seg.firstIndex);
-    setPanelOpen(false);
-    setPinIdx(segIdx);
-    if (pinTimerRef.current !== null) clearTimeout(pinTimerRef.current);
-    pinTimerRef.current = setTimeout(() => {
-      pinTimerRef.current = null;
-      setPinIdx(null);
-      setActiveIdx(computedIdxRef.current);
-      activeIdxRef.current = computedIdxRef.current;
-    }, PIN_MS);
+  // 点击行：跳转 + 目标 pin 高亮 + 活动 pin 2500ms；面板不关，选中 = 所点行滚到中央
+  const onRowClick = (i: number) => {
+    const tk = ticks[i];
+    if (!tk) return;
+    jumpToKey(tk.key, tk.index);
+    setSelIdx(i);
+    centerRow(i);
+    setPinIdx(i);
   };
 
-  // 「加载更早」：按 before 游标（store 最旧 id）向窗外取一窗并入。失败静默（钮由
-  // finally 复位可重试）。
-  const onLoadEarlier = () => {
-    if (loadingMore) return;
+  // Load more：循环翻页直到面板至少新增 1 条用户消息或 hasMore=false。前插前记锚
+  // （原首行 offsetTop + scrollTop + 选中行），新增后由锚定 effect 补偿。失败静默
+  // （钮由 finally 复位可重试）。
+  const onLoadMore = () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setLoadingMore(true);
     const run = async () => {
-      const st = useMessagesStore.getState().bySession[sessionId];
-      if (st?.hasMore && st.oldestId !== null) {
-        await useMessagesStore.getState().fetchEarlierPage(sessionId, st.oldestId, fetchPage);
+      for (;;) {
+        const st = useMessagesStore.getState().bySession[sessionId];
+        if (!st?.hasMore || st.oldestId === null) break;
+        const beforeCount = countUserPrompts(st.entries);
+        const list = listRef.current;
+        const firstRow = list?.querySelector<HTMLElement>("[data-row-key]");
+        anchorRef.current = {
+          prevLen: ticksRef.current.length,
+          selIdx,
+          firstKey: firstRow?.dataset.rowKey ?? ticksRef.current[0]?.key ?? "",
+          prevTop: firstRow?.offsetTop ?? 0,
+          prevScrollTop: list?.scrollTop ?? 0,
+        };
+        await useMessagesStore
+          .getState()
+          .fetchEarlierPage(sessionId, st.oldestId, fetchPage);
+        const st2 = useMessagesStore.getState().bySession[sessionId];
+        const added = st2 ? countUserPrompts(st2.entries) - beforeCount : 0;
+        if (added >= 1) break;
+        if (!st2?.hasMore) break;
       }
     };
     run()
       .catch(() => {
         // 取数失败静默（软增强；loadingMore 已由 finally 复位，钮可重试）
       })
-      .finally(() => setLoadingMore(false));
+      .finally(() => {
+        loadingRef.current = false;
+        setLoadingMore(false);
+      });
   };
 
-  if (ticks.length === 0 || segments.length < 2) return null;
+  if (ticks.length < 2) return null;
 
-  const viewIdxSafe = clamp(viewIdx, 0, segments.length - 1);
-  const bandH = visCount * PITCH_PX;
-  const panelWindowH = winRows * PANEL_ROW_PX;
-  const offsetY = -viewStart * PANEL_ROW_PX;
+  const lit = litCountOf(ticks.length, viewIdx);
 
   return (
     <div
-      ref={railRef}
+      ref={containerRef}
       data-testid="nav-rail"
-      className="pointer-events-none absolute inset-y-1 right-0 hidden w-7 lg:flex"
+      className="pointer-events-none absolute right-1 top-1 z-40 hidden lg:block"
     >
-      {/* 「加载更早」独立圆钮：gutter 顶部，加载中 loader 旋转 + opacity-70 */}
-      {hasMore && (
-        <button
-          type="button"
-          data-testid="nav-rail-load-earlier"
-          aria-label={t("chat.navRail.loadEarlier")}
-          onClick={onLoadEarlier}
-          className="pointer-events-auto absolute right-1.5 top-1 z-10 flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
-        >
-          {loadingMore ? (
-            <Loader2 aria-hidden className="size-3.5 animate-spin opacity-70" />
-          ) : (
-            <ArrowUp aria-hidden className="size-3.5" />
-          )}
-        </button>
-      )}
-
-      {/* 指示器带：右对齐垂直居中，命中区 28px（挤压缩 12px）；点击按指针 Y 选最近段 */}
+      {/* 角标指示器：固定五格刻度，亮格随阅读位置映射；悬停 120ms / 点击开面板 */}
       <div
-        ref={bandRef}
-        data-testid="nav-rail-band"
-        className="pointer-events-auto absolute right-1.5 top-1/2 -translate-y-1/2"
-        style={{ width: hitW, height: bandH }}
-        onPointerMove={onBandMove}
-        onPointerLeave={onBandLeave}
-        onClick={onBandClick}
+        data-testid="nav-rail-indicator"
         role="navigation"
         aria-label={t("chat.navRail.jumpTo", { title: ticks[0]?.title ?? "" })}
+        className="pointer-events-auto flex items-center gap-[5px] rounded-lg bg-background/85 p-2"
+        onPointerEnter={onIndicatorEnter}
+        onPointerLeave={clearHoverTimer}
+        onClick={openPanel}
       >
-        {/* tape：translateY 滑动（duration-300 ease-out），key=首段 id 防 prepend 假动画 */}
-        <div
-          key={segments[0]!.key}
-          className="flex flex-col items-center transition-transform duration-300 ease-out"
-          style={{ transform: `translateY(${-effTapeStart * PITCH_PX}px)` }}
-        >
-          {segments.map((seg, i) => {
-            const isActive = i === viewIdxSafe;
-            const isHover = hoverIdx === i;
-            return (
-              <span
-                key={seg.key}
-                data-testid="nav-rail-segment"
-                data-seg-key={seg.key}
-                data-active={isActive ? "true" : "false"}
-                className="flex items-center justify-center"
-                style={{ height: PITCH_PX, width: "100%" }}
-              >
-                <span
-                  aria-hidden
-                  className={`block h-0.5 rounded-full transition-all duration-200 ease-out ${
-                    isActive
-                      ? "bg-foreground"
-                      : isHover
-                        ? "bg-foreground/80"
-                        : "bg-foreground/30"
-                  }`}
-                  style={{ width: tickWidthOf(i, viewIdxSafe, hoverIdx) }}
-                />
-              </span>
-            );
-          })}
-        </div>
+        {Array.from({ length: INDICATOR_CELLS }, (_, i) => (
+          <span
+            key={i}
+            aria-hidden
+            className={`block h-[2px] w-[26px] rounded-full ${
+              i < lit ? "bg-foreground" : "bg-foreground/25"
+            }`}
+          />
+        ))}
       </div>
 
-      {/* 悬停面板：固定贴 gutter 左侧，全部用户消息迷你列表（可交互，见组件注释） */}
-      {panelOpen && rowsFlat.length > 0 && (
-        <NavRailSegmentCard
-          rows={rowsFlat}
-          hl={clamp(hl, 0, rowsFlat.length - 1)}
-          activeSegIdx={viewIdxSafe}
-          offsetY={offsetY}
-          windowH={panelWindowH}
-          onRowEnter={setHl}
-          onWheelStep={(dir) =>
-            setHl((h) => clamp(h + dir, 0, rowsFlat.length - 1))
-          }
-          onMouseEnter={clearPanelHideTimer}
-          onMouseLeave={closePanelSoon}
-        />
+      {/* 面板：原位覆盖角标展开（容器 pointer-events:none，面板显式恢复交互） */}
+      {panelOpen && (
+        <div
+          ref={panelRef}
+          data-testid="nav-rail-panel"
+          className="pointer-events-auto absolute right-0 top-0 z-50 w-[min(20rem,calc(100vw-5rem))] rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-md"
+        >
+          {/* 首行：Load more prompts（无更早时改尾注「已到会话最早」） */}
+          {hasMore ? (
+            <button
+              type="button"
+              data-testid="nav-rail-load-more"
+              disabled={loadingMore}
+              onClick={onLoadMore}
+              className={`flex w-full items-center justify-center gap-1.5 rounded-t-xl py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground ${
+                loadingMore ? "cursor-wait" : ""
+              }`}
+            >
+              {loadingMore && <Loader2 aria-hidden className="size-3.5 animate-spin" />}
+              {t("chat.navRail.loadMorePrompts")}
+            </button>
+          ) : (
+            <div
+              data-testid="nav-rail-earliest"
+              className="flex w-full items-center justify-center py-2 text-xs text-muted-foreground"
+            >
+              {t("chat.navRail.earliestReached")}
+            </div>
+          )}
+
+          {/* 列表区：原生滚动 max-h 24rem；行 = 用户消息预览，选中行实心 accent */}
+          <div ref={listRef} className="relative max-h-96 overflow-y-auto pb-1">
+            {ticks.map((tk, i) => {
+              const isSel = i === selIdx;
+              return (
+                <div
+                  key={tk.key}
+                  data-testid={isSel ? "nav-rail-prompt-row-active" : "nav-rail-prompt-row"}
+                  data-row-key={tk.key}
+                  title={tk.title}
+                  onClick={() => onRowClick(i)}
+                  className={`cursor-pointer px-2 py-1.5 ${
+                    isSel
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <span className="line-clamp-2 text-xs leading-snug [overflow-wrap:anywhere]">
+                    {tk.summary}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

@@ -6,8 +6,8 @@
 import { useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 
-/** 高亮持续时长（ms；与 index.css navHighlight 动画对齐） */
-const HIGHLIGHT_MS = 1600;
+/** 高亮持续时长（ms；与 index.css nav-highlight-flash 动画对齐） */
+const HIGHLIGHT_MS = 2500;
 
 export function useNavRailJump(
   scrollRef: React.RefObject<HTMLDivElement | null>,

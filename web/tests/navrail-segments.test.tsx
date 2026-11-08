@@ -1,10 +1,10 @@
-// nav-rail 指示器带单测（OpenChamber v1.24.2 复刻）：活动段判定纯函数（顶边
-// scrollTop+100px 最后一段 / 距底 max(48,10% viewport) 取最后段）；带体段合并上限
-// 30 格；悬停面板 = 全部用户消息迷你列表（160 字符截断、无时间行）；面板滚轮 54px
-// 步进改高亮行；点击带体按指针 Y 选段跳转 + 活动指示 pin 2500ms 防回拖；「加载更早」
-// 顶部圆钮按 before 游标（store 最旧 id）翻页。渲染走真实组件（happy-dom +
-// createRoot，旧 harness 同款）；virtualizer 以最小桩满足只读消费面；store 直注；
-// 翻页经 fetchPage 注入桩。测试语言锁 zh-CN（setup-locale.ts）。
+// nav-rail 角标+面板单测（OC v2.7.0 换装形态）：亮格等比映射纯函数（条数 ≤5 亮
+// min(n,5)，>5 按阅读位置映射 1..5）；面板内 Load more 分页循环终止条件（至少新增
+// 1 条用户消息或 hasMore=false 才停）；前插后选中行索引平移补偿 + 列表 scrollTop
+// 锚定（不跳）；点击行跳转（scrollToOffset）+ 面板保留 + 选中实心行 = 所点行。
+// 渲染走真实组件（happy-dom + createRoot，旧 harness 同款）；virtualizer 以最小桩
+// 满足只读消费面；store 直注；翻页经 fetchPage 注入桩。测试语言锁 zh-CN
+// （setup-locale.ts）。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { MessagesPage, WireEntry } from "@/lib/api";
@@ -17,10 +17,14 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createElement, useMemo } = await import("react");
-const { NavRail, tapeStartOf, tickWidthOf } = await import("@/components/chat/nav-rail");
+const { NavRail } = await import("@/components/chat/nav-rail");
 const { useMessagesStore } = await import("@/stores/messages");
-const { buildTicks, buildSegments, pickActiveSegmentIndex, BAND_MAX_SEGMENTS, PITCH_PX } =
-  await import("@/components/chat/nav-rail-segments");
+const {
+  buildTicks,
+  countUserPrompts,
+  litCountOf,
+  pickActiveSegmentIndex,
+} = await import("@/components/chat/nav-rail-segments");
 type NavTick = Awaited<ReturnType<typeof buildTicks>>[number];
 
 /** entries → items（chat-view 同链路）→ ticks（纯函数测试入口） */
@@ -46,13 +50,7 @@ function userEntry(text: string): WireEntry {
   } as WireEntry;
 }
 
-interface SeedOptions {
-  entries: WireEntry[];
-  hasMore?: boolean;
-  oldestId?: string | null;
-}
-
-function seedStore({ entries, hasMore = false, oldestId = null }: SeedOptions) {
+function seedStore(entries: WireEntry[], paging?: { hasMore: boolean; oldestId: string | null }) {
   useMessagesStore.setState({
     bySession: {
       s1: {
@@ -60,8 +58,8 @@ function seedStore({ entries, hasMore = false, oldestId = null }: SeedOptions) {
         cursor: null,
         leafId: null,
         loaded: true,
-        hasMore,
-        oldestId,
+        hasMore: paging?.hasMore ?? false,
+        oldestId: paging?.oldestId ?? null,
         streaming: false,
         streamingMessage: null,
         streamingEntryId: null,
@@ -74,20 +72,22 @@ function seedStore({ entries, hasMore = false, oldestId = null }: SeedOptions) {
 
 /** 调用序日志：fetchPage / scrollToOffset 按发生顺序入列 */
 const callLog: string[] = [];
-let fetchPageImpl: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage> = async () => ({
-  sessionId: "s1",
-  entries: [],
-  leafId: null,
-  cursor: null,
-  hasMore: false,
-  oldestId: null,
-});
+/** 每次调 fetchPage 弹出一个页（空数组 = 无新增用户消息） */
+let pageQueue: { entries: WireEntry[]; hasMore: boolean; oldestId: string | null }[] = [];
 const fetchPageSpy = (opts: { before?: string; full?: boolean }) => {
   callLog.push(`fetchPage:${opts.before ?? ""}`);
-  return fetchPageImpl(opts);
+  const page = pageQueue.shift() ?? { entries: [], hasMore: false, oldestId: null };
+  return Promise.resolve({
+    sessionId: "s1",
+    entries: page.entries,
+    leafId: null,
+    cursor: null,
+    hasMore: page.hasMore,
+    oldestId: page.oldestId,
+  } satisfies MessagesPage);
 };
 
-/** virtualizer 最小桩：每下标可指定测量起点（段顶边判定/点击落位断言用） */
+/** virtualizer 最小桩：每下标可指定测量起点（活动位置判定/点击落位断言用） */
 function stubVirtualizer(starts: number[]) {
   return {
     getTotalSize: () => 1000,
@@ -126,15 +126,15 @@ function HarnessRail(props: {
 
 interface Harness {
   host: HTMLElement;
-  band: () => HTMLElement;
-  segments: () => HTMLElement[];
-  card: () => HTMLElement | null;
+  indicator: () => HTMLElement;
+  panel: () => HTMLElement;
   rows: () => HTMLElement[];
-  loadEarlier: () => HTMLButtonElement | null;
-  /** 指针悬停带体（clientY → 12px 取整映射最近格） */
-  hoverBand: (clientY: number) => void;
-  /** 点击带体（clientY → 最近段跳转 + pin） */
-  clickBand: (clientY: number) => void;
+  activeRow: () => HTMLElement | null;
+  loadMore: () => HTMLButtonElement | null;
+  list: () => HTMLElement | null;
+  openPanel: () => void;
+  clickRow: (i: number) => void;
+  clickLoadMore: () => Promise<void>;
   scrollRail: (scrollTop: number) => void;
   unmount: () => Promise<void>;
 }
@@ -142,12 +142,13 @@ interface Harness {
 async function mountRail(
   entries: WireEntry[],
   starts: number[],
-  scrollEl?: HTMLDivElement,
+  paging?: { hasMore: boolean; oldestId: string | null },
 ): Promise<Harness> {
+  seedStore(entries, paging);
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  const scrollRef = { current: scrollEl ?? null };
+  const scrollRef = { current: null };
   const el = createElement(HarnessRail, {
     sessionId: "s1",
     scrollRef: scrollRef as { current: null },
@@ -156,34 +157,58 @@ async function mountRail(
   await act(async () => {
     root.render(el);
   });
-  const bandEl = () => {
-    const el = host.querySelector<HTMLElement>('[data-testid="nav-rail-band"]');
-    if (!el) throw new Error("指示器带不存在");
-    return el;
-  };
   return {
     host,
-    band: bandEl,
-    segments: () =>
-      Array.from(host.querySelectorAll<HTMLElement>('[data-testid="nav-rail-segment"]')),
-    card: () => host.querySelector<HTMLElement>('[data-testid="nav-rail-hover-card"]'),
+    indicator: () => {
+      const el = host.querySelector<HTMLElement>('[data-testid="nav-rail-indicator"]');
+      if (!el) throw new Error("角标不存在");
+      return el;
+    },
+    panel: () => {
+      const el = host.querySelector<HTMLElement>('[data-testid="nav-rail-panel"]');
+      if (!el) throw new Error("面板不存在");
+      return el;
+    },
     rows: () =>
-      Array.from(host.querySelectorAll<HTMLElement>('[data-testid="nav-rail-hover-row"]')),
-    loadEarlier: () =>
-      host.querySelector<HTMLButtonElement>('[data-testid="nav-rail-load-earlier"]'),
-    hoverBand: (clientY: number) => {
+      Array.from(
+        host.querySelectorAll<HTMLElement>(
+          '[data-testid="nav-rail-prompt-row"], [data-testid="nav-rail-prompt-row-active"]',
+        ),
+      ),
+    activeRow: () =>
+      host.querySelector<HTMLElement>('[data-testid="nav-rail-prompt-row-active"]'),
+    loadMore: () =>
+      host.querySelector<HTMLButtonElement>('[data-testid="nav-rail-load-more"]'),
+    list: () =>
+      host.querySelector<HTMLElement>('[data-testid="nav-rail-panel"] > div:last-child'),
+    openPanel: () => {
       act(() => {
-        bandEl().dispatchEvent(
-          new MouseEvent("pointermove", { bubbles: true, clientY }),
-        );
+        host
+          .querySelector<HTMLElement>('[data-testid="nav-rail-indicator"]')
+          ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
     },
-    clickBand: (clientY: number) => {
+    clickRow: (i: number) => {
+      const row = host.querySelectorAll<HTMLElement>(
+        '[data-testid="nav-rail-prompt-row"], [data-testid="nav-rail-prompt-row-active"]',
+      )[i];
+      if (!row) throw new Error(`行 ${i} 不存在`);
       act(() => {
-        bandEl().dispatchEvent(new MouseEvent("click", { bubbles: true, clientY }));
+        row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    },
+    clickLoadMore: async () => {
+      const btn = host.querySelector<HTMLButtonElement>(
+        '[data-testid="nav-rail-load-more"]',
+      );
+      if (!btn) throw new Error("Load more 按钮不存在");
+      await act(async () => {
+        btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
       });
     },
     scrollRail: (scrollTop: number) => {
+      const scrollEl = scrollRef.current;
       if (!scrollEl) throw new Error("未注入滚动容器");
       Object.defineProperty(scrollEl, "scrollTop", { configurable: true, value: scrollTop });
       act(() => {
@@ -197,303 +222,148 @@ async function mountRail(
   };
 }
 
-/** act 内排空微任务与一帧：scroll rAF 判定与异步续体全部落定 */
-const settle = async () => {
-  for (let i = 0; i < 8; i++) {
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-  await act(async () => {
-    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-  });
-};
-
 beforeEach(() => {
   callLog.length = 0;
+  pageQueue = [];
   seq = 0;
-  fetchPageImpl = async () => ({
-    sessionId: "s1",
-    entries: [],
-    leafId: null,
-    cursor: null,
-    hasMore: false,
-    oldestId: null,
-  });
 });
 
-afterEach(async () => {
+afterEach(() => {
+  useMessagesStore.setState({ bySession: {} });
   document.body.innerHTML = "";
+  vi.restoreAllMocks();
 });
 
-describe("nav-rail 活动段判定纯函数", () => {
-  const offs = [0, 200, 400, 600];
-
-  test("顶边 ≤ scrollTop+100px 的最后一段", () => {
-    expect(pickActiveSegmentIndex(offs, { scrollTop: 0, viewportH: 200, totalSize: 1000 })).toBe(0);
-    expect(pickActiveSegmentIndex(offs, { scrollTop: 250, viewportH: 200, totalSize: 1000 })).toBe(1);
-    expect(pickActiveSegmentIndex(offs, { scrollTop: 350, viewportH: 200, totalSize: 1000 })).toBe(2);
+describe("litCountOf 亮格映射", () => {
+  test("条数 ≤5 时亮 min(条数, 5)", () => {
+    expect(litCountOf(0, 0)).toBe(0);
+    expect(litCountOf(2, 0)).toBe(2);
+    expect(litCountOf(3, 2)).toBe(3);
+    expect(litCountOf(5, 4)).toBe(5);
   });
 
-  test("距底 ≤ max(48px, 10% viewport) 或粘底取最后段", () => {
-    // gap 30 ≤ max(48, 20) → 最后段（顶边判定本会落在中间段）
-    expect(pickActiveSegmentIndex(offs, { scrollTop: 380, viewportH: 200, totalSize: 620 })).toBe(3);
-    // gap 100 > max(48, 40) → 顶边判定生效（非最后段）
-    expect(
-      pickActiveSegmentIndex([0, 300, 500, 800], { scrollTop: 500, viewportH: 400, totalSize: 1000 }),
-    ).toBe(2);
-    // 粘底（gap < 0）
-    expect(pickActiveSegmentIndex(offs, { scrollTop: 900, viewportH: 200, totalSize: 1000 })).toBe(3);
-  });
-
-  test("空段集返回 0", () => {
-    expect(pickActiveSegmentIndex([], { scrollTop: 0, viewportH: 200, totalSize: 1000 })).toBe(0);
+  test("条数 >5 时按阅读位置等比映射 1..5", () => {
+    expect(litCountOf(10, 0)).toBe(1);
+    expect(litCountOf(10, 9)).toBe(5);
+    expect(litCountOf(10, 4)).toBe(3); // 4/9 ≈ 0.44 → round(1+1.78)=3
+    expect(litCountOf(21, 10)).toBe(3); // 中位 → 3
+    expect(litCountOf(10, -5)).toBe(1); // 越界钳位
+    expect(litCountOf(10, 99)).toBe(5);
   });
 });
 
-describe("nav-rail 带体纯函数", () => {
-  test("段合并上限 30 格：带高 = min(段数,30) * 12px，合并后权和守恒", () => {
-    const entries = Array.from({ length: 40 }, (_, i) => userEntry(`第${i + 1}条`));
-    const merged = buildSegments(ticksOf(entries));
-    expect(merged.length).toBe(BAND_MAX_SEGMENTS);
-    expect(merged.reduce((acc, s) => acc + s.count, 0)).toBe(40);
-    expect(Math.min(40, BAND_MAX_SEGMENTS) * PITCH_PX).toBe(360);
-    expect(Math.min(5, BAND_MAX_SEGMENTS) * PITCH_PX).toBe(60);
-  });
-
-  test("刻度宽度：普通 10 / active 14 / 悬停聚焦 20 邻近衰减 [1,0.6,0.35,0.15]", () => {
-    expect(tickWidthOf(2, 2, null)).toBe(14);
-    expect(tickWidthOf(2, -1, 2)).toBe(20);
-    expect(tickWidthOf(3, -1, 2)).toBe(16); // 10 + 10*0.6
-    expect(tickWidthOf(4, -1, 2)).toBe(13.5); // 10 + 10*0.35
-    expect(tickWidthOf(5, -1, 2)).toBe(11.5); // 10 + 10*0.15
-    expect(tickWidthOf(6, -1, 2)).toBe(10); // 衰减区外
-    expect(tickWidthOf(2, 2, 2)).toBe(14); // active 优先于悬停
-  });
-
-  test("tape 滑动起点：段数 ≤ 30 不滑；超出时活动段尽量居中并钳界", () => {
-    expect(tapeStartOf(20, 18)).toBe(0);
-    expect(tapeStartOf(40, 0)).toBe(0);
-    expect(tapeStartOf(40, 15)).toBe(0);
-    expect(tapeStartOf(40, 25)).toBe(10);
-    expect(tapeStartOf(40, 39)).toBe(10); // 钳上界 40-30
+describe("countUserPrompts 分页计数", () => {
+  test("只数带文本的用户消息（assistant/纯图不计）", () => {
+    const entries = [
+      userEntry("a"),
+      {
+        type: "message",
+        id: "a1",
+        timestamp: "x",
+        message: { role: "assistant", content: [{ type: "text", text: "b" }] },
+      } as WireEntry,
+      userEntry("c"),
+    ];
+    expect(countUserPrompts(entries)).toBe(2);
   });
 });
 
-describe("nav-rail 指示器带（组件）", () => {
-  let harness: Harness | null = null;
+describe("pickActiveSegmentIndex（沿用，供亮格跟随）", () => {
+  test("顶边 ≤ scrollTop+100 的最后一段；距底取最后段", () => {
+    const offs = [0, 300, 600, 900];
+    expect(pickActiveSegmentIndex(offs, { scrollTop: 0, viewportH: 400, totalSize: 2000 })).toBe(0);
+    expect(pickActiveSegmentIndex(offs, { scrollTop: 350, viewportH: 400, totalSize: 2000 })).toBe(1);
+    expect(pickActiveSegmentIndex(offs, { scrollTop: 1600, viewportH: 400, totalSize: 2000 })).toBe(3);
+  });
+});
 
-  afterEach(async () => {
-    if (harness) {
-      await harness.unmount();
-      harness = null;
-    }
+describe("面板分页（Load more 循环）", () => {
+  test("翻到新增 1 条用户消息即停（终止条件一）", async () => {
+    const entries = [userEntry("m1"), userEntry("m2"), userEntry("m3")];
+    const old1 = userEntry("old1");
+    // 第一窗空回（无新增，hasMore 仍真）→ 第二窗回 1 条即达标停
+    pageQueue = [
+      { entries: [], hasMore: true, oldestId: "cursor2" },
+      { entries: [old1], hasMore: false, oldestId: null },
+    ];
+    seedStore(entries, { hasMore: true, oldestId: "cursor1" });
+    const h = await mountRail(entries, [0, 100, 200], { hasMore: true, oldestId: "cursor1" });
+    h.openPanel();
+    expect(h.loadMore()).not.toBeNull();
+    // 循环在单次点击内自旋：空窗续翻，直到新增 1 条或 hasMore=false
+    await h.clickLoadMore();
+    expect(callLog.filter((c) => c.startsWith("fetchPage")).length).toBe(2);
+    expect(h.rows().length).toBe(4);
+    await h.unmount();
   });
 
-  test("显示条件段数 ≥ 2：单条用户消息不渲染导航轨", async () => {
-    seedStore({ entries: [userEntry("唯一一条")] });
-    harness = await mountRail([userEntry("唯一一条")], [0]);
-    expect(harness.host.querySelector('[data-testid="nav-rail"]')).toBeNull();
+  test("hasMore=false 且零新增也停（终止条件二）", async () => {
+    const entries = [userEntry("m1"), userEntry("m2")];
+    pageQueue = [{ entries: [], hasMore: false, oldestId: null }];
+    seedStore(entries, { hasMore: true, oldestId: "cursor1" });
+    const h = await mountRail(entries, [0, 100], { hasMore: true, oldestId: "cursor1" });
+    h.openPanel();
+    await h.clickLoadMore();
+    expect(callLog.filter((c) => c.startsWith("fetchPage")).length).toBe(1);
+    // 无更早后按钮消失（尾注态由 UI 呈现）
+    expect(h.loadMore()).toBeNull();
+    await h.unmount();
   });
 
-  test("悬停面板 = 全部用户消息迷你列表：160 字符截断、无时间行、活动行实心标记", async () => {
-    const e1 = userEntry("第一条消息");
-    const e2 = userEntry("二".repeat(200));
-    seedStore({ entries: [e1, e2] });
-    harness = await mountRail([e1, e2], [0, 800]);
-
-    harness.hoverBand(14); // y=14 → 格 1
-    const card = harness.card();
-    expect(card).not.toBeNull();
-    const rows = harness.rows();
-    expect(rows.length).toBe(2); // 全部用户消息，非单卡
-    expect(rows[0]!.textContent).toBe("第一条消息");
-    // 160 字符截断含省略号；无时间行无头像（OC 无）
-    expect(rows[1]!.textContent).toBe(`${"二".repeat(160)}…`);
-    expect(harness.host.querySelector('[data-testid="nav-rail-hover-time"]')).toBeNull();
-    // 指针落在格 1 → 高亮行 = 段 1 首行（行 1）
-    expect(rows[1]!.querySelector("[data-hl=true]")).not.toBeNull();
-    expect(rows[0]!.querySelector("[data-hl=true]")).toBeNull();
-  });
-
-  test("面板滚轮 54px 步进：高亮行随滚轮方向移动并钳在行界", async () => {
-    const e1 = userEntry("第一条消息");
-    const e2 = userEntry("第二条消息");
-    seedStore({ entries: [e1, e2] });
-    harness = await mountRail([e1, e2], [0, 800]);
-    harness.hoverBand(4); // 格 0 → 高亮行 0
-
-    const rows = harness.rows();
-    expect(rows[0]!.querySelector("[data-hl=true]")).not.toBeNull();
-    const list = harness.host.querySelector('[data-testid="nav-rail-panel-list"]');
+  test("前插后选中行索引平移补偿 + scrollTop 锚定（不跳）", async () => {
+    const entries = [userEntry("m1"), userEntry("m2"), userEntry("m3")];
+    // 前插 2 条旧消息
+    const old1 = userEntry("old1");
+    const old2 = userEntry("old2");
+    pageQueue = [{ entries: [old1, old2], hasMore: false, oldestId: null }];
+    seedStore(entries, { hasMore: true, oldestId: "cursor1" });
+    const h = await mountRail(entries, [0, 100, 200], { hasMore: true, oldestId: "cursor1" });
+    h.openPanel();
+    // 点中第 2 行（新序中应平移到下标 3）
+    h.clickRow(1);
+    expect(h.activeRow()?.textContent).toContain("m2");
+    const list = h.list();
     expect(list).not.toBeNull();
+    // 刷帧：等 openPanel 的双 rAF 居中回调先落定，再置锚定滚动位
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    // 锚定：面板列表滚动位手动置位，翻页后保持
+    Object.defineProperty(list!, "scrollTop", { configurable: true, writable: true, value: 77 });
+    await h.clickLoadMore();
+    expect(h.rows().length).toBe(5);
+    // 平移补偿：选中行 = m2（原下标 1 + 新增 2）
+    expect(h.activeRow()?.textContent).toContain("m2");
+    const activeIdx = h.rows().findIndex((r) => r === h.activeRow());
+    expect(activeIdx).toBe(3);
+    // scrollTop 锚定：happy-dom 无布局（offsetTop 恒 0），锚定式回写 = 原值
+    expect(list!.scrollTop).toBe(77);
+    await h.unmount();
+  });
+});
 
-    act(() => {
-      list!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 54 }));
-    });
-    expect(harness.rows()[1]!.querySelector("[data-hl=true]")).not.toBeNull();
-
-    // 再向下钳在末行；向上步回 0
-    act(() => {
-      list!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 54 }));
-    });
-    expect(harness.rows()[1]!.querySelector("[data-hl=true]")).not.toBeNull();
-    act(() => {
-      list!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -54 }));
-    });
-    act(() => {
-      list!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -54 }));
-    });
-    expect(harness.rows()[0]!.querySelector("[data-hl=true]")).not.toBeNull();
+describe("点击行交互", () => {
+  test("点击行跳转 + 面板保留 + 选中实心行 = 所点行", async () => {
+    const entries = [userEntry("m1"), userEntry("m2"), userEntry("m3")];
+    seedStore(entries);
+    const h = await mountRail(entries, [0, 100, 200]);
+    h.openPanel();
+    expect(h.panel()).not.toBeNull();
+    h.clickRow(2);
+    // 跳转走 scrollToOffset（测量桩起点 200）
+    expect(callLog).toContain("scrollToOffset:200");
+    // 面板不关，选中 = 所点行
+    expect(h.panel()).not.toBeNull();
+    expect(h.activeRow()?.textContent).toContain("m3");
+    const rows = h.rows();
+    expect(rows[2]).toEqual(h.activeRow());
+    await h.unmount();
   });
 
-  test("点击带体按指针 Y 选最近段跳转，活动指示 pin 该段防回拖", async () => {
-    const e1 = userEntry("第一条消息");
-    const e2 = userEntry("第二条消息");
-    seedStore({ entries: [e1, e2] });
-    const scrollEl = document.createElement("div");
-    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 200 });
-    Object.defineProperty(scrollEl, "scrollTop", { configurable: true, value: 0, writable: true });
-    harness = await mountRail([e1, e2], [0, 800], scrollEl);
-
-    // 点击 y=14 → 段 1：scrollToOffset 落段 1 测量起点 800
-    harness.clickBand(14);
-    await act(async () => {});
-    expect(callLog).toContain("scrollToOffset:800");
-    // pin 生效：滚动判定会把活动段算回段 0（顶边 0 ≤ 100），指示仍钉在段 1
-    harness.scrollRail(0);
-    await settle();
-    const segs = harness.segments();
-    expect(segs[1]!.dataset.active).toBe("true");
-    expect(segs[0]!.dataset.active).toBe("false");
-    // 点击后面板关闭
-    expect(harness.card()).toBeNull();
-  });
-
-  test("无 pin 时活动段随 scroll 判定：顶边阈值切换段；距底取最后段", async () => {
-    const e1 = userEntry("第一条消息");
-    const e2 = userEntry("第二条消息");
-    seedStore({ entries: [e1, e2] });
-    const scrollEl = document.createElement("div");
-    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 200 });
-    Object.defineProperty(scrollEl, "scrollTop", { configurable: true, value: 0, writable: true });
-    harness = await mountRail([e1, e2], [0, 800], scrollEl);
-    await settle();
-
-    const segs = harness.segments();
-    expect(segs.length).toBe(2);
-    // 顶部：顶边 0 ≤ 100 → 段 0；段 1 顶边 800 > 100
-    expect(segs[0]!.dataset.active).toBe("true");
-    // 滚到 800：顶边 800 ≤ 900 → 段 1
-    harness.scrollRail(800);
-    await settle();
-    expect(segs[1]!.dataset.active).toBe("true");
-    expect(segs[0]!.dataset.active).toBe("false");
-    // 滚回顶部（无 pin）→ 段 0
-    harness.scrollRail(0);
-    await settle();
-    expect(segs[0]!.dataset.active).toBe("true");
-  });
-
-  test("「加载更早」顶部圆钮：hasMore 时渲染，点击按 before 游标（store 最旧 id）翻页", async () => {
-    const e1 = userEntry("窗内一条");
-    const e2 = userEntry("窗内两条");
-    seedStore({ entries: [e1, e2], hasMore: true, oldestId: e1.id });
-    const older = userEntry("窗外更早那条");
-    fetchPageImpl = async () => ({
-      sessionId: "s1",
-      entries: [older, e1, e2],
-      leafId: null,
-      cursor: null,
-      hasMore: false,
-      oldestId: older.id,
-    });
-    harness = await mountRail([e1, e2], [0, 800]);
-
-    const btn = harness.loadEarlier();
-    expect(btn).not.toBeNull();
-    expect(btn!.getAttribute("aria-label")).toBe("加载更早");
-    act(() => {
-      btn!.click();
-    });
-    await settle();
-    expect(callLog).toContain(`fetchPage:${e1.id}`);
-    // 取回更早消息成新段（2→3 段），无更多后钮消失
-    expect(harness.segments().length).toBe(3);
-    expect(harness.loadEarlier()).toBeNull();
-  });
-
-  test("carousel 悬停边缘步进 tape 窗口偏移，不触消息列滚动；离开带体归零", async () => {
-    const entries = Array.from({ length: 35 }, (_, i) => userEntry(`第${i + 1}条`));
-    seedStore({ entries });
-    const scrollEl = document.createElement("div");
-    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 200 });
-    Object.defineProperty(scrollEl, "scrollTop", {
-      configurable: true,
-      value: 0,
-      writable: true,
-    });
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
-    try {
-      harness = await mountRail(
-        entries,
-        entries.map((_, i) => i * 200),
-        scrollEl,
-      );
-      const tape = () =>
-        harness!.host.querySelector<HTMLElement>('[data-testid="nav-rail-band"] > div')!;
-      expect(tape().style.transform).toBe("translateY(0px)");
-
-      // 悬停底缘（y 远超 18px 边缘区）→ 80ms/格向下步进窗口；消息列 scrollTop 不动
-      harness.hoverBand(350);
-      act(() => {
-        vi.advanceTimersByTime(240);
-      });
-      expect(tape().style.transform).toBe("translateY(-36px)"); // 3 格 × 12px
-      expect(scrollEl.scrollTop).toBe(0);
-      expect(callLog.filter((l) => l.startsWith("scrollToOffset"))).toEqual([]);
-
-      // 偏移期间指针映射计入 carousel 偏移：格 0 → 段 3（首行即段首，1:1）
-      harness.hoverBand(4);
-      const rows = harness.rows();
-      expect(rows[3]!.querySelector("[data-hl=true]")).not.toBeNull();
-      expect(rows[2]!.querySelector("[data-hl=true]")).toBeNull();
-
-      // 离开带体：窗口偏移归零，tape 回到活动段居中起点；消息列仍未被滚动
-      act(() => {
-        harness!.band().dispatchEvent(new MouseEvent("pointerout", { bubbles: true }));
-      });
-      expect(tape().style.transform).toBe("translateY(0px)");
-      expect(scrollEl.scrollTop).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("活动段 index 空间稳定：悬停沿带移动不改 data-active 所指段，ticks/segments 同序", async () => {
-    const entries = Array.from({ length: 35 }, (_, i) => userEntry(`第${i + 1}条`));
-    seedStore({ entries });
-    harness = await mountRail(
-      entries,
-      entries.map((_, i) => i * 200),
-    );
-
-    const activeKey = () =>
-      harness!
-        .segments()
-        .filter((s) => s.dataset.active === "true")
-        .map((s) => s.dataset.segKey);
-    const allKeys = () => harness!.segments().map((s) => s.dataset.segKey);
-    // 35 段不合并，与 ticks 同源同序（u1..u35）
-    expect(harness.segments().length).toBe(35);
-    expect(allKeys()).toEqual(entries.map((e) => e.id));
-    // 顶部判定：只有段 0 活动
-    expect(activeKey()).toEqual(["u1"]);
-
-    // 悬停沿带从底到顶移动（无点击、无滚动），data-active 始终指向同一段键
-    for (const y of [350, 200, 100, 50, 4]) {
-      harness.hoverBand(y);
-      expect(activeKey()).toEqual(["u1"]);
-    }
+  test("段数 <2 不渲染角标", async () => {
+    seedStore([userEntry("only")]);
+    const h = await mountRail([userEntry("only")], [0]);
+    expect(() => h.indicator()).toThrow();
+    await h.unmount();
   });
 });

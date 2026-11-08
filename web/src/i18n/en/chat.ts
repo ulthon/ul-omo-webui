@@ -274,10 +274,11 @@ export const chat = {
     next: "Show another",
     dismiss: "Dismiss",
   },
-  // nav-rail.tsx
+  // nav-rail.tsx（OC v2.7 角标+面板形态）
   navRail: {
     jumpTo: "Jump to: {title}",
-    loadEarlier: "Load earlier",
+    loadMorePrompts: "Load more prompts",
+    earliestReached: "Beginning of conversation reached",
   },
   // permission-queue.tsx
   permissionQueue: {
