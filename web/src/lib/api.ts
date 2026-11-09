@@ -103,6 +103,11 @@ export interface WireEntry {
 export interface WireMessage {
   role: string;
   content?: WirePart[];
+  /** 消息级错误（引擎 stopReason==="error" 时携带 errorMessage/errorCause；server 原样
+   *  透传，限流/额度类错误主路径，渲染层见 parts.tsx MessageErrorBanner） */
+  stopReason?: string;
+  errorMessage?: string;
+  errorCause?: { type?: string; model?: string };
   [key: string]: unknown;
 }
 

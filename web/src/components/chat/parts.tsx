@@ -59,11 +59,12 @@ function errorPartText(part: WirePart): string {
 }
 
 /** 模型错误 part 错误卡：destructive 色系，定格与流式共用（StreamingPart 走同一
- *  PartView 分发），历史回看同路径自然覆盖。 */
-function ErrorPartCard({ text }: { text: string }) {
+ *  PartView 分发），历史回看同路径自然覆盖。testid 可换（消息级 banner 复用同卡样式，
+ *  22c1426 part 级卡与消息级 banner 两路径并存）。 */
+export function ErrorPartCard({ text, testid = "message-error-part" }: { text: string; testid?: string }) {
   return (
     <div
-      data-testid="message-error-part"
+      data-testid={testid}
       role="alert"
       className="my-1 flex max-w-full items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
     >
@@ -107,12 +108,15 @@ export function PartView({
   sessionId,
   live,
   entryId,
+  suppressErrorText,
 }: {
   part: WirePart;
   sessionId: string;
   live: boolean;
   /** 所在条目 id（任务 7）：透传给 thinking/toolCall 行用于耗时标签 */
   entryId?: string;
+  /** 消息级 errorMessage：相等的 error part 卡跳过（去重，消息级 banner 为准） */
+  suppressErrorText?: string;
 }) {
   switch (part.type) {
     case "text": {
@@ -131,6 +135,9 @@ export function PartView({
     case "error": {
       const text = errorPartText(part);
       if (!text) return null;
+      // 去重（消息级 stopReason 错误主路径）：part 文本与 errorMessage 相等时以消息级
+      // banner 为准，跳过 part 卡重复。
+      if (suppressErrorText !== undefined && text === suppressErrorText) return null;
       return <ErrorPartCard text={text} />;
     }
     case "toolCall": {
@@ -174,12 +181,15 @@ export function PartsView({
   sessionId,
   live,
   entryId,
+  suppressErrorText,
 }: {
   parts?: WirePart[];
   sessionId: string;
   live: boolean;
   /** 所在条目 id（任务 7）：透传给 part 分发用于耗时标签 */
   entryId?: string;
+  /** 消息级 errorMessage：透传 PartView 去重 */
+  suppressErrorText?: string;
 }) {
   if (!parts || parts.length === 0) return null;
   if (parts.every((p) => !isRenderablePart(p))) {
@@ -188,10 +198,32 @@ export function PartsView({
   return (
     <>
       {parts.map((part, i) => (
-        <PartView key={i} part={part} sessionId={sessionId} live={live} entryId={entryId} />
+        <PartView key={i} part={part} sessionId={sessionId} live={live} entryId={entryId} suppressErrorText={suppressErrorText} />
       ))}
     </>
   );
+}
+
+/** 消息级错误文本提取：stopReason==="error" 且 errorMessage 非空字符串才有效，
+ *  其余（含 undefined 消息）一律空串不渲染。限流/额度类错误主路径。 */
+export function messageErrorText(message?: WireMessage | null): string {
+  if (!message || message.stopReason !== "error") return "";
+  const m = message.errorMessage;
+  return typeof m === "string" ? m : "";
+}
+
+/** 消息级错误 banner：复用 ErrorPartCard 样式，testid=message-error-banner。
+ *  定格（message-bubble MessageContent）与流式（StreamingErrorBanner）共用。 */
+export function MessageErrorBanner({ text }: { text: string }) {
+  if (!text) return null;
+  return <ErrorPartCard text={text} testid="message-error-banner" />;
+}
+
+/** 流式消息级错误 banner：单订阅 streamingMessage 的 stopReason/errorMessage，
+ *  非错误态返回稳定空串不重渲。 */
+export function StreamingErrorBanner({ sessionId }: { sessionId: string }) {
+  const text = useMessagesStore((s) => messageErrorText(s.bySession[sessionId]?.streamingMessage));
+  return <MessageErrorBanner text={text} />;
 }
 
 /** 流式 part 计数订阅：只随 content 长度变化重渲染（新 part 出现时挂载新 StreamingPart） */

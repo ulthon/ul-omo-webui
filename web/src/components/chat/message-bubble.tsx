@@ -6,7 +6,7 @@ import { ChevronDown, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
 import { messageModel, shortModelName, type WireMessage, type WireEntry } from "@/lib/api";
-import { PartsView, ToolResultLine, StreamingParts } from "./parts";
+import { PartsView, ToolResultLine, StreamingParts, MessageErrorBanner, StreamingErrorBanner, messageErrorText } from "./parts";
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
@@ -198,7 +198,13 @@ function MessageContent({
   if (message.role === "toolResult") {
     return <ToolResultLine message={message} />;
   }
-  return <PartsView parts={message.content} sessionId={sessionId} live={live} entryId={entryId} />;
+  return (
+    <>
+      <PartsView parts={message.content} sessionId={sessionId} live={live} entryId={entryId} suppressErrorText={messageErrorText(message)} />
+      {/* 消息级 stopReason 错误 banner（限流/额度主路径）；与 error part 文本相等时已去重 */}
+      <MessageErrorBanner text={messageErrorText(message)} />
+    </>
+  );
 }
 
 /** 定格条目气泡：以 entryId 订阅单条 entry（upsertEntry 只替换被改条目的对象引用）。
@@ -460,6 +466,8 @@ export function StreamingBubble({ sessionId }: { sessionId: string }) {
   return (
     <BubbleShell role="assistant" timestamp={null} model={appliedModel ?? receiptModel ?? streamingModelOf(sessionId)} live>
       <StreamingParts sessionId={sessionId} />
+      {/* 消息级 stopReason 错误 banner：流式与定格同路径呈现 */}
+      <StreamingErrorBanner sessionId={sessionId} />
     </BubbleShell>
   );
 }
