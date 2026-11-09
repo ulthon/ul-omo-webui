@@ -50,17 +50,15 @@ export function validateProjectInput(raw: unknown): string {
  * 根目录拒收：根作为工作目录的会话曾把项目列表污染成 "/"（旧版诊断包），偏好写必失败；
  * 只读拒收：偏好/配置写落在项目目录内，只读目录注册后每次写都会 500。
  */
+/**
+ * 注册面口径：与 validateProjectInput 同源。曾经在此拦截根目录/只读目录（#33，
+ * 2026-11-08 上午），当日用户指出：旧版偏好误写根目录的病根是全局 currentProject
+ * 错位，会话为根重构已删除该概念，偏好写失败对根目录/只读项目也有 configError
+ * 静默降级不弹错——防线价值消失且误伤真实用法（用户确有以 / 为工作目录的工作），
+ * 当日撤回拦截，保留函数作为注册面唯一入口供未来口径演进。
+ */
 export function registerProjectInput(raw: unknown): string {
-  const real = validateProjectInput(raw);
-  if (real === parse(real).root) {
-    throw new ApiError(400, "invalid_project_root", "不能以文件系统根目录作为项目：请注册具体项目目录");
-  }
-  try {
-    accessSync(real, constants.W_OK);
-  } catch {
-    throw new ApiError(400, "project_not_writable", `项目目录不可写：${real}`);
-  }
-  return real;
+  return validateProjectInput(raw);
 }
 
 /**

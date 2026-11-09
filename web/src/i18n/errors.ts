@@ -60,8 +60,6 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   invalid_prompt: "errors.invalidPrompt",
   invalid_project: "errors.invalidProject",
   // #33 多会话并行批次（项目根校验）：新增两码
-  invalid_project_root: "errors.invalidProjectRoot",
-  project_not_writable: "errors.projectNotWritable",
   invalid_purge: "errors.invalidPurge",
   invalid_renamed_title: "errors.invalidRenamedTitle",
   invalid_request: "errors.invalidRequest",

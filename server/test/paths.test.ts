@@ -38,21 +38,9 @@ describe("validateProjectInput（绝对性 = 运行平台语义）", () => {
     expect(() => createProjectInput("D:\\projects\\x")).toThrowError(/绝对路径/);
   });
 
-  test("注册面根目录拒收：invalid_project_root（防 \"/\" 项目污染列表）；读口径不拒根", () => {
-    expect(() => registerProjectInput("/")).toThrowError(/文件系统根目录/);
-    expect(validateProjectInput("/")).toBe("/"); // memory 全局兜底等读路径不受影响
-  });
-
-  test("只读目录拒收：project_not_writable（偏好写必失败的不收；root 绕过权限位故跳过）", () => {
-    if (process.getuid?.() === 0) return; // root 对 0555 仍可写，无法在本环境构造只读目录
-    const ro = mkdtempSync(join(tmpdir(), "paths-ro-"));
-    try {
-      chmodSync(ro, 0o555);
-      expect(() => registerProjectInput(ro)).toThrowError(/不可写/);
-    } finally {
-      chmodSync(ro, 0o755);
-      rmSync(ro, { recursive: true, force: true });
-    }
+  test("注册面口径与读口径一致（撤拦截后同源，根/只读交由偏好写 configError 降级）", () => {
+    expect(registerProjectInput("/")).toBe("/");
+    expect(validateProjectInput("/")).toBe("/");
   });
 
   test("不存在路径 → project_not_found", () => {
