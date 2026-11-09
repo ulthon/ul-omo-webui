@@ -207,7 +207,7 @@ function compareEntries(a: ListEntry, b: ListEntry, sort: SortState): number {
 
 export function FilesPage() {
   const t = useT();
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const storeProjects = useUiStore((s) => s.projects);
   const setStoreProjects = useUiStore((s) => s.setProjects);
   const activeProject = useActiveProject();
@@ -384,9 +384,9 @@ export function FilesPage() {
       })
       .catch((err: unknown) => {
         setList({ key, entries: null, listError: true });
-        showToast(apiErrorMessage(err, "files.list.loadFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "files.list.loadFailed"));
       });
-  }, [showToast]);
+  }, [pushGlobalError]);
   useEffect(() => {
     if (!project) return;
     loadDir(project, dir);
@@ -458,9 +458,9 @@ export function FilesPage() {
       refetchAfterOp();
     } catch (err) {
       if (err instanceof ApiError && err.code === "engine_busy") {
-        showToast(t("files.confirm.engineBusy"), "error");
+        pushGlobalError(t("files.confirm.engineBusy"));
       } else {
-        showToast(apiErrorMessage(err, "files.op.deleteFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "files.op.deleteFailed"));
       }
     } finally {
       setDeleteBusy(false);
@@ -481,7 +481,7 @@ export function FilesPage() {
       setConflict(null);
       refetchAfterOp();
     } catch (err) {
-      showToast(apiErrorMessage(err, "files.op.moveFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "files.op.moveFailed"));
     } finally {
       setConflictBusy(false);
     }
@@ -577,12 +577,12 @@ export function FilesPage() {
               setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "done" } : it)));
             } catch (retryErr) {
               setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
-              showToast(apiErrorMessage(retryErr, "files.op.uploadFailed"), "error");
+              pushGlobalError(apiErrorMessage(retryErr, "files.op.uploadFailed"));
             }
           }
         } else {
           setUploadQueue((q) => q.map((it) => (it.id === id ? { ...it, status: "failed" } : it)));
-          showToast(apiErrorMessage(err, "files.op.uploadFailed"), "error");
+          pushGlobalError(apiErrorMessage(err, "files.op.uploadFailed"));
         }
       }
     }
@@ -627,7 +627,7 @@ export function FilesPage() {
             : kind === "rename"
               ? "files.op.renameFailed"
               : "files.op.moveFailed";
-      showToast(apiErrorMessage(err, fallbackKey), "error");
+      pushGlobalError(apiErrorMessage(err, fallbackKey));
     } finally {
       setDialogBusy(false);
     }

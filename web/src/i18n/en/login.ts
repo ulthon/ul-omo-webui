@@ -202,6 +202,13 @@ export const login = {
     thinkingNote: "When on, thinking blocks that appear afterwards start expanded, and output auto-scrolls to the bottom while expanded; manual scrolling stops following. Synced across devices.",
     // Tips section (docs08 2026-10-22 batch task 25: usage tips toggle, on by default)
     tipsSaveFailed: "Failed to save tips settings",
+    // —— Notification center (global errors aggregated, plan A) ——
+    notifCenterTitle: "Notifications",
+    notifEmpty: "No notifications",
+    notifClear: "Clear all",
+    notifCopy: "Copy",
+    notifCopied: "Copied",
+    notifDismiss: "Dismiss",
     tipsHeading: "Tips",
     tipsEnabled: "Show usage tips",
     tipsNote: "The session empty state shows a tip card sourced from the omo CLI; hidden once dismissed. Turning it back on clears the per-session dismissal.",

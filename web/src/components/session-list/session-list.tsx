@@ -190,7 +190,7 @@ export function SessionList() {
       setSearchResults(res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(tSnap("sessionList.list.searchFailed"), "error");
+        useUiStore.getState().pushGlobalError(tSnap("sessionList.list.searchFailed"));
       }
     } finally {
       setSearching(false);
@@ -316,7 +316,7 @@ export function SessionList() {
         }, 2500);
         return;
       }
-      useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.createFailed"), "error");
+      useUiStore.getState().pushGlobalError(apiErrorMessage(err, "sessionList.list.createFailed"));
     } finally {
       // 排程了重试则不在此释放：锁由重试自身的完成路径（本 finally，isFirst=false）
       // 释放；未排程重试时立即释放（正常完成或非 engine 错误的 toast 路径）
@@ -366,7 +366,7 @@ export function SessionList() {
       ui.showToast(hidden ? t("sessionList.list.projectHidden") : t("sessionList.list.projectShown"), "info");
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(apiErrorMessage(err, "sessionList.list.operationFailed"), "error");
+        useUiStore.getState().pushGlobalError(apiErrorMessage(err, "sessionList.list.operationFailed"));
       }
     } finally {
       setHiding(false);
@@ -381,7 +381,7 @@ export function SessionList() {
       await api.putSettings({ [PROJECT_ORDER_KV]: JSON.stringify(nextOrder) });
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(t("sessionList.list.saveManualOrderFailed"), "error");
+        useUiStore.getState().pushGlobalError(t("sessionList.list.saveManualOrderFailed"));
       }
     }
   }, [t]);
@@ -444,7 +444,7 @@ export function SessionList() {
       await api.putSettings({ [SESSION_ORDER_KV]: JSON.stringify(nextOrder) });
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(t("sessionList.list.saveManualOrderFailed"), "error");
+        useUiStore.getState().pushGlobalError(t("sessionList.list.saveManualOrderFailed"));
       }
     }
   }, [t]);

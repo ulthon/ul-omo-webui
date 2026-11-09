@@ -253,7 +253,7 @@ describe("设置面板项目管理区（W1 #1）", () => {
     });
     await flush();
     expect(deleteCalled).toBe(true);
-    expect(useUiStore.getState().toasts.at(-1)?.kind).toBe("error");
+    expect(useUiStore.getState().globalNotifs.length).toBeGreaterThanOrEqual(1);
     expect(useSessionsStore.getState().selectedId).toBe("s1");
 
     await act(async () => {

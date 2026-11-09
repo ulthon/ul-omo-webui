@@ -77,6 +77,7 @@ function ExtensionRow({
 export function ExtensionsSection() {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const [items, setItems] = useState<ExtensionItem[] | null>(null);
   const [cliAvailable, setCliAvailable] = useState(true);
   const [auth, setAuth] = useState<AuthStatusResponse | null>(null);
@@ -128,7 +129,7 @@ export function ExtensionsSection() {
     api.getAuthStatus()
       .then((s) => setAuth(s))
       .catch((err: unknown) => {
-        showToast(apiErrorMessage(err, "extensions.loadFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "extensions.loadFailed"));
       })
       .finally(() => setAuthChecking(false));
   }, [showToast]);
@@ -140,7 +141,7 @@ export function ExtensionsSection() {
         await api.setExtensionEnabled(item.name, item.kind, enabled);
         await refresh();
       } catch (err) {
-        showToast(apiErrorMessage(err, "extensions.toggleFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "extensions.toggleFailed"));
       } finally {
         setBusy(false);
       }
@@ -159,11 +160,11 @@ export function ExtensionsSection() {
         if (res.ok) {
           showToast(`${t("extensions.actionOk")}\n${res.message.slice(0, 400)}`);
         } else {
-          showToast(`${t("extensions.actionFailed")}\n${res.message.slice(0, 400)}`, "error");
+          pushGlobalError(`${t("extensions.actionFailed")}\n${res.message.slice(0, 400)}`);
         }
         await refresh();
       } catch (err) {
-        showToast(apiErrorMessage(err, "extensions.actionFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "extensions.actionFailed"));
       } finally {
         setInstalling(false);
       }
@@ -173,7 +174,7 @@ export function ExtensionsSection() {
 
   const onInstall = useCallback(() => {
     if (!isValidSource(source)) {
-      showToast(t("extensions.sourceInvalid"), "error");
+      pushGlobalError(t("extensions.sourceInvalid"));
       return;
     }
     void runAction("install", source.trim());

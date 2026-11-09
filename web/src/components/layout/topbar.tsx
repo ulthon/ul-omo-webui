@@ -24,6 +24,7 @@ import { TagBadges } from "@/components/session-list/tag-badge";
 import { formatRelative } from "@/components/session-list/session-item";
 import { RowPinnedBadge, RowStatusDot, RowUnreadBadge } from "@/components/session-list/row-bits";
 import { ShortcutsDialog } from "@/components/layout/shortcuts-dialog";
+import { NotificationCenter } from "@/components/layout/notification-center";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -399,6 +400,8 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
           >
             <FolderOpen className="size-5" />
           </Button>
+          {/* 通知中心入口（全局错误聚合，方案 A）：无通知置灰不可点，有通知显角标 */}
+          <NotificationCenter />
           {/* 设置入口（r9 2026-10-26 批次任务 9）：打开独立全屏设置页。size-11=44px 触控达标 */}
           <Button
             variant="ghost"

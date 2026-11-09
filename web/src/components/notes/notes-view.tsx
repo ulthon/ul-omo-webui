@@ -52,6 +52,7 @@ function toInitialData(note: NoteListItem, project: string): NoteData {
 
 function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { current: boolean } }) {
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [reloadSeq, setReloadSeq] = useState(0);
   /** 就地展开的行内编辑器：存量笔记 id 或 "draft"（列表顶新建空行）；null = 全部收起 */
@@ -98,7 +99,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       if (tagReqRef.current === seq) setTagNotes(notes);
     } catch (err) {
       if (tagReqRef.current === seq) setTagNotes([]);
-      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 
@@ -116,7 +117,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       notesApi
         .reorder(project, notes.map((n) => n.id))
         .catch((err: unknown) => {
-          showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+          pushGlobalError(apiErrorMessage(err, "notes.actionFailed"));
           onChanged();
         });
     },
@@ -130,7 +131,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       if (expandedId === note.id) setExpandedId(null);
       onChanged();
     } catch (err) {
-      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 
@@ -140,7 +141,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       showToast(t("notes.view.restoredToast", { title: note.title }));
       onChanged();
     } catch (err) {
-      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 
@@ -151,7 +152,7 @@ function NotesViewInner({ project, dirtyRef }: { project: string; dirtyRef: { cu
       showToast(t("notes.view.purgedToast", { title: note.title }));
       onChanged();
     } catch (err) {
-      showToast(apiErrorMessage(err, "notes.actionFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "notes.actionFailed"));
     }
   };
 

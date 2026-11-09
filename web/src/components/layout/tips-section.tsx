@@ -23,7 +23,7 @@ export function TipsSection() {
       useUiStore.getState().setTipsEnabled(enabled);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(apiErrorMessage(err, "login.topbar.tipsSaveFailed"), "error");
+        useUiStore.getState().pushGlobalError(apiErrorMessage(err, "login.topbar.tipsSaveFailed"));
       }
     } finally {
       setSaving(false);

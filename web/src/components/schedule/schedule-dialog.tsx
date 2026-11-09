@@ -33,6 +33,7 @@ const DUE_PRESETS: ReadonlyArray<{ value: DuePreset; labelKey: "schedule.preset1
 export function ScheduleDialog({ session, onClose }: { session: SessionListItem; onClose: () => void }) {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
 
   const [data, setData] = useState<ScheduleListResponse | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -83,7 +84,7 @@ export function ScheduleDialog({ session, onClose }: { session: SessionListItem;
         setData((prev) => (prev ? { ...prev, jobs: prev.jobs.filter((j) => j.id !== id) } : prev));
         return;
       }
-      showToast(apiErrorMessage(err, "schedule.cancelFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "schedule.cancelFailed"));
     } finally {
       setCancellingId(null);
     }

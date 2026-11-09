@@ -203,6 +203,13 @@ export const login = {
     thinkingNote: "开启后思考块默认展开，展开时输出自动滚动到底部，手动滚动即停跟随；对之后新出现的思考块生效，全设备同步。",
     // 提示分区（docs08 2026-10-22 批次任务 25：用法提示开关，缺省开）
     tipsSaveFailed: "保存提示设置失败",
+    // —— 通知中心（全局错误聚合，方案 A）——
+    notifCenterTitle: "通知中心",
+    notifEmpty: "暂无通知",
+    notifClear: "全部清空",
+    notifCopy: "复制",
+    notifCopied: "已复制",
+    notifDismiss: "关闭此条",
     tipsHeading: "提示",
     tipsEnabled: "显示用法提示",
     tipsNote: "会话空态显示用法提示卡（内容来自 omo CLI）；关闭后不再显示。重新开启会清除「本会话不再显」记忆。",

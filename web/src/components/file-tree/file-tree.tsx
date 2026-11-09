@@ -124,7 +124,7 @@ export function FileTree({
   /** 可选（builtin-file-management 任务 2）：目录行点击时上抛路径，见 TreeRowProps 注释 */
   onDirectoryOpen?: (path: string) => void;
 }) {
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const t = useT();
   // Map/Set 装在同一个对象里整体替换，保证浅比较触发重渲染；根目录（""）挂载即在加载中
   const [data, setData] = useState<TreeData>(() => ({
@@ -155,10 +155,10 @@ export function FileTree({
             loading.delete(path);
             return { ...prev, expanded, loading };
           });
-          showToast(apiErrorMessage(err, "fileTree.tree.loadFailed"), "error");
+          pushGlobalError(apiErrorMessage(err, "fileTree.tree.loadFailed"));
         });
     },
-    [project, showToast],
+    [project, pushGlobalError],
   );
 
   useEffect(() => {

@@ -26,6 +26,7 @@ const STATUS_KEY: Record<AuthStatusResponse["status"], MessageKey> = {
 export function AuthSection() {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const [provider, setProvider] = useState<string>(PROVIDER_OPTIONS[0]);
   const [customProvider, setCustomProvider] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -49,11 +50,11 @@ export function AuthSection() {
   const test = useCallback(async () => {
     const p = provider === CUSTOM ? customProvider.trim() : provider;
     if (p === "") {
-      showToast(t("auth.providerRequired"), "error");
+      pushGlobalError(t("auth.providerRequired"));
       return;
     }
     if (apiKey.trim() === "") {
-      showToast(t("auth.keyRequired"), "error");
+      pushGlobalError(t("auth.keyRequired"));
       return;
     }
     setTesting(true);

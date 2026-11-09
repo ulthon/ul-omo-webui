@@ -114,7 +114,7 @@ async function mountDialog(initialNames: string[], orphanCleanups?: TagOrphanCle
 }
 
 beforeEach(() => {
-  useUiStore.setState({ toasts: [] });
+  useUiStore.setState({ globalNotifs: [] });
 });
 
 afterEach(() => {
@@ -148,7 +148,7 @@ describe("TagManageDialog 整替冲突防护（r9）", () => {
     expect(calls.some((c) => c.method === "GET" && c.path === "/api/tags")).toBe(true);
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
     // toast 提示（zh：目标已不在场，本次变更未提交）
-    const toasts = useUiStore.getState().toasts.map((t) => t.text).join("|");
+    const toasts = useUiStore.getState().globalNotifs.map((t) => t.text).join("|");
     expect(toasts).toContain("未提交");
     expect(toasts).toContain("a");
     await unmount();
@@ -177,7 +177,7 @@ describe("TagManageDialog 整替冲突防护（r9）", () => {
     // 一打 409 后不自动重试（重试即覆盖对端）
     expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
     // toast 提示（zh：冲突，未提交）
-    const toasts = useUiStore.getState().toasts.map((t) => t.text).join("|");
+    const toasts = useUiStore.getState().globalNotifs.map((t) => t.text).join("|");
     expect(toasts).toContain("冲突");
     expect(toasts).toContain("未提交");
     // 本地副本不回写旧值：列表同步为服务端最新 [a, b]，而非本端旧编辑 a2

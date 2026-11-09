@@ -212,7 +212,27 @@ interface UiState {
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
   clearNotifications(): void;
+  // —— 通知中心（全局错误聚合，方案 A）：无会话上下文的 error toast 改入此通道 ——
+  // 条目不自动消失、可回看；同文本错误去重合并计数（同类连续错误不刷屏）；最新在前。
+  globalNotifs: GlobalNotif[];
+  notifCenterOpen: boolean;
+  pushGlobalError(text: string): void;
+  dismissGlobalNotif(text: string): void;
+  clearGlobalErrors(): void;
+  setNotifCenterOpen(open: boolean): void;
 }
+
+/** 通知中心条目：text 为去重键（同文本合并），count 累加，ts 取最后一次发生时间 */
+export interface GlobalNotif {
+  text: string;
+  count: number;
+  ts: number;
+}
+
+/** 入口角标计数：全部条目次数求和（清空归零；条目常驻所以不做已读态） */
+export const selectGlobalNotifCount = (s: { globalNotifs: GlobalNotif[] }): number =>
+  s.globalNotifs.reduce((acc, n) => acc + n.count, 0);
+
 
 // 轻提示栈（docs08 2026-10-25 用户反馈）：底部同列堆叠至多 MAX_TOASTS 条，各自独立关闭，
 // 文字可选中可复制（点文字本体不触发任何动作）。info 各自计时自动消失（timer 按 id 归档）；
@@ -265,6 +285,8 @@ export const useUiStore = create<UiState>()((set) => ({
   composerInject: null,
   toasts: [],
   notifications: [],
+  globalNotifs: [],
+  notifCenterOpen: false,
 
   setConnection: (status) => set({ connection: status }),
   setDrawerOpen: (open) => set({ drawerOpen: open }),
@@ -332,4 +354,21 @@ export const useUiStore = create<UiState>()((set) => ({
     set((s) => ({ toasts: s.toasts.filter((it) => it.id !== id) }));
   },
   clearNotifications: () => set({ notifications: [] }),
+  pushGlobalError: (text) =>
+    set((s) => {
+      const existing = s.globalNotifs.find((n) => n.text === text);
+      const rest = s.globalNotifs.filter((n) => n !== existing);
+      const entry: GlobalNotif = existing
+        ? { text, count: existing.count + 1, ts: Date.now() }
+        : { text, count: 1, ts: Date.now() };
+      // 容量上限：超出丢最旧（环形缓冲语义，与 notifications 历史层一致）
+      return { globalNotifs: [entry, ...rest].slice(0, MAX_GLOBAL_NOTIFS) };
+    }),
+  dismissGlobalNotif: (text) =>
+    set((s) => ({ globalNotifs: s.globalNotifs.filter((n) => n.text !== text) })),
+  clearGlobalErrors: () => set({ globalNotifs: [] }),
+  setNotifCenterOpen: (notifCenterOpen) => set({ notifCenterOpen }),
 }));
+
+// 通知中心容量：全局错误属低频事件，100 条足够回看且不撑爆内存
+const MAX_GLOBAL_NOTIFS = 100;

@@ -65,7 +65,7 @@ function fmtMs(ms: number): string {
 
 export function OverviewEngine({ sessionId }: { sessionId: string | null }) {
   const t = useT();
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   // durable id → 会话文件路径（引擎键）。引用稳定：命中即返回行 path 原值。
   const sessionPath = useSessionsStore((s) => {
     if (!sessionId) return null;
@@ -117,10 +117,10 @@ export function OverviewEngine({ sessionId }: { sessionId: string | null }) {
       .stopEngine({ sessionPath: row.sessionPath })
       .then(() => load())
       .catch((err: unknown) => {
-        showToast(apiErrorMessage(err, "login.rightRail.overview.engineStopFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "login.rightRail.overview.engineStopFailed"));
       })
       .finally(() => setStopping(false));
-  }, [row, stopping, turnActive, load, t, showToast]);
+  }, [row, stopping, turnActive, load, t, pushGlobalError]);
 
   // 隐藏规则：无可匹配行即整块不渲染
   if (row === null) return null;

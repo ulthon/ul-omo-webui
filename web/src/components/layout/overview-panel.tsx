@@ -170,13 +170,14 @@ function OverviewNotes() {
   const count = useUiStore((s) => s.overviewNotesCount);
   const setOverviewNotesCount = useUiStore((s) => s.setOverviewNotesCount);
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const changeCount = (dir: 1 | -1) => {
     const next = Math.min(Math.max(count + dir, 1), MAX_OVERVIEW_NOTES_COUNT);
     if (next === count) return;
     setOverviewNotesCount(next);
     api
       .putSettings({ [OVERVIEW_NOTES_COUNT_KV]: String(next) })
-      .catch(() => showToast(t("login.rightRail.overview.notesCountSaveFailed"), "error"));
+      .catch(() => pushGlobalError(t("login.rightRail.overview.notesCountSaveFailed")));
   };
 
   useEffect(() => {

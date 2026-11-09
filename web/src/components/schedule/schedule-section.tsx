@@ -92,6 +92,7 @@ export function ScheduleRow({
 export function ScheduleSection() {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const byProject = useSessionsStore((s) => s.byProject);
   const [data, setData] = useState<ScheduleListResponse | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -153,7 +154,7 @@ export function ScheduleSection() {
         setData((prev) => (prev ? { ...prev, jobs: prev.jobs.filter((j) => j.id !== id) } : prev));
         return;
       }
-      showToast(apiErrorMessage(err, "schedule.cancelFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "schedule.cancelFailed"));
     } finally {
       setCancellingId(null);
     }

@@ -98,6 +98,7 @@ type Scope = "global" | "project";
 
 export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClose }: TagManageDialogProps) {
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const t = useT();
   const isProject = typeof scope === "object";
   const project = isProject ? scope.projectPath : "";
@@ -130,7 +131,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
         // 放弃本次编辑：本地副本同步为服务端最新 + 关闭行内编辑（用户看到刷新后的列表）
         setLocalDefs((prev) => ({ ...prev, [groupScope]: latest }));
         setEditing(null);
-        showToast(t("sessionList.tagManage.targetGoneToast", { name: tagChangeTarget(change) }), "error");
+        pushGlobalError(t("sessionList.tagManage.targetGoneToast", { name: tagChangeTarget(change) }));
         return false;
       }
       try {
@@ -148,7 +149,7 @@ export function TagManageDialog({ scope, defs, orphanCleanups, onChanged, onClos
           // 冲突放弃：同步服务端最新（不回写旧值、不自动重试）+ 关闭行内编辑
           setLocalDefs((prev) => ({ ...prev, [groupScope]: latest }));
           setEditing(null);
-          showToast(t("sessionList.tagManage.conflictToast", { name: tagChangeTarget(change) }), "error");
+          pushGlobalError(t("sessionList.tagManage.conflictToast", { name: tagChangeTarget(change) }));
           return false;
         }
         throw err;

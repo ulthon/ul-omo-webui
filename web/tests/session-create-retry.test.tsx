@@ -131,7 +131,7 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
 
   test("(1) 首次 engine_not_ready 重试成功：会话创建、无错误 toast、api 恰 2 次", async () => {
     vi.useFakeTimers();
-    const toastSpy = vi.spyOn(useUiStore.getState(), "showToast");
+    const toastSpy = vi.spyOn(useUiStore.getState(), "pushGlobalError");
     api.createSession
       .mockImplementationOnce(() => Promise.reject(new ApiError(503, "engine_not_ready", "warming up")))
       .mockImplementationOnce(() =>
@@ -159,7 +159,7 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
 
   test("(2) 两次均 engine_not_ready：错误 toast 恰一次、api 恰 2 次、锁最终释放", async () => {
     vi.useFakeTimers();
-    const toastSpy = vi.spyOn(useUiStore.getState(), "showToast");
+    const toastSpy = vi.spyOn(useUiStore.getState(), "pushGlobalError");
     api.createSession
       .mockImplementationOnce(() => Promise.reject(new ApiError(503, "engine_not_ready", "warming up")))
       .mockImplementationOnce(() => Promise.reject(new ApiError(503, "engine_not_ready", "still warming up")));
@@ -182,7 +182,7 @@ describe("新建会话冷启动 engine_not_ready 一次性自动重试（r11 tod
 
   test("(3) 非 engine 错误（400 invalid_path）：不重试，api 恰 1 次、toast 一次", async () => {
     vi.useFakeTimers();
-    const toastSpy = vi.spyOn(useUiStore.getState(), "showToast");
+    const toastSpy = vi.spyOn(useUiStore.getState(), "pushGlobalError");
     api.createSession.mockImplementationOnce(() => Promise.reject(new ApiError(400, "invalid_path", "bad path")));
     const h = await mountList();
     await h.click();

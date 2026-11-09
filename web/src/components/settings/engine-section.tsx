@@ -76,7 +76,7 @@ const stoppable = (row: EngineAdminRow) =>
 /** 空闲回收 + 进程管理（导出供单测与设置页装配） */
 export function EngineSection() {
   const t = useT();
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
 
   // ---- 空闲回收档位 ----
   const [idle, setIdle] = useState<EngineIdleValue | null>(null);
@@ -111,7 +111,7 @@ export function EngineSection() {
       await api.putSettings({ [ENGINE_IDLE_TIMEOUT_KV]: mode });
       setIdle(mode);
     } catch (err) {
-      showToast(apiErrorMessage(err, "login.settingsPage.engineIdleSaveFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "login.settingsPage.engineIdleSaveFailed"));
     } finally {
       setSavingIdle(false);
     }
@@ -124,7 +124,7 @@ export function EngineSection() {
       await api.putSettings({ [ENGINE_ACTIVITY_WINDOW_KV]: mode });
       setActivity(mode);
     } catch (err) {
-      showToast(apiErrorMessage(err, "login.settingsPage.engineActivitySaveFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "login.settingsPage.engineActivitySaveFailed"));
     } finally {
       setSavingActivity(false);
     }
@@ -162,7 +162,7 @@ export function EngineSection() {
       await api.stopEngine({ sessionPath: row.sessionPath });
       await refresh();
     } catch (err) {
-      showToast(apiErrorMessage(err, "login.settingsPage.engineStopFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "login.settingsPage.engineStopFailed"));
     } finally {
       setStopping(null);
     }
@@ -189,7 +189,7 @@ export function EngineSection() {
     } finally {
       setStoppingAll(false);
     }
-    if (failed) showToast(apiErrorMessage(new Error("stop-all partial failure"), "login.settingsPage.engineStopFailed"), "error");
+    if (failed) pushGlobalError(apiErrorMessage(new Error("stop-all partial failure"), "login.settingsPage.engineStopFailed"));
   };
 
   return (

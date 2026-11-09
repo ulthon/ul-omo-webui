@@ -55,7 +55,7 @@ export function FileEditor({
    * （调用方透传 FileConflictError 即可）；null = 保存不可用（端点未接入形态） */
   onSave: ((content: string, expectations: SaveExpectations) => Promise<{ mtimeNs: string; size: number }>) | null;
 }) {
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const [state, setState] = useState<EditorState>({ kind: "loading" });
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [dirty, setDirty] = useState(false);
@@ -88,12 +88,12 @@ export function FileEditor({
         if (cancelled) return;
         const message = err instanceof Error ? err.message : tSnap("files.edit.loadFailed");
         setState({ kind: "error", message });
-        showToast(message, "error");
+        pushGlobalError(message);
       });
     return () => {
       cancelled = true;
     };
-  }, [project, path, reloadToken, showToast, dirtyRef]);
+  }, [project, path, reloadToken, pushGlobalError, dirtyRef]);
 
   // 编辑器挂载：内容就绪后动态加载 CodeMirror；卸载/重挂载销毁实例
   useEffect(() => {

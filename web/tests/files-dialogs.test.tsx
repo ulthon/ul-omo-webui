@@ -169,7 +169,7 @@ function click(el: HTMLElement): Promise<void> {
 }
 
 function toastTexts(): string[] {
-  return useUiStore.getState().toasts.map((t) => t.text);
+  return useUiStore.getState().globalNotifs.map((t) => t.text);
 }
 
 /** 受控 input 赋值：React value tracker 会吞同值 input 事件，需走原型 setter */

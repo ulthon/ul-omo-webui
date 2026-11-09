@@ -137,7 +137,7 @@ const checkedState = (container: ParentNode): string | null =>
   container.querySelector<HTMLButtonElement>('button[data-tag="b"]')?.getAttribute("aria-checked") ?? null;
 
 beforeEach(() => {
-  useUiStore.setState({ toasts: [] });
+  useUiStore.setState({ globalNotifs: [] });
 });
 
 afterEach(() => {
@@ -166,7 +166,7 @@ describe("TagDropdown 挂载整替冲突防护（r9 F1-B1）", () => {
     // 409 后重拉该会话最新挂载（对端新增不丢，快照可重试）
     expect(calls.some((c) => c.method === "GET" && c.path === "/api/sessions/s1/tags")).toBe(true);
     // toast 冲突提示（apiErrorMessage 映射 tag_mount_conflict → zh 词典文案）
-    const toasts = useUiStore.getState().toasts.map((t) => t.text).join("|");
+    const toasts = useUiStore.getState().globalNotifs.map((t) => t.text).join("|");
     expect(toasts).toContain("标签挂载已被其他端修改");
     // 勾选态不变（失败项下次点击按快照重算，可重试）
     expect(checkedState(container)).toBe("false");

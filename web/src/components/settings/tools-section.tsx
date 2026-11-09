@@ -40,7 +40,7 @@ export function ToolsSection({ projectPath }: { projectPath?: string | null }) {
   const t = useT();
   const showError = (err: unknown, fallbackKey: Parameters<typeof apiErrorMessage>[1]) => {
     if (err instanceof ApiError && err.status === 401) return;
-    useUiStore.getState().showToast(apiErrorMessage(err, fallbackKey), "error");
+    useUiStore.getState().pushGlobalError(apiErrorMessage(err, fallbackKey));
   };
 
   // 目录加载一次 + 服务端启停态灌入草稿（项目切换/服务端 refetch 后重灌）

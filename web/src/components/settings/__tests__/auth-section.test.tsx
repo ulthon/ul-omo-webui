@@ -141,6 +141,6 @@ describe("AuthSection（r10 任务 13）", () => {
     await flush();
     expect(saveFn).not.toHaveBeenCalled();
     const { useUiStore } = await import("@/stores/ui");
-    expect(useUiStore.getState().toasts.some((t) => t.text.includes("请粘贴 API key"))).toBe(true);
+    expect(useUiStore.getState().globalNotifs.some((t) => t.text.includes("请粘贴 API key"))).toBe(true);
   });
 });

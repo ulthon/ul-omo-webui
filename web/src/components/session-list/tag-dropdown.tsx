@@ -39,6 +39,7 @@ function initialSelected(sessions: SessionListItem[]): Set<string> {
 
 export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onClose }: TagDropdownProps) {
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const t = useT();
   const batch = sessions.length > 1;
   // 打开时刻的挂载快照：id → 当前挂载 + revision（r9 F1-B1 挂载乐观锁）。连续勾选基于
@@ -75,7 +76,7 @@ export function TagDropdown({ anchor, sessions, defs, manageScope, onManage, onC
         useSessionsStore.getState().patchSession(s.id, { tags: res.tags });
       } catch (err) {
         failedIds.push(s.title || s.id);
-        showToast(apiErrorMessage(err, "sessionList.tagDropdown.saveFailed"), "error");
+        pushGlobalError(apiErrorMessage(err, "sessionList.tagDropdown.saveFailed"));
         if (err instanceof ApiError && err.status === 409) {
           // 冲突会话重拉最新挂载进快照（对端改动不丢），下次点击按新快照重算可成功
           try {

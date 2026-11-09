@@ -157,6 +157,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSe
   const selected = useSessionsStore((s) => s.selectedId === session.id);
   const select = useSessionsStore((s) => s.select);
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
 
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -176,7 +177,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSe
       });
       onChanged();
     } catch (err) {
-      showToast(apiErrorMessage(err, "sessionList.item.operationFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "sessionList.item.operationFailed"));
     } finally {
       setBusy(false);
     }
@@ -201,7 +202,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSe
       await api.exportSession(session.id, session.title);
       showToast("已导出 HTML");
     } catch (err) {
-      showToast(apiErrorMessage(err, "sessionList.item.exportFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "sessionList.item.exportFailed"));
     } finally {
       setExporting(false);
     }
@@ -220,7 +221,7 @@ export function SessionItem({ session, forkIndexes, projectLabel, onDialog, onSe
       showToast("标题已生成");
       onChanged();
     } catch (err) {
-      showToast(apiErrorMessage(err, "sessionList.item.titleGenFailed"), "error");
+      pushGlobalError(apiErrorMessage(err, "sessionList.item.titleGenFailed"));
     } finally {
       setGeneratingTitle(false);
     }

@@ -33,7 +33,7 @@ export function FilePreview({
    * 真图渲染（不再占位）；缺省关闭——composer @引用场景默认行为零波及 */
   enableImageInline?: boolean;
 }) {
-  const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   // 初始即 loading；调用方以 key={path} 重挂载派生重置，effect 只发请求不同步 setState
   const [state, setState] = useState<PreviewState>({ kind: "loading" });
 
@@ -48,12 +48,12 @@ export function FilePreview({
         if (cancelled) return;
         const message = err instanceof Error ? err.message : tSnap("fileTree.preview.loadFailed");
         setState({ kind: "error", message });
-        showToast(message, "error");
+        pushGlobalError(message);
       });
     return () => {
       cancelled = true;
     };
-  }, [project, path, showToast]);
+  }, [project, path, pushGlobalError]);
 
   const t = useT();
   const mime = imageMimeOf(path);

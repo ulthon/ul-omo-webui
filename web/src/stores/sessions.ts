@@ -369,7 +369,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       useSessionsStore.getState().setSessions(project, res.sessions);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 401)) {
-        useUiStore.getState().showToast(t("common.lib.sessionListLoadFailed"), "error");
+        useUiStore.getState().pushGlobalError(t("common.lib.sessionListLoadFailed"));
       }
     } finally {
       useSessionsStore.getState().setLoading(false);

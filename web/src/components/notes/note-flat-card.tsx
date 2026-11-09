@@ -55,6 +55,7 @@ export function NoteFlatCard({
 }) {
   const t = useT();
   const showToast = useUiStore((s) => s.showToast);
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const untitled = t("notes.view.untitled");
   const displayTitle = deriveDisplayTitle(note.title, note.preview, untitled);
 
@@ -73,7 +74,7 @@ export function NoteFlatCard({
     try {
       downloadNoteMarkdown(note, untitled);
     } catch {
-      showToast(t("notes.view.copyFailed"), "error");
+      pushGlobalError(t("notes.view.copyFailed"));
     }
   };
 

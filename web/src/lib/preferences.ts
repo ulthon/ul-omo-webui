@@ -35,7 +35,7 @@ export function scheduleModelPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_MS)
       })
       .catch((err: unknown) => {
         if (!(err instanceof ApiError && err.status === 401)) {
-          useUiStore.getState().showToast(t("common.lib.saveModelPrefFailed"), "error");
+          useUiStore.getState().pushGlobalError(t("common.lib.saveModelPrefFailed"));
         }
       });
   }, delayMs);
@@ -64,7 +64,7 @@ export function scheduleThinkingPreferencePersist(delayMs = PREFERENCE_DEBOUNCE_
       })
       .catch((err: unknown) => {
         if (!(err instanceof ApiError && err.status === 401)) {
-          useUiStore.getState().showToast(t("common.lib.saveThinkingPrefFailed"), "error");
+          useUiStore.getState().pushGlobalError(t("common.lib.saveThinkingPrefFailed"));
         }
       });
   }, delayMs);

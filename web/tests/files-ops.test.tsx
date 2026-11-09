@@ -354,9 +354,8 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     await act(async () => {
       q(document, '[data-testid="files-delete-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const toasts = useUiStore.getState().toasts;
-    expect(toasts.at(-1)?.kind).toBe("error");
-    expect(toasts.at(-1)?.text).toContain("引擎");
+    const notifs = useUiStore.getState().globalNotifs;
+    expect(notifs.some((n) => n.text.includes("引擎"))).toBe(true);
     // 新建文件 403 path_escape → toast 兜底键文案，且不重取目录
     const treeCallsBefore = calls.tree.length;
     await act(async () => {
@@ -369,8 +368,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     await act(async () => {
       q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const toasts2 = useUiStore.getState().toasts;
-    expect(toasts2.at(-1)?.kind).toBe("error");
+    expect(useUiStore.getState().globalNotifs.length).toBeGreaterThanOrEqual(2);
     expect(calls.createFile.length).toBe(1);
     expect(calls.tree.length).toBe(treeCallsBefore);
     await act(async () => {
