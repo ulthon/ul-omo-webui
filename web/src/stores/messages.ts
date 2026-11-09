@@ -9,6 +9,7 @@
 import { create } from "zustand";
 import type { MessagesPage, WireEntry, WireMessage, WirePart } from "@/lib/api";
 import { isMemoryAppendedEntry } from "@/lib/memory-entries";
+import { diag } from "@/lib/diag";
 import { parseTaskCompletionEntry } from "@/lib/task-completion";
 import {
   lastModelChangeOf,
@@ -921,7 +922,19 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           // 思考档三链 B：用户显式手选过的档位不被引擎回显覆盖（引擎自身 settings.json
           // 默认 high 会把手选 max 打回）；未手选（回退链/程序化链）照常同步。
           const ui = useUiStore.getState();
-          if (!ui.userPickedThinking) ui.setSelectedThinkingLevel(level);
+          if (!ui.userPickedThinking) {
+            // 来源分级日志（2026-11-10 思考档排查）：引擎推送变化——同值不重复记，值变化才记一行
+            if (ui.selectedThinkingLevel !== level) {
+              const sel = event.thinkingSelection;
+              diag.info("thinking-level", "engine_change", {
+                to: level,
+                session: sessionId,
+                source:
+                  sel === undefined || sel === null ? undefined : JSON.stringify(sel).slice(0, 120),
+              });
+            }
+            ui.setSelectedThinkingLevel(level);
+          }
           break;
         }
 

@@ -255,7 +255,14 @@ export function SessionList() {
       // 无条件化（W2 任务 8）：两个落点（工具条=派生项目/分组头=显式项目）都先解析再建
       const meta = ui.projects.find((p) => p.projectPath === project);
       ui.setSelectedModel(meta?.preferredModel ?? null);
-      ui.setSelectedThinkingLevel(meta?.preferredThinkingLevel ?? null);
+      const prevLevel = ui.selectedThinkingLevel;
+      const nextLevel = meta?.preferredThinkingLevel ?? null;
+      ui.setSelectedThinkingLevel(nextLevel);
+      // 来源分级日志（2026-11-10 思考档排查）：建会话链程序化对齐项目偏好档位
+      // （init，会话尚未创建记 unknown；同值不重记）
+      if (prevLevel !== nextLevel) {
+        diag.info("thinking-level", "init", { value: nextLevel ?? "unknown", session: "unknown" });
+      }
       // 思考档三链 B：程序化落定后清手选标记（与 applyProjectDecision 同口径）
       ui.clearUserPickedThinking();
       await loadProjectModels(project);

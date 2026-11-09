@@ -248,7 +248,14 @@ function applyProjectDecision(sessionId: string, targetProject: string): void {
   // （model_change 后紧跟 explicit high）：置 null 后切模型的 prompt 不带档，引擎对
   // 未带档的切模型回落自身默认 high 并记 explicit，手选 max 被洗掉（三链修复漏的
   // 第四链）。项目偏好是用户意图的最接近代理；引擎侧重开带档（三链 A）与此双保险。
-  ui.setSelectedThinkingLevel(pref?.preferredThinkingLevel ?? null);
+  const prevLevel = ui.selectedThinkingLevel;
+  const nextLevel = pref?.preferredThinkingLevel ?? null;
+  ui.setSelectedThinkingLevel(nextLevel);
+  // 来源分级日志（2026-11-10 思考档排查）：会话打开对齐档位的初始化/恢复（首次设定，
+  // 同值不重记，避免误判为变化）
+  if (prevLevel !== nextLevel) {
+    diag.info("thinking-level", "init", { value: nextLevel ?? "unknown", session: sessionId });
+  }
   // 思考档三链 B：程序化落定后清手选标记——新会话/新项目的引擎回显照常同步（
   // 手选语义只对当次选择态成立，跨会话不残留）
   ui.clearUserPickedThinking();

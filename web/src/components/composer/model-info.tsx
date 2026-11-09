@@ -18,6 +18,7 @@ import { scheduleThinkingPreferencePersist } from "@/lib/preferences";
 import { selectModel, selectFavoriteModel } from "@/lib/model-cycle";
 import { useT } from "@/i18n/i18n";
 import { useUiStore } from "@/stores/ui";
+import { useSessionsStore } from "@/stores/sessions";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -204,6 +205,12 @@ export function ComposerModelInfo({ pendingEffect = false }: { pendingEffect?: b
     // 思考档三链 B：显式手选路径（pickThinkingLevel 置位）——引擎 thinking_level_changed
     // 回显不再覆盖手选显示。
     diag.info("run", "thinking", { level });
+    // 来源分级日志（2026-11-10 思考档排查）：用户主动切换——old 取不到记 unknown
+    diag.info("thinking-level", "user_change", {
+      from: useUiStore.getState().selectedThinkingLevel ?? "unknown",
+      to: level,
+      session: useSessionsStore.getState().selectedId ?? "unknown",
+    });
     useUiStore.getState().pickThinkingLevel(level);
     scheduleThinkingPreferencePersist();
   };

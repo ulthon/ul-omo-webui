@@ -2,6 +2,7 @@
 // 不自动打开项目、不选中会话（URL ?session= 恢复由 shell 承担）；模型列表按需于
 // 首次选中时加载（冷启动教训）；项目切换由 sessions store 的 select 内聚承担。
 import { api, ApiError } from "@/lib/api";
+import { diag } from "@/lib/diag";
 import type { EngineDefaultModel, ModelInfo } from "@/lib/api";
 import {
   PROJECT_ORDER_KV,
@@ -53,6 +54,9 @@ export async function loadProjectModels(path: string): Promise<void> {
     }
     if (!cur.selectedThinkingLevel && defaults?.thinkingLevel) {
       cur.setSelectedThinkingLevel(defaults.thinkingLevel);
+      // 来源分级日志（2026-11-10 思考档排查）：回退链首次设定引擎默认档位（init，
+      // 不选会话时无会话上下文记 unknown）
+      diag.info("thinking-level", "init", { value: defaults.thinkingLevel, session: "unknown" });
     }
   } catch (err) {
     if (token !== modelsLoadSeq) return; // 迟到的失败同丢弃，不清掉新项目已加载列表
