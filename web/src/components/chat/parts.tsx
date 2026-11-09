@@ -2,7 +2,9 @@
 //   text → Markdown；thinking → ThinkingBlock；toolCall → name=todo 走 TodoList 结构化清单
 //   （todo-list.tsx，details 缺失时组件内自行降级 ToolCard），其余工具 → ToolCard（tool-card.tsx，
 //   含结果折叠展示，toolResult 消息经 toolCallId 关联进卡片，不再单独渲染 ToolResultLine）；
-//   image → 内联缩略 + 灯箱；image_ref → 占位降级（todo 23）。
+//   image → 内联缩略 + 灯箱；image_ref → 占位降级（todo 23）；error → 红色错误卡
+//   （message-error-part，模型侧错误 429 限流/额度用完/上下文超限等：文本鸭子形提取
+//   message/text/error.message，原文保留不翻译，retry 提示原样随文显示）。
 //   未知类型 → 轻量占位 chip「未支持内容块：〈type〉」（docs08-r6 任务 10 ①；此前的
 //   default null 分支是空壳气泡的候选源——task-3 枚举修正：实测 part.type 仅
 //   text/toolCall/thinking/image 四种且全在渲染集合内，本分支为防御性兜底，无实证样本、
@@ -18,6 +20,7 @@ import { ThinkingBlock } from "./thinking-block";
 import { ToolCard } from "./tool-card";
 import { ImagePart, ImageRefPlaceholder } from "./image-lightbox";
 import { TodoList } from "./todo-list";
+import { CircleAlert } from "lucide-react";
 
 /** part 可见性判据（PartView null 分支的同构镜像，防 drift：新增 null 分支须同步此处；
  *  模块私有——仅 PartsView 计数分支消费，导出会破 fast-refresh 纯组件约束）。
@@ -33,6 +36,41 @@ function isRenderablePart(part: WirePart): boolean {
       // thinking / image / image_ref / 未知类型（① 占位 chip）均可见
       return true;
   }
+}
+
+/** error part 错误文本鸭子形提取：wire 透传无硬 schema，兼容
+ *  {message}（引擎会话级错误帧形态）、{text}、{error: string} 与
+ *  {error: {message|name}}（AI SDK 风格嵌套形态）；全缺席返回空串不渲染。
+ *  原文保留不翻译（模型错误多为英文原文），retry in Xs 等提示随原文一并展示。 */
+function errorPartText(part: WirePart): string {
+  for (const key of ["message", "text"] as const) {
+    const v = part[key];
+    if (typeof v === "string" && v !== "") return v;
+  }
+  const err = part.error;
+  if (typeof err === "string" && err !== "") return err;
+  if (err !== null && typeof err === "object") {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === "string" && m !== "") return m;
+    const n = (err as { name?: unknown }).name;
+    if (typeof n === "string" && n !== "") return n;
+  }
+  return "";
+}
+
+/** 模型错误 part 错误卡：destructive 色系，定格与流式共用（StreamingPart 走同一
+ *  PartView 分发），历史回看同路径自然覆盖。 */
+function ErrorPartCard({ text }: { text: string }) {
+  return (
+    <div
+      data-testid="message-error-part"
+      role="alert"
+      className="my-1 flex max-w-full items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
+      <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <span className="whitespace-pre-wrap break-words min-w-0">{text}</span>
+    </div>
+  );
 }
 
 /** 未支持 part 占位 chip（docs08-r6 任务 10 ①）：常显类型名，不渲染未知载荷 */
@@ -90,6 +128,11 @@ export function PartView({
       return <ImagePart part={part} />;
     case "image_ref":
       return <ImageRefPlaceholder />;
+    case "error": {
+      const text = errorPartText(part);
+      if (!text) return null;
+      return <ErrorPartCard text={text} />;
+    }
     case "toolCall": {
       const toolCallId = typeof part.id === "string" ? part.id : "";
       const name = typeof part.name === "string" ? part.name : "unknown";
