@@ -82,6 +82,8 @@ export const sseRoutes = new Hono()
 
 /** 活跃 SSE 连接数（采集增强批：诊断 summary 观测面；streamSSE 生命周期内递增递减） */
 let openSseConnections = 0
+/** 连接序号（settle 常开日志的 conn 字段）：自增标识区分多路连接，判定"哪条连接没收到"。 */
+let connSeq = 0
 export function sseConnectionCount(): number {
   return openSseConnections
 }
@@ -479,6 +481,7 @@ sseRoutes.get("/events", (c) => {
 
   return streamSSE(c, async (stream) => {
     const conn: Connection = { queue: [], lastSentId: afterId, flushing: false, closed: false }
+    const connId = `c${++connSeq}`
     let cleaned = false
     let unsubscribe: (() => void) | null = null
     // hono streamSSE 语义：cb 返回即关闭响应流。长驻 SSE 必须把 cb 挂在
@@ -528,6 +531,16 @@ sseRoutes.get("/events", (c) => {
             dlog(`marker ${frame.marker} id=${frame.id} data=${frame.data}`)
             await stream.writeSSE({ event: frame.marker, data: frame.data, id: String(frame.id) })
           } else {
+            // 收尾帧常开写出日志（不走诊断开关）：激活点滞留取证链——逐连接记录
+            // settle 帧写出（多连接时每连接一行，判定"哪条连接没收到"正是需求）。
+            if (isSettleFrame(frame.event)) {
+              log.info("sse", "settle", {
+                id: frame.event.id,
+                type: wireType(frame.event),
+                session: wireSessionId(frame.event) ?? "-",
+                conn: connId,
+              })
+            }
             await writeBridgeEvent(stream, frame.event, durableLookup)
           }
           conn.lastSentId = frame.kind === "gap" || frame.kind === "marker" ? frame.id : frame.event.id

@@ -5,8 +5,9 @@
  * 全部走 app.request() 内存流，零真实引擎、零端口。
  */
 
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import { Hono } from "hono"
+import { log } from "../src/obs/logger"
 import { EventBus, ENGINE_PERMISSIONS_INVALIDATED, attachEventBus } from "../src/engine/events"
 import { SSE_HEARTBEAT_TYPE, sseRoutes, setEventBus } from "../src/api/sse"
 import { EngineProcessManager } from "../src/engine/process-manager"
@@ -538,5 +539,53 @@ describe("GET /api/events 墓碑会话粒度（multi-session-parallel T4）", ()
     expect(blocks.slice(1, 4).map((b) => parseBlock(b).id)).toEqual(["1", "2", "3"])
     expect(parseBlock(blocks[4]).event).toBe("replay_done")
     await res.body!.cancel()
+  })
+})
+
+// ---- settle 帧常开写出日志（激活点滞留取证链）----
+
+describe("GET /api/events settle 帧常开日志", () => {
+  test("settle 帧写出时发 log.info('sse','settle')，非 settle 帧不发（不走诊断开关）", async () => {
+    const settleCalls: unknown[][] = []
+    const spy = vi.spyOn(log, "info").mockImplementation((mod, ev, ...rest) => {
+      if (mod === "sse" && ev === "settle") settleCalls.push([mod, ev, ...rest])
+    })
+    try {
+      const { bus, app } = makeApp()
+      const res = await app.request("/api/events")
+      // 中间帧（message_update）不发 settle 日志，收尾帧（agent_end）恰发一条
+      bus.publish(PROJ, wireEvent("s1", 1))
+      bus.publish(PROJ, { type: "agent_end", sessionId: "s1" } as never)
+      const blocks = await readSseBlocks(res.body!, 2)
+      expect(parseBlock(blocks[1]).event).toBe("agent_end")
+      expect(settleCalls.length).toBe(1)
+      const fields = settleCalls[0][2] as { id: number; type: string; session: string; conn: string }
+      expect(fields).toMatchObject({ id: 2, type: "agent_end", session: "s1" })
+      expect(fields.conn).toMatch(/^c\d+$/)
+      // 断开并复用连接序号自增语义：下一条连接 conn 递增
+      await res.body!.cancel()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("重放路径的 settle 帧同样发常开日志（每连接一行）", async () => {
+    const settleCalls: unknown[][] = []
+    const spy = vi.spyOn(log, "info").mockImplementation((mod, ev, ...rest) => {
+      if (mod === "sse" && ev === "settle") settleCalls.push([mod, ev, ...rest])
+    })
+    try {
+      const { bus, app } = makeApp()
+      bus.publish(PROJ, { type: "session_closed", sessionId: "s1" } as never) // id 1
+      const res = await app.request("/api/events", { headers: { "Last-Event-ID": "0" } })
+      await readSseBlocks(res.body!, 3)
+      // 重放序列 [begin][1][done] 中 settle 帧恰记录一条，conn 为本连接标识
+      expect(settleCalls.length).toBe(1)
+      const fields = settleCalls[0][2] as { id: number; type: string; session: string; conn: string }
+      expect(fields).toMatchObject({ id: 1, type: "session_closed", session: "s1" })
+      await res.body!.cancel()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
