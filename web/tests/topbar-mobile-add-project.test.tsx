@@ -90,7 +90,7 @@ afterEach(() => {
 });
 
 describe("任务13 添加项目入口双端就近", () => {
-  test("侧栏列表双行入口：手机档分组区头部 + 桌面档分组列表尾部，点击后弹窗打开", async () => {
+  test("侧栏列表双行入口：手机档分组区头部 + 桌面档移至顶部 New session 同行，点击后弹窗打开", async () => {
     useUiStore.setState({
       projects: [{ projectPath: "/p1", preferredModel: null }],
     });
@@ -99,17 +99,18 @@ describe("任务13 添加项目入口双端就近", () => {
     const desktop = container.querySelector('[data-testid="sidebar-add-project-desktop"]') as HTMLElement | null;
     expect(mobile).not.toBeNull();
     expect(desktop).not.toBeNull();
-    // 位置契约：手机行在分组区头部（分组头之前），桌面行在分组列表尾部（分组头之后）
+    // 位置契约：手机行在分组区头部（分组头之前），桌面行移至顶部工具条（分组头之前，
+    // New session 同行右侧图标钮）
     const firstGroup = container.querySelector('[data-project-group="/p1"]');
     expect(firstGroup).not.toBeNull();
     expect(container.contains(mobile!) && (mobile!.compareDocumentPosition(firstGroup!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true);
-    expect(container.contains(desktop!) && (desktop!.compareDocumentPosition(firstGroup!) & Node.DOCUMENT_POSITION_PRECEDING) !== 0).toBe(true);
-    // 触控目标：min-h-11（44px）；两端互斥显隐经 lg 断点类
+    expect(container.contains(desktop!) && (desktop!.compareDocumentPosition(firstGroup!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true);
+    // 触控目标：手机行 min-h-11（44px）；桌面行是同工具条内的方形图标钮（lg 档）
     expect(mobile!.className).toContain("min-h-11");
     expect(mobile!.className).toContain("lg:hidden");
-    expect(desktop!.className).toContain("min-h-11");
     expect(desktop!.className).toContain("hidden");
     expect(desktop!.className).toContain("lg:flex");
+    expect(desktop!.getAttribute("title")).toContain("添加项目");
     expect(mobile!.textContent).toContain("添加项目");
     // 点击真实打开 AddProjectDialog
     await act(async () => {

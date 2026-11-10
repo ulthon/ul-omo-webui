@@ -3,7 +3,7 @@
 // 环境说明同 session-item-expand-removed.test.tsx：@ts-nocheck + 被测模块动态 import +
 // @happy-dom 全局注册；标记断言走 renderToStaticMarkup，点击行为走 createRoot 真实 DOM。
 // 验收：(a) 手机档头部同一 flex 行含 新建图标钮+搜索+批量；(b) 旧 h-11 w-full 全宽钮 DOM 消失；
-// (c) lg 桌面档变体类（lg:h-7 lg:w-full）保留；(d) 点击仍调 api.createSession（落点=选中会话派生项目，
+// (c) lg 桌面档变体类（lg:h-7 lg:flex-1）保留；(d) 点击仍调 api.createSession（落点=选中会话派生项目，
 // 会话根架构 W2 任务 8：工具条不再读全局项目字段，布景 seed selectedId+byProject 反查链）。
 import { describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -124,9 +124,10 @@ describe("新建会话图标钮与搜索/批量同行（r10 todo 4）", () => {
     expect(html).toContain('class="hidden lg:inline"');
   });
 
-  test("(c) 桌面 lg 变体等于原类链：lg:h-7 / lg:w-full 保留，且无 justify-start（桌面居中不被改）", () => {
+  test("(c) 桌面 lg 变体：lg:h-7 保留，同行 flex-1 占宽（添加项目图标钮移顶部），无 justify-start", () => {
     const html = renderList();
-    expect(html).toContain("lg:h-7 lg:w-full");
+    expect(html).toContain("lg:h-7");
+    expect(html).toContain("lg:flex-1");
     // button.tsx 基类 justify-center 在 lg+ 治理对齐；不得引入 justify-start 左对齐
     expect(html).not.toContain("justify-start");
     expect(html).toContain(NEW_SESSION_LABEL);

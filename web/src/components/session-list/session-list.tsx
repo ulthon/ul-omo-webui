@@ -702,6 +702,9 @@ export function SessionList() {
         {/* r10 todo 4：手机档新建会话收成 size-9 图标钮，与搜索/批量同行防误触；
             lg 档保持原三行堆叠（全宽钮/搜索/批量）。 */}
         <div className="flex items-center gap-1.5 lg:flex-col lg:items-stretch lg:gap-0 lg:space-y-2">
+        {/* 添加项目桌面入口移至顶部（方案 A）：与 New session 同行右侧方形图标钮；
+            手机抽屉入口（sidebar-add-project-mobile）在分组区头部不动 */}
+        <div className="flex items-center gap-1.5">
         {/* 落点=选中会话派生项目（useActiveProject 订阅 selectedId+byProject，跨项目
             选中后随 store 提交同步更新）；无选中会话禁用（W2 任务 8：点击时刻实时读
             全局项目字段的补丁退役） */}
@@ -709,13 +712,23 @@ export function SessionList() {
           size="sm"
           aria-label={t("sessionList.list.newSession")}
           data-testid="new-session-btn"
-          className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:w-full"
+          className="size-9 shrink-0 justify-center gap-1 text-xs lg:h-7 lg:min-w-0 lg:flex-1"
           disabled={creating || !activeProject}
           onClick={() => void createSession(activeProject)}
         >
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
           <span className="hidden lg:inline">{t("sessionList.list.newSession")}</span>
         </Button>
+        <button
+          type="button"
+          data-testid="sidebar-add-project-desktop"
+          title={t("login.topbar.addProjectShort")}
+          className="hidden size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:flex lg:size-7"
+          onClick={() => setAddOpen(true)}
+        >
+          <Plus className="size-3.5" />
+        </button>
+        </div>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -1234,17 +1247,6 @@ export function SessionList() {
               );
             })}
 
-            {/* 桌面侧栏组尾入口（W3 任务 13）：添加项目置于项目分组列表尾部
-                （手机抽屉同一组件，lg 以下隐藏，手机入口见分组区头部） */}
-            <button
-              type="button"
-              data-testid="sidebar-add-project-desktop"
-              className="hidden w-full min-h-11 items-center gap-1 rounded-md px-1 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground lg:flex"
-              onClick={() => setAddOpen(true)}
-            >
-              <FolderPlus className="size-3.5 shrink-0" />
-              <span>{t("login.topbar.addProjectShort")}</span>
-            </button>
           </>
         )}
       </div>

@@ -2,18 +2,14 @@
 import { describe, expect, test } from "vitest";
 import { collectTags, deriveDisplayTitle, filterNotesByTag, parseTagInput, relTime, tagsToInput } from "@/components/notes/notes-logic";
 
-describe("deriveDisplayTitle（r11 todo7 列表行标题兑底）", () => {
+describe("deriveDisplayTitle（列表行标题兜底：空标题一律未命名）", () => {
   test("标题非空原样返回", () => {
     expect(deriveDisplayTitle(" 有标题 ", "正文", "无标题")).toBe("有标题");
   });
 
-  test("空标题取正文首个非空行", () => {
-    expect(deriveDisplayTitle("", "\n\n  第二行在前 \n第一行", "无标题")).toBe("第二行在前");
-  });
-
-  test("首行超长截断到 maxLen 加省略号", () => {
-    const long = "字".repeat(50);
-    expect(deriveDisplayTitle("", long, "无标题")).toBe("字".repeat(40) + "…");
+  test("空标题不取正文首行，一律回退「无标题」标签", () => {
+    expect(deriveDisplayTitle("", "\n\n  第二行在前 \n第一行", "无标题")).toBe("无标题");
+    expect(deriveDisplayTitle("", "有正文内容", "无标题")).toBe("无标题");
   });
 
   test("标题正文全空回退「无标题」标签", () => {

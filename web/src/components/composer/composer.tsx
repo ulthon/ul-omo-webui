@@ -270,11 +270,14 @@ export function Composer({
   const slashSnapshotRef = useRef("");
   /** document 段 Esc 监听读的镜像（effect 同步，见取数块前） */
   const slashOpenRef = useRef(false);
+  /** 用户是否已用 ↑/↓ 明确导航过高亮：未导航时回车不选命令，原文冒泡走发送 */
+  const slashNavigatedRef = useRef(false);
 
-  /** 输入统一入口：任何输入都重置下拉高亮（token 变化后从头导航） */
+  /** 输入统一入口：任何输入都重置下拉高亮与导航态（token 变化后从头导航） */
   const applyText = useCallback(
     (next: string) => {
       setSlashHighlight(0);
+      slashNavigatedRef.current = false;
       update(next);
     },
     [update],
@@ -979,22 +982,25 @@ export function Composer({
         }
         return;
       }
-      // 斜杠下拉在场且有可选项时 ↑/↓/Enter 归导航（优先于历史翻阅）：高亮循环移动，
-      // 回车选择高亮项（首 token 替换后值含空格，下拉随值派生自动关闭）。过滤后无
-      // 命中（如 /comp 唯一候选 compact 被不支持名单排除）不消费按键——Enter 落到
-      // 正常发送路径，由命令门拦截不支持的命令并行内明示。
+      // 斜杠下拉在场且有可选项时 ↑/↓ 归导航（优先于历史翻阅）：高亮循环移动，
+      // 并标记「用户已明确导航」。回车只在已明确导航后确认高亮项（首 token 替换后
+      // 值含空格，下拉随值派生自动关闭）；未导航（含默认高亮首项从未动过）或无命
+      // 中时不消费按键——Enter 冒泡落正常发送路径，未知斜杠命令原文发出，由命令
+      // 门在发送期对不支持命令行内明示。
       if (slashOpen && slashItems.length > 0) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
+          slashNavigatedRef.current = true;
           setSlashHighlight((i) => (i + 1) % slashItems.length);
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
+          slashNavigatedRef.current = true;
           setSlashHighlight((i) => (i - 1 + slashItems.length) % slashItems.length);
           return;
         }
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && slashNavigatedRef.current) {
           e.preventDefault();
           selectSlashItem(slashItems[safeHighlight]!);
           return;

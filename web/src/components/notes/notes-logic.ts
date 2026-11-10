@@ -47,24 +47,16 @@ export function filterNotesByTag<T extends { tags: string[] }>(
 }
 
 /**
- * 列表行标题兜底（r11 todo7）：标题非空原样返回；空标题取正文首行（调用方传全文或
- * 已截断的首行摘要均可，函数内先抽非空首行）截断到 maxLen，连正文都空则回退「无标题」。
- * 服务端列表 payload 的 preview 字段（首行摘要）与本函数共用同一语义（前后端一致）。
+ * 列表行标题兜底：标题非空原样返回；空标题一律回退「未命名笔记」标签（不做正文首行
+ * 抽取——原首行截断兜底已定调废除：服务端 preview 字段只作正文预览，不进标题）。
  */
 export function deriveDisplayTitle(
   title: string,
-  content: string | undefined,
+  _content: string | undefined,
   untitledLabel: string,
-  maxLen = 40,
 ): string {
   const trimmed = title.trim();
-  if (trimmed.length > 0) return trimmed;
-  const firstLine = (content ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  if (firstLine === undefined) return untitledLabel;
-  return firstLine.length > maxLen ? `${firstLine.slice(0, maxLen)}…` : firstLine;
+  return trimmed.length > 0 ? trimmed : untitledLabel;
 }
 
 /** 相对时间：30 天内走统一 i18n 实现；超过 30 天保持本页签既有 YYYY-MM-DD 契约；null/非法 → "—" */

@@ -307,7 +307,7 @@ describe("r11 todo7 笔记行内编辑", () => {
     });
   });
 
-  test("标题兜底：空标题行展示正文首行摘要，非空标题原样", async () => {
+  test("标题兜底：空标题行一律显示未命名标签，不取正文首行；非空标题原样", async () => {
     installRoutes([
       {
         method: "GET",
@@ -327,7 +327,8 @@ describe("r11 todo7 笔记行内编辑", () => {
     await waitFor(() => host.querySelectorAll("[data-testid=note-item]").length === 2, "list ready");
     const rows = [...host.querySelectorAll("[data-testid=note-item]")];
     const rowText = (id: string) => (host.querySelector(`[data-testid=note-item][data-note-id=${id}]`) as HTMLElement).textContent;
-    expect(rowText("empty-title")).toContain("首行摘要内容");
+    expect(rowText("empty-title")).toContain("无标题");
+    expect(rowText("empty-title")).not.toContain("首行摘要内容");
     expect(rowText("with-title")).toContain("有标题");
     expect(rowText("with-title")).not.toContain("不应显示");
     void rows;
