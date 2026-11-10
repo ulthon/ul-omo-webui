@@ -258,6 +258,71 @@ const STICKY_TOP_PAD = 16;
 const NO_QUESTIONS: QuestionRequest[] = [];
 const NO_SUMMARIES: QuestionResolvedSummary[] = [];
 
+/** 用户输入解除跟随的触发键（PageUp/Home/ArrowUp：都是往回看的滚动键） */
+const USER_DISENGAGE_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
+
+/**
+ * 用户输入直接解除流式跟随（fix 2026-11-11）：输出中/思考中用户向上滚动被程序滚动
+ * 护栏拽回的修复。根因：scrollToAnchor 自触发的 scroll 事件在护栏窗内被忽略防误翻，
+ * 用户恰在窗内上滚时其 scroll 事件同样被忽略，跟随态保持 true，下次流式变化再拽底。
+ * 修法：用户输入信号（wheel 向上 / 触摸向下拖 / 回看键）绕过程序护栏直接解除跟随；
+ * 滚回底部仍由既有 scroll 判定重新置 true。返回清理函数。
+ */
+export function attachUserScrollDisengage(
+  el: HTMLElement,
+  onDisengage: (src: "user-wheel" | "user-touch" | "user-key") => void,
+): () => void {
+  // wheel：仅向上（deltaY<0）解除；向下不拦，滚回底部由 scroll 判定恢复跟随
+  const onWheel = (e: WheelEvent): void => {
+    if (e.deltaY < 0) onDisengage("user-wheel");
+  };
+  let touchStartY: number | null = null;
+  let touchStartX: number | null = null;
+  const onTouchStart = (e: TouchEvent): void => {
+    const t = e.touches[0];
+    touchStartY = t ? t.clientY : null;
+    touchStartX = t ? t.clientX : null;
+  };
+  // 触摸：手指向下拖（clientY 增大，内容上滚=往回看）且主纵向位移超阈值才解除——
+  // 与下拉刷新（手指向上）/横向轮播区分：以纵向为主轴且 |dy|>8px
+  const onTouchMove = (e: TouchEvent): void => {
+    if (touchStartY === null || touchStartX === null) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dy = t.clientY - touchStartY;
+    const dx = touchStartX - t.clientX;
+    if (dy > 8 && dy > Math.abs(dx)) {
+      onDisengage("user-touch");
+      touchStartY = null;
+      touchStartX = null;
+    }
+  };
+  const onTouchEnd = (): void => {
+    touchStartY = null;
+    touchStartX = null;
+  };
+  // 键盘（全局回看键）：输入法/编辑场景（input/textarea/contenteditable）不解除，
+  // 避免输入框里按 ArrowUp 编辑文本误关跟随
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (!USER_DISENGAGE_KEYS.has(e.key)) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    onDisengage("user-key");
+  };
+  el.addEventListener("wheel", onWheel, { passive: true });
+  el.addEventListener("touchstart", onTouchStart, { passive: true });
+  el.addEventListener("touchmove", onTouchMove, { passive: true });
+  el.addEventListener("touchend", onTouchEnd, { passive: true });
+  window.addEventListener("keydown", onKeyDown);
+  return () => {
+    el.removeEventListener("wheel", onWheel);
+    el.removeEventListener("touchstart", onTouchStart);
+    el.removeEventListener("touchmove", onTouchMove);
+    el.removeEventListener("touchend", onTouchEnd);
+    window.removeEventListener("keydown", onKeyDown);
+  };
+}
+
 /** MessageList 命令句柄（r11 todo 6d）：待答提问提示条点击定位流内卡用 */
 export interface MessageListHandle {
   /** 滚动定位流内提问卡；虚拟化窗外时先 scrollToIndex 挂载该行再定位 */
@@ -280,8 +345,9 @@ export function MessageList({
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
-  // 程序滚动护栏（#26）：程序滚锚（跟随/恢复/回底）期间的滚动事件不把跟随态翻为解除
-  //（虚拟列表动态测量下中速帧锚点暂不在渲染窗，避免误解除）；窗口内也不闪回底钮。
+  // 程序滚动护栏（#26，职责收窄 fix 2026-11-11）：只护置 true 方向——程序滚锚自触发的
+  // scroll 事件不把跟随态提前翻回跟随（锚点暂不在渲染窗属正常）；解除方向改由用户输入
+  // 监听（wheel/touch/key，见 attachUserScrollDisengage）直接负责，不受护栏影响。
   const programmaticUntilRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
 
@@ -344,6 +410,23 @@ export function MessageList({
     const idx = mergedItems.findIndex((it) => it.key === anchorId);
     return idx >= 0 ? idx : mergedItems.length - 1;
   }, [mergedItems, anchorId, lastItemKey]);
+
+  // 用户输入解除跟随（fix 2026-11-11）：用户 wheel 向上/触摸向下拖/回看键直接解除，
+  // 不受程序滚动护栏影响——护栏只防程序滚动自身的 scroll 误判，不该吞掉用户输入。
+  const disengageFollow = useCallback(
+    (src: "user-wheel" | "user-touch" | "user-key") => {
+      if (!followRef.current) return;
+      diag.info("scroll", "follow_flip", { from: true, to: false, src, anchorIndex, items: mergedItems.length });
+      followRef.current = false;
+      setShowJump(true);
+    },
+    [anchorIndex, mergedItems.length],
+  );
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    return attachUserScrollDisengage(el, disengageFollow);
+  }, [disengageFollow]);
 
   // 待答提问卡定位（r11 todo 6d）：提示条点击 → 流内卡 scrollIntoView；虚拟化窗外
   // （未挂载）先 scrollToIndex 挂载该行，下一帧再定位
@@ -428,8 +511,10 @@ export function MessageList({
     const remaining = el.scrollHeight - Math.min(el.scrollTop, maxScroll) - el.clientHeight;
     const atBottom = remaining < 8 && (covered || virtualItems.length === 0);
     const programmatic = Date.now() < programmaticUntilRef.current;
-    // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带锚点快照与触发源 scroll；
-    // 程序滚动护栏窗口内不解除跟随（中速帧锚点暂不在渲染窗属正常，误解除会打断跟随）
+    // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带锚点快照与触发源 scroll。
+    // 职责收窄（fix 2026-11-11）：解除方向由用户输入监听直接负责（见 disengageFollow），
+    // scroll 只负责滚回底部重新置 true；程序护栏窗口内不置 true（程序滚锚途中锚点
+    // 暂未入渲染窗属正常，避免提前恢复跟随）
     if (!programmatic) {
       if (followRef.current !== atBottom) {
         diag.info("scroll", "follow_flip", { from: followRef.current, to: atBottom, src: "scroll", anchorIndex, items: mergedItems.length, scrollTop: Math.round(el.scrollTop) });
