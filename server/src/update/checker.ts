@@ -19,7 +19,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
+import { fileURLToPath } from "node:url";
 import { selfDir } from "../runtime-paths";
 
 export interface PkgVersionInfo {
@@ -119,16 +120,40 @@ export function enginePackageName(): string {
   return process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG?.trim() || DEFAULT_ENGINE_PKG;
 }
 
-/** 引擎当前版本：node_modules 内包的 package.json（node 原生解析）；解析失败
- *  （生产 checkout 形态缺包/不可读）兑底引擎 CLI --version，仍失败 → unknown */
+/** 包主入口 → 本包 package.json：senpi 2026.11.10-2 起 exports 不再导出 "./package.json"
+ *  子路径（require.resolve 包名/package.json 恒 ERR_PACKAGE_PATH_NOT_EXPORTED，真实升
+ *  级实例 T5 冒烟实证），改解析包主入口后向上找本包 package.json（名字精确匹配）。
+ *  找不到返回 null（由调用方回落 CLI 兑底）。 */
+function pkgJsonViaEntry(entryUrl: string, pkgName: string): string | null {
+  let dir = dirname(fileURLToPath(entryUrl));
+  const root = parse(dir).root;
+  for (;;) {
+    const p = join(dir, "package.json");
+    try {
+      const pkg = JSON.parse(readFileSync(p, "utf8")) as { name?: unknown };
+      if (pkg.name === pkgName) return p;
+    } catch {
+      // 无 package.json 或不可读：继续上溯
+    }
+    if (dir === root) return null;
+    dir = dirname(dir);
+  }
+}
+
+/** 引擎当前版本：node_modules 内包的 package.json（ESM import.meta.resolve 主入口，
+ *  不依赖 exports 是否导出 package.json 子路径）；解析失败（包未安装/不可读）兑底
+ *  引擎 CLI --version，仍失败 → unknown */
 export function engineCurrentVersion(): string {
   try {
-    const pkgPath = createRequire(import.meta.url).resolve(`${enginePackageName()}/package.json`);
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "unknown";
+    const pkgPath = pkgJsonViaEntry(import.meta.resolve(`${enginePackageName()}`), enginePackageName());
+    if (pkgPath !== null) {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
+      if (typeof pkg.version === "string" && pkg.version !== "") return pkg.version;
+    }
   } catch {
-    return engineVersionFromBin();
+    // 主入口解析失败（包未安装等）：走 CLI 兑底
   }
+  return engineVersionFromBin();
 }
 
 /** 引擎 CLI --version 兑底探测：UL_OMO_WEBUI_UPDATE_ENGINE_BIN > "omo"（PATH）；

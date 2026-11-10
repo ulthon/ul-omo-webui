@@ -6,7 +6,7 @@
 //   更新态并提示新版本；重启窗口内轮询失败静默继续；
 // - 失败 → 错误文案 + 重试（重放失败的那次动作：检查失败重查、安装失败重发）。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type UpdateCheck } from "@/lib/api";
+import { api, ApiError, type UpdateCheck } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { Button } from "@/components/ui/button";
 
@@ -75,7 +75,14 @@ export function UpdateSection() {
     } catch (err) {
       baselineRef.current = null;
       setPhase("idle");
-      setError(err instanceof Error ? err.message : String(err));
+      // 引擎通道显式拒绝（engine-upgrade-5169 批 4a）：按错误码替换为说明文案
+      setError(
+        err instanceof ApiError && err.code === "engine_upgrade_via_webui_release"
+          ? t("update.engineViaRelease")
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
       setErrorKind("install");
     }
   };
