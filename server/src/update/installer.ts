@@ -4,9 +4,12 @@
 //   响应 200 后经注入的 shutdown 优雅收口（systemd Restart=on-failure 下显式 restart 双保险）。
 // - 每次运行追加 DATA_DIR/update-install.log（openchamber 同名先例）：start 行 + 子进程
 //   输出 + result 行。
+// - 结果标记（2026-11-11 批）：安装成功先写 DATA_DIR/update-outcome.json 待确认标记
+//   {version, at, ok:null}；新版首轮启动 confirmUpdateOutcome 把 ok:null 置 true——
+//   服务没起来（如 502 挂死）标记停在待确认，前端经 /api/update/check lastInstall 呈现。
 // - 互斥：同刻仅一次安装；失败解锁，成功刻意不解（进程已进入关停窗口，防二次触发）。
 import { execFile, spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registryBase, webuiPackageName } from "./checker";
 
@@ -43,6 +46,54 @@ export interface InstallFailure {
 }
 
 export type InstallResult = { readonly restarting: true; readonly version: string } | InstallFailure;
+
+/** 更新结果标记（update-outcome.json）：ok=null 待确认（已装未重启完成）> true/false */
+export interface UpdateOutcome {
+  readonly version: string;
+  readonly at: string;
+  readonly ok: boolean | null;
+}
+
+const OUTCOME_FILE = "update-outcome.json";
+
+function outcomePath(dataDir: string): string {
+  return join(dataDir, OUTCOME_FILE);
+}
+
+/** 读结果标记；缺失/形状不符 → null */
+export function readUpdateOutcome(dataDir: string): UpdateOutcome | null {
+  try {
+    const raw = JSON.parse(readFileSync(outcomePath(dataDir), "utf8")) as {
+      version?: unknown;
+      at?: unknown;
+      ok?: unknown;
+    };
+    if (
+      typeof raw.version !== "string" ||
+      typeof raw.at !== "string" ||
+      !(typeof raw.ok === "boolean" || raw.ok === null)
+    ) {
+      return null;
+    }
+    return { version: raw.version, at: raw.at, ok: raw.ok as boolean | null };
+  } catch {
+    return null;
+  }
+}
+
+/** 新版首轮启动确认：待确认标记置 ok:true 并落盘；无标记/已确认原样返回。落盘失败
+ *  不阻断启动（标记尽力而为）。 */
+export function confirmUpdateOutcome(dataDir: string): UpdateOutcome | null {
+  const prev = readUpdateOutcome(dataDir);
+  if (prev === null || prev.ok !== null) return prev;
+  const confirmed: UpdateOutcome = { ...prev, ok: true };
+  try {
+    writeFileSync(outcomePath(dataDir), JSON.stringify(confirmed));
+  } catch {
+    // 尽力而为：读侧下次仍见待确认，不致误报失败
+  }
+  return confirmed;
+}
 
 export interface InstallDeps {
   /** 运行数据目录（update-install.log 落点，服务端启动已保证存在） */
@@ -162,6 +213,15 @@ async function runInstall(deps: InstallDeps, target: UpdateTarget, version: stri
 
   appendLog(out.stdout);
   appendLog(out.stderr);
+  // 待确认结果标记：新版首轮启动 confirmUpdateOutcome 置 ok:true；写失败不阻断重启调度
+  try {
+    writeFileSync(
+      outcomePath(deps.dataDir),
+      JSON.stringify({ version, at: now().toISOString(), ok: null } satisfies UpdateOutcome),
+    );
+  } catch (e) {
+    appendLog(`[${now().toISOString()}] outcome marker 写入失败: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const restartCmd = resolveRestartCmd();
   const schedule: (restartCmd: string) => void =
     deps.scheduleRestart ?? ((cmd: string) => defaultScheduleRestart(cmd, appendLog));

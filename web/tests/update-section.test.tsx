@@ -147,4 +147,64 @@ describe("UpdateSection", () => {
     expect(c.querySelector("[data-testid=update-banner]")).toBeNull();
     expect(c.querySelector("[data-testid=update-retry-btn]")).not.toBeNull();
   });
+
+  test("confirm 乐观锁定：点击立即进更新态，请求失败后回退到错误提示（2026-11-11 批）", async () => {
+    installFetch({
+      check: checkShape(
+        { current: "1.0.0", latest: "2.0.0", hasUpdate: true },
+        { current: "2026.10.1", latest: "2026.10.1", hasUpdate: false },
+      ),
+    });
+    const c = await mount();
+    await until(c, "[data-testid=update-banner]");
+
+    // install 请求挂起不回：点击后不等服务端响应，锁定态必须已生效（按钮消失+状态行出现）
+    let releaseInstall: (r: Response) => void = () => {};
+    const deferred = new Promise<Response>((resolve) => {
+      releaseInstall = resolve;
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === "/api/update/install") return deferred;
+      return original(input, init);
+    }) as typeof fetch;
+
+    await click(c.querySelector<HTMLButtonElement>("[data-testid=update-confirm-btn]")!);
+    expect(c.querySelector("[data-testid=update-status]")).not.toBeNull();
+    expect(c.querySelector("[data-testid=update-confirm-btn]")).toBeNull();
+
+    // 请求失败：解除锁定，错误提示 + 重试可点
+    await act(async () => {
+      releaseInstall(new Response(JSON.stringify({ error: "boom" }), { status: 500 }));
+      await deferred.catch(() => {});
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    await until(c, "[data-testid=update-error]");
+    expect(c.querySelector("[data-testid=update-retry-btn]")).not.toBeNull();
+  });
+
+  test("check 响应带 lastInstall：成功绿行 / 失败红行呈现（2026-11-11 批）", async () => {
+    installFetch({
+      check: {
+        webui: { current: "1.0.0", latest: "1.0.0", hasUpdate: false },
+        engine: { current: "2026.10.1", latest: "2026.10.1", hasUpdate: false },
+        lastInstall: { version: "2.0.0", at: "2026-11-11T10:00:00.000Z", ok: true },
+      },
+    });
+    const c = await mount();
+    const ok = await until(c, "[data-testid=update-last-install-ok]");
+    expect(ok.textContent).toContain("2.0.0");
+
+    installFetch({
+      check: {
+        webui: { current: "1.0.0", latest: "1.0.0", hasUpdate: false },
+        engine: { current: "2026.10.1", latest: "2026.10.1", hasUpdate: false },
+        lastInstall: { version: "2.0.0", at: "2026-11-11T10:00:00.000Z", ok: false },
+      },
+    });
+    const c2 = await mount();
+    const fail = await until(c2, "[data-testid=update-last-install-fail]");
+    expect(fail.textContent).toContain("2.0.0");
+  });
 });

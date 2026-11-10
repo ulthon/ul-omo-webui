@@ -6,7 +6,11 @@ import { join, relative } from "node:path";
 import { readFileSync } from "node:fs";
 import { agentDir, DATA_DIR, engineRegistryPath, HOST, metaDbPath, PORT, STATIC_DIR, siteName } from "./config";
 import { initDiagnosticsFlags } from "./conf/diagnostics-flags";
+import { confirmUpdateOutcome } from "./update/installer";
 initDiagnosticsFlags(DATA_DIR);
+// 更新结果标记确认（2026-11-11 批）：首轮启动把安装后待确认标记置 ok:true；服务没
+// 起来标记停在待确认，前端 lastInstall 可区分成功/未完成
+confirmUpdateOutcome(DATA_DIR);
 import { loadEmbeddedStatic, embeddedRelPath, injectSiteName } from "./embedded-static";
 import { toErrorResponse } from "./api/http";
 import { createAuth, resolvePassword } from "./auth/password";

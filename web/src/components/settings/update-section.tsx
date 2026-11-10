@@ -64,14 +64,17 @@ export function UpdateSection() {
   }, [phase, runCheck]);
 
   const confirm = async (): Promise<void> => {
-    if (check === null) return;
+    if (check === null || phaseRef.current === "updating") return; // 防重复点击
     setError(null);
+    // 乐观锁定（2026-11-11 批）：第一行即置更新态，不等服务端响应；失败回退到 idle
+    // + 错误提示，成功（服务将重启）更新态延续不清除，页面重连后自然恢复
+    baselineRef.current = check.webui.current;
+    setPhase("updating");
     try {
-      baselineRef.current = check.webui.current;
       await api.updateInstall({ target: "webui", version: check.webui.latest });
-      setPhase("updating");
     } catch (err) {
       baselineRef.current = null;
+      setPhase("idle");
       setError(err instanceof Error ? err.message : String(err));
       setErrorKind("install");
     }
@@ -116,6 +119,16 @@ export function UpdateSection() {
           {updatedTo !== null && (
             <p className="pt-2 text-xs text-emerald-600" data-testid="update-updated">
               {t("update.updated", { version: updatedTo })}
+            </p>
+          )}
+          {check.lastInstall != null && check.lastInstall.ok !== null && (
+            <p
+              className={`pt-2 text-xs ${check.lastInstall.ok ? "text-emerald-600" : "text-red-500"}`}
+              data-testid={check.lastInstall.ok ? "update-last-install-ok" : "update-last-install-fail"}
+            >
+              {check.lastInstall.ok
+                ? t("update.lastInstallOk", { version: check.lastInstall.version })
+                : t("update.lastInstallFail", { version: check.lastInstall.version })}
             </p>
           )}
         </>

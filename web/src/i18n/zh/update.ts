@@ -11,4 +11,6 @@ export const update = {
   retry: "重试",
   checkFailed: "检查更新失败",
   installFailed: "更新失败",
+  lastInstallOk: "上次更新成功（{version}）",
+  lastInstallFail: "上次更新未完成（{version}），可重试更新",
 };

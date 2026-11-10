@@ -11,4 +11,6 @@ export const update = {
   retry: "Retry",
   checkFailed: "Update check failed",
   installFailed: "Update failed",
+  lastInstallOk: "Last update succeeded ({version})",
+  lastInstallFail: "Last update did not complete ({version}); you can retry",
 };

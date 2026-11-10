@@ -1,12 +1,13 @@
 // 更新面（2026-10-31 update 批）：
-// - GET  /api/update/check    三态检测（webui + 引擎），单项失败静默降级不报错
+// - GET  /api/update/check    三态检测（webui + 引擎），单项失败静默降级不报错；
+//   响应附 lastInstall（update-outcome.json 结果标记，2026-11-11 批）
 // - POST /api/update/install  触发安装（服务端互斥）；成功响应 200 后 500ms 经注入的
 //   shutdown 优雅关停（不直接 process.exit，组合根收口权在 index.ts）
 // 认证：随既有 /api/* cookie 中间件（挂载顺序在 auth.middleware 之后）。
 import { Hono, type Context } from "hono";
 import { DATA_DIR } from "../config";
 import { checkUpdates } from "../update/checker";
-import { installUpdate } from "../update/installer";
+import { installUpdate, readUpdateOutcome } from "../update/installer";
 import { ApiError, parseJsonBody, route } from "./http";
 
 export interface UpdateRouteDeps {
@@ -20,7 +21,12 @@ const SHUTDOWN_DELAY_MS = 500;
 export function createUpdateRoutes(deps: UpdateRouteDeps): Hono {
   const app = new Hono();
 
-  app.get("/api/update/check", route(async (c: Context) => c.json(await checkUpdates())));
+  app.get(
+    "/api/update/check",
+    route(async (c: Context) =>
+      c.json({ ...(await checkUpdates()), lastInstall: readUpdateOutcome(DATA_DIR) }),
+    ),
+  );
 
   app.post(
     "/api/update/install",

@@ -1337,6 +1337,9 @@ export interface UpdateSide {
 export interface UpdateCheck {
   webui: UpdateSide;
   engine: UpdateSide;
+  /** 上次安装结果标记（server update-outcome.json）；ok=null 待确认（已装未重启完成）；
+   *  旧版服务端不带此字段 */
+  lastInstall?: { version: string; at: string; ok: boolean | null } | null;
 }
 
 export interface UpdateInstallBody {

@@ -11,6 +11,11 @@
 // - 引擎 current 兑底（2026-11-01 批）：node_modules 解析失败（生产 checkout 形态）时
 //   spawn PATH 上引擎 CLI --version（默认 omo；UL_OMO_WEBUI_UPDATE_ENGINE_BIN 覆盖/
 //   空串关闸，同 env 注入风格），结果按 bin 缓存进程生命周期。
+// - 引擎 latest 改读配套版本（2026-11-11 批）：senpi npm dist-tags.latest 长期停留在
+//   2026.5.21 旧值，registry latest 已失真。改为读已安装 omo-ai 的依赖声明
+//   dependencies["@code-yeongyu/senpi"]（如 2026.10.27-1），语义="本机 omo-ai 声明的
+//   配套引擎版本"；hasUpdate 用它对 current 判定。UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED
+//   直接覆盖（QA/特殊部署），UL_OMO_WEBUI_UPDATE_ENGINE_HOST_PKG 覆盖宿主包名。
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -191,24 +196,65 @@ async function fetchLatest(base: string, name: string, doFetch: FetchLike): Prom
   }
 }
 
+// ---------- 引擎配套版本 ----------
+
+let globalRootCache: string | null | undefined; // undefined = 未探测
+
+/** 全局 node_modules 根（npm root -g，一次探测后缓存；失败 → null） */
+function globalNodeModulesRoot(): string | null {
+  if (globalRootCache === undefined) {
+    try {
+      const out = execFileSync("npm", ["root", "-g"], { encoding: "utf8", timeout: 5000 }).trim();
+      globalRootCache = out === "" ? null : out;
+    } catch {
+      globalRootCache = null;
+    }
+  }
+  return globalRootCache;
+}
+
+/** 从宿主包 package.json 读 dependencies[引擎包名]；不可读/缺声明 → unknown */
+function senpiVersionFromHostPkg(pkgPath: string): string {
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+      dependencies?: Record<string, unknown>;
+    };
+    const v = pkg.dependencies?.[enginePackageName()];
+    return typeof v === "string" && v.trim() !== "" ? v.trim() : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** 引擎配套版本：env UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED 直接覆盖 > 已安装 omo-ai
+ *  （宿主包名 env 覆盖）依赖声明。定位：先 node_modules resolve（源码/本地共装形态），
+ *  失败回落 npm root -g 下的宿主包（生产全局安装形态）。任何失败 → unknown。 */
+export function enginePairedVersion(): string {
+  const override = process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED?.trim();
+  if (override !== undefined && override !== "") return override;
+  const host = process.env.UL_OMO_WEBUI_UPDATE_ENGINE_HOST_PKG?.trim() || "omo-ai";
+  try {
+    const pkgPath = createRequire(import.meta.url).resolve(`${host}/package.json`);
+    return senpiVersionFromHostPkg(pkgPath);
+  } catch {
+    const root = globalNodeModulesRoot();
+    return root === null ? "unknown" : senpiVersionFromHostPkg(join(root, host, "package.json"));
+  }
+}
+
 export interface CheckOptions {
   /** fetch 注入口（测试）；缺省全局 fetch */
   readonly fetchImpl?: FetchLike;
 }
 
-/** 全量检查：webui + 引擎并行查询；单项失败不影响另一项，整体恒 resolve */
+/** 全量检查：webui 查 registry；引擎 latest 取配套版本（不查 registry），current 仍
+ *  运行中引擎自报。单项失败不影响另一项，整体恒 resolve */
 export async function checkUpdates(options: CheckOptions = {}): Promise<UpdateCheckResult> {
   const doFetch = options.fetchImpl ?? fetch;
   const base = registryBase();
-  if (base === null) {
-    return { webui: toInfo(webuiCurrentVersion(), "unknown"), engine: toInfo(engineCurrentVersion(), "unknown") };
-  }
-  const [webuiLatest, engineLatest] = await Promise.all([
-    fetchLatest(base, webuiPackageName(), doFetch),
-    fetchLatest(base, enginePackageName(), doFetch),
-  ]);
+  const webuiLatest = base === null ? "unknown" : await fetchLatest(base, webuiPackageName(), doFetch);
   return {
     webui: toInfo(webuiCurrentVersion(), webuiLatest),
-    engine: toInfo(engineCurrentVersion(), engineLatest),
+    engine: toInfo(engineCurrentVersion(), enginePairedVersion()),
   };
 }

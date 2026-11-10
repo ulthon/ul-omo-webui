@@ -4,7 +4,7 @@
 // 仍保持 unknown 旧语义；兑底自身由专用用例注入 bin 脚本驱动。
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
-import { checkUpdates, compareVersions, engineCurrentVersion } from "../src/update/checker";
+import { checkUpdates, compareVersions, engineCurrentVersion, enginePairedVersion } from "../src/update/checker";
 
 const REGISTRY = "http://registry.test";
 
@@ -13,6 +13,8 @@ function setEnv(): void {
   process.env.UL_OMO_WEBUI_UPDATE_PKG = "qa-webui-stub";
   process.env.UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE = "1.0.0";
   process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG = "qa-engine-stub";
+  // 引擎配套版本（2026-11-11 批语义）：latest 不再查 registry，测试用 env 直达覆盖
+  process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED = "9.9.9";
   // CLI 兑底关闸：stub 包未安装，保持 current unknown 旧语义（兑底另测）
   process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN = "";
 }
@@ -22,6 +24,7 @@ afterEach(() => {
   delete process.env.UL_OMO_WEBUI_UPDATE_PKG;
   delete process.env.UL_OMO_WEBUI_UPDATE_CURRENT_OVERRIDE;
   delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PKG;
+  delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED;
   delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN;
 });
 
@@ -43,9 +46,10 @@ describe("checkUpdates", () => {
       },
     });
     expect(result.webui).toEqual({ current: "1.0.0", latest: "1.0.1", hasUpdate: true });
-    // 引擎包 env 指向未安装 stub → current unknown，latest 仍透传、hasUpdate 恒 false
-    expect(result.engine).toEqual({ current: "unknown", latest: "1.0.1", hasUpdate: false });
-    expect(seen).toHaveLength(2);
+    // 引擎包 env 指向未安装 stub → current unknown；latest 取配套版本（env 覆盖值），
+    // current unknown 则 hasUpdate 恒 false；引擎不查 registry（只拉 webui 元数据）
+    expect(result.engine).toEqual({ current: "unknown", latest: "9.9.9", hasUpdate: false });
+    expect(seen).toHaveLength(1);
     expect(seen[0]).toBe(`${REGISTRY}/${encodeURIComponent("qa-webui-stub")}`);
   });
 
@@ -61,7 +65,8 @@ describe("checkUpdates", () => {
       fetchImpl: () => Promise.reject(new Error("ECONNREFUSED")),
     });
     expect(result.webui).toEqual({ current: "1.0.0", latest: "unknown", hasUpdate: false });
-    expect(result.engine).toEqual({ current: "unknown", latest: "unknown", hasUpdate: false });
+    // 引擎 latest 取配套版本，不受 registry 可达性影响
+    expect(result.engine).toEqual({ current: "unknown", latest: "9.9.9", hasUpdate: false });
   });
 });
 
@@ -106,5 +111,25 @@ describe("engineCurrentVersion CLI 兑底", () => {
     setEnv();
     process.env.UL_OMO_WEBUI_UPDATE_ENGINE_BIN = "./qa-no-such-bin";
     expect(engineCurrentVersion()).toBe("unknown");
+  });
+});
+
+// 配套版本解析（2026-11-11 批）：env 直达覆盖 > 宿主包（omo-ai）依赖声明。
+describe("enginePairedVersion", () => {
+  test("env UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED 直达覆盖生效", () => {
+    process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED = "2026.11.10-2";
+    expect(enginePairedVersion()).toBe("2026.11.10-2");
+    delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED;
+  });
+
+  test("宿主包不存在（node_modules 与全局均无）→ unknown 不报错", () => {
+    process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED = ""; // 显式清空：走宿主包解析
+    process.env.UL_OMO_WEBUI_UPDATE_ENGINE_HOST_PKG = "qa-no-such-host";
+    try {
+      expect(enginePairedVersion()).toBe("unknown");
+    } finally {
+      delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_PAIRED;
+      delete process.env.UL_OMO_WEBUI_UPDATE_ENGINE_HOST_PKG;
+    }
   });
 });

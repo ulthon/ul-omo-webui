@@ -1,12 +1,14 @@
 // 安装器单测（2026-10-31 update 批）：Windows 501、npm 失败不重启、互斥锁、成功调度重启。
 // npm 执行/重启调度全量注入，env 指向 stub 值，不触网、不真跑 systemd-run。
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  confirmUpdateOutcome,
   installUpdate,
   InstallSpawnError,
+  readUpdateOutcome,
   type InstallDeps,
   type InstallFailure,
   type InstallResult,
@@ -134,5 +136,30 @@ describe("installUpdate", () => {
     const log = readFileSync(join(deps.dataDir, "update-install.log"), "utf8");
     expect(log).toContain("scheduled restart: systemd-run --on-active=3s systemctl restart qa-unit");
     expect(log).toContain("result ok version=1.0.1");
+    // 待确认结果标记（2026-11-11 批）：安装成功即写，ok 停 null 等新版首轮启动确认
+    expect(readUpdateOutcome(deps.dataDir)).toEqual({ version: "1.0.1", at: "2026-10-31T10:00:00.000Z", ok: null });
+  });
+});
+
+describe("update-outcome 标记", () => {
+  test("npm 失败：不写标记", async () => {
+    process.env.UL_OMO_WEBUI_UPDATE_REGISTRY = REGISTRY;
+    process.env.UL_OMO_WEBUI_UPDATE_PKG = "qa-webui-stub";
+    const deps = makeDeps({ runInstall: async () => { throw new InstallSpawnError("boom", "", ""); } });
+    expectFailure(await installUpdate(deps, "webui", "1.0.1"));
+    expect(readUpdateOutcome(deps.dataDir)).toBeNull();
+  });
+
+  test("confirmUpdateOutcome：待确认置 ok:true；无标记/已确认原样返回", () => {
+    const deps = makeDeps({});
+    const dir = deps.dataDir;
+    // 无标记：原样 null
+    expect(confirmUpdateOutcome(dir)).toBeNull();
+    // 待确认 → 确认落盘
+    writeFileSync(join(dir, "update-outcome.json"), JSON.stringify({ version: "1.0.1", at: "t", ok: null }));
+    expect(confirmUpdateOutcome(dir)).toEqual({ version: "1.0.1", at: "t", ok: true });
+    expect(readUpdateOutcome(dir)).toEqual({ version: "1.0.1", at: "t", ok: true });
+    // 已确认：原样返回，不重复改写
+    expect(confirmUpdateOutcome(dir)).toEqual({ version: "1.0.1", at: "t", ok: true });
   });
 });
