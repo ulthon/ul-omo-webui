@@ -63,7 +63,7 @@ beforeEach(() => {
   markRead.mockResolvedValue({ ok: true, sessionId: SID });
   getSettings.mockResolvedValue({ settings: {} } as never);
   getQuestions.mockResolvedValue({ questions: [] } as never);
-  getQueue.mockResolvedValue({ queue: [] } as never);
+  getQueue.mockResolvedValue({ queue: [], steering: [], followUp: [] } as never);
   useMessagesStore.setState({ bySession: {} });
   useSessionsStore.setState({ selectedId: null });
 });
@@ -112,5 +112,75 @@ describe("增量校准撞 cursor_invalid 自动升级全量重取（t12）", () 
     expect(listMessages).toHaveBeenCalledTimes(1);
     expect(listMessages.mock.calls[0][1]).toEqual({ cursor: "stale-cursor" });
     expect(useMessagesStore.getState().bySession[SID].cursor).toBe("stale-cursor");
+  });
+});
+
+describe("增量异常顶替守卫（2026-11-11 循环防护卡独占会话修复）", () => {
+  test("增量窗 4 条远少于槽内既有 200 条且无 hasMore 佐证 → 强制 full=1 全量整替（不 append）", async () => {
+    // 槽内 200 条已加载；引擎重启重放场景：增量只带回 4 条防护条目
+    const seeded = Array.from({ length: 200 }, (_, i) => userEntry(`e${i}`));
+    useMessagesStore.getState().setEntries(SID, seeded as never, "old-cursor", "e199", {
+      hasMore: false,
+      oldestId: null,
+    });
+    const fullEntries = Array.from({ length: 216 }, (_, i) => userEntry(`f${i}`));
+    listMessages
+      .mockResolvedValueOnce(page([userEntry("g1"), userEntry("g2"), userEntry("g3"), userEntry("g4")], "replay-cursor") as never)
+      .mockResolvedValueOnce(page(fullEntries, "full-cursor") as never);
+
+    await mount();
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
+    expect(listMessages.mock.calls[0][1]).toEqual({ cursor: "old-cursor" });
+    expect(listMessages.mock.calls[1][1]).toEqual({ full: true });
+    await vi.waitFor(() => {
+      const st = useMessagesStore.getState().bySession[SID];
+      // 全量整替：不是 200+4 的 append，也不是 4 条顶替，而是服务端真值 216 条
+      expect(st.entries).toHaveLength(216);
+      expect(st.entries[0].id).toBe("f0");
+      expect(st.cursor).toBe("full-cursor");
+      expect(st.loaded).toBe(true);
+    });
+  });
+
+  test("增量带回条目但 cursor 未推进（leafId 不连续）→ 强制 full=1 全量整替", async () => {
+    const seeded = Array.from({ length: 50 }, (_, i) => userEntry(`e${i}`));
+    useMessagesStore.getState().setEntries(SID, seeded as never, "old-cursor", "e49", {
+      hasMore: false,
+      oldestId: null,
+    });
+    const fullEntries = Array.from({ length: 60 }, (_, i) => userEntry(`f${i}`));
+    listMessages
+      .mockResolvedValueOnce(page([userEntry("g1")], "old-cursor") as never)
+      .mockResolvedValueOnce(page(fullEntries, "full-cursor") as never);
+
+    await mount();
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
+    expect(listMessages.mock.calls[1][1]).toEqual({ full: true });
+    await vi.waitFor(() => {
+      const st = useMessagesStore.getState().bySession[SID];
+      expect(st.entries).toHaveLength(60);
+      expect(st.cursor).toBe("full-cursor");
+    });
+  });
+
+  test("正常增量（新增条目数不少于既有 / 有 hasMore 佐证）不触发全量重拉", async () => {
+    // 小槽场景：增量带回条目数 >= 既有数，走常规 append
+    const seeded = Array.from({ length: 2 }, (_, i) => userEntry(`e${i}`));
+    useMessagesStore.getState().setEntries(SID, seeded as never, "old-cursor", "e1", {
+      hasMore: false,
+      oldestId: null,
+    });
+    listMessages
+      .mockResolvedValueOnce(
+        page([userEntry("n1"), userEntry("n2")], "new-cursor") as never,
+      );
+
+    await mount();
+    await vi.waitFor(() => {
+      const st = useMessagesStore.getState().bySession[SID];
+      expect(st.entries.map((e) => e.id)).toEqual(["e0", "e1", "n1", "n2"]);
+      expect(st.cursor).toBe("new-cursor");
+    });
+    expect(listMessages).toHaveBeenCalledTimes(1);
   });
 });

@@ -625,6 +625,24 @@ export function buildMessageItems(
       if (list[i].kind === "restoreDigest" && i !== lastDigestIdx) list.splice(i, 1);
     }
   }
+  // 循环防护卡同型收敛（2026-11-11，与 CLI 引擎侧同型只画最末一张对齐）：
+  // 「相邻同型聚合」只覆盖连排场景，非相邻的同型组各自成组（老版本堆叠机制）；
+  // 引擎重启/重放会重复投递防护条目，历史各组描述彼次防护事件且已过期。整个列表按
+  // loopGuardKind 只保留最末一组（每组保留对象与 key 不动，仍锚定组首条 entryId，
+  // 虚拟化行不错位），更早的同型组不再产生可见行——数据不动，纯展示层收敛，
+  // 同 noticeCard/restoreDigest 口径。异型（notice/escalation/recovery）互不干扰，
+  // 各自保留各自的最后一组。
+  const lastGuardIdxByKind = new Map<LoopGuardKind, number>();
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i]!;
+    if (it.kind === "loopGuardGroup") lastGuardIdxByKind.set(it.loopGuardKind, i);
+  }
+  if (lastGuardIdxByKind.size > 0) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const it = list[i]!;
+      if (it.kind === "loopGuardGroup" && lastGuardIdxByKind.get(it.loopGuardKind) !== i) list.splice(i, 1);
+    }
+  }
     if (opts.hasStreamingMessage) list.push({ key: "__streaming", kind: "streaming" });
   return list;
 }

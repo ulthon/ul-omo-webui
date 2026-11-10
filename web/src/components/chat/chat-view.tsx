@@ -183,12 +183,58 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     if (perfOn) perfMark(loadMark);
     api
       .listMessages(sessionId, cursor ? { cursor } : undefined)
-      .then((page) => {
+      .then(async (page) => {
         if (cancelled) return;
         const store = useMessagesStore.getState();
         if (cursor) {
-          store.appendEntries(sessionId, page.entries);
-          store.setCursor(sessionId, page.cursor);
+          // 增量对账守卫（循环防护卡独占会话 2026-11-11）：引擎重启/重放会向会话文件
+          // 重复投递 custom 条目，增量窗可能只带回这几条重放条目。若直接落库，切回后
+          // 槽内看起来“最新”，全量历史永不补齐（实测会话只剩 4 张防护卡、105 条消息
+          // 全消失）。判定二选一即异常：① 增量窗条目数少于槽内既有且无 hasMore 佐证
+          // （正常的尾窗/全量页要么条目占优要么 hasMore=true）；② 带回条目但 cursor
+          // 未推进（leafId 不连续，服务端语义自相矛盾）。异常时强制 full=1 全量重拉
+          // 再落库，并记 diag 取证行。
+          const prevCount = existing?.entries.length ?? 0;
+          const notAdvanced = page.entries.length > 0 && page.cursor === cursor;
+          const shrink = page.entries.length > 0 && !(page.hasMore ?? false) && page.entries.length < prevCount;
+          if (notAdvanced || shrink) {
+            diag.info("messages", "refetch-full", {
+              sessionId,
+              reason: notAdvanced ? "leaf-not-advanced" : "incremental-shrink",
+              incremental: page.entries.length,
+              existing: prevCount,
+            });
+            const fullPage = await api.listMessages(sessionId, { full: true });
+            if (cancelled) return;
+            useMessagesStore.getState().setEntries(sessionId, fullPage.entries, fullPage.cursor, fullPage.leafId, {
+              hasMore: fullPage.hasMore ?? false,
+              oldestId: fullPage.oldestId ?? null,
+            });
+          } else {
+            store.appendEntries(sessionId, page.entries);
+            store.setCursor(sessionId, page.cursor);
+          }
+        } else if (
+          // 同型守卫的无游标分支：已加载过的槽（cursor=null「已最新」语义）走尾窗直读
+          // 时，若返回窗比槽内既有还少且无 hasMore 佐证，说明拿到的不是可信尾窗
+          // （引擎回退路径可能只回重放窗），同样升级全量整替
+          existing?.loaded === true &&
+          page.entries.length > 0 &&
+          !(page.hasMore ?? false) &&
+          page.entries.length < existing.entries.length
+        ) {
+          diag.info("messages", "refetch-full", {
+            sessionId,
+            reason: "tail-shrink",
+            page: page.entries.length,
+            existing: existing.entries.length,
+          });
+          const fullPage = await api.listMessages(sessionId, { full: true });
+          if (cancelled) return;
+          useMessagesStore.getState().setEntries(sessionId, fullPage.entries, fullPage.cursor, fullPage.leafId, {
+            hasMore: fullPage.hasMore ?? false,
+            oldestId: fullPage.oldestId ?? null,
+          });
         } else {
           // 任务 16：首载尾窗直读——携带 hasMore/oldestId 供触顶向上翻页；
           // cursor 仍为文件 leafId（切回会话的前向增量校准不变）

@@ -94,27 +94,66 @@ describe("buildMessageItems loop-guard 连排聚合", () => {
     expect(group.key).toBe("loop-guard-a");
   });
 
-  test("kind 边界重置聚合：notice→escalation→notice 三组各自单条", () => {
+  test("kind 边界重置聚合后异型各组独立；同型收敛只留最末一组（2026-11-11）", () => {
     const items = buildMessageItems(
       [lg("a", "notice", "c1"), lg("b", "escalation", "c2"), lg("c", "notice", "c3")],
       OPTS,
     );
+    // 首个 notice 组被同型收敛移除，只保留 escalation 与最末 notice 组（异型互不干扰）
     expect(groups(items)).toEqual([
-      ["loopGuardGroup", "notice", 1],
       ["loopGuardGroup", "escalation", 1],
       ["loopGuardGroup", "notice", 1],
     ]);
   });
 
-  test("非相邻同型不聚合：普通 message 条目隔开即两组", () => {
+  test("非相邻同型不合并为一组，且同型收敛只保留最末一组（2026-11-11）", () => {
     const items = buildMessageItems(
       [lg("a", "notice", "c1"), msg("m1", "assistant", "正文"), lg("b", "notice", "c2")],
       OPTS,
     );
+    // 聚合阶段两组各自独立（中间隔普通消息不合并），收敛阶段移除较早的 a 组
     expect(groups(items)).toEqual([
-      ["loopGuardGroup", "notice", 1],
       ["entry", "m1", 0],
       ["loopGuardGroup", "notice", 1],
+    ]);
+  });
+
+  test("同型全量收敛：4 条分散 notice（被普通消息隔开）只渲染最末一组（2026-11-11 循环防护卡独占/堆叠修复）", () => {
+    const items = buildMessageItems(
+      [
+        lg("g1", "notice", "c1"),
+        msg("m1", "assistant", "正文一"),
+        lg("g2", "notice", "c2"),
+        msg("m2", "user", "正文二"),
+        lg("g3", "notice", "c3"),
+        lg("g4", "notice", "c4"),
+      ],
+      OPTS,
+    );
+    const guardItems = items.filter((i) => i.kind === "loopGuardGroup");
+    expect(guardItems).toHaveLength(1);
+    const group = guardItems[0] as Extract<ChatListItem, { kind: "loopGuardGroup" }>;
+    // key 锚定最末组首条 entryId（虚拟化行不错位）；entryIds 为最末连排段
+    expect(group.entryIds).toEqual(["g3", "g4"]);
+    expect(group.key).toBe("loop-guard-g3");
+  });
+
+  test("异型各自保留各自的最后一组（notice/escalation 互不干扰）", () => {
+    const items = buildMessageItems(
+      [
+        lg("n1", "notice", "c1"),
+        lg("e1", "escalation", "c2"),
+        msg("m1", "assistant", "正文"),
+        lg("n2", "notice", "c3"),
+        lg("e2", "escalation", "c4"),
+      ],
+      OPTS,
+    );
+    // 最末 notice（n2）与最末 escalation（e2）各自保留，更早的 n1/e1 被移除
+    expect(groups(items)).toEqual([
+      ["entry", "m1", 0],
+      ["loopGuardGroup", "notice", 1],
+      ["loopGuardGroup", "escalation", 1],
     ]);
   });
 
