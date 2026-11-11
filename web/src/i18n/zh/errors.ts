@@ -13,6 +13,7 @@ export const errors = {
   compactTimeout: "压缩仍在后台进行，完成后水位自动刷新",
   cursorInvalid: "翻页游标已失效，请回到最新消息重试",
   cliMissing: "未找到 omo CLI：凭证测试不可用（请用引擎 CLI 安装）",
+  authProviderNotFound: "凭证不存在，可能已被删除，请刷新列表",
   sessionNotFound: "会话不存在",
   sessionNotPersisted: "会话尚未落盘（空会话）",
   sessionReopenFailed: "引擎会话重开失败，请稍后重试",

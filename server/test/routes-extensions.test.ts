@@ -2,7 +2,7 @@
 // 清单形态（三目录 + packages、缺目录空态、畸形清单跳过）、启停写入与 400/404、
 // auth 三态（伪 CLI 退出码 0/1/2）、spawn 超时不挂、无凭证泄漏、install/remove/update
 // 动作路径。全部 mkdtemp 隔离 + 伪 CLI 脚本（不触真实引擎与凭证）。
-import { describe, expect, test, afterEach } from "vitest";
+import { describe, expect, test, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { createExtensionsRoutes, type ExtensionsRouteDeps } from "../src/api/rou
 const ROOTS: string[] = [];
 afterEach(() => {
   for ( const r of ROOTS.splice(0)) rmSync(r, { recursive: true, force: true });
+  vi.unstubAllGlobals();
 });
 
 function makeAgentDir(): string {
@@ -252,6 +253,145 @@ test("GET /api/auth/status：绝不回显凭证材料；超时降级 error 不�
     delete process.env.FAKE_MARKER;
     delete process.env.FAKE_AUTH_SLEEP_MS;
   }
+});
+
+// ---------------------------------------------------------------- CLI 非 ready 的 HTTP 直验兜底
+// 生产缺陷修复（2026-11-11）：CLI 在 server 子进程内恒 exit=2 invalid，设置页添加凭证
+// 从未成功。CLI 非 ready 且 baseUrl/api/key 齐备 → GET {baseUrl}/models 直验兜底。
+describe("GET /api/auth/status：HTTP 直验兜底", () => {
+  const HTTP_KEY = "sk-http-fallback-secret-key";
+  const OPENAI_MODELS = { providers: { stub: { baseUrl: "https://api.example.com/v1/", api: "openai-completions", models: [] } } };
+
+  /** 兜底场景公共底座：settings defaultProvider=stub + auth.json key + 伪 CLI 恒 FAKE_AUTH_EXIT（缺省 2） */
+  function setupFallbackDir(models: Record<string, unknown> | undefined, authExit = "2"): {
+    dir: string;
+    app: Hono;
+    marker: string;
+  } {
+    const dir = makeAgentDir();
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: "stub" }), "utf8");
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ stub: { type: "api", key: HTTP_KEY } }), "utf8");
+    if (models !== undefined) writeFileSync(join(dir, "models.json"), JSON.stringify(models), "utf8");
+    writeFakeCli(dir);
+    const marker = join(dir, "marker.log");
+    process.env.FAKE_MARKER = marker;
+    process.env.FAKE_AUTH_EXIT = authExit;
+    return { dir, app: makeApp(makeDeps(dir)), marker };
+  }
+
+  function stubFetch(handler: () => Promise<Response>): Array<{ url: unknown; headers: Record<string, string> | undefined }> {
+    const calls: Array<{ url: unknown; headers: Record<string, string> | undefined }> = [];
+    vi.stubGlobal(
+      "fetch",
+      (url: unknown, init?: { headers?: Record<string, string> }): Promise<Response> => {
+        calls.push({ url, headers: init?.headers });
+        return handler();
+      },
+    );
+    return calls;
+  }
+
+  test("CLI exit=2 + baseUrl + /models 200 → ready（checkedVia=http，去尾斜杠，Bearer 透传，不回显 key）", async () => {
+    const { app, marker } = setupFallbackDir(OPENAI_MODELS);
+    const calls = stubFetch(async () => new Response('{"data":[]}', { status: 200 }));
+    try {
+      const res = await req(app, "/api/auth/status");
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ status: "ready", provider: "stub", checkedVia: "http", detail: null });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe("https://api.example.com/v1/models"); // baseUrl 去尾斜杠 + /models
+      expect(calls[0].headers?.Authorization).toBe(`Bearer ${HTTP_KEY}`);
+      expect(JSON.stringify(res.body)).not.toContain(HTTP_KEY);
+      expect(readFileSync(marker, "utf8")).toContain("auth:stub"); // CLI 第一优先先跑
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
+
+  test("CLI exit=2 + 401 → not_configured（detail 简述，checkedVia=http）", async () => {
+    const { app } = setupFallbackDir(OPENAI_MODELS);
+    stubFetch(async () => new Response("unauthorized", { status: 401 }));
+    try {
+      const res = await req(app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "not_configured", checkedVia: "http" });
+      expect(res.body.detail).toContain("401");
+      expect(JSON.stringify(res.body)).not.toContain(HTTP_KEY);
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
+
+  test("CLI exit=2 + 网络抛错 → error（detail 简短原因不含 key）；TimeoutError → 超时 detail", async () => {
+    const first = setupFallbackDir(OPENAI_MODELS);
+    stubFetch(async () => {
+      throw new TypeError("fetch failed");
+    });
+    try {
+      const res = await req(first.app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "error", checkedVia: "http" });
+      expect(res.body.detail).toContain("网络错误");
+      expect(JSON.stringify(res.body)).not.toContain(HTTP_KEY);
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+    const second = setupFallbackDir(OPENAI_MODELS);
+    stubFetch(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    try {
+      const res = await req(second.app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "error", checkedVia: "http" });
+      expect(res.body.detail).toContain("超时");
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
+
+  test("CLI exit=2 + 无 baseUrl（无 models.json）→ 保留 CLI error（detail 注明无法直验），不发起 fetch", async () => {
+    const { app } = setupFallbackDir(undefined);
+    const calls = stubFetch(async () => new Response("{}", { status: 200 }));
+    try {
+      const res = await req(app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "error", checkedVia: "cli" });
+      expect(res.body.detail).toContain("exit=2");
+      expect(res.body.detail).toContain("无法 HTTP 直验");
+      expect(calls).toHaveLength(0);
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
+
+  test("CLI exit=2 + api=anthropic（非 OpenAI 兼容）→ 不兜底，保留 CLI error", async () => {
+    const { app } = setupFallbackDir({ providers: { stub: { baseUrl: "https://api.anthropic.com/v1", api: "anthropic", models: [] } } });
+    const calls = stubFetch(async () => new Response("{}", { status: 200 }));
+    try {
+      const res = await req(app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "error", checkedVia: "cli" });
+      expect(res.body.detail).toContain("无法 HTTP 直验");
+      expect(calls).toHaveLength(0);
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
+
+  test("CLI exit=0（ready）→ 直接采用（checkedVia=cli），不发起 fetch（CLI 第一优先）", async () => {
+    const { app } = setupFallbackDir(OPENAI_MODELS, "0");
+    const calls = stubFetch(async () => new Response("{}", { status: 200 }));
+    try {
+      const res = await req(app, "/api/auth/status");
+      expect(res.body).toMatchObject({ status: "ready", checkedVia: "cli" });
+      expect(calls).toHaveLength(0);
+    } finally {
+      delete process.env.FAKE_MARKER;
+      delete process.env.FAKE_AUTH_EXIT;
+    }
+  });
 });
 
 // ---------------------------------------------------------------- install / remove / update

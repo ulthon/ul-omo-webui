@@ -44,7 +44,8 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // 头部排除清单），合计仍 107。多会话并行批次（引擎重开退避耗尽映射）追加 1 码：
 // session_reopen_failed，合计 108。会话小夹心批次（session-polish 任务 1：prompt 等待超时映射）
 // 追加 1 码：prompt_timeout，合计 109。#33 多会话并行批次（项目根校验）追加 2 码：
-// invalid_project_root/project_not_writable（0.6.0 撤回根目录拦截后回落 110）。
+// invalid_project_root/project_not_writable（0.6.0 撤回根目录拦截后回落 110）。凭证列表/删除/逐测
+// 批次追加 1 码：auth_provider_not_found，合计 111。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -52,6 +53,7 @@ const SCANNED_CODES = [
   "attachment_expired",
   "attachment_not_found",
   "attachment_too_large",
+  "auth_provider_not_found",
   "cli_missing",
   "compact_timeout",
   "compact_unsupported",
@@ -202,12 +204,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（111 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids）", () => {
+  test("映射恰好覆盖 server 扫描集（112 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(111);
+    expect(scanned).toHaveLength(112);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(111);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(112);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

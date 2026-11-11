@@ -23,6 +23,7 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   content_too_large: "errors.contentTooLarge",
   cursor_invalid: "errors.cursorInvalid",
   cli_missing: "errors.cliMissing",
+  auth_provider_not_found: "errors.authProviderNotFound",
   engine_not_ready: "errors.engineNotReady",
   fork_cancelled: "errors.forkCancelled",
   fork_failed: "errors.forkFailed",

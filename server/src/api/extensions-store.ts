@@ -5,10 +5,14 @@
 //   缺省 enabled=true）。引擎核心未见既有资源禁用键（2026-10-23 实证 pi-agent-core /
 //   harness config），按计划契约「settings.json 启停态」由 webui 持有；写经模块级串行
 //   promise 链 + temp+rename 原子替换（计划「串行锁」，防并发启停交错覆盖）；
-// - auth 检查：spawnSync `omo auth check --provider <p> --no-refresh`（退出码 0/1/2 →
-//   就绪/未配置/错误，超时 10s）；provider 取 settings.json defaultProvider，缺则
-//   auth.json 首个键，两者皆无直接 not_configured（不 spawn）。凭证材料绝不回显——
-//   响应只含 status/provider/checkedAt，不含任何 CLI 输出；
+// - auth 检查：CLI 第一优先（spawnSync `omo auth check --provider <p> --no-refresh`，
+//   退出码 0/1/2 → 就绪/未配置/错误，超时 10s）；provider 取 settings.json
+//   defaultProvider，缺则 auth.json 首个键，两者皆无直接 not_configured（不 spawn）。
+//   CLI 非 ready 时 HTTP 直验兜底：models.json providers.<p>.baseUrl 存在、api 属
+//   OpenAI 兼容（openai-completions/openai-responses/缺省）且 auth.json 有 key →
+//   GET {baseUrl}/models + Bearer（10s 超时）——2xx → ready、401/403 → not_configured、
+//   其余/网络错 → error（修复生产缺陷：CLI 在 server 子进程内恒 exit=2 invalid）。
+//   凭证材料绝不回显——响应只含 status/provider/checkedAt/checkedVia，不含任何 CLI 输出；
 // - install/remove/update：非交互可行性已实证（2026-10-23：stdin 关闭下
 //   `omo install npm:<不存在包>` 干净 E404 退出、`omo remove` 干净退出、`omo update`
 //   无提示持续运行），可行→做：async spawn 有界超时（install/remove 120s、update 180s）。
@@ -181,6 +185,8 @@ export interface AuthStatus {
   provider: string | null;
   checkedAt: number;
   detail: string | null;
+  /** 结果通道：cli = 引擎 CLI（第一优先，含 CLI 缺失/无法直验时的降级）；http = CLI 非 ready 后的 OpenAI 兼容直验兜底 */
+  checkedVia: "cli" | "http";
 }
 
 /** 引擎 CLI（node + omo.js）解析；与 senpi-adapter exportHtml 同源推导 */
@@ -216,32 +222,107 @@ export interface AuthCheckOptions {
   agentDir: string;
   engineCli: { nodeBin: string; cliJs: string } | null;
   timeoutMs?: number;
+  /** 指定 provider 检查（POST /api/auth/check）：CLI 实证支持 `auth check --provider <p>`，
+   * 给定时跳过 authProviderOf 推导直接使用；不给定保持既有默认推导语义。 */
+  provider?: string;
 }
 
-/** spawnSync omo auth check：退出码 0/1/2 → ready/not_configured/error；超时/CLI 缺失 → error。
- * provider 无法确定时直接 not_configured（不 spawn）。--no-refresh：只读检查不触凭证刷新。 */
-export function checkAuthStatus(opts: AuthCheckOptions): AuthStatus {
-  const now = Date.now();
-  const provider = authProviderOf(opts.agentDir);
-  if (!provider) return { status: "not_configured", provider: null, checkedAt: now, detail: null };
-  if (!opts.engineCli) {
-    return { status: "error", provider, checkedAt: now, detail: "omo CLI 不存在，无法检查凭证" };
-  }
-  const r = spawnSync(opts.engineCli.nodeBin, [opts.engineCli.cliJs, "auth", "check", "--provider", provider, "--no-refresh"], {
-    encoding: "utf8",
-    timeout: opts.timeoutMs ?? AUTH_TIMEOUT_MS,
-    cwd: opts.agentDir,
-    env: { ...process.env, OMO_CODING_AGENT_DIR: opts.agentDir, SENPI_CODING_AGENT_DIR: opts.agentDir },
+/** OpenAI 兼容 api 值（models.json providers.<p>.api）：/models 直验可行 */
+const OPENAI_COMPATIBLE_APIS: ReadonlySet<string> = new Set(["openai-completions", "openai-responses"]);
+
+/** auth.json 指定 provider 的 key（直验 Bearer 用，仅内存传递绝不外显）；缺失/畸形 → null */
+function providerKeyOf(agentDir: string, provider: string): string | null {
+  const entry = readAuthDoc(agentDir)[provider];
+  return isRecord(entry) && typeof entry.key === "string" && entry.key !== "" ? entry.key : null;
+}
+
+/** HTTP 直验条件：models.json providers.<p> 的 baseUrl 非空且 api 兼容（缺省视作 OpenAI 兼容）。
+ * 返回 null = 无法直验（条目缺失/无 baseUrl/api 非兼容如 anthropic）。 */
+function providerHttpFallbackConfig(agentDir: string, provider: string): { baseUrl: string } | null {
+  const entry = readModelsLoose(agentDir)[provider];
+  if (!isRecord(entry)) return null;
+  const baseUrl = typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "";
+  if (baseUrl === "") return null;
+  if (typeof entry.api === "string" && !OPENAI_COMPATIBLE_APIS.has(entry.api)) return null;
+  return { baseUrl };
+}
+
+/** CLI 非 ready 后的 HTTP 直验兜底：GET {baseUrl去尾斜杠}/models + Bearer key
+ * （Node 24 全局 fetch + AbortSignal.timeout，缺省 10s）。2xx → ready；401/403 →
+ * not_configured；网络错/超时/其他状态 → error。detail 简短且绝不含 key。
+ * 直验条件不满足（baseUrl/api/key 任一缺失）返回 null，调用方保留 CLI 结果。 */
+async function httpFallbackCheck(agentDir: string, provider: string, timeoutMs?: number): Promise<AuthStatus | null> {
+  const cfg = providerHttpFallbackConfig(agentDir, provider);
+  if (cfg === null) return null;
+  const key = providerKeyOf(agentDir, provider);
+  if (key === null) return null;
+  const timeout = timeoutMs ?? AUTH_TIMEOUT_MS;
+  const url = `${cfg.baseUrl.replace(/\/+$/, "")}/models`;
+  const viaHttp = (status: AuthStatusValue, detail: string | null): AuthStatus => ({
+    status,
+    provider,
+    checkedAt: Date.now(),
+    detail,
+    checkedVia: "http",
   });
-  if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-    return { status: "error", provider, checkedAt: now, detail: `凭证检查超时（${opts.timeoutMs ?? AUTH_TIMEOUT_MS}ms）` };
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(timeout) });
+    if (res.ok) return viaHttp("ready", null);
+    if (res.status === 401 || res.status === 403) {
+      return viaHttp("not_configured", `HTTP 直验 ${res.status}：凭证被服务端拒绝`);
+    }
+    return viaHttp("error", `HTTP 直验失败（HTTP ${res.status}）`);
+  } catch (err) {
+    const aborted = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+    const reason = (err instanceof Error ? err.message : String(err)).slice(0, 200);
+    return viaHttp("error", aborted ? `HTTP 直验超时（${timeout}ms）` : `HTTP 直验网络错误：${reason}`);
   }
-  if (r.error) {
-    return { status: "error", provider, checkedAt: now, detail: `凭证检查启动失败：${r.error.message}` };
+}
+
+/** async：CLI 第一优先——spawnSync omo auth check 退出码 0/1/2 → ready/not_configured/error，
+ * ready 直接采用（checkedVia="cli"）；超时/CLI 缺失 → error。CLI 非 ready 时走 HTTP 直验兜底
+ * （生产缺陷：CLI 在 server 子进程内恒 exit=2 invalid，设置页添加凭证从未成功——2026-11-11 修复）；
+ * 无法直验（baseUrl/api/key 任一缺失）保留 CLI 结果，error 时 detail 注明。
+ * provider 无法确定时直接 not_configured（不 spawn）。--no-refresh：只读检查不触凭证刷新。 */
+export async function checkAuthStatus(opts: AuthCheckOptions): Promise<AuthStatus> {
+  const provider = opts.provider ?? authProviderOf(opts.agentDir);
+  const viaCli = (status: AuthStatusValue, detail: string | null): AuthStatus => ({
+    status,
+    provider,
+    checkedAt: Date.now(),
+    detail,
+    checkedVia: "cli",
+  });
+  if (!provider) return viaCli("not_configured", null);
+  let cli: AuthStatus;
+  if (!opts.engineCli) {
+    cli = viaCli("error", "omo CLI 不存在，无法检查凭证");
+  } else {
+    const r = spawnSync(opts.engineCli.nodeBin, [opts.engineCli.cliJs, "auth", "check", "--provider", provider, "--no-refresh"], {
+      encoding: "utf8",
+      timeout: opts.timeoutMs ?? AUTH_TIMEOUT_MS,
+      cwd: opts.agentDir,
+      env: { ...process.env, OMO_CODING_AGENT_DIR: opts.agentDir, SENPI_CODING_AGENT_DIR: opts.agentDir },
+    });
+    if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      cli = viaCli("error", `凭证检查超时（${opts.timeoutMs ?? AUTH_TIMEOUT_MS}ms）`);
+    } else if (r.error) {
+      cli = viaCli("error", `凭证检查启动失败：${r.error.message}`);
+    } else if (r.status === 0) {
+      cli = viaCli("ready", null);
+    } else if (r.status === 1) {
+      cli = viaCli("not_configured", null);
+    } else {
+      cli = viaCli("error", `凭证检查失败（exit=${r.status ?? "null"}）`);
+    }
   }
-  if (r.status === 0) return { status: "ready", provider, checkedAt: now, detail: null };
-  if (r.status === 1) return { status: "not_configured", provider, checkedAt: now, detail: null };
-  return { status: "error", provider, checkedAt: now, detail: `凭证检查失败（exit=${r.status ?? "null"}）` };
+  if (cli.status === "ready") return cli;
+  const http = await httpFallbackCheck(opts.agentDir, provider, opts.timeoutMs);
+  if (http !== null) return http;
+  if (cli.status === "error") {
+    return { ...cli, detail: `${cli.detail ?? "CLI 检查失败"}；无法 HTTP 直验（缺 baseUrl、api 非兼容或无 key）` };
+  }
+  return cli;
 }
 
 // ---------------------------------------------------------------- 凭证写入（r10 批次任务 13）
@@ -271,7 +352,7 @@ function writeAuthDocAtomic(agentDir: string, doc: Record<string, unknown>): voi
  * settings.json defaultProvider=provider（authProviderOf 检查面同源）。
  * 返回回滚函数：恢复两处旧值（原本无 auth.json 则删除，不留空壳文件）；
  * key 只落引擎认证文件，不经任何日志。
- * 同步写入（调用点为单发用户动作；saveAndCheckCredential 内紧接同步检查，无并发交错面）。 */
+ * 同步写入（调用点为单发用户动作；saveAndCheckCredential 内紧接检查，无并发交错面）。 */
 export function applyAuthCredential(agentDir: string, provider: string, apiKey: string): () => void {
   const prevAuth = readAuthDoc(agentDir);
   const prevProvider = readSettings(agentDir).defaultProvider;
@@ -298,26 +379,130 @@ export interface CredentialSaveResult {
   rolledBack: boolean;
 }
 
-/** 粘贴凭证端到端：写入 → checkAuthStatus；非 ready 回滚（含 not_configured/error）。
- * 同步执行（spawnSync 既有纪律），失败不抛——失败原因在 status.detail。 */
-export function saveAndCheckCredential(opts: {
+/** 粘贴凭证端到端：写入 → checkAuthStatus（async：CLI 第一优先 + HTTP 直验兜底）；
+ * 非 ready 回滚（含 not_configured/error）。失败不抛——失败原因在 status.detail。 */
+export async function saveAndCheckCredential(opts: {
   agentDir: string;
   engineCli: { nodeBin: string; cliJs: string } | null;
   provider: string;
   apiKey: string;
+  /** 可选 baseUrl：非空串时同步 models.json providers.<id>.baseUrl；检查未过同事务回滚 */
+  baseUrl?: string;
   timeoutMs?: number;
-}): CredentialSaveResult {
-  const rollback = applyAuthCredential(opts.agentDir, opts.provider, opts.apiKey);
-  const status = checkAuthStatus({
+}): Promise<CredentialSaveResult> {
+  const rollbackAuth = applyAuthCredential(opts.agentDir, opts.provider, opts.apiKey);
+  const rollbackModels = applyAuthBaseUrl(opts.agentDir, opts.provider, opts.baseUrl ?? "");
+  const status = await checkAuthStatus({
     agentDir: opts.agentDir,
     engineCli: opts.engineCli,
     timeoutMs: opts.timeoutMs,
   });
   if (status.status !== "ready") {
-    rollback();
+    rollbackModels();
+    rollbackAuth();
     return { status, rolledBack: true };
   }
   return { status, rolledBack: false };
+}
+
+// ---------------------------------------------------------------- 凭证列表 / 删除（provider 认证配置面批次）
+
+/** key 掩码：长度 ≥8 → 前 3 + "***" + 后 4；否则全 "***"。绝不回显完整 key。 */
+export function maskKey(key: unknown): string {
+  if (typeof key !== "string" || key.length === 0) return "***";
+  if (key.length < 8) return "***";
+  return `${key.slice(0, 3)}***${key.slice(-4)}`;
+}
+
+/** models.json 宽松直读：仅判 hasBaseUrl 用，缺失/损坏一律返回空表（不抛）。 */
+function readModelsLoose(agentDir: string): Record<string, unknown> {
+  const file = join(agentDir, "models.json");
+  if (!existsSync(file)) return {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const providers = isRecord(parsed) ? parsed.providers : undefined;
+    return isRecord(providers) ? providers : {};
+  } catch {
+    return {};
+  }
+}
+
+export interface AuthProviderItem {
+  name: string;
+  /** auth.json 条目 type 字段（既有写入形态无 type 时为 null） */
+  type: string | null;
+  keyMask: string;
+  /** models.json 该 provider 是否配置了 baseUrl */
+  hasBaseUrl: boolean;
+}
+
+/** 列 auth.json 全部 provider（GET /api/auth/providers）：只读键名与 type，绝不读值外显；
+ * auth.json 缺失/损坏 → 空数组。 */
+export function listAuthProviders(agentDir: string): AuthProviderItem[] {
+  const doc = readAuthDoc(agentDir);
+  const providers = readModelsLoose(agentDir);
+  return Object.entries(doc).map(([name, entry]) => ({
+    name,
+    type: isRecord(entry) && typeof entry.type === "string" ? entry.type : null,
+    keyMask: maskKey(isRecord(entry) ? entry.key : undefined),
+    hasBaseUrl: typeof (providers[name] as Record<string, unknown> | undefined)?.baseUrl === "string"
+      && (providers[name] as Record<string, unknown>).baseUrl !== "",
+  }));
+}
+
+/** 删除 auth.json 指定 provider（DELETE /api/auth/providers/:id）：不存在 404；
+ * temp+rename 原子写（同 writeAuthDocAtomic 纪律）。不动 models.json。 */
+export function deleteAuthProvider(agentDir: string, provider: string): void {
+  const doc = readAuthDoc(agentDir);
+  if (!(provider in doc)) {
+    throw new ApiError(404, "auth_provider_not_found", `凭证不存在：${provider}`);
+  }
+  const next = { ...doc };
+  delete next[provider];
+  writeAuthDocAtomic(agentDir, next);
+}
+
+/** models.json 原子写（temp+rename，models-discover 同款纪律）；目录确保存在 */
+function writeModelsDocAtomic(agentDir: string, doc: Record<string, unknown>): void {
+  mkdirSync(agentDir, { recursive: true });
+  const file = join(agentDir, "models.json");
+  const tmp = join(agentDir, `.models.json.tmp-${process.pid}-${Date.now()}`);
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
+}
+
+/** models.json 宽松整读（回滚快照用）；缺失/损坏返回 null（原本无有效文件） */
+function readModelsDocLoose(agentDir: string): Record<string, unknown> | null {
+  const file = join(agentDir, "models.json");
+  if (!existsSync(file)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** baseUrl 写入（POST /api/auth/credentials 可选 baseUrl）：providers.<id>.baseUrl 同步——
+ * 条目不存在则建最小条目 {baseUrl, api:"openai-completions", models:[]}；存在则只改 baseUrl，
+ * 其余字段不动。返回回滚函数：恢复整份 models.json 旧态（原本无有效文件则删除）。
+ * 空 baseUrl（空串）= 不改动 models.json，回滚为空操作（同事务语义）。 */
+function applyAuthBaseUrl(agentDir: string, provider: string, baseUrl: string): () => void {
+  if (baseUrl === "") return () => {};
+  const prev = readModelsDocLoose(agentDir);
+  const prevExisted = existsSync(join(agentDir, "models.json"));
+  const doc: Record<string, unknown> = prev ? { ...prev } : {};
+  const providers = isRecord(doc.providers) ? { ...doc.providers } : {};
+  const entry = isRecord(providers[provider]) ? { ...(providers[provider] as Record<string, unknown>) } : null;
+  providers[provider] = entry === null
+    ? { baseUrl, api: "openai-completions", models: [] }
+    : { ...entry, baseUrl };
+  doc.providers = providers;
+  writeModelsDocAtomic(agentDir, doc);
+  return () => {
+    if (prev !== null) writeModelsDocAtomic(agentDir, prev);
+    else rmSync(join(agentDir, "models.json"), { force: true });
+  };
 }
 
 // ---------------------------------------------------------------- install / remove / update

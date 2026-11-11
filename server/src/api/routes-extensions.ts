@@ -1,7 +1,7 @@
 // 扩展资源面与 auth 凭证检查 REST 路由（docs08-2026-10-22 批次任务 24）：
 // - GET  /api/extensions            资源清单（extensions/skills/prompts 三目录 + settings packages）
 // - PUT  /api/extensions/:name      { enabled, kind? } 启停写入（服务端串行锁）
-// - GET  /api/auth/status           凭证检查（spawnSync omo auth check，0/1/2 三态，10s 超时）
+// - GET  /api/auth/status           凭证检查（CLI omo auth check 0/1/2 三态 + OpenAI 兼容 HTTP 直验兜底，10s 超时）
 // - POST /api/auth/credentials      { provider, apiKey } 粘贴凭证写入+检查（非 ready 回滚，绝不回显 key）
 // - POST /api/extensions/install    { source } 非交互安装（async spawn 有界超时）
 // - POST /api/extensions/remove     { source } 非交互移除
@@ -10,6 +10,8 @@ import { Hono, type Context } from "hono";
 import { ApiError, parseJsonBody, route } from "./http";
 import {
   checkAuthStatus,
+  deleteAuthProvider,
+  listAuthProviders,
   listExtensions,
   RESOURCE_KINDS,
   runExtensionAction,
@@ -75,7 +77,7 @@ export function createExtensionsRoutes(deps: ExtensionsRouteDeps): Hono {
   }));
 
   app.get("/api/auth/status", route(async (c: Context) => {
-    const status: AuthStatus = checkAuthStatus({
+    const status: AuthStatus = await checkAuthStatus({
       agentDir: deps.agentDir,
       engineCli: deps.engineCli,
       timeoutMs: deps.authTimeoutMs,
@@ -83,8 +85,42 @@ export function createExtensionsRoutes(deps: ExtensionsRouteDeps): Hono {
     return c.json(status);
   }));
 
+  // 凭证列表（provider 认证配置面批次）：auth.json 全部 provider，key 只给掩码，
+  // 绝不回显完整凭证；auth.json 缺失 → 空数组。
+  app.get("/api/auth/providers", route(async (c: Context) => {
+    return c.json({ items: listAuthProviders(deps.agentDir), cliAvailable: deps.engineCli !== null });
+  }));
+
+  // 删除凭证：不存在 404；auth.json temp+rename 原子写。不动 models.json。
+  app.delete("/api/auth/providers/:id", route(async (c: Context) => {
+    const id = c.req.param("id");
+    if (typeof id !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(id)) {
+      throw new ApiError(400, "invalid_provider", "provider 必填（字母/数字/./_/-，≤128 字符）");
+    }
+    deleteAuthProvider(deps.agentDir, id);
+    return c.json({ ok: true, name: id });
+  }));
+
+  // 指定 provider 检查：CLI 实证支持 `omo auth check --provider <p> --no-refresh`，
+  // 直接复用 checkAuthStatus 加 provider 覆盖（不回退 models 列表轻量请求）；
+  // CLI 缺失沿用既有 error 降级语义。响应同三态，绝不回显凭证材料。
+  app.post("/api/auth/check", route(async (c: Context) => {
+    const body = await parseJsonBody(c);
+    const provider = body.provider;
+    if (typeof provider !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(provider)) {
+      throw new ApiError(400, "invalid_provider", "provider 必填（字母/数字/./_/-，≤128 字符）");
+    }
+    const status = await checkAuthStatus({
+      agentDir: deps.agentDir,
+      engineCli: deps.engineCli,
+      timeoutMs: deps.authTimeoutMs,
+      provider,
+    });
+    return c.json(status);
+  }));
+
   // 粘贴凭证端到端（r10 批次任务 13）：写入 → auth check；非 ready 服务端已回滚（无效 key
-  // 不落盘）。响应只含三态 status/provider/checkedAt/detail，绝不含 key。
+  // 不落盘）。响应只含三态 status/provider/checkedAt/checkedVia/detail，绝不含 key。
   app.post("/api/auth/credentials", route(async (c: Context) => {
     if (!deps.engineCli) {
       throw new ApiError(503, "cli_missing", "omo CLI 不存在，凭证测试不可用（请用引擎 CLI 安装）");
@@ -98,11 +134,31 @@ export function createExtensionsRoutes(deps: ExtensionsRouteDeps): Hono {
     if (typeof apiKey !== "string" || apiKey.trim() === "" || apiKey.length > 4096) {
       throw new ApiError(400, "invalid_api_key", "apiKey 必填且长度 ≤ 4096");
     }
-    const result = saveAndCheckCredential({
+    // 可选 baseUrl：空串 = 不改 models.json；非空必须是合法 http(s) URL
+    let baseUrl = "";
+    if (body.baseUrl !== undefined) {
+      if (typeof body.baseUrl !== "string" || body.baseUrl.length > 2048) {
+        throw new ApiError(400, "invalid_baseurl", "baseUrl 必须是非空 http(s) URL 或空串（空 = 不改 models.json）");
+      }
+      baseUrl = body.baseUrl.trim();
+      if (baseUrl !== "") {
+        let url: URL;
+        try {
+          url = new URL(baseUrl);
+        } catch {
+          throw new ApiError(400, "invalid_baseurl", "baseUrl 不是合法 URL");
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+          throw new ApiError(400, "invalid_baseurl", "baseUrl 必须是 http(s) URL");
+        }
+      }
+    }
+    const result = await saveAndCheckCredential({
       agentDir: deps.agentDir,
       engineCli: deps.engineCli,
       provider,
       apiKey,
+      baseUrl,
       timeoutMs: deps.authTimeoutMs,
     });
     return c.json(result.status, result.status.status === "ready" ? 200 : 422);

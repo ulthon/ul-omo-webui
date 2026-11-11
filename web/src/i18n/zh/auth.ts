@@ -1,4 +1,4 @@
-// auth 域词条（zh-CN）：设置页「认证」分区（r10 批次任务 13）。
+// auth 域词条（zh-CN）：设置页「认证」分区（r10 批次任务 13 + 凭证列表/删除/逐测/baseUrl 批次）。
 export const auth = {
   heading: "认证",
   note: "粘贴 API key 后点击测试；测试通过才写入引擎认证配置，无效 key 不会保存。key 不会明文显示或记录。",
@@ -13,4 +13,18 @@ export const auth = {
   testOk: "凭证有效，已保存",
   testFailed: "凭证测试未通过",
   rejectNotConfigured: "引擎未接受该凭证（key 无效或格式不符）",
+  baseUrlLabel: "Base URL（可选）",
+  baseUrlPlaceholder: "https://api.example.com/v1",
+  baseUrlInvalid: "Base URL 必须是 http(s) 地址，留空则不修改",
+  listEmpty: "暂无已保存凭证",
+  listTitle: "已保存凭证",
+  rowTest: "测试",
+  rowTesting: "测试中…",
+  rowUntested: "未测",
+  rowReady: "可用",
+  rowError: "失败",
+  rowDelete: "删除",
+  rowDeleteConfirm: "确认删除",
+  deleteOk: "已删除",
+  deleteFailed: "删除失败",
 } as const;

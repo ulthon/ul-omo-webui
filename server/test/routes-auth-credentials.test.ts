@@ -14,6 +14,7 @@ const ROOTS: string[] = [];
 afterEach(() => {
   for (const r of ROOTS.splice(0)) rmSync(r, { recursive: true, force: true });
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function makeAgentDir(): string {
@@ -89,7 +90,7 @@ describe("POST /api/auth/credentials（r10 任务 13）", () => {
 
     const r = await post(app, { provider: "mock-provider", apiKey: KEY });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ status: "ready", provider: "mock-provider", checkedAt: expect.any(Number), detail: null });
+    expect(r.body).toEqual({ status: "ready", provider: "mock-provider", checkedAt: expect.any(Number), detail: null, checkedVia: "cli" });
     expect(r.text).not.toContain(KEY);
 
     const doc = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"));
@@ -163,5 +164,57 @@ describe("POST /api/auth/credentials（r10 任务 13）", () => {
       expect(r.body.error.code).toBe(code);
     }
     expect(existsSync(join(dir, "auth.json"))).toBe(false);
+  });
+
+  test("生产缺陷修复路径：CLI 恒 error（exit=2）+ baseUrl → HTTP 直验 200 → 200 ready 落盘不回滚", async () => {
+    const dir = makeAgentDir();
+    writeFakeCli(dir);
+    process.env.FAKE_AUTH_EXIT = "2"; // 伪 CLI 恒 exit 2（生产缺陷形态：CLI 子进程内 invalid）
+    process.env.FAKE_EXPECT_KEY = "";
+    const calls: Array<{ url: unknown; auth: unknown }> = [];
+    vi.stubGlobal("fetch", (url: unknown, init?: { headers?: Record<string, string> }) => {
+      calls.push({ url, auth: init?.headers?.Authorization });
+      return Promise.resolve(new Response('{"data":[]}', { status: 200 }));
+    });
+    const app = makeApp(dir);
+    try {
+      const r = await post(app, { provider: "mock-provider", apiKey: KEY, baseUrl: "https://api.example.com/v1" });
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ status: "ready", provider: "mock-provider", checkedVia: "http" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe("https://api.example.com/v1/models");
+      expect(calls[0].auth).toBe(`Bearer ${KEY}`);
+      expect(r.text).not.toContain(KEY);
+      // ready：auth.json + settings defaultProvider + models.json baseUrl 均落盘不回滚
+      const doc = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"));
+      expect(doc["mock-provider"]).toEqual({ key: KEY });
+      expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).defaultProvider).toBe("mock-provider");
+      expect(JSON.parse(readFileSync(join(dir, "models.json"), "utf8")).providers["mock-provider"].baseUrl).toBe("https://api.example.com/v1");
+    } finally {
+      delete process.env.FAKE_AUTH_EXIT;
+      delete process.env.FAKE_EXPECT_KEY;
+    }
+  });
+
+  test("HTTP 直验 401 → 422 not_configured + 回滚（无效 key 不落盘）", async () => {
+    const dir = makeAgentDir();
+    writeFakeCli(dir);
+    process.env.FAKE_AUTH_EXIT = "2";
+    process.env.FAKE_EXPECT_KEY = "";
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response("unauthorized", { status: 401 })));
+    const app = makeApp(dir);
+    try {
+      const r = await post(app, { provider: "mock-provider", apiKey: KEY, baseUrl: "https://api.example.com/v1" });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ status: "not_configured", checkedVia: "http" });
+      expect(r.body.detail).toContain("401");
+      expect(r.text).not.toContain(KEY);
+      expect(existsSync(join(dir, "auth.json"))).toBe(false);
+      expect(existsSync(join(dir, "models.json"))).toBe(false);
+      expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).defaultProvider).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_AUTH_EXIT;
+      delete process.env.FAKE_EXPECT_KEY;
+    }
   });
 });

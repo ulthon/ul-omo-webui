@@ -1257,12 +1257,24 @@ export const api = {
   async getAuthStatus(): Promise<AuthStatusResponse> {
     return request("/api/auth/status");
   },
+  /** 凭证列表（key 只含掩码，绝无完整 key；auth.json 缺失 → 空数组） */
+  async listAuthProviders(): Promise<AuthProvidersResponse> {
+    return request("/api/auth/providers");
+  },
+  /** 删除凭证（不存在 404） */
+  async deleteAuthProvider(provider: string): Promise<{ ok: boolean; name: string }> {
+    return request(`/api/auth/providers/${encodeURIComponent(provider)}`, { method: "DELETE" });
+  },
+  /** 指定 provider 检查（复用 CLI `auth check --provider`）；响应同三态，绝不含 key */
+  async checkAuthProvider(provider: string): Promise<AuthStatusResponse> {
+    return request("/api/auth/check", jsonInit("POST", { provider }));
+  },
   /** 粘贴凭证写入+连通检查（r10 任务 13）：服务端非 ready 已回滚；响应只含三态，绝不含 key。
    * 422 = 检查未通过（响应体是三态 AuthStatus 而非 error 形态），原样返回供前端展示失败原因。 */
-  async saveAuthCredential(provider: string, apiKey: string): Promise<AuthStatusResponse> {
+  async saveAuthCredential(provider: string, apiKey: string, baseUrl?: string): Promise<AuthStatusResponse> {
     let res: Response;
     try {
-      res = await fetch("/api/auth/credentials", jsonInit("POST", { provider, apiKey }));
+      res = await fetch("/api/auth/credentials", jsonInit("POST", { provider, apiKey, baseUrl }));
     } catch (err) {
       throw new ApiError(0, "network", err instanceof Error ? err.message : String(err));
     }
@@ -1468,4 +1480,17 @@ export interface AuthStatusResponse {
   provider: string | null;
   checkedAt: number;
   detail: string | null;
+}
+
+/** 凭证条目（GET /api/auth/providers）：key 只含掩码，绝无完整 key */
+export interface AuthProviderItem {
+  name: string;
+  type: string | null;
+  keyMask: string;
+  hasBaseUrl: boolean;
+}
+
+export interface AuthProvidersResponse {
+  items: AuthProviderItem[];
+  cliAvailable: boolean;
 }

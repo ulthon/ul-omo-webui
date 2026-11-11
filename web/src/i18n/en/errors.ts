@@ -11,6 +11,7 @@ export const errors = {
   compactTimeout: "Compaction is still running in the background; the context level refreshes automatically once it finishes",
   cursorInvalid: "Page cursor is no longer valid; return to the latest messages and retry",
   cliMissing: "omo CLI not found: credential testing is unavailable (install via the engine CLI)",
+  authProviderNotFound: "Credential not found; it may have been deleted, please refresh the list",
   sessionNotFound: "Session not found",
   sessionNotPersisted: "Session not persisted (empty session)",
   sessionReopenFailed: "Failed to reopen the engine session; try again shortly",

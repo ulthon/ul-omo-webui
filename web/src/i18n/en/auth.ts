@@ -1,4 +1,4 @@
-// auth domain strings (en): settings "Auth" section (r10 batch todo 13).
+// auth domain strings (en): settings "Auth" section (r10 batch todo 13 + providers list/delete/per-row check/baseUrl batch).
 // Key set locked to zh/auth.ts via the aggregator satisfies clause.
 export const auth = {
   heading: "Auth",
@@ -14,4 +14,18 @@ export const auth = {
   testOk: "Key verified and saved",
   testFailed: "Credential test failed",
   rejectNotConfigured: "The engine rejected this key (invalid or malformed)",
+  baseUrlLabel: "Base URL (optional)",
+  baseUrlPlaceholder: "https://api.example.com/v1",
+  baseUrlInvalid: "Base URL must be an http(s) address; leave empty to keep models.json unchanged",
+  listEmpty: "No saved credentials yet",
+  listTitle: "Saved credentials",
+  rowTest: "Test",
+  rowTesting: "Testing…",
+  rowUntested: "Untested",
+  rowReady: "Ready",
+  rowError: "Failed",
+  rowDelete: "Delete",
+  rowDeleteConfirm: "Confirm delete",
+  deleteOk: "Deleted",
+  deleteFailed: "Delete failed",
 } as const;
