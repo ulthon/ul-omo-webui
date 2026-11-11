@@ -13,8 +13,10 @@
  * - 就绪时序：冷启动可超单请求 30s deadline——先轮询 get_protocol_info 成功再 open_session
  *   （docs/verification/03 坑 1；超时只 reject pending，进程仍可用）。
  *
- * 会话模型（docs/verification/01 结论 4 / 05 P2-11）：单连接同一时刻驾驶一个活跃会话；
- * 引擎无跨进程排他锁（双驾驶会交错写同一 JSONL），单驱动纪律由上层强制。
+ * 会话模型（docs/verification/01 结论 4 / 05 P2-11）：单连接同一时刻驾驶一个活跃会话。
+ * 引擎侧排他语义（senpi 2026.11.6-2 起）：同一会话被另一活进程打开时引擎拒绝第二写者
+ * （CLI 无终端形态 exit 76），且 stop 后引擎 park 保留会话（不即时关闭）——残留进程
+ * 重开冲突由上层 isSessionReopenableError 归类处理。
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, statSync } from "node:fs"

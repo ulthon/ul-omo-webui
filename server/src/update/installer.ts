@@ -161,6 +161,12 @@ export async function installUpdate(
   if ((deps.platform ?? process.platform) !== "linux") {
     return { status: 501, code: "update_unsupported", message: "Windows 更新暂不支持，请在终端手动更新" };
   }
+  if (target === "engine") {
+    // 引擎通道显式拒绝（2026-11-11 engine-upgrade-5169 批 4a）：runInstall 一律装
+    // webuiPackageName()，target=engine 实际装的是 webui 包——历史假可用（版本号不匹配时
+    // 500）。引擎升级搭载 webui 发版分发，明确 501 指引用户更新 webui。
+    return { status: 501, code: "engine_upgrade_via_webui_release", message: "引擎升级搭载 webui 发版，请更新 webui" };
+  }
   if (installInFlight) {
     return { status: 409, code: "update_in_progress", message: "更新已在进行中" };
   }

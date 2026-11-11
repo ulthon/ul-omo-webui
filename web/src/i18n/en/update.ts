@@ -11,6 +11,7 @@ export const update = {
   retry: "Retry",
   checkFailed: "Update check failed",
   installFailed: "Update failed",
+  engineViaRelease: "Engine upgrades ship with the WebUI release; update the WebUI instead",
   lastInstallOk: "Last update succeeded ({version})",
   lastInstallFail: "Last update did not complete ({version}); you can retry",
 };

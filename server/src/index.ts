@@ -17,6 +17,7 @@ import { createAuth, resolvePassword } from "./auth/password";
 import { openMetaDb } from "./db/meta";
 import { openConfigStore } from "./conf/config-store";
 import { EngineProcessManager, resolveEnginePaths } from "./engine/process-manager";
+import { runEngineVersionCheck } from "./engine/version-check";
 import { ScheduleRunnerSupervisor } from "./engine/schedule-runner";
 import { createScheduleRoutes, createScheduleDeliverHandler, type ScheduleRouteDeps } from "./api/routes-schedule";
 import { abandonSessionJobs, scheduleDir } from "./api/schedule-store";
@@ -294,6 +295,10 @@ const scheduleDeps: ScheduleRouteDeps = {
   degraded: () => scheduleSupervisor?.degraded() ?? false,
   deliverToken: scheduleDeliverToken,
 };
+
+// 引擎版本分叉启动断言（engine-upgrade-5169 批 4b）：宿主包 vs spawn 侧 cli 上溯版本，
+// 不一致仅告警不阻断（resolveEnginePaths 命中模块级缓存，无额外开销）
+runEngineVersionCheck();
 
 // tips 用法提示（docs08 plan 任务 25）：引擎 CLI --list-tips 缓存路由（启动缓存+5min
 // TTL，失败用缓存）。引擎运行时缺失时回落 PATH 上的 omo；仍失败即空表，前端无 tip 区。

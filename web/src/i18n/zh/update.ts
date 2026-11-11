@@ -11,6 +11,7 @@ export const update = {
   retry: "重试",
   checkFailed: "检查更新失败",
   installFailed: "更新失败",
+  engineViaRelease: "引擎升级搭载 webui 发版，请更新 webui",
   lastInstallOk: "上次更新成功（{version}）",
   lastInstallFail: "上次更新未完成（{version}），可重试更新",
 };

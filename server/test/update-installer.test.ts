@@ -66,6 +66,26 @@ describe("installUpdate", () => {
     expect(deps.restartCmds).toHaveLength(0);
   });
 
+  test("引擎目标：501 engine_upgrade_via_webui_release，不执行 npm、不调度重启", async () => {
+    process.env.UL_OMO_WEBUI_UPDATE_REGISTRY = REGISTRY;
+    process.env.UL_OMO_WEBUI_UPDATE_PKG = "qa-webui-stub";
+    let npmCalled = false;
+    const deps = makeDeps({
+      runInstall: async () => {
+        npmCalled = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+    const result = await installUpdate(deps, "engine", "2026.11.10-2");
+    expect(result).toMatchObject({
+      status: 501,
+      code: "engine_upgrade_via_webui_release",
+      message: "引擎升级搭载 webui 发版，请更新 webui",
+    });
+    expect(npmCalled).toBe(false);
+    expect(deps.restartCmds).toHaveLength(0);
+  });
+
   test("npm 失败：500 + logTail，不调度重启，锁释放可重试", async () => {
     process.env.UL_OMO_WEBUI_UPDATE_REGISTRY = REGISTRY;
     process.env.UL_OMO_WEBUI_UPDATE_PKG = "qa-webui-stub";
