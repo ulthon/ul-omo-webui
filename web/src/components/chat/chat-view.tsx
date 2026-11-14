@@ -7,7 +7,7 @@
 // docs08-r6 任务 13：命令按钮行（command-bar）整文件退役，命令门链（commands.ts →
 // api.prompt）与 /compact 斜杠下拉静态段保留，按钮显隐不再参与功能面。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessagesSquare } from "lucide-react";
+import { ListTree, MessagesSquare } from "lucide-react";
 import { ApiError, api, setPromptGate } from "@/lib/api";
 import { readSessionUrl } from "@/lib/session-url";
 import { perfMark, perfMeasure, webPerfEnabled } from "@/lib/perf";
@@ -25,6 +25,7 @@ import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList, type MessageListHandle } from "./message-list";
 import { buildMessageItems, modelChangeBackfillOf, type ChatListItem } from "./message-items";
+import { SessionTreeOverlay } from "./session-tree-overlay";
 import { filterEntriesToPath, deriveSiblingPositions } from "./branch-path-data";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionHintBar } from "./question-hint-bar";
@@ -116,6 +117,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const [autoRetried, setAutoRetried] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // 分支树全屏层（session-branching todo 7）：消息流工具栏入口，流式/导航中禁用
+  const [treeOpen, setTreeOpen] = useState(false);
   const syncingUntilRef = useRef(0);
   const syncInFlightRef = useRef(false);
   // 消息列表命令句柄（r11 todo 6d）：待答提问提示条点击 → scrollToQuestion 定位流内卡
@@ -452,6 +455,22 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+          {/* 分支树入口（session-branching todo 7）：与叶切换同一忙碌锁口径
+              （branchSwitchDisabled = streaming+运行态并集+navigating），流式中禁用；
+              浮层点击可达叶走 switchLeaf 编排后关闭回消息流 */}
+          <div className="flex items-center">
+            <button
+              type="button"
+              data-testid="session-tree-button"
+              aria-label={t("chat.tree.open")}
+              title={t("chat.tree.open")}
+              disabled={branchSwitchDisabled}
+              onClick={() => setTreeOpen(true)}
+              className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ListTree className="size-4" aria-hidden />
+            </button>
+          </div>
           {/* 后台活动条（r10 todo 11）：会话页级新表面，双断点同构；无快照不渲染 */}
           <ActivityBar sessionId={sessionId} />
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
@@ -481,6 +500,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         </div>
       </div>
       {!isMobile && <StatusBar sessionId={sessionId} />}
+      {treeOpen && <SessionTreeOverlay sessionId={sessionId} onClose={() => setTreeOpen(false)} />}
     </div>
   );
 }

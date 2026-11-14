@@ -163,6 +163,27 @@ export interface SessionNavigateResult {
   editorText?: string;
 }
 
+/** 会话树轻量节点（session-branching todo 7）：GET /api/sessions/:id/tree 下发，
+ *  preview 服务端已截 160 字，全文绝不下发 */
+export interface SessionTreeNode {
+  id: string;
+  parentId: string | null;
+  role: string;
+  preview: string;
+  timestamp: string;
+  childCount: number;
+}
+
+/** GET /api/sessions/:id/tree 响应（轻量树 + 双口径现读叶 + 可选不可达集） */
+export interface SessionTreePayload {
+  sessionId: string;
+  source: "disk" | "engine";
+  nodes: SessionTreeNode[];
+  activeLeafId: string | null;
+  /** 被压缩剪除的节点（磁盘有而引擎树无）：不可点击，渲染「已压缩」提示 */
+  unreachableIds?: string[];
+}
+
 export interface SessionCreated {
   id: string;
   sessionPath: string;
@@ -669,6 +690,11 @@ export const api = {
    *  switchLeaf）经此消费；409 already_processing / stale_leaf 由编排按拒绝路径处理。 */
   async navigate(sessionId: string, body: SessionNavigateBody): Promise<SessionNavigateResult> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/navigate`, jsonInit("POST", body));
+  },
+  /** 会话树轻量读取（session-branching todo 7）：SessionTreeOverlay 挂载/重开时拉取，
+   *  压缩事件后树数据失效由浮层重拉；仅 GET，无写面。 */
+  async getSessionTree(sessionId: string): Promise<SessionTreePayload> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/tree`);
   },
   /** 模型归因轻量回读（首屏流量直做批）：服务端磁盘精筛只回 model_change 条目
    *  （KB 级），取代 backfill 旧 full=1 全量拉取（长会话单开多至几十 MB、95%

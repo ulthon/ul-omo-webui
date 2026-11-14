@@ -61,6 +61,19 @@ export const chat = {
     prevSibling: "上一分支",
     nextSibling: "下一分支",
   },
+  // session-tree-overlay.tsx 分支树全屏层（session-branching todo 7）
+  tree: {
+    open: "查看会话分支树",
+    title: "会话分支树",
+    close: "关闭分支树",
+    loading: "加载分支树…",
+    loadFailed: "分支树加载失败",
+    empty: "暂无可展示的分支",
+    emptyPreview: "（无文本内容）",
+    compacted: "已压缩",
+    currentLeaf: "当前分支",
+    branchCount: "{n} 个分支",
+  },
   // message-bubble.tsx CLI 恢复摘要静音行（2026-11-02）
   restoreDigest: {
     label: "CLI 恢复摘要",
@@ -253,6 +266,11 @@ export const chat = {
     copied: "已复制原文",
     copyFailed: "复制失败（浏览器未授权剪贴板）",
     retryBranchCreated: "已创建重试分支，正在重新生成…",
+    // session-branching todo 8：重试双路径（IS-8）与 user 消息分支菜单（IS-4/IS-5）
+    retryResent: "已在原会话重新发送，正在生成新分支…",
+    branchFromHere: "从此处分支",
+    editResend: "编辑重发",
+    branchNavigateFailed: "分支切换失败",
     retryFailed: "重试失败",
     menuLabel: "消息操作",
     copy: "复制原文",

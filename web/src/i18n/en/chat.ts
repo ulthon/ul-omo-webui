@@ -60,6 +60,19 @@ export const chat = {
     prevSibling: "Previous branch",
     nextSibling: "Next branch",
   },
+  // session-tree-overlay.tsx fullscreen branch tree (session-branching todo 7)
+  tree: {
+    open: "View session branch tree",
+    title: "Session branch tree",
+    close: "Close branch tree",
+    loading: "Loading branch tree…",
+    loadFailed: "Failed to load branch tree",
+    empty: "No branches to show",
+    emptyPreview: "(no text content)",
+    compacted: "Compacted",
+    currentLeaf: "Current branch",
+    branchCount: "{n} branches",
+  },
   // message-bubble.tsx CLI restore digest muted line (2026-11-02)
   restoreDigest: {
     label: "CLI restore digest",
@@ -252,6 +265,11 @@ export const chat = {
     copied: "Original text copied",
     copyFailed: "Copy failed (clipboard permission not granted)",
     retryBranchCreated: "Retry branch created; regenerating…",
+    // session-branching todo 8: retry dual path (IS-8) and user-message branch menu (IS-4/IS-5)
+    retryResent: "Resent in this session; generating a new branch…",
+    branchFromHere: "Branch from here",
+    editResend: "Edit and resend",
+    branchNavigateFailed: "Failed to switch branch",
     retryFailed: "Retry failed",
     menuLabel: "Message actions",
     copy: "Copy original text",
