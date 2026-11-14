@@ -585,8 +585,10 @@ export function readDefaultModel(agentDir: string): { provider: string; model: s
  * start/stop 为 no-op（生命周期归管理器），其余方法全部委托。
  * 整体 cast 原因：getEntries 的 SessionEntry 与 adapter 的 EngineEntry 是同一 wire
  * 形态（adapter 层已按此假设映射，见 senpi-adapter.ts 的默认工厂同样处理）。
+ * 导出供 server/test/engine-runtime-wrapper-surface.test.ts 做方法面回归闸
+ * （task-10 缺陷 A：fake 网关测不出包装层缺方法，必须对真实包装实例断言）。
  */
-function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
+export function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
   // adapter 的就绪探测直接取 client.send（senpi-adapter.ts start()），包装层必须暴露
   const rawSend = (client as unknown as { send: (m: unknown) => Promise<{ success: boolean }> }).send.bind(client);
   const wrapped = {
@@ -624,6 +626,19 @@ function wrapLifecycleClient(client: RpcClient): SenpiRpcClient {
     // 手动压缩（docs08-r5 任务 8）：包装层清单随 SenpiRpcClient 同步扩充（同上 QA 教训）
     compact: (customInstructions?: string) => client.compact(customInstructions),
     getMedia: (toolCallId: string, contentIndex: number) => client.getMedia(toolCallId, contentIndex),
+    // 树操作面（session-branching todo 2/3/9）：包装层清单随 SenpiRpcClient 同步扩充
+    // （同上 QA 教训；task-10 缺陷 A：漏此四处致真实引擎 /navigate /edit-assistant
+    // /continue 全 500 —— this.rpc(...).navigateTree is not a function，fake 网关测不出）。
+    // continueFromLeaf 的 expectedLeafId 引擎 wire 面暂不携带（SenpiRpcClient 接口注释
+    // 同源，SDK RpcClient 现为零参声明）：对方法本体做签名收窄后原样透传，
+    // 保持「引擎支持后零改动启用」语义（运行时多参引擎自然忽略）。
+    navigateTree: (targetId: string, options?: { intent?: "select" | "resume"; expectedLeafId?: string }) =>
+      client.navigateTree(targetId, options),
+    getTree: () => client.getTree(),
+    editAssistantMessage: (entryId: string, text: string, options?: { expectedLeafId?: string }) =>
+      client.editAssistantMessage(entryId, text, options),
+    continueFromLeaf: (options?: { expectedLeafId?: string }) =>
+      (client.continueFromLeaf as (o?: { expectedLeafId?: string }) => Promise<void>)(options),
   };
   return wrapped as unknown as SenpiRpcClient;
 }

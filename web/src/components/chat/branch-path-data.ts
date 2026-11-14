@@ -108,18 +108,57 @@ export interface SiblingPosition {
   nextId: string | null;
 }
 
-/** 兄弟序位派生（todo 5）：全量 entries 一次遍历建 childrenByParent（有效 parentId
- *  分组，无 parentId 的根条目同汇 "" 组——多根场景也有序位），同组 >=2 条时按
- *  entries 文件序记每位兄弟的 index/前后 id。消费侧（chat-view）每份 entries 只算
- *  一次往下传，绝不在每个气泡内重算（计划 F4 反 slop 线）。 */
+/** 气泡级可渲染判定（message-bubble.tsx isRenderableEntry 同口径）：type="message"
+ *  且 message.role 为字符串。‹n/m› 只渲染在 user/assistant 气泡下缘，兄弟序位的
+ *  合格成员也只认消息条目——引擎嫁接的 custom 簿记、tool 调用、model_change 时间线
+ *  条目既不出序位，也不计入兄弟计数（task-10 缺陷 B：若簿记入组，fork 位的兄弟数
+ *  会被嫁接链污染）。 */
+function isBubbleEntry(entry: WireEntry): boolean {
+  if (entry.type !== "message") return false;
+  const msg = entry.message as { role?: unknown } | undefined;
+  return typeof msg?.role === "string";
+}
+
+/** 生效父归一（task-10 缺陷 B）：引擎 navigate_tree(select) 在目标父位嫁接簿记条目
+ *  （custom 型、不可渲染），新分支的 user 消息挂嫁接链之下而非直连同 fork——实测
+ *  拓扑（QA 证据 §2）：u1.parent=fork（3 子）而 u2/u3.parent=各自嫁接节点（单子），
+ *  裸 parentId 分组时分支二/三各自单子，‹n/m› 不渲染。归一：沿 parentId 上溯穿过
+ *  不可渲染条目到最近的气泡级祖先（与 derivePathEntryIds 路径回溯穿过 tool/custom
+ *  不可见条目、routes-session 树端点按 parentId 链构建同构）；祖先不在场（未加载窗/
+ *  压缩剪除）以该悬空 parentId 为组键（同悬空键仍聚同组，与旧口径一致）；无父 →
+ *  "" 根组；visited 防环（坏数据收敛）。 */
+function effectiveParentId(entry: WireEntry, byId: Map<string, WireEntry>): string {
+  const visited = new Set<string>();
+  let cur = parentIdOf(entry);
+  while (cur !== null) {
+    if (visited.has(cur)) break; // 环守卫
+    visited.add(cur);
+    const parent = byId.get(cur);
+    if (parent === undefined) return cur; // 悬空：以该 id 为组键
+    if (isBubbleEntry(parent)) return cur;
+    cur = parentIdOf(parent);
+  }
+  return "";
+}
+
+/** 兄弟序位派生（todo 5；task-10 缺陷 B 归一）：全量 entries 一次遍历——仅气泡级
+ *  条目入组，组键为生效父（effectiveParentId 簿记压缩后的最近可渲染祖先），同组
+ *  >=2 条时按 entries 文件序记每位兄弟的 index/前后 id。消费侧（chat-view）每份
+ *  entries 只算一次往下传，绝不在每个气泡内重算（计划 F4 反 slop 线）。 */
 export function deriveSiblingPositions(
   entries: ReadonlyArray<WireEntry>,
 ): Map<string, SiblingPosition> {
+  const byId = new Map<string, WireEntry>();
+  for (const e of entries) {
+    const id = e.id;
+    if (typeof id === "string" && id !== "" && !byId.has(id)) byId.set(id, e);
+  }
   const childrenByParent = new Map<string, Array<WireEntry & { id: string }>>();
   for (const e of entries) {
     const id = e.id;
     if (typeof id !== "string" || id === "") continue;
-    const key = parentIdOf(e) ?? "";
+    if (!isBubbleEntry(e)) continue; // 簿记/工具/时间线条目不入兄弟组（也不出序位）
+    const key = effectiveParentId(e, byId);
     const arr = childrenByParent.get(key);
     if (arr) arr.push(e as WireEntry & { id: string });
     else childrenByParent.set(key, [e as WireEntry & { id: string }]);
