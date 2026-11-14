@@ -3,12 +3,13 @@
 // （非日志，误导性成功输出防线）；navigating 互斥拒二次切换与发送；409/前置门拒绝
 // 状态保持；expectedLeafId CAS 透传；replay 窗口整替推迟；迟到帧幂等；中途拆会话
 // 不复活槽。纯 store + 注入 fetcher（fetchEarlierPage 同款先例），无真定时器——
-// 推迟落地用订阅先行（switchLeaf 内部挂订阅）+ 手动关窗触发，微任务 flush 推进。
+// 推迟落地用订阅先行（switchLeaf 内部挂订阅）+ 手动关窗触发，微任务 flush 推进；
+// task-10 缺陷 F 批新增 fake timers 用例（校准/重试兜底超时、推迟上限强制收口）。
 // 环境说明同 messages-paging.test.ts：@ts-nocheck + 动态 import。
 // @ts-nocheck
 import { describe, expect, test, beforeEach, vi, afterEach } from "vitest";
 
-const { useMessagesStore } = await import("@/stores/messages");
+const { useMessagesStore, STALE_RETRY_FLOOR_MS, REPLAY_DEFER_MAX_MS } = await import("@/stores/messages");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
 const { turnInFlightOf, knownRunningOf } = await import("@/components/chat/hydration-lock");
@@ -613,6 +614,158 @@ describe("switchLeaf 编排（F19 全序）", () => {
       ["resume", "a2"],
       ["resume", "calib-9"],
     ]);
+  });
+
+  // ── task-10 缺陷 F：温态快 stale 校准重试链（校准零推迟 + 悬挂兜底 + 推迟上限）──
+
+  test("(18) 温态快 stale（F 回归探针形态）：校准取数即时执行不受 replay 窗口门控，重试带引擎新叶，终页整替落定", async () => {
+    seedSlot();
+    useMessagesStore.getState().beginReplayRecovery(); // 残窗在场：校准链不得被推迟（F 机制实证位）
+    const calls = [];
+    let fetchCount = 0;
+    let releaseRetry;
+    const CALIB_PAGE = [
+      msgEntry("u1", null),
+      msgEntry("a1", "u1", "assistant"),
+      msgEntry("u2", "a1"),
+      msgEntry("a2", "u2", "assistant"),
+      msgEntry("bk-graft", "a2", "assistant", "挂接簿记"),
+    ];
+    const p = useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: (body) => {
+        calls.push(`navigate:${body.expectedLeafId}`);
+        if (body.expectedLeafId === "a2") return Promise.reject(staleRejection("a2", "eng-leaf"));
+        return new Promise((res) => {
+          releaseRetry = () => res({ sessionId: SID, leafId: "bk-leaf" });
+        });
+      },
+      fetchFull: async () => {
+        fetchCount += 1;
+        calls.push(`fetchFull:${fetchCount}`);
+        return fetchCount === 1 ? pageOf(CALIB_PAGE, "eng-leaf") : pageOf(NEW_PAGE, "a2b");
+      },
+    });
+    await flush();
+    // 校准链已完整执行：fetchFull 即时调用（无 replay 门控）→ 校准整替已落地 → 重试已带引擎新叶出网
+    expect(calls).toEqual(["navigate:a2", "fetchFull:1", "navigate:eng-leaf"]);
+    expect(st().entries).toBe(CALIB_PAGE); // 校准整替即时落地（窗口未收口也不推迟）
+    expect(st().leafId).toBe("eng-leaf"); // CAS 指针重置到引擎真叶
+    expect(st().viewLeafId).toBe("u1"); // 视图叶保持（用户分支不动）
+    expect(st().navigating).toBe(true); // 布防保持至终页落地
+    releaseRetry();
+    const r = await p;
+    expect(r.ok).toBe(true);
+    expect(r.leafId).toBe("bk-leaf");
+    // ④ 终页整替在窗口内推迟（F19 语义保持）——关窗即落定
+    expect(st().entries).toBe(CALIB_PAGE); // 终页未落地
+    expect(st().navigating).toBe(true);
+    useMessagesStore.getState().endReplayRecovery();
+    const s = st();
+    expect(s.entries).toBe(NEW_PAGE);
+    expect(s.viewLeafId).toBe("bk-leaf");
+    expect(s.navigating).toBe(false);
+    expect(s.leafNavSeq).toBe(1);
+  });
+
+  test("(19) 整替推迟有界（缺陷 F）：残窗超 REPLAY_DEFER_MAX_MS 强制收口后照常落地，navigating 不永久布防", async () => {
+    vi.useFakeTimers();
+    try {
+      seedSlot();
+      useMessagesStore.getState().beginReplayRecovery();
+      const p = useMessagesStore.getState().switchLeaf(SID, "u2", {
+        navigate: async () => ({ sessionId: SID, leafId: "bk-leaf" }),
+        fetchFull: async () => pageOf(NEW_PAGE, "a2b"),
+      });
+      await flush();
+      await p;
+      // 推迟中：整替未落地、布防保持（F19 语义保持）
+      expect(st().entries.some((e) => e.id === "a2")).toBe(true);
+      expect(st().navigating).toBe(true);
+      expect(useMessagesStore.getState().replayRecovering).toBe(true);
+      // 超限：强制收口（与建连清残窗同口径）→ 订阅触发落地
+      await vi.advanceTimersByTimeAsync(REPLAY_DEFER_MAX_MS);
+      const s = st();
+      expect(useMessagesStore.getState().replayRecovering).toBe(false); // 残窗已收口
+      expect(s.entries).toBe(NEW_PAGE);
+      expect(s.viewLeafId).toBe("bk-leaf");
+      expect(s.navigating).toBe(false);
+      expect(s.leafNavSeq).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("(20) 校准取数悬挂兑底（缺陷 F）：fetchFull 永不落定 → STALE_RETRY_FLOOR_MS 超时 → errors.staleLeaf 卡 + 拆防收口", async () => {
+    vi.useFakeTimers();
+    try {
+      seedSlot();
+      const before = st();
+      const p = useMessagesStore.getState().switchLeaf(SID, "u2", {
+        navigate: (body) => {
+          if (body.expectedLeafId === "a2") return Promise.reject(staleRejection("a2", "eng-leaf"));
+          return Promise.reject(new Error("不应重试出网（校准悬挂时重试绝不该发出）"));
+        },
+        fetchFull: () => new Promise(() => {}), // 悬挂：永不落定
+      });
+      let settled;
+      p.then((res) => {
+        settled = res;
+      });
+      await vi.advanceTimersByTimeAsync(STALE_RETRY_FLOOR_MS);
+      await flush();
+      expect(settled).toEqual({ ok: false, reason: "rejected", errorCarded: true });
+      const s = st();
+      expect(s.navigating).toBe(false); // 拆防：切换面不锁死
+      expect(s.errors).toHaveLength(1); // 常驻错误卡（对齐 CLI 可回看，静默悬挂不可达）
+      expect(s.errors[0].text).toBe("会话分支位置已变化，请重试切换"); // errors.staleLeaf（zh 锁定）
+      expect(s.entries).toBe(before.entries); // 零整替（校准未落定）
+      expect(s.viewLeafId).toBe("u1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("(21) 重试 navigate 悬挂兑底（缺陷 F）：校准已落地但重试悬挂 → 超时 → errors.staleLeaf 卡 + 拆防；迟到回执不复活", async () => {
+    vi.useFakeTimers();
+    try {
+      seedSlot();
+      const CALIB_PAGE = [
+        msgEntry("u1", null),
+        msgEntry("a1", "u1", "assistant"),
+        msgEntry("u2", "a1"),
+        msgEntry("a2", "u2", "assistant"),
+        msgEntry("bk-graft", "a2", "assistant", "挂接簿记"),
+      ];
+      let releaseRetry;
+      const p = useMessagesStore.getState().switchLeaf(SID, "u2", {
+        navigate: (body) => {
+          if (body.expectedLeafId === "a2") return Promise.reject(staleRejection("a2", "eng-leaf"));
+          return new Promise((res) => {
+            releaseRetry = res;
+          });
+        },
+        fetchFull: async () => pageOf(CALIB_PAGE, "eng-leaf"),
+      });
+      let settled;
+      p.then((res) => {
+        settled = res;
+      });
+      await flush();
+      expect(st().leafId).toBe("eng-leaf"); // 校准已落地（CAS 指针重置）
+      await vi.advanceTimersByTimeAsync(STALE_RETRY_FLOOR_MS);
+      await flush();
+      expect(settled).toEqual({ ok: false, reason: "rejected", errorCarded: true });
+      expect(st().navigating).toBe(false);
+      expect(st().errors[0].text).toBe("会话分支位置已变化，请重试切换");
+      // 迟到回执（页面死亡后才返回的形态）：Promise 已定语义丢弃，不复活视图/布防
+      releaseRetry?.({ sessionId: SID, leafId: "bk-leaf" });
+      await flush();
+      expect(st().entries).toBe(CALIB_PAGE); // 仍为校准页（终页整替未发生）
+      expect(st().viewLeafId).toBe("u1");
+      expect(st().navigating).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -289,8 +289,10 @@ interface MessagesState {
    * 并集禁入口：streaming + 回合在途 turnInFlightOf——task-10 缺陷 D 收窄，waiting
    * 不再入锁；拒绝出轻提示 toast 不再静默）→ ②POST navigate（expectedLeafId 透传；
    * 409 stale_leaf 先全量整替校准再带新叶自动重试恰一次——task-10 缺陷 C，二次
-   * stale 交常驻错误卡）→ ③清流式态 → ④full=1 全量整替（refetchSession 通道，
-   * replay 窗口内推迟到窗口关闭后落地）→ ⑤回传 leafId 更新 viewLeafId →
+   * stale 交常驻错误卡；校准+重试链有界兜底 STALE_RETRY_FLOOR_MS，悬挂超时同
+   * errors.staleLeaf 卡收口——task-10 缺陷 F）→ ③清流式态 → ④full=1 全量整替
+   * （refetchSession 通道，replay 窗口内推迟到窗口关闭后落地，推迟上限
+   * REPLAY_DEFER_MAX_MS 残窗强制收口——缺陷 F）→ ⑤回传 leafId 更新 viewLeafId →
    * ⑥leafNavSeq 自增（usage 触发）→ ⑦navigating 互斥拒并发切换与发送。其余拒绝
    * 路径（前置门外的 409/网络）状态保持：不整替、不清流式态、viewLeafId 不动。 */
   switchLeaf(
@@ -391,6 +393,40 @@ const LOCAL_ENTRY_PREFIX = "local-";
  *  无 end 帧即自动回落。取值需覆盖同步 RPC 期限（server COMPACT_HTTP_TIMEOUT_MS 10s）
  *  + 引擎后台压缩完成的事件延迟（一次 LLM summarization 可达分钟级），取 90s。 */
 export const COMPACTING_FALLBACK_MS = 90_000;
+
+/** 409 校准重试链兜底时长（task-10 缺陷 F）：recalibrate 取数与重试 navigate 的有界
+ *  等待下限；超时（取数悬挂/引擎无响应等）拆防 + errors.staleLeaf 常驻错误卡——切换
+ *  链永不静默悬挂。取值覆盖引擎冷启挂起（QA 实测 19-27s），不误杀慢而合法的重试。 */
+export const STALE_RETRY_FLOOR_MS = 30_000;
+
+/** 切换整替的重放窗口推迟上限（task-10 缺陷 F）：honest 重放窗口亚秒收口（服务端
+ *  建连同步写完 replay_begin..done 桥帧）；超此限即残窗（连接死于重放中途且重连未
+ *  成），强制收口（endReplayRecovery，与 EventsClient 建连清残窗同口径）后整替照常
+ *  落地——用户驱动的导航不因残窗无限推迟（navigating 永久布防=切换面静默锁死）。 */
+export const REPLAY_DEFER_MAX_MS = 8_000;
+
+/** withStaleFloor 超时哨兵（task-10 缺陷 F）：区别于底层动作自身的错误 */
+const STALE_FLOOR_EXPIRED = Symbol("stale-retry-floor-expired");
+
+/** 有界等待（task-10 缺陷 F 兜底）：ms 内未落定即以哨兵拒绝（不中断底层动作，迟到
+ *  结果由 Promise 已定语义自然丢弃）；落定则透传结果/错误。 */
+function withStaleFloor<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(STALE_FLOOR_EXPIRED), ms);
+    // bun 单测环境不挂住进程退出（同 armCompactingFallback 模式）
+    (timer as unknown as { unref?: () => void }).unref?.();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
 
 /** 各会话压缩进行态兑底定时器（setCompacting(true) 布防，end/清理拆防） */
 const compactingTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1326,21 +1362,41 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           if (!stale.stale) throw err;
           // 校准（F19 全量整替）：重置本地叶指针（viewLeafId 不动——漂移只追加簿记
           // 条目，用户所在分支仍在树中）；缺陷 D 修复后 waiting 不再锁切换面，
-          // 挂接稳态的 runState 无需在此对冲
-          const pageLeaf = await get().recalibrateAfterStale(sessionId, { fetchFull: deps.fetchFull });
+          // 挂接稳态的 runState 无需在此对冲。缺陷 F 兜底：校准取数有界
+          // （STALE_RETRY_FLOOR_MS）——悬挂（磁盘读悬挂等）超时即 errors.staleLeaf
+          // 常驻错误卡 + 拒绝收口，静默悬挂不可达；迟到结果由 Promise 已定语义丢弃。
+          const pageLeaf = await withStaleFloor(
+            get().recalibrateAfterStale(sessionId, { fetchFull: deps.fetchFull }),
+            STALE_RETRY_FLOOR_MS,
+          ).catch((floorErr: unknown) => {
+            if (floorErr !== STALE_FLOOR_EXPIRED) throw floorErr; // 校准自身异常：原拒绝路径
+            get().pushError(sessionId, t("errors.staleLeaf"));
+            errorCarded = true;
+            throw err; // 以首拒错误收口（同源归因）
+          });
           if (pageLeaf === null) throw err; // 取数失败/槽拆：按拒绝路径收口
           try {
-            receipt = await deps.navigate({
-              entryId,
-              intent,
-              // CAS 首选引擎拒答自带的新叶（error.data.leafId，与引擎在记忆真叶同拍）
-              expectedLeafId: stale.leafId ?? pageLeaf,
-            });
+            receipt = await withStaleFloor(
+              deps.navigate({
+                entryId,
+                intent,
+                // CAS 首选引擎拒答自带的新叶（error.data.leafId，与引擎在记忆真叶同拍）
+                expectedLeafId: stale.leafId ?? pageLeaf,
+              }),
+              STALE_RETRY_FLOOR_MS,
+            );
           } catch (retryErr) {
-            // 二次 stale（他端持续推进/校准后仍漂移）：常驻错误卡（对齐 CLI 可回看；
-            // errorCarded 标记防调用方双推）
-            get().pushError(sessionId, apiErrorMessage(retryErr, "chat.messageActions.branchNavigateFailed"));
+            // 二次 stale（他端持续推进/校准后仍漂移）：常驻错误卡（对齐 CLI 可回看）；
+            // 重试悬挂超时：errors.staleLeaf 常驻错误卡（同悬挂纪律）；errorCarded
+            // 标记防调用方双推
+            get().pushError(
+              sessionId,
+              retryErr === STALE_FLOOR_EXPIRED
+                ? t("errors.staleLeaf")
+                : apiErrorMessage(retryErr, "chat.messageActions.branchNavigateFailed"),
+            );
             errorCarded = true;
+            if (retryErr === STALE_FLOOR_EXPIRED) throw err; // 以首拒错误收口（同源归因）
             throw retryErr;
           }
         }
@@ -1387,16 +1443,28 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           // 重放窗口内不整替（F19 ⑤「整替排在 replay_done 后」支）：订阅先行，窗口
           // 关闭（replay_done / 建连清残窗）后一次性落地；窗口期内会话被拆则放弃。
           // navigating 保持布防至落地——整替未发生前视图仍在旧叶，放行切换会撕裂。
+          // 缺陷 F：推迟有界（REPLAY_DEFER_MAX_MS）——honest 窗口亚秒收口，超限即
+          // 残窗（连接死于重放中途且重连未成），强制收口（与建连清残窗同口径）后由
+          // 订阅照常落地；navigating 不因残窗永久布防（切换面静默锁死）。
+          let landed = false;
           const unsub = useMessagesStore.subscribe((s) => {
             if (!s.bySession[sessionId]) {
+              landed = true;
               unsub();
               return;
             }
             if (!s.replayRecovering) {
+              landed = true;
               unsub();
               apply();
             }
           });
+          const deferTimer = setTimeout(() => {
+            if (landed) return; // 已落地/已放弃：不误伤其后新开的合法窗口
+            useMessagesStore.getState().endReplayRecovery(); // 残窗强制收口 → 订阅即触发落地
+          }, REPLAY_DEFER_MAX_MS);
+          // bun 单测环境不挂住进程退出（同 armCompactingFallback 模式）
+          (deferTimer as unknown as { unref?: () => void }).unref?.();
         } else {
           apply();
         }
