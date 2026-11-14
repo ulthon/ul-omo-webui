@@ -33,6 +33,8 @@ import {
   type EngineCommandInfo,
   type EngineCompactResult,
   type EngineModelInfo,
+  type EngineNavigateTreeInput,
+  type EngineNavigateTreeResult,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
   type EngineQuestionFrame,
@@ -40,6 +42,7 @@ import {
   type EngineQueueSnapshot,
   type EngineSessionSummary,
   type EngineThinkingLevel,
+  type EngineTreeNode,
   type EngineTurnSample,
   type EngineTurnSpeed,
   type EngineUsageStats,
@@ -189,6 +192,27 @@ export interface EngineGateway {
     entryId: string,
     position?: "before" | "at",
   ): Promise<{ id: string; sessionPath: string; durable: boolean; text: string }>;
+  /**
+   * 会话树读取（session-branching todo 3）：引擎 get_tree RPC（适配层封装见
+   * senpi-adapter getTree，todo 2）。路由层两用：会话文件缺席时的回退树源（会经
+   * ensureForSession 懒起引擎，forkSession 同链）；文件在而回合在途时的叶对账源
+   * （activeLeafId 引擎口径 + 压缩剪除 unreachableIds 比对）。可选面（compact 同例）：
+   * 真实注册表实现之；测试 fake 可省略（路由层降级 501 tree_unsupported）。
+   */
+  treeGet?(sessionId: string): Promise<{ tree: EngineTreeNode[]; leafId: string | null }>;
+  /**
+   * 树导航（navigate_tree RPC，适配层 navigateTree）：单驱动纪律——目标会话回合
+   * 进行中抛 ApiError(409, "already_processing")（forkSession 同款先例）；
+   * expectedLeafId 乐观锁原样透传，引擎拒 stale_leaf 时适配层映射后原样上抛。
+   * 可选面（同 treeGet）。
+   */
+  treeNavigate?(sessionId: string, input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult>;
+  /**
+   * 会话级在途探询（不触发 spawn）：该会话回合进行中 true；引擎未起/空闲 false。
+   * GET /tree activeLeafId 双口径判据（在途取引擎 RPC 叶，否则文件末条）。
+   * 可选面（同 treeGet）。
+   */
+  peekSessionRunning?(sessionId: string): Promise<boolean>;
   /**
    * 引擎就绪时返回**回合进行中**（webui 驱动的流式回合）会话路径列表（项目内全部
    * 会话引擎的并集，可多行——multi-session-parallel T3）；无就绪引擎返回 null
@@ -2266,6 +2290,29 @@ class ProjectRuntime {
     await this.openLane(bound.sessionPath, { forceOpen: true, durableHint: sessionId });
     return { id, sessionPath: forkPath, durable, text: typeof forked.text === "string" ? forked.text : "" };
   }
+
+  /** 会话树读取（session-branching todo 3）：引擎 get_tree RPC（适配层 getTree）。
+   *  文件缺席回退树源/在途叶对账两用；ensureForSession 懒起与 forkSession 同链。 */
+  async treeGet(sessionId: string): Promise<{ tree: EngineTreeNode[]; leafId: string | null }> {
+    const bound = await this.ensureForSession(sessionId);
+    return bound.adapter.getTree();
+  }
+
+  /** 树导航（navigate_tree）：单驱动纪律守卫（forkSession 409 already_processing
+   *  同款先例）；引擎侧业务拒绝（寻址/stale_leaf/流式互斥）由适配层映射后原样上抛。 */
+  async treeNavigate(sessionId: string, input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult> {
+    const bound = await this.ensureForSession(sessionId);
+    if (this.runningTurns.has(bound.sessionPath)) {
+      throw new ApiError(409, "already_processing", "该会话回合进行中，导航前请等待回合结束或 abort");
+    }
+    return bound.adapter.navigateTree(input);
+  }
+
+  /** 会话回合在途探询（不触发 spawn）：activeSessionPaths 并集判据（回合进行中口径）。 */
+  async sessionRunning(sessionPath: string): Promise<boolean> {
+    const paths = await this.activeSessionPaths();
+    return paths !== null && paths.includes(sessionPath);
+  }
 }
 
 /** 引擎网关：路由层唯一入口。按项目懒加载运行时，会话 id 全局反查。 */
@@ -2477,6 +2524,30 @@ export class EngineRuntimeRegistry implements EngineGateway {
     const rt = this.runtimes.get(project);
     if (!rt) return null;
     return rt.peekRunStates();
+  }
+
+  async treeGet(sessionId: string): Promise<{ tree: EngineTreeNode[]; leafId: string | null }> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.treeGet(sessionId);
+  }
+
+  async treeNavigate(sessionId: string, input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.treeNavigate(sessionId, input);
+  }
+
+  async peekSessionRunning(sessionId: string): Promise<boolean> {
+    // 不触发 spawn：sessionPath 反查（SDK 直读）+ 各项目运行时在途并集匹配；
+    // 会话不可解析（未落盘新会话/别名）按不在途处理
+    try {
+      const path = await this.sessionPath(sessionId);
+      for (const rt of this.runtimes.values()) {
+        if (await rt.sessionRunning(path)) return true;
+      }
+    } catch {
+      // 解析失败不炸树读取（activeLeafId 退回文件口径）
+    }
+    return false;
   }
 
   /** wire sessionId（routing handle）→ durable id（SSE 信封注入用）。

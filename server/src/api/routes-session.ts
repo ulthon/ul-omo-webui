@@ -5,9 +5,11 @@ import { lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync,
 import { join } from "node:path";
 import type {
   EngineEntry,
+  EngineNavigateTreeInput,
   EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
+  EngineTreeNode,
 } from "../adapter/engine-adapter";
 import { EngineAdapterError } from "../adapter/engine-adapter";
 import {
@@ -289,6 +291,93 @@ async function listProjectSessions(
     rows.push({ ...s, preview, lastActiveAt: lastActiveAt === "" ? null : lastActiveAt, active: activePaths ? activePaths.includes(s.path) : null, runState });
   }
   return rows;
+}
+
+// ── 会话树轻量节点（session-branching todo 3）──────────────────────────────
+// GET /api/sessions/:id/tree 的节点载荷：全文绝不下发，preview 160 字定死。
+
+/** 树节点预览上限（字符）：下发轻量树的硬边界（计划拍死，不下发全文） */
+export const TREE_PREVIEW_CHARS = 160;
+
+/** 轻量树节点（磁盘/引擎两源归一形态） */
+interface SessionTreeNode {
+  id: string;
+  parentId: string | null;
+  role: string;
+  preview: string;
+  timestamp: string;
+  childCount: number;
+}
+
+/** 条目角色口径：message 型取 message.role（user/assistant），其余型回退 entry.type */
+function entryRole(entry: EngineEntry): string {
+  if (entry.type === "message") {
+    const message = entry.message;
+    if (typeof message === "object" && message !== null) {
+      const role = (message as { role?: unknown }).role;
+      if (typeof role === "string" && role) return role;
+    }
+  }
+  return entry.type;
+}
+
+/** 条目文本预览：message 型拼接 content 文本 part 后按上限截断；其余型空串 */
+function entryPreview(entry: EngineEntry): string {
+  if (entry.type !== "message") return "";
+  const message = entry.message;
+  if (typeof message !== "object" || message === null) return "";
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  const text = content
+    .map((part) => {
+      if (typeof part === "object" && part !== null && (part as { type?: unknown }).type === "text") {
+        const t = (part as { text?: unknown }).text;
+        if (typeof t === "string" && t) return t;
+      }
+      return "";
+    })
+    .filter((s) => s.length > 0)
+    .join(" ");
+  return text.length > TREE_PREVIEW_CHARS ? text.slice(0, TREE_PREVIEW_CHARS) : text;
+}
+
+/** EngineEntry → 轻量节点（childCount 由调用方供：磁盘=parentId 计数，引擎=children 长度） */
+function toTreeNode(entry: EngineEntry, childCount: number): SessionTreeNode {
+  return {
+    id: entry.id,
+    parentId: typeof entry.parentId === "string" && entry.parentId ? entry.parentId : null,
+    role: entryRole(entry),
+    preview: entryPreview(entry),
+    timestamp: typeof entry.timestamp === "string" ? entry.timestamp : "",
+    childCount,
+  };
+}
+
+/** 引擎嵌套树 → 轻量节点平铺（DFS，文件序同构旧→新） */
+function flattenEngineTree(tree: EngineTreeNode[]): SessionTreeNode[] {
+  const out: SessionTreeNode[] = [];
+  const walk = (nodes: EngineTreeNode[]): void => {
+    for (const node of nodes) {
+      const children = Array.isArray(node.children) ? node.children : [];
+      out.push(toTreeNode(node.entry, children.length));
+      walk(children);
+    }
+  };
+  walk(tree);
+  return out;
+}
+
+/** 引擎树 id 集（unreachableIds 比对用） */
+function collectTreeNodeIds(tree: EngineTreeNode[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (nodes: EngineTreeNode[]): void => {
+    for (const node of nodes) {
+      if (typeof node.entry?.id === "string") ids.add(node.entry.id);
+      if (Array.isArray(node.children)) walk(node.children);
+    }
+  };
+  walk(tree);
+  return ids;
 }
 
 export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService }): Hono {
@@ -790,6 +879,108 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     return c.json({
       session: { id: forked.id, sessionPath: forked.sessionPath, durable: forked.durable },
       text: forked.text,
+    });
+  }));
+
+  // 会话树视图（session-branching todo 3）：磁盘优先轻量树（messages 三路径同款范式）。
+  // 文件在则 readAllEntries 直读构建节点树（引擎零参与不拉起），不在（未落盘新会话/
+  // 别名）回退引擎 getTree RPC。节点 {id,parentId,role,preview,timestamp,childCount}
+  // 全文绝不下发（preview 160 字定死）。activeLeafId 双口径：回合在途
+  // （peekSessionRunning）取引擎 get_tree 叶（流式中文件尾条滞后，引擎是真相源），
+  // 否则文件末条 id——每次请求现读不缓存；unreachableIds 仅拿到引擎树时回填
+  // （磁盘有而引擎树无 = 压缩剪除的不可达节点，树视图禁切依据）。
+  app.get("/api/sessions/:id/tree", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    // 磁盘优先（messages 同款）：sessionPath 在则 stat 探文件
+    const sessionPath = deps.engines.sessionPath ? await deps.engines.sessionPath(id) : null;
+    let stat: { size: number } | null = null;
+    if (sessionPath) {
+      try {
+        stat = statSync(sessionPath);
+      } catch {
+        stat = null;
+      }
+    }
+    if (sessionPath && stat && stat.size > 0) {
+      const all = await readAllEntries(sessionPath);
+      const childCounts = new Map<string, number>();
+      for (const entry of all.entries) {
+        const pid = typeof entry.parentId === "string" && entry.parentId ? entry.parentId : null;
+        if (pid) childCounts.set(pid, (childCounts.get(pid) ?? 0) + 1);
+      }
+      const nodes = all.entries.map((entry) => toTreeNode(entry, childCounts.get(entry.id) ?? 0));
+      let activeLeafId = all.leafId ?? all.entries.at(-1)?.id ?? null;
+      let unreachableIds: string[] | undefined;
+      const running = deps.engines.peekSessionRunning
+        ? await deps.engines.peekSessionRunning(id).catch(() => false)
+        : false;
+      if (running && deps.engines.treeGet) {
+        try {
+          const engineTree = await deps.engines.treeGet(id);
+          if (typeof engineTree.leafId === "string" && engineTree.leafId) activeLeafId = engineTree.leafId;
+          // 压缩剪除对账（GAP-6）：磁盘有而引擎树无 = 不可达节点
+          const engineIds = collectTreeNodeIds(engineTree.tree);
+          const unreachable = all.entries.filter((e) => !engineIds.has(e.id)).map((e) => e.id);
+          if (unreachable.length > 0) unreachableIds = unreachable;
+        } catch (err) {
+          // 引擎叶对账失败不炸树读取：activeLeafId 退回文件末条口径
+          console.error(`[tree] 引擎叶对账失败，activeLeafId 退回文件末条：`, err);
+        }
+      }
+      return c.json({
+        sessionId: id,
+        source: "disk",
+        nodes,
+        activeLeafId,
+        ...(unreachableIds ? { unreachableIds } : {}),
+      });
+    }
+    // 文件不在（未落盘新会话/别名）或网关无直读面：回退引擎 getTree RPC
+    if (!deps.engines.treeGet) {
+      throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树通道");
+    }
+    const engineTree = await deps.engines.treeGet(id);
+    return c.json({
+      sessionId: id,
+      source: "engine",
+      nodes: flattenEngineTree(engineTree.tree),
+      activeLeafId: engineTree.leafId ?? null,
+    });
+  }));
+
+  // 树导航（session-branching todo 3）：navigate_tree RPC（适配层 navigateTree）。
+  // 单驱动纪律 409 already_processing（forkSession 先例，运行时层映射）；
+  // expectedLeafId 乐观锁原样透传（引擎拒 stale_leaf 防跨端竞态）；
+  // select 语义 user 消息时回 editorText（编辑重发回填）。渲染过滤不在本端点做（前端事）。
+  app.post("/api/sessions/:id/navigate", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const body = await parseJsonBody(c);
+    if (typeof body.entryId !== "string" || !body.entryId) {
+      throw new ApiError(400, "invalid_entry", "entryId 必填");
+    }
+    const intent = body.intent;
+    if (intent !== "select" && intent !== "resume") {
+      throw new ApiError(400, "invalid_intent", "intent 仅支持 select|resume");
+    }
+    let expectedLeafId: string | undefined;
+    if (body.expectedLeafId !== undefined && body.expectedLeafId !== null) {
+      if (typeof body.expectedLeafId !== "string" || !body.expectedLeafId) {
+        throw new ApiError(400, "invalid_leaf", "expectedLeafId 需为非空字符串");
+      }
+      expectedLeafId = body.expectedLeafId;
+    }
+    if (!deps.engines.treeNavigate) {
+      throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树导航通道");
+    }
+    const result = await deps.engines.treeNavigate(id, {
+      entryId: body.entryId,
+      intent: intent as EngineNavigateTreeInput["intent"],
+      expectedLeafId,
+    });
+    return c.json({
+      sessionId: id,
+      leafId: result.leafId,
+      ...(typeof result.editorText === "string" ? { editorText: result.editorText } : {}),
     });
   }));
 
