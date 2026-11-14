@@ -4,6 +4,7 @@
 // 组件薄壳传真实实现、测试注入 fake 断言调用序列。
 import type { WireEntry, WireMessage } from "@/lib/api";
 import type { SwitchLeafDeps, SwitchLeafResult } from "@/stores/messages";
+import { staleLeafOf } from "@/stores/messages";
 import type { MessageKey } from "@/i18n/i18n";
 
 /** 气泡消息的 markdown 原文：text part 按序拼接（thinking/toolCall/image 等 part 不算原文） */
@@ -122,6 +123,12 @@ export interface MessageActionDeps {
     sessionId: string,
     deps: Pick<SwitchLeafDeps, "fetchFull">,
   ) => Promise<{ ok: boolean }>;
+  /** 409 stale_leaf 校准（task-10 缺陷 C，stores/messages recalibrateAfterStale）：
+   *  full 整替重置本地叶指针并返回新叶；取数失败/槽拆返回 null */
+  recalibrateAfterStale: (
+    sessionId: string,
+    deps: Pick<SwitchLeafDeps, "fetchFull">,
+  ) => Promise<string | null>;
   /** 动作失败文案（apiErrorMessage 包装：editFailed/editContinueFailed/copyContinueFailed
    *  作 fallbackKey；失败注入返回固定串即可） */
   actionFailedMessage: (err: unknown, fallbackKey: MessageKey) => string;
@@ -133,6 +140,15 @@ export interface MessageActionDeps {
     copyContinueCreated: string;
     editRefreshFailed: string;
   };
+}
+
+/** switchLeaf 拒绝分流（task-10 缺陷 D/C）：前置门拒绝（busy/blocked）store 内已出
+ *  轻提示 toast，此处不再重复推错误卡（双反馈防线）；引擎/网络拒绝（rejected）
+ *  走常驻错误卡（对齐 CLI 可回看），但 errorCarded=true（二次 stale store 已推过
+ *  stale_leaf 错误卡）时跳过，防双卡。 */
+function pushIfRejected(sessionId: string, res: SwitchLeafResult, deps: MessageActionDeps): void {
+  if (res.reason !== "rejected" || res.errorCarded === true) return;
+  deps.pushError(sessionId, deps.texts.branchNavigateFailed);
 }
 
 /**
@@ -150,7 +166,7 @@ export async function runBranchFromHere(
     fetchFull: deps.fetchFull,
   });
   if (!res.ok) {
-    deps.pushError(sessionId, deps.texts.branchNavigateFailed);
+    pushIfRejected(sessionId, res, deps);
     return;
   }
   if (res.editorText) await refillDraft(sessionId, res.editorText, deps);
@@ -173,7 +189,7 @@ export async function runEditResend(
     fetchFull: deps.fetchFull,
   });
   if (!res.ok) {
-    deps.pushError(sessionId, deps.texts.branchNavigateFailed);
+    pushIfRejected(sessionId, res, deps);
     return;
   }
   const text = res.editorText ?? localText;
@@ -205,7 +221,7 @@ export async function runRetry(
       fetchFull: deps.fetchFull,
     });
     if (!res.ok) {
-      deps.pushError(sessionId, deps.texts.branchNavigateFailed);
+      pushIfRejected(sessionId, res, deps);
       return;
     }
     try {
@@ -238,6 +254,9 @@ export async function runRetry(
  * 引擎自带 continue-from-leaf system-notice）→ refreshAfterContinue（todo 6 链刷新：
  * full 整替+回跟活叶+usage 沿）。编辑成功后链路不可回滚（引擎无逆操作）：continue
  * 失败仍刷新视图让副本可见（用户可稍后重发消息续跑），错误卡明示续跑未启动。
+ * task-10 缺陷 C：edit 的 CAS 跳同受冷引擎挂接簿记漂移波及——首拒 409 stale_leaf
+ * 时全量整替校准（recalibrateAfterStale）后带新叶自动重试恰一次（F19 同款，
+ * switchLeaf stale 重试镜像）；二次失败交既有错误卡路径。
  */
 export async function runEditReply(
   sessionId: string,
@@ -248,11 +267,7 @@ export async function runEditReply(
 ): Promise<void> {
   let editLeafId: string | null;
   try {
-    const edited = await deps.editAssistant(sessionId, {
-      entryId,
-      text,
-      ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
-    });
+    const edited = await editAssistantWithStaleRetry(sessionId, entryId, text, expectedLeafId, deps);
     editLeafId = edited.leafId;
   } catch (err) {
     deps.pushError(sessionId, deps.actionFailedMessage(err, "chat.messageActions.editFailed"));
@@ -275,6 +290,37 @@ export async function runEditReply(
   } else if (!refreshed.ok) {
     // 续跑已启动但视图未刷新（fetch 失败，状态保持）：错误卡明示，SSE/重开可自愈
     deps.pushError(sessionId, deps.texts.editRefreshFailed);
+  }
+}
+
+/** editAssistantMessage 带 409 stale_leaf 校准重试（task-10 缺陷 C，恰一次）：
+ *  非 stale 原样上抛；stale 先全量整替校准（新叶落库）再以引擎拒答自带新叶
+ *  （可能缺席→用校准页叶）重发一次，二次失败上抛交调用方错误卡。 */
+async function editAssistantWithStaleRetry(
+  sessionId: string,
+  entryId: string,
+  text: string,
+  expectedLeafId: string | undefined,
+  deps: MessageActionDeps,
+): Promise<{ outcome: string; leafId: string | null; entry?: WireEntry }> {
+  try {
+    return await deps.editAssistant(sessionId, {
+      entryId,
+      text,
+      ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
+    });
+  } catch (err) {
+    const stale = staleLeafOf(err);
+    if (!stale.stale) throw err;
+    const pageLeaf = await deps.recalibrateAfterStale(sessionId, { fetchFull: deps.fetchFull }).catch(
+      () => null,
+    );
+    if (pageLeaf === null) throw err; // 校准失败：按原拒绝上抛（错误卡文案取原错误）
+    return await deps.editAssistant(sessionId, {
+      entryId,
+      text,
+      expectedLeafId: stale.leafId ?? pageLeaf,
+    });
   }
 }
 

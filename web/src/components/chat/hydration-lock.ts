@@ -24,8 +24,9 @@ export function pickActive(
 
 /** 已知运行中：SSE 权威链 running/waiting，或未见 SSE 事件时探询 active=true
  * （与 session-item StatusDot 的 runStates > active 权威链同口径）——解锁后排队态可用。
- * 抽为纯函数供 hook 与叶切换前置门（F19 前置门，Composer queueAvailable 同一
- * 口径）共用，不各自重推导。 */
+ * 抽为纯函数供 hook 与 Composer 排队语义（r4：已知 running 解锁后照常排队）共用。
+ * 注意：waiting 在此算「运行中」仅为排队语义（挂接待输入仍可发消息转排队）；
+ * 分支切换锁已改用 turnInFlightOf（task-10 缺陷 D：waiting 不得锁切换面）。 */
 export function knownRunningOf(
   runState: string | undefined,
   probeActive: boolean | null,
@@ -33,7 +34,24 @@ export function knownRunningOf(
   return runState === "running" || runState === "waiting" || (runState === undefined && probeActive === true);
 }
 
-export function useHydrationRunLock(sessionId: string): { hydrationLocked: boolean; knownRunning: boolean } {
+/** 回合在途（task-10 缺陷 D 修复：真忙碌判据）：仅 SSE 权威 running，或未见
+ * SSE 事件时探询 active=true 兑底（服务端 active = 回合进行中口径，routes-session
+ * 列表注释）。waiting（引擎挂接待输入稳态/提问待答）不入锁：引擎挂接后事件流
+ * 收敛 waiting，若入锁切换面被永久禁用（QA attempt-2 实锤）；提问/权限等待期间
+ * 导航的真实互斥由引擎 409 already_processing 兑底，前端不抢答。与 switchLeaf
+ * 前置门（stores/messages）、chat-view 切换锁同一推导。 */
+export function turnInFlightOf(
+  runState: string | undefined,
+  probeActive: boolean | null,
+): boolean {
+  return runState === "running" || (runState === undefined && probeActive === true);
+}
+
+export function useHydrationRunLock(sessionId: string): {
+  hydrationLocked: boolean;
+  knownRunning: boolean;
+  turnInFlight: boolean;
+} {
   // 解锁闩（once）：权威信号（runStates 写入 / 探询 active）渲染期即时置位——React 允许
   // 同组件渲染期调整自身 state（立即重渲，不提交）；探询完成置位走异步 finally。
   // 解锁后不回锁，重挂载（刷新/切换会话）才重置。
@@ -61,7 +79,9 @@ export function useHydrationRunLock(sessionId: string): { hydrationLocked: boole
 
   return {
     hydrationLocked: !unlocked,
-    // 已知运行中（knownRunningOf 纯函数，见上）：与叶切换前置门同一推导
+    // 已知运行中（knownRunningOf 纯函数，见上）：排队语义（Composer queueAvailable）
     knownRunning: knownRunningOf(runState, probeActive),
+    // 回合在途（turnInFlightOf 纯函数，见上）：分支切换锁口径（task-10 缺陷 D）
+    turnInFlight: turnInFlightOf(runState, probeActive),
   };
 }

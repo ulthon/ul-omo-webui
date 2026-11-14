@@ -126,8 +126,11 @@ export const errors = {
   rebindConflict: "A session file with the same name already exists in this project",
   // Engine process admin (2026-11-04 batch, routes-engines stop)
   unknownProject: "Unknown project",
-  // Session tree gateway (session-branching todo 3, routes-session)
+  // Session tree gateway (session-branching todo 3, routes-session); staleLeaf joins
+  // with the task-10 defect C fix: engine CAS rejection 409, shown on the error card
+  // when recalibration+retry still finds the leaf drifted
   invalidIntent: "Invalid navigation intent (only select|resume are supported)",
   invalidLeaf: "Invalid leaf id (must be a non-empty string)",
   treeUnsupported: "The current gateway does not implement the session tree channel",
+  staleLeaf: "The branch position changed; please retry the switch",
 } as const;

@@ -98,10 +98,12 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   unknown_project: "errors.unknownProject",
   // 多会话并行批次（T5 定向停单会话引擎网关新增 1 码）
   unknown_session: "errors.unknownSession",
-  // 会话树网关（session-branching todo 3 routes-session 新增 3 码）
+  // 会话树网关（session-branching todo 3 routes-session 新增 3 码；task-10 缺陷 C 修复
+  // 再增 1 码：stale_leaf 引擎 CAS 拒绝 409，data.leafId 附引擎当前真叶供校准重试）
   invalid_intent: "errors.invalidIntent",
   invalid_leaf: "errors.invalidLeaf",
   tree_unsupported: "errors.treeUnsupported",
+  stale_leaf: "errors.staleLeaf",
   purge_requires_deleted: "errors.purgeRequiresDeleted",
   rebind_conflict: "errors.rebindConflict",
   schedule_limit: "errors.scheduleLimit",

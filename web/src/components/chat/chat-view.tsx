@@ -147,7 +147,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 运行态水合锁（docs08-r5 任务 6）：刷新/会话打开起默认按「进行中」阻塞，首个权威
   // 运行态信号（runStates 写入 / 探询 active / 探询完成仍 unknown）解锁，不回锁。
   // 已知 running 解锁后照常排队（r4 语义不回退）：queueAvailable 并入 knownRunning。
-  const { hydrationLocked, knownRunning } = useHydrationRunLock(sessionId);
+  const { hydrationLocked, knownRunning, turnInFlight } = useHydrationRunLock(sessionId);
 
   // / 命令门（todo 24）：注册到 api.prompt 链路，输入以 / 开头且命中不支持命令时
   // 抛 ApiError（composer 行内明示），阻止引擎把命令当普通消息交给模型（模型会伪造已执行）。
@@ -384,9 +384,9 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const siblingPositions = useMemo(() => deriveSiblingPositions(entries ?? []), [entries]);
   // 叶切换回调（session-branching todo 6）：接线 stores/messages 的 switchLeaf 编排——
   // F19 全序（前置门→navigate→清流式态→full 整替→viewLeafId→usage 触发→navigating
-  // 互斥）收口在 store；fetcher 注入（fetchEarlierPage 同款先例）。拒绝路径
-  // （blocked/busy/409）状态保持静默 no-op：可切换态下 pager 本就可用，偶发拒绝
-  // （他端并发 stale_leaf）由下次整替对齐，无 UI 反馈面。
+  // 互斥）收口在 store；fetcher 注入（fetchEarlierPage 同款先例）。拒绝反馈收口在
+  // store（task-10 缺陷 C/D）：前置门拒绝（busy/blocked）出轻提示 toast，引擎拒绝
+  // （409 二次 stale 等）出常驻错误卡，此处不再静默丢结果。
   const onSwitchSibling = useCallback(
     (entryId: string) => {
       void useMessagesStore.getState().switchLeaf(sessionId, entryId, {
@@ -396,11 +396,13 @@ function ChatSession({ sessionId }: { sessionId: string }) {
     },
     [sessionId],
   );
-  // 忙碌锁（todo 5，todo 6 口径注释更新）：与下方 Composer queueAvailable 同一并集——
-  // streaming + knownRunning（SSE 权威 running/waiting 或探询 active 兑底；hydration-lock
-  // knownRunningOf 单推导源，store 侧 switchLeaf 前置门同一推导，不另派判定）。
-  // 叶导航在途（navigating 布防）一并禁切（store 互斥位，见上）。
-  const branchSwitchLocked = streaming || knownRunning || runState === "running" || runState === "waiting";
+  // 切换锁（task-10 缺陷 D 收窄）：真忙碌才锁——streaming 或回合在途
+  //（turnInFlight：SSE 权威 running 或探询 active 兑底；waiting 是引擎挂接待输入稳态
+  // 不入锁，否则挂接后切换面被永久禁用）。‹n/m› pager 与树入口按钮同用
+  // branchSwitchDisabled；叶导航在途（navigating 布防）一并禁切（store 互斥位）。
+  // 排队可用（queueAvailable）维持旧并集（streaming + knownRunning：running/waiting
+  // 可排队，r4 语义不回退），不再与切换锁共用同一表达式。
+  const branchSwitchLocked = streaming || turnInFlight;
   const branchSwitchDisabled = branchSwitchLocked || navigating;
 
   const items = useMemo<ChatListItem[]>(
@@ -475,16 +477,17 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           <ActivityBar sessionId={sessionId} />
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
           <QueueBar sessionId={sessionId} />
-          {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传入处并入 runState
-              running/waiting 显式并集（knownRunning 虽已含，此处按计划定死保守并集，
-              中断口宁多勿少，防 hydration-lock 口径演进回归） */}
+          {/* 中断逃逸口（docs08-r6 任务 6 ①）：queueAvailable 传 streaming +
+              knownRunning（running/waiting 排队语义，r4 不回退；Composer 内部再并集
+              running/waiting/提问待答，中断口宁多勿少）。task-10 缺陷 D 起与切换锁
+              （branchSwitchLocked）分道：waiting 可排队但不再锁切换面 */}
           {/* 发消息即上浮（docs08 2026-10-23/24 批次任务 13 ①）：回执时刻本地乐观上浮
               （排队/直发两路回执都走 onSent）。取值从 store 现读 selectedId 兑底
               props sessionId——直发首条消息 adopt 换 key 后闭包里的旧 id 已不在
               byProject，浮到新 id 才不落空 */}
           <Composer
             sessionId={sessionId}
-            queueAvailable={branchSwitchLocked}
+            queueAvailable={streaming || knownRunning}
             permissionLocked={hasPendingPermission}
             hydrationLocked={hydrationLocked}
             onSent={() => {

@@ -129,8 +129,10 @@ export const errors = {
   rebindConflict: "当前项目已存在同名会话文件",
   // 引擎进程管理（2026-11-04 批次 routes-engines stop 新增码）
   unknownProject: "未注册的项目",
-  // 会话树网关（session-branching todo 3 routes-session 新增码）
+  // 会话树网关（session-branching todo 3 routes-session 新增码；staleLeaf 为 task-10
+  // 缺陷 C 修复新增码：引擎 CAS 拒绝 409，客户端校准重试后仍漂移时入错误卡）
   invalidIntent: "导航意图无效（仅支持 select|resume）",
   invalidLeaf: "叶标识无效（须为非空字符串）",
   treeUnsupported: "当前网关未实现会话树通道",
+  staleLeaf: "会话分支位置已变化，请重试切换",
 } as const;

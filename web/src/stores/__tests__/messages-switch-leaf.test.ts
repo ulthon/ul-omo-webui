@@ -11,6 +11,7 @@ import { describe, expect, test, beforeEach, vi, afterEach } from "vitest";
 const { useMessagesStore } = await import("@/stores/messages");
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
+const { turnInFlightOf, knownRunningOf } = await import("@/components/chat/hydration-lock");
 const { api, ApiError } = await import("@/lib/api");
 
 const SID = "t6-switch-leaf";
@@ -86,7 +87,7 @@ function happyDeps(calls) {
 beforeEach(() => {
   useMessagesStore.setState({ bySession: {}, replayRecovering: false });
   useSessionsStore.setState({ runStates: {}, byProject: {} });
-  useUiStore.setState({ modelsLoaded: false });
+  useUiStore.setState({ modelsLoaded: false, toasts: [] });
 });
 
 afterEach(() => {
@@ -303,7 +304,7 @@ describe("switchLeaf 编排（F19 全序）", () => {
     expect(st().entries).toBe(NEW_PAGE);
   });
 
-  test("(8) 前置门并集禁用：streaming/running/waiting/探询 active 兜底四态拒且零网络零布防", async () => {
+  test("(8) 前置门真忙碌禁用（task-10 缺陷 D 收窄）：streaming/running/探询 active 三态拒且零网络零布防+轻提示；waiting 不再拒（挂接待输入稳态放行）", async () => {
     seedSlot();
     const navigate = vi.fn(async () => ({ sessionId: SID, leafId: "bk-leaf" }));
     const deps = { navigate, fetchFull: async () => pageOf(NEW_PAGE, "a2b") };
@@ -319,18 +320,13 @@ describe("switchLeaf 编排（F19 全序）", () => {
     useMessagesStore.setState((s) => ({
       bySession: { ...s.bySession, [SID]: { ...s.bySession[SID], streaming: false } },
     }));
-    // runState running / waiting
+    // runState running（真忙碌：回合在途）
     useSessionsStore.setState({ runStates: { [SID]: "running" } });
     expect(await useMessagesStore.getState().switchLeaf(SID, "u1", deps)).toEqual({
       ok: false,
       reason: "blocked",
     });
-    useSessionsStore.setState({ runStates: { [SID]: "waiting" } });
-    expect(await useMessagesStore.getState().switchLeaf(SID, "u1", deps)).toEqual({
-      ok: false,
-      reason: "blocked",
-    });
-    // 未见 SSE 事件（runState 缺席）+ 探询 active=true 兜底（knownRunning 同口径）
+    // 未见 SSE 事件（runState 缺席）+ 探询 active=true 兜底（服务端 active=回合进行中口径）
     useSessionsStore.setState({ runStates: {}, byProject: { p: [{ id: SID, active: true }] } });
     expect(await useMessagesStore.getState().switchLeaf(SID, "u1", deps)).toEqual({
       ok: false,
@@ -338,11 +334,52 @@ describe("switchLeaf 编排（F19 全序）", () => {
     });
     expect(navigate).not.toHaveBeenCalled(); // 前置门在出网前拦截
     expect(st().navigating).toBe(false); // 未布防（互斥位不泄漏）
+    // 前置门拒绝轻提示（缺陷 D：不再静默 no-op）——三次拒绝三枚 toast，文案一致
+    const toasts = useUiStore.getState().toasts;
+    expect(toasts).toHaveLength(3);
+    expect(toasts.every((x) => x.text === "回合进行中，暂时无法切换分支")).toBe(true); // setup-locale 锁 zh
+    // waiting（引擎挂接待输入稳态）不再入锁：放行（缺陷 D 修复实证位）
+    useSessionsStore.setState({ runStates: { [SID]: "waiting" }, byProject: {} });
+    const rw = await useMessagesStore.getState().switchLeaf(SID, "u1", deps);
+    expect(rw.ok).toBe(true);
+    expect(navigate).toHaveBeenCalledTimes(1);
     // 对照：权威 idle（active=false）放行
     useSessionsStore.setState({ runStates: { [SID]: "idle" }, byProject: { p: [{ id: SID, active: false }] } });
     const r = await useMessagesStore.getState().switchLeaf(SID, "u1", deps);
     expect(r.ok).toBe(true);
-    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(2);
+  });
+
+  test("(8b) 判据纯函数锁口径（hydration-lock 单推导源）：turnInFlightOf 不认 waiting，knownRunningOf（排队语义）仍认", () => {
+    // 切换锁口径（缺陷 D）：waiting 不锁
+    expect(turnInFlightOf("waiting", null)).toBe(false);
+    expect(turnInFlightOf("running", null)).toBe(true);
+    expect(turnInFlightOf(undefined, true)).toBe(true); // 探询 active 兑底
+    expect(turnInFlightOf(undefined, false)).toBe(false);
+    expect(turnInFlightOf("idle", null)).toBe(false);
+    expect(turnInFlightOf("background_running", null)).toBe(false); // 后台任务非回合在途（引擎面可切）
+    // 排队语义口径（r4 不回退）：waiting 仍算已知运行（可发消息转排队）
+    expect(knownRunningOf("waiting", null)).toBe(true);
+    expect(knownRunningOf("running", null)).toBe(true);
+  });
+
+  test("(8c) navigating 互斥拒（busy）出轻提示（缺陷 D：不再静默）", async () => {
+    seedSlot();
+    let release;
+    const p1 = useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: () => new Promise((res) => { release = () => res({ sessionId: SID, leafId: "bk-leaf" }); }),
+      fetchFull: async () => pageOf(NEW_PAGE, "a2b"),
+    });
+    await flush();
+    await useMessagesStore.getState().switchLeaf(SID, "u1", {
+      navigate: async () => ({ sessionId: SID, leafId: "nope" }),
+      fetchFull: async () => pageOf([], null),
+    });
+    const toasts = useUiStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].text).toBe("分支切换进行中，请稍候");
+    release();
+    await p1;
   });
 
   test("(9) 迟到帧幂等（stale 态）：整替后旧分支 message_end 伪影追加无害，不删真相不复活流式", async () => {
@@ -423,6 +460,106 @@ describe("switchLeaf 编排（F19 全序）", () => {
     expect(after.leafNavSeq).toBe(0);
     expect(after.streaming).toBe(false); // ③ 已清（navigate 成功即清，F19 顺序）
     expect(after.streamingMessage).toBe(null);
+  });
+
+  // ── task-10 缺陷 C：409 stale_leaf 校准重试（冷引擎挂接簿记漂移叶）──
+
+  /** 引擎拒答同形（web ApiError 鸭子形状；leafId 缺席时模拟 edit 变体帧） */
+  function staleRejection(expected, now, withLeafId = true) {
+    const err = new ApiError(409, "stale_leaf", `Session leaf moved (expected ${expected}, now ${now})`);
+    if (withLeafId) err.data = { leafId: now };
+    return err;
+  }
+
+  test("(12) 首拒 stale（带引擎新叶）：校准整替后带新叶自动重试恰一次，链路照常收口", async () => {
+    seedSlot(); // leafId=a2、viewLeafId=u1（漂移前叶仍在树中，视图不动）
+    const calls = [];
+    let fetchCount = 0;
+    const CALIB_PAGE = [
+      msgEntry("u1", null),
+      msgEntry("a1", "u1", "assistant"),
+      msgEntry("u2", "a1"),
+      msgEntry("a2", "u2", "assistant"),
+      msgEntry("bk-graft", "a2", "assistant", "挂接簿记"), // 挂接追加的簿记尾条
+    ];
+    const r = await useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: async (body) => {
+        calls.push(["navigate", body.expectedLeafId]);
+        if (calls.length === 1) throw staleRejection("a2", "bk-graft");
+        return { sessionId: SID, leafId: "bk-leaf", editorText: "第二条" };
+      },
+      fetchFull: async () => {
+        fetchCount += 1;
+        calls.push(["fetchFull", fetchCount]);
+        return fetchCount === 1 ? pageOf(CALIB_PAGE, "bk-graft") : pageOf(NEW_PAGE, "a2b");
+      },
+    });
+    expect(r).toEqual({ ok: true, leafId: "bk-leaf", editorText: "第二条" });
+    // 顺序：navigate(陈旧叶 a2)→校准 fetch→navigate(引擎新叶)→终页 fetch（F19 链照常）
+    expect(calls).toEqual([
+      ["navigate", "a2"],
+      ["fetchFull", 1],
+      ["navigate", "bk-graft"],
+      ["fetchFull", 2],
+    ]);
+    const s = st();
+    expect(s.entries).toBe(NEW_PAGE); // 终页整替
+    expect(s.leafId).toBe("a2b");
+    expect(s.viewLeafId).toBe("bk-leaf");
+    expect(s.leafNavSeq).toBe(1);
+    expect(s.navigating).toBe(false);
+  });
+
+  test("(13) 首拒 stale 不带引擎新叶（edit 变体帧形态）：重试用校准页叶；CAS 指针已重置", async () => {
+    seedSlot();
+    const seen = [];
+    await useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: async (body) => {
+        seen.push(body.expectedLeafId);
+        if (seen.length === 1) throw staleRejection("a2", "calib-9", false);
+        return { sessionId: SID, leafId: "bk-leaf" };
+      },
+      fetchFull: async () => pageOf(NEW_PAGE, "calib-9"),
+    });
+    expect(seen).toEqual(["a2", "calib-9"]); // 重试 CAS 用校准页叶（data.leafId 缺席回退）
+  });
+
+  test("(14) 二次 stale：常驻错误卡（errors.staleLeaf 文案）+ rejected(errorCarded) + 拆防，CAS 指针保持校准值（状态一致）", async () => {
+    seedSlot();
+    const calls = [];
+    const r = await useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: async (body) => {
+        calls.push(body.expectedLeafId);
+        throw staleRejection(body.expectedLeafId ?? "a2", calls.length === 1 ? "calib-9" : "calib-10");
+      },
+      fetchFull: async () => pageOf(NEW_PAGE, "calib-9"),
+    });
+    expect(r).toEqual({ ok: false, reason: "rejected", errorCarded: true });
+    expect(calls).toEqual(["a2", "calib-9"]); // 重试恰一次
+    const s = st();
+    expect(s.navigating).toBe(false); // 拆防可再切
+    expect(s.leafId).toBe("calib-9"); // 校准已落地：下次切换不再带陈旧叶
+    expect(s.errors).toHaveLength(1); // 常驻错误卡（对齐 CLI 可回看）
+    expect(s.errors[0].text).toBe("会话分支位置已变化，请重试切换"); // errors.staleLeaf（zh 锁定）
+    expect(s.viewLeafId).toBe("u1"); // 视图叶保留（校准页仍在树中，漂移不动用户所在分支）
+  });
+
+  test("(15) 校准取数失败（fetchFull 抛错）：按原拒绝收口（rejected 无卡）不重试", async () => {
+    seedSlot();
+    let retries = 0;
+    const r = await useMessagesStore.getState().switchLeaf(SID, "u2", {
+      navigate: async () => {
+        retries += 1;
+        throw staleRejection("a2", "calib-9");
+      },
+      fetchFull: async () => {
+        throw new ApiError(500, "internal", "网络瞬断");
+      },
+    });
+    expect(r).toEqual({ ok: false, reason: "rejected" });
+    expect(retries).toBe(1); // 未重试
+    expect(st().errors).toHaveLength(0); // 无错误卡（上层可再触发）
+    expect(st().navigating).toBe(false);
   });
 });
 

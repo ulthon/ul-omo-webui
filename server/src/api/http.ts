@@ -6,12 +6,15 @@ import { EngineAdapterError } from "../adapter/engine-adapter";
 import { log } from "../obs/logger";
 import { newRid, withRid } from "../obs/req-context";
 
-/** 业务错误：REST 层按 status/code 直接序列化 */
+/** 业务错误：REST 层按 status/code 直接序列化；data 为可选结构化附加载荷
+ *  （如 409 stale_leaf 附带引擎当前 leafId），非空时随 error.data 下发供客户端
+ *  校准重试（task-10 缺陷 C；fs 先例 existing/current 走专用错误类，本字段走通用面） */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly data?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -37,7 +40,10 @@ function adapterErrorStatus(code: string): number {
 
 export function toErrorResponse(c: Context, err: unknown): Response {
   if (err instanceof ApiError) {
-    return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
+    return c.json(
+      { error: { code: err.code, message: err.message, ...(err.data ? { data: err.data } : {}) } },
+      err.status as 400,
+    );
   }
   if (err instanceof EngineAdapterError) {
     return c.json(

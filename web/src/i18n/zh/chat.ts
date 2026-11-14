@@ -61,7 +61,8 @@ export const chat = {
     prevSibling: "上一分支",
     nextSibling: "下一分支",
   },
-  // session-tree-overlay.tsx 分支树全屏层（session-branching todo 7）
+  // session-tree-overlay.tsx 分支树全屏层（session-branching todo 7）；switchBusy/
+  // switchBlocked 为 switchLeaf 前置门拒绝轻提示（task-10 缺陷 D：不再静默 no-op）
   tree: {
     open: "查看会话分支树",
     title: "会话分支树",
@@ -73,6 +74,8 @@ export const chat = {
     compacted: "已压缩",
     currentLeaf: "当前分支",
     branchCount: "{n} 个分支",
+    switchBusy: "分支切换进行中，请稍候",
+    switchBlocked: "回合进行中，暂时无法切换分支",
   },
   // message-bubble.tsx CLI 恢复摘要静音行（2026-11-02）
   restoreDigest: {

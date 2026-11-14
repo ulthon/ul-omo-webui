@@ -548,12 +548,16 @@ interface FsUploadErrorBody {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** 服务端结构化附加载荷（task-10 缺陷 C：409 stale_leaf 附带引擎当前 leafId，
+ *  供切叶/编辑编排校准重试；fs 先例 existing/current 走专用错误类，本字段走通用面） */
+  readonly data?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, data?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -617,19 +621,26 @@ async function request<T>(path: string, init?: RequestInit & RequestOptions): Pr
   if (!res.ok) {
     let code = "unknown";
     let message = `HTTP ${res.status}`;
+    let data: Record<string, unknown> | undefined;
     try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } | string };
+      const body = (await res.json()) as {
+        error?: { code?: string; message?: string; data?: unknown } | string;
+      };
       if (typeof body.error === "string") {
         code = body.error;
         message = body.error;
       } else if (body.error && typeof body.error === "object") {
         code = body.error.code ?? code;
         message = body.error.message ?? message;
+        // 结构化附加载荷（409 stale_leaf 的 leafId 等）：仅收普通对象，防数组/原始值混入
+        if (body.error.data && typeof body.error.data === "object" && !Array.isArray(body.error.data)) {
+          data = body.error.data as Record<string, unknown>;
+        }
       }
     } catch {
       // 非 JSON 错误体，保留 HTTP 状态默认文案
     }
-    throw new ApiError(res.status, code, message);
+    throw new ApiError(res.status, code, message, data);
   }
   return (await res.json()) as T;
 }

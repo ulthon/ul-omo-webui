@@ -381,6 +381,36 @@ function collectTreeNodeIds(tree: EngineTreeNode[]): Set<string> {
   return ids;
 }
 
+/** 树变更类引擎业务拒绝映射（session-branching task-10 缺陷 C）：引擎 CAS 拒绝
+ *  （RpcCommandError errorCode="stale_leaf"，todo-1 实调 §3.6 原文帧）从适配层/
+ *  网关原样上抛到此，旧状无映射落 500 internal。按 todo-1 §4 映射表归一为
+ *  409 stale_leaf + error.data.leafId（引擎当前真叶，todo-1 §3.6/§3.7 errorData 实证；
+ *  edit 变体帧可能不携带 errorData，回退从引擎原文消息 "Session leaf moved
+ *  (expected X, now Y)" 解析 now 位），供客户端全量整替校准后带新叶重试（F19）。
+ *  码锚定精确全等（isSessionReopenableError 同款纪律，禁子串宽匹配）；非 stale
+ *  原样返回 err 由既有 route 包装序列化。 */
+function mapTreeStaleLeafError(err: unknown): unknown {
+  const e = err as { errorCode?: unknown; code?: unknown; message?: unknown; errorData?: unknown } | null | undefined;
+  if (e && typeof e === "object" && [e.errorCode, e.code].some((v) => typeof v === "string" && v === "stale_leaf")) {
+    const message = typeof e.message === "string" ? e.message : "Session leaf moved";
+    const data =
+      e.errorData && typeof e.errorData === "object" && !Array.isArray(e.errorData)
+        ? (e.errorData as Record<string, unknown>)
+        : undefined;
+    let leafId = data?.leafId;
+    if (typeof leafId !== "string" || !leafId) {
+      // edit 变体帧无 errorData：回退解析引擎原文消息的 now 位
+      const m = /now ([^\s)]+)/.exec(message);
+      leafId = m?.[1];
+    }
+    if (typeof leafId === "string" && leafId) {
+      return new ApiError(409, "stale_leaf", message, { leafId });
+    }
+    return new ApiError(409, "stale_leaf", message);
+  }
+  return err;
+}
+
 export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService }): Hono {
   const app = new Hono();
   // 新建会话：模型优先级 body.model > 项目偏好（todo 6：项目文件合并读取，过渡态
@@ -972,11 +1002,17 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     if (!deps.engines.treeNavigate) {
       throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树导航通道");
     }
-    const result = await deps.engines.treeNavigate(id, {
-      entryId: body.entryId,
-      intent: intent as EngineNavigateTreeInput["intent"],
-      expectedLeafId,
-    });
+    let result: Awaited<ReturnType<NonNullable<typeof deps.engines.treeNavigate>>>;
+    try {
+      result = await deps.engines.treeNavigate(id, {
+        entryId: body.entryId,
+        intent: intent as EngineNavigateTreeInput["intent"],
+        expectedLeafId,
+      });
+    } catch (err) {
+      // 冷引擎首次切叶：挂接簿记漂移叶 → 引擎拒 stale_leaf（task-10 缺陷 C）
+      throw mapTreeStaleLeafError(err);
+    }
     return c.json({
       sessionId: id,
       leafId: result.leafId,
@@ -1008,11 +1044,17 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     if (!deps.engines.treeEditAssistant) {
       throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树编辑通道");
     }
-    const result = await deps.engines.treeEditAssistant(id, {
-      entryId: body.entryId,
-      text: body.text,
-      expectedLeafId,
-    } as EngineAssistantEditInput);
+    let result: Awaited<ReturnType<NonNullable<typeof deps.engines.treeEditAssistant>>>;
+    try {
+      result = await deps.engines.treeEditAssistant(id, {
+        entryId: body.entryId,
+        text: body.text,
+        expectedLeafId,
+      } as EngineAssistantEditInput);
+    } catch (err) {
+      // 同 navigate：CAS 跳（edit_assistant_message）同受冷引擎挂接漂移波及（缺陷 C）
+      throw mapTreeStaleLeafError(err);
+    }
     return c.json({
       sessionId: id,
       outcome: result.outcome,
@@ -1039,7 +1081,13 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     if (!deps.engines.treeContinueFromLeaf) {
       throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树续跑通道");
     }
-    await deps.engines.treeContinueFromLeaf(id, { expectedLeafId });
+    try {
+      await deps.engines.treeContinueFromLeaf(id, { expectedLeafId });
+    } catch (err) {
+      // 引擎 wire 面暂不携带 expectedLeafId（适配层注释），stale 当前不可达；映射
+      // 先行占位，引擎启用 CAS 后零改动受益（与 navigate/edit 同一映射）
+      throw mapTreeStaleLeafError(err);
+    }
     return c.json({ sessionId: id });
   }));
 

@@ -98,6 +98,7 @@ export function MessageActions({
     editAssistant: (sid, body) => api.editAssistantMessage(sid, body),
     continueFromLeaf: (sid, body) => api.continueFromLeaf(sid, body),
     refreshAfterContinue: (sid, d) => useMessagesStore.getState().refreshAfterContinue(sid, d),
+    recalibrateAfterStale: (sid, d) => useMessagesStore.getState().recalibrateAfterStale(sid, d),
     texts: {
       branchNavigateFailed: t("chat.messageActions.branchNavigateFailed"),
       retryResent: t("chat.messageActions.retryResent"),

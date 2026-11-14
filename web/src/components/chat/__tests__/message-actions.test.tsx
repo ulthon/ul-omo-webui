@@ -102,6 +102,7 @@ describe("messageMenuItems（能力位门控）", () => {
 /** fake deps：记录全部调用（误导性成功输出防线——断言调用序列本身，非日志） */
 function fakeDeps(overrides = {}) {
   const calls = [];
+  let editCalls = 0;
   const d = {
     switchLeaf: vi.fn(async (sid, eid) => {
       calls.push(`switchLeaf:${sid}:${eid}`);
@@ -114,6 +115,12 @@ function fakeDeps(overrides = {}) {
     fetchFull: vi.fn(async () => {
       calls.push("fetchFull");
       return { entries: [], leafId: "lf1", cursor: "lf1" };
+    }),
+    recalibrateAfterStale: vi.fn(async (sid) => {
+      calls.push(`recal:${sid}`);
+      if (overrides.recalibrateThrows) throw overrides.recalibrateThrows;
+      // 显式区分：recalibrateLeaf=null 是有效注入值（校准失败），不能被 ?? 吞掉
+      return overrides.recalibrateLeaf !== undefined ? overrides.recalibrateLeaf : "cal-leaf-1";
     }),
     putDraft: vi.fn(async (sid, content) => {
       calls.push(`putDraft:${sid}:${content}`);
@@ -145,7 +152,9 @@ function fakeDeps(overrides = {}) {
     retryFailedMessage: vi.fn((err) => `RETRY_FAILED(${String(err)})`),
     actionFailedMessage: vi.fn((err, key) => `FAILED(${key}):${String(err)}`),
     editAssistant: vi.fn(async (sid, body) => {
+      editCalls += 1;
       calls.push(`edit:${sid}:${body.entryId}:${body.text}:${body.expectedLeafId ?? "-"}`);
+      if (overrides.editThrowsOnce && editCalls === 1) throw overrides.editThrowsOnce;
       if (overrides.editThrows) throw overrides.editThrows;
       return overrides.editResult ?? { outcome: "edited", leafId: "edit-leaf-1" };
     }),
@@ -185,10 +194,13 @@ describe("runBranchFromHere（从此此处分支：不自动发送）", () => {
     expect(deps.prompt).not.toHaveBeenCalled();
   });
 
-  test("(11) switchLeaf 拒绝（409/前置门）：pushError，无回填无发送", async () => {
+  test("(11) switchLeaf 引擎拒绝（rejected）：pushError，无回填无发送；前置门拒绝（blocked/busy）由 store 轻提示承担不再双推（task-10 缺陷 D）", async () => {
     const { deps, calls } = fakeDeps({ switchLeafResult: { ok: false, reason: "rejected" } });
     await runBranchFromHere("s1", "u2", deps);
     expect(calls).toEqual(["switchLeaf:s1:u2", "pushError:BNF"]);
+    const gated = fakeDeps({ switchLeafResult: { ok: false, reason: "blocked" } });
+    await runBranchFromHere("s1", "u2", gated.deps);
+    expect(gated.calls).toEqual(["switchLeaf:s1:u2"]); // 无错误卡（toast 在真 store 内出）
   });
 });
 
@@ -206,11 +218,12 @@ describe("runEditResend（编辑重发：putDraft 单一回填源）", () => {
     expect(deps.putDraft).toHaveBeenCalledWith("s1", "回填文本");
   });
 
-  test("(14) switchLeaf 拒绝：状态保持（无 putDraft）+ pushError", async () => {
+  test("(14) switchLeaf 前置门拒绝：状态保持（无 putDraft 无错误卡——反馈由 store 轻提示承担，task-10 缺陷 D）", async () => {
     const { deps, calls } = fakeDeps({ switchLeafResult: { ok: false, reason: "blocked" } });
     await runEditResend("s1", "u2", "本地原文", deps);
-    expect(calls).toEqual(["switchLeaf:s1:u2", "pushError:BNF"]);
+    expect(calls).toEqual(["switchLeaf:s1:u2"]);
     expect(deps.putDraft).not.toHaveBeenCalled();
+    expect(deps.pushError).not.toHaveBeenCalled();
   });
 });
 
@@ -235,11 +248,12 @@ describe("runRetry（重试双路径，IS-8）", () => {
     expect(calls).toEqual(["switchLeaf:s1:u2", "prompt:s1:原问题", "pushError:RETRY_FAILED(Error: boom)"]);
   });
 
-  test("(18) 新路径 switchLeaf 拒绝：不发送，pushError 分支失败", async () => {
+  test("(18) 新路径 switchLeaf 前置门拒绝（busy）：不发送无错误卡（store 轻提示承担，task-10 缺陷 D）", async () => {
     const { deps, calls } = fakeDeps({ switchLeafResult: { ok: false, reason: "busy" } });
     await runRetry("s1", "u2", "原问题", true, deps);
-    expect(calls).toEqual(["switchLeaf:s1:u2", "pushError:BNF"]);
+    expect(calls).toEqual(["switchLeaf:s1:u2"]);
     expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.pushError).not.toHaveBeenCalled();
   });
 
   test("(19) treeNavigation=false：保留 fork 降级路径（fork before+切会话+重发），toast 沿旧路径", async () => {
@@ -325,6 +339,65 @@ describe("runEditReply（assistant 编辑续跑：edit→continue→refresh 序�
     const { deps, calls } = fakeDeps({ refreshResult: { ok: false } });
     await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
     expect(calls).toEqual(["edit:s1:a1:文本:leaf-cur", "continue:s1:edit-leaf-1", "refresh:s1", "pushError:ERF"]);
+  });
+
+  // task-10 缺陷 C：edit 的 CAS 跳同受冷引擎挂接簿记漂移波及——409 stale_leaf
+  // 校准重试恰一次（staleLeafOf 鸭子形状：status 409 + code stale_leaf + data.leafId）
+  function staleErr(leafId) {
+    return Object.assign(new Error(`Session leaf moved (expected leaf-cur, now ${leafId})`), {
+      status: 409,
+      code: "stale_leaf",
+      data: { leafId },
+    });
+  }
+
+  test("(28) edit 首拒 409 stale：校准（recal）后带引擎新叶重试恰一次，后续链照常", async () => {
+    const { deps, calls } = fakeDeps({ editThrowsOnce: staleErr("fresh-9") });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(calls).toEqual([
+      "edit:s1:a1:文本:leaf-cur", // 首发带本地叶（陈旧）→ 409 stale
+      "recal:s1", // 全量整替校准（recalibrateAfterStale）
+      "edit:s1:a1:文本:fresh-9", // 重试带引擎拒答回传的新叶（优先于校准页叶）
+      "continue:s1:edit-leaf-1",
+      "refresh:s1",
+    ]);
+    expect(deps.pushError).not.toHaveBeenCalled();
+  });
+
+  test("(29) 引擎未带 leafId（edit 变体帧）：用校准页叶重试；二次仍拒交错误卡不再重试", async () => {
+    const first = Object.assign(new Error("Session leaf moved (expected leaf-cur, now fresh-7)"), {
+      status: 409,
+      code: "stale_leaf",
+    });
+    const second = Object.assign(new Error("Session leaf moved (expected fresh-7, now fresh-8)"), {
+      status: 409,
+      code: "stale_leaf",
+      data: { leafId: "fresh-8" },
+    });
+    const { deps, calls } = fakeDeps({ editThrowsOnce: first, editThrows: second });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(calls).toEqual([
+      "edit:s1:a1:文本:leaf-cur",
+      "recal:s1",
+      "edit:s1:a1:文本:cal-leaf-1", // data.leafId 缺席 → 校准页叶
+      "pushError:FAILED(chat.messageActions.editFailed):Error: Session leaf moved (expected fresh-7, now fresh-8)",
+    ]);
+    expect(deps.continueFromLeaf).not.toHaveBeenCalled();
+    expect(deps.recalibrateAfterStale).toHaveBeenCalledTimes(1); // 重试恰一次
+  });
+
+  test("(30) 校准取数失败（recal 抛错/null）：按原拒绝上抛交错误卡，不重试", async () => {
+    const fail = fakeDeps({ editThrowsOnce: staleErr("fresh-9"), recalibrateThrows: new Error("network") });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", fail.deps);
+    expect(fail.calls).toEqual([
+      "edit:s1:a1:文本:leaf-cur",
+      "recal:s1",
+      "pushError:FAILED(chat.messageActions.editFailed):Error: Session leaf moved (expected leaf-cur, now fresh-9)",
+    ]);
+    const nullLeaf = fakeDeps({ editThrowsOnce: staleErr("fresh-9"), recalibrateLeaf: null });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", nullLeaf.deps);
+    expect(nullLeaf.deps.editAssistant).toHaveBeenCalledTimes(1);
+    expect(nullLeaf.deps.pushError).toHaveBeenCalledTimes(1);
   });
 });
 

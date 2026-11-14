@@ -45,7 +45,9 @@ const SERVER_SRC = path.resolve(WEB_ROOT, "..", "server", "src");
 // session_reopen_failed，合计 108。会话小夹心批次（session-polish 任务 1：prompt 等待超时映射）
 // 追加 1 码：prompt_timeout，合计 109。#33 多会话并行批次（项目根校验）追加 2 码：
 // invalid_project_root/project_not_writable（0.6.0 撤回根目录拦截后回落 110）。凭证列表/删除/逐测
-// 批次追加 1 码：auth_provider_not_found，合计 111。
+// （凭证列表/删除/逐测批次追加 1 码：auth_provider_not_found，合计 111。）
+// session-branching task-10 缺陷 C 修复追加 1 码：stale_leaf（引擎 CAS 拒绝 409 映射），
+// 合计 116。
 const SCANNED_CODES = [
   "already_compacted",
   "already_processing",
@@ -151,6 +153,7 @@ const SCANNED_CODES = [
   "session_not_persisted",
   "session_reopen_failed",
   "snippet_conflict",
+  "stale_leaf",
   "tag_conflict",
   "tag_mount_conflict",
   "target_exists",
@@ -207,12 +210,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（115 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids；session-branching todo 3 +invalid_intent/invalid_leaf/tree_unsupported）", () => {
+  test("映射恰好覆盖 server 扫描集（116 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids；session-branching todo 3 +invalid_intent/invalid_leaf/tree_unsupported；task-10 缺陷 C +stale_leaf）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(115);
+    expect(scanned).toHaveLength(116);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(115);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(116);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

@@ -18,9 +18,11 @@ import {
   type StreamErrorItem,
 } from "@/components/chat/message-items";
 import { advanceLeaf, lastEntryId } from "@/components/chat/branch-path-data";
-import { knownRunningOf, pickActive } from "@/components/chat/hydration-lock";
+import { pickActive, turnInFlightOf } from "@/components/chat/hydration-lock";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
+import { t } from "@/i18n/i18n";
+import { apiErrorMessage } from "@/i18n/errors";
 
 /** 生效模型水合（docs08 2026-10-22 批次任务 27a）：载入窗含 model_change 条目时把最后
  *  一条写会话生效模型——刷新/打开会话后 appliedModels 不再是未知态（待生效徽标误报
@@ -148,10 +150,26 @@ export interface SwitchLeafDeps {
   fetchFull: () => Promise<MessagesPage>;
 }
 
+/** 409 stale_leaf 拒绝识别（session-branching task-10 缺陷 C）：web ApiError 鸭子
+ *  形状（status 409 + code stale_leaf；不 import lib/api，保持本模块注入解耦纪律）。
+ *  命中时附带回传引擎当前叶（error.data.leafId，服务端路由层透传，可能缺席——
+ *  服务端已从引擎 errorData/原文消息归一，缺席即引擎未给）。 */
+export function staleLeafOf(err: unknown): { stale: boolean; leafId: string | null } {
+  const e = err as { status?: unknown; code?: unknown; data?: { leafId?: unknown } | undefined } | null | undefined;
+  if (!e || typeof e !== "object" || e.status !== 409 || e.code !== "stale_leaf") {
+    return { stale: false, leafId: null };
+  }
+  const leafId = e.data?.leafId;
+  return { stale: true, leafId: typeof leafId === "string" && leafId !== "" ? leafId : null };
+}
+
 export interface SwitchLeafResult {
   ok: boolean;
-  /** busy=导航已在途（⑦互斥）；blocked=前置门拒绝（F19 并集）；rejected=引擎/网络拒绝（409 等） */
+  /** busy=导航已在途（⑦互斥）；blocked=前置门拒绝（真忙碌并集）；rejected=引擎/网络拒绝（409 等） */
   reason?: "busy" | "blocked" | "rejected";
+  /** true=store 已推过常驻错误卡（二次 stale 路径，task-10 缺陷 C）：调用方
+   *（message-actions-data pushIfRejected）不得再推，防双卡 */
+  errorCarded?: boolean;
   /** ok=true 时回传导航落定叶（回执 leafId，唯一真相） */
   leafId?: string;
   /** ok=true 且 select 命中 user 消息时的编辑回填文本（todo 8 从此此处分支/编辑重发
@@ -267,7 +285,25 @@ interface MessagesState {
    * 关闭后落地）→ ⑤回传 leafId 更新 viewLeafId → ⑥leafNavSeq 自增（usage 触发）→
    * ⑦navigating 互斥拒并发切换与发送。拒绝路径（前置门/409）状态保持：不整替、
    * 不清流式态、viewLeafId 不动。 */
+  /** 叶切换编排（session-branching todo 6，F19 顺序契约定死）：①前置门（真忙碌
+   * 并集禁入口：streaming + 回合在途 turnInFlightOf——task-10 缺陷 D 收窄，waiting
+   * 不再入锁；拒绝出轻提示 toast 不再静默）→ ②POST navigate（expectedLeafId 透传；
+   * 409 stale_leaf 先全量整替校准再带新叶自动重试恰一次——task-10 缺陷 C，二次
+   * stale 交常驻错误卡）→ ③清流式态 → ④full=1 全量整替（refetchSession 通道，
+   * replay 窗口内推迟到窗口关闭后落地）→ ⑤回传 leafId 更新 viewLeafId →
+   * ⑥leafNavSeq 自增（usage 触发）→ ⑦navigating 互斥拒并发切换与发送。其余拒绝
+   * 路径（前置门外的 409/网络）状态保持：不整替、不清流式态、viewLeafId 不动。 */
   switchLeaf(sessionId: string, entryId: string, deps: SwitchLeafDeps): Promise<SwitchLeafResult>;
+  /** 409 stale_leaf 校准（session-branching task-10 缺陷 C，F19「全量整替校准」落位）：
+   *  full=1 全量整替把本地叶指针重置到文件/引擎当前真值（冷引擎挂接簿记漂移叶后
+   *  的一切 CAS 后续以新叶续）。视图叶不动（setEntries keepView 语义天然成立：漂移
+   *  只追加簿记条目，用户所在分支仍在树中）。返回新叶 id；取数失败/槽拆/空叶返回
+   *  null（调用方按拒绝路径收口）。switchLeaf 的 stale 重试与 editAssistantMessage
+   *  CAS 跳（message-actions-data runEditReply）共用本编排。 */
+  recalibrateAfterStale(
+    sessionId: string,
+    deps: Pick<SwitchLeafDeps, "fetchFull">,
+  ): Promise<string | null>;
   /** assistant 编辑续跑后的刷新编排（session-branching todo 9）：edit 已把引擎叶换到
    *  副本、continue 已开启真实回合（F12 两段链），故不设前置门/不出 navigate/不清
    *  流式态（迟到流式帧是合法的活回合，非旧叶残像）——只做 F19 链的④⑤⑥子集：
@@ -1237,17 +1273,24 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
 
     switchLeaf: async (sessionId, entryId, deps) => {
       const cur = get().bySession[sessionId];
-      // ⑦ navigating 互斥：并发切换即拒（UI 禁用之外的状态机兑底）
-      if (cur?.navigating) return { ok: false, reason: "busy" };
-      // ① 前置门（F19）：与 chat-view Composer queueAvailable 同一口径（streaming +
-      // knownRunningOf：SSE 权威 running/waiting 或探询 active 兑底；queued 并集由
-      // queueAvailable 语义覆盖——可排队即不可切）。勿依赖引擎报错做 UX。
+      // ⑦ navigating 互斥：并发切换即拒（UI 禁用之外的状态机兑底）；拒绝出轻提示
+      //（task-10 缺陷 D：前置门拒绝不再静默 no-op；toast 先例 event-dispatch notify）
+      if (cur?.navigating) {
+        useUiStore.getState().showToast(t("chat.tree.switchBusy"));
+        return { ok: false, reason: "busy" };
+      }
+      // ① 前置门（F19 + task-10 缺陷 D 收窄）：真忙碌才拒——streaming 或回合在途
+      //（turnInFlightOf：SSE 权威 running 或探询 active 兑底）。waiting（引擎挂接
+      // 待输入稳态/提问待答）不再入锁：挂接稳态即 waiting，入锁会永久禁用切换面；
+      // 提问/权限等待期间导航的真实互斥由引擎 409 already_processing 兑底。拒绝出
+      // 轻提示（勿依赖引擎报错做 UX）。
       const sessions = useSessionsStore.getState();
       if (
         !cur ||
         cur.streaming ||
-        knownRunningOf(sessions.runStates[sessionId], pickActive(sessions, sessionId))
+        turnInFlightOf(sessions.runStates[sessionId], pickActive(sessions, sessionId))
       ) {
+        useUiStore.getState().showToast(t("chat.tree.switchBlocked"));
         return { ok: false, reason: "blocked" };
       }
       // 布防先于出网：导航在途即拒并发发送（api.prompt 同读此位）与二次切换
@@ -1256,13 +1299,42 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         if (!slot) return s;
         return { bySession: { ...s.bySession, [sessionId]: { ...slot, navigating: true } } };
       });
+      // 二次 stale 已推错误卡的标记（拒绝回执携带，防调用方双推）
+      let errorCarded = false;
       try {
-        // ② POST navigate（F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒 stale_leaf）
-        const receipt = await deps.navigate({
-          entryId,
-          intent: "select",
-          expectedLeafId: cur.leafId ?? undefined,
-        });
+        // ② POST navigate（F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒
+        // stale_leaf；task-10 缺陷 C：冷引擎挂接簿记漂移叶首切必 stale——409 时
+        // 全量整替校准后带新叶自动重试恰一次，二次 stale 交常驻错误卡收口）
+        let receipt: LeafNavigateReceipt;
+        try {
+          receipt = await deps.navigate({
+            entryId,
+            intent: "select",
+            expectedLeafId: cur.leafId ?? undefined,
+          });
+        } catch (err) {
+          const stale = staleLeafOf(err);
+          if (!stale.stale) throw err;
+          // 校准（F19 全量整替）：重置本地叶指针（viewLeafId 不动——漂移只追加簿记
+          // 条目，用户所在分支仍在树中）；缺陷 D 修复后 waiting 不再锁切换面，
+          // 挂接稳态的 runState 无需在此对冲
+          const pageLeaf = await get().recalibrateAfterStale(sessionId, { fetchFull: deps.fetchFull });
+          if (pageLeaf === null) throw err; // 取数失败/槽拆：按拒绝路径收口
+          try {
+            receipt = await deps.navigate({
+              entryId,
+              intent: "select",
+              // CAS 首选引擎拒答自带的新叶（error.data.leafId，与引擎在记忆真叶同拍）
+              expectedLeafId: stale.leafId ?? pageLeaf,
+            });
+          } catch (retryErr) {
+            // 二次 stale（他端持续推进/校准后仍漂移）：常驻错误卡（对齐 CLI 可回看；
+            // errorCarded 标记防调用方双推）
+            get().pushError(sessionId, apiErrorMessage(retryErr, "chat.messageActions.branchNavigateFailed"));
+            errorCarded = true;
+            throw retryErr;
+          }
+        }
         // ③ 清本会话流式态（防迟到 message_end 把半截内容定格进旧视图）
         get().clearStreamingForNavigation(sessionId);
         // ④ full=1 全量整替（refetchSession 通道同款：full 拉取 + setEntries + 槽在位
@@ -1321,8 +1393,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         }
         return { ok: true, leafId: receipt.leafId, editorText: receipt.editorText };
       } catch (err) {
-        // 拒绝路径（409 already_processing / stale_leaf / 网络等）：状态保持——不整替、
-        // 不清流式态、viewLeafId 不动，仅拆防回到可切换态
+        // 拒绝路径（前置门已前置出网拦；此为引擎/网络拒绝：409 already_processing /
+        // stale 二次重试失败 / 网络等）：状态保持——不整替、不清流式态、viewLeafId
+        // 不动（stale 首拒的校准整替已在重试前落地，属 F19 校准而非本路径），仅拆防
+        // 回到可切换态
         set((s) => {
           const slot = s.bySession[sessionId];
           if (!slot) return s;
@@ -1332,8 +1406,29 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           sessionId,
           err: err instanceof Error ? err.message : String(err),
         });
-        return { ok: false, reason: "rejected" };
+        return { ok: false, reason: "rejected", ...(errorCarded ? { errorCarded: true } : {}) };
       }
+    },
+
+    recalibrateAfterStale: async (sessionId, deps) => {
+      // 409 stale_leaf 校准（task-10 缺陷 C，F19 全量整替）：取数失败/槽拆/空叶
+      // 一律 null（调用方按拒绝路径收口，不在此推错误面——反馈由上层编排统一）
+      let page: MessagesPage;
+      try {
+        page = await deps.fetchFull();
+      } catch {
+        return null;
+      }
+      const fresh = typeof page.leafId === "string" && page.leafId !== "" ? page.leafId : null;
+      if (fresh === null) return null;
+      if (!get().bySession[sessionId]) return null; // 中途拆会话：不复活槽
+      // 整替落位（setEntries keepView 语义：显式视图叶仍在树中则保留——漂移只追加
+      // 簿记条目，用户所在分支不动；CAS 指针 leafId 随页重置到当前真值）
+      get().setEntries(sessionId, page.entries, page.cursor, fresh, {
+        hasMore: page.hasMore ?? false,
+        oldestId: page.oldestId ?? null,
+      });
+      return fresh;
     },
 
     refreshAfterContinue: async (sessionId, deps) => {

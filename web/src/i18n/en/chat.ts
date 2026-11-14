@@ -60,7 +60,9 @@ export const chat = {
     prevSibling: "Previous branch",
     nextSibling: "Next branch",
   },
-  // session-tree-overlay.tsx fullscreen branch tree (session-branching todo 7)
+  // session-tree-overlay.tsx fullscreen branch tree (session-branching todo 7);
+  // switchBusy/switchBlocked are the switchLeaf precondition-gate rejection toasts
+  // (task-10 defect D: no more silent no-op)
   tree: {
     open: "View session branch tree",
     title: "Session branch tree",
@@ -72,6 +74,8 @@ export const chat = {
     compacted: "Compacted",
     currentLeaf: "Current branch",
     branchCount: "{n} branches",
+    switchBusy: "Branch switch in progress, please wait",
+    switchBlocked: "A turn is running; branch switching is temporarily unavailable",
   },
   // message-bubble.tsx CLI restore digest muted line (2026-11-02)
   restoreDigest: {

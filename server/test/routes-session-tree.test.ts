@@ -7,9 +7,11 @@
  *   引擎叶对账失败退回文件末条（stale_state 兑底）
  * - 文件不在回退引擎 getTree RPC（嵌套树平铺）；网关无树通道 501 tree_unsupported
  * - navigate：happy（select 回 leafId+editorText、CAS expectedLeafId 原样透传）/
- *   resume 无 editorText / 引擎在途 409 already_processing / 坏 body 三连 400
+ *   resume 无 editorText / 引擎在途 409 already_processing / 坏 body 三连 400 /
+ *   task-10 缺陷 C：引擎 stale_leaf 映射 409+error.data.leafId（非 stale 码不上抬）
  * - todo 9：POST /edit-assistant（改写副本成新叶，CAS 透传/outcome/entry 回传/坏 body
- *   400/409/501）+ POST /continue（从叶无新 prompt 续跑，CAS 透传/409/501）
+ *   400/409/501；stale_leaf 变体帧无 errorData 时从原文消息解析 leafId）
+ *   + POST /continue（从叶无新 prompt 续跑，CAS 透传/409/501/stale 同源映射）
  * - 鉴权：/api/* cookie 中间件，无 cookie 401
  */
 import { describe, expect, test, afterEach, vi } from "vitest";
@@ -91,6 +93,19 @@ function writeSessionFile(entries: EngineEntry[]): string {
 /** 引擎嵌套树节点（测试构造用） */
 function engineNode(entry: EngineEntry, children: EngineTreeNode[] = []): EngineTreeNode {
   return { entry, children };
+}
+
+/** 引擎 RpcCommandError 同形（SDK dist/modes/rpc/rpc-command-error：message +
+ *  errorCode + errorData；todo-1 实调 §3.6 原文帧：errorCode="stale_leaf"、
+ *  error="Session leaf moved (expected X, now Y)"、errorData={leafId:Y}（edit 变体帧可缺席）） */
+function rpcStaleLeaf(expected: string, now: string, withLeafId = true): Error & { errorCode?: string; errorData?: unknown } {
+  const err = new Error(`Session leaf moved (expected ${expected}, now ${now})`) as Error & {
+    errorCode?: string;
+    errorData?: unknown;
+  };
+  err.errorCode = "stale_leaf";
+  if (withLeafId) err.errorData = { leafId: now };
+  return err;
 }
 
 // ── FakeGateway：仅实现本测试触及的面；树三面可编程 ──────────────────────
@@ -384,6 +399,37 @@ describe("POST /api/sessions/:id/navigate（session-branching todo 3）", () => 
     expect(body.error.message).toContain("回合进行中");
   });
 
+  test("task-10 缺陷 C：引擎 stale_leaf 拒绝映射 409 + error.data.leafId 附引擎当前叶（todo-1 §4 映射表）", async () => {
+    const gateway = new FakeGateway();
+    gateway.navigateError = rpcStaleLeaf("b2019836", "9587b1e7");
+    const res = await buildApp(gateway).request("/api/sessions/s1/navigate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e3", intent: "select", expectedLeafId: "b2019836" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; message: string; data?: { leafId?: string } } };
+    expect(body.error.code).toBe("stale_leaf");
+    expect(body.error.message).toContain("Session leaf moved (expected b2019836, now 9587b1e7)");
+    // 引擎拒答自带的新叶原样透传（客户端校准重试的 CAS 值）
+    expect(body.error.data).toEqual({ leafId: "9587b1e7" });
+  });
+
+  test("非 stale 引擎业务码不上抬 409（映射只锁 stale_leaf，其余原样上抛）", async () => {
+    const gateway = new FakeGateway();
+    const err = new Error("Entry sb-no-such-entry-000 not found") as Error & { errorCode?: string };
+    err.errorCode = "not_found";
+    gateway.navigateError = err;
+    const res = await buildApp(gateway).request("/api/sessions/s1/navigate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e3", intent: "select" }),
+    });
+    expect(res.status).toBe(500); // 既有行为：无映射落 internal（todo 3 范围不变）
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("internal");
+  });
+
   test("坏 body 三连：缺 entryId/坏 intent/坏 expectedLeafId/非 JSON 各自独立错误码", async () => {
     const app = buildApp(new FakeGateway());
     const post = (raw: string) =>
@@ -481,6 +527,21 @@ describe("POST /api/sessions/:id/edit-assistant（session-branching todo 9）", 
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("already_processing");
   });
 
+  test("task-10 缺陷 C：edit 变体帧不带 errorData——仍 409 stale_leaf，leafId 从引擎原文消息解析", async () => {
+    const gateway = new FakeGateway();
+    gateway.editError = rpcStaleLeaf("sb-stale-leaf-000", "8f353a3b", false);
+    const res = await buildApp(gateway).request("/api/sessions/s1/edit-assistant", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e2", text: "x", expectedLeafId: "sb-stale-leaf-000" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; data?: { leafId?: string } } };
+    expect(body.error.code).toBe("stale_leaf");
+    // errorData 缺席：回退解析原文消息 now 位（todo-1 §3.6 edit 变体帧形态）
+    expect(body.error.data).toEqual({ leafId: "8f353a3b" });
+  });
+
   test("网关无编辑通道：501 tree_unsupported", async () => {
     const gateway = new FakeGateway();
     (gateway as Partial<EngineGateway>).treeEditAssistant = undefined;
@@ -538,6 +599,20 @@ describe("POST /api/sessions/:id/continue（session-branching todo 9）", () => 
     });
     expect(badLeaf.status).toBe(400);
     expect(((await badLeaf.json()) as { error: { code: string } }).error.code).toBe("invalid_leaf");
+  });
+
+  test("task-10 缺陷 C 同源映射：continue 若拒 stale_leaf 同归 409+data.leafId（引擎启用 CAS 后零改动受益）", async () => {
+    const gateway = new FakeGateway();
+    gateway.continueError = rpcStaleLeaf("copy-graft-1", "copy-graft-2");
+    const res = await buildApp(gateway).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedLeafId: "copy-graft-1" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; data?: { leafId?: string } } };
+    expect(body.error.code).toBe("stale_leaf");
+    expect(body.error.data).toEqual({ leafId: "copy-graft-2" });
   });
 
   test("网关无续跑通道：501 tree_unsupported", async () => {
