@@ -31,6 +31,8 @@ import {
   EngineAdapterError,
   type EngineAdapter,
   type EngineActiveSession,
+  type EngineAssistantEditInput,
+  type EngineAssistantEditResult,
   type EngineCapabilities,
   type EngineCommandInfo,
   type EngineCompactResult,
@@ -39,6 +41,8 @@ import {
   type EngineEventSubscription,
   type EngineMessagesPage,
   type EngineModelInfo,
+  type EngineNavigateTreeInput,
+  type EngineNavigateTreeResult,
   type EngineOpenSessionOptions,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
@@ -48,6 +52,7 @@ import {
   type EngineSessionSummary,
   type EngineThinkingLevel,
   type EngineTodoState,
+  type EngineTreeNode,
   type EngineUsageStats,
 } from "./engine-adapter"
 import { log } from "../obs/logger"
@@ -140,6 +145,34 @@ export interface SenpiRpcClient {
   getCommands(): Promise<Array<Record<string, unknown>>>
   getSessionStats(): Promise<Record<string, unknown>>
   getMedia(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }>
+  /** 树导航（navigate_tree）：entryId/targetId 寻址引擎核心等价（connection-handler
+   *  折叠为同一目标 id），宿主统一以 targetId 形态发帧；回包为原始结果形态
+   *  （cancelled/editorText/aborted/summaryEntry + handler 补充的 leafId） */
+  navigateTree(targetId: string, options?: {
+    intent?: "select" | "resume"
+    expectedLeafId?: string
+  }): Promise<{
+    cancelled: boolean
+    leafId: string | null
+    editorText?: string
+    aborted?: boolean
+    summaryEntry?: { id?: unknown; [k: string]: unknown } | null
+  }>
+  /** 会话树全量读取（get_tree）：节点为 SessionTreeNode 递归结构原样 */
+  getTree(): Promise<{ tree: EngineTreeNode[]; leafId: string | null }>
+  /** 编辑 assistant 回复（edit_assistant_message）：改写副本成新叶，不自动续跑 */
+  editAssistantMessage(entryId: string, text: string, options?: {
+    expectedLeafId?: string
+  }): Promise<{
+    outcome: "edited" | "unchanged" | "cancelled"
+    entry?: unknown
+    leafId: string | null
+    aborted?: boolean
+    summaryEntryId?: string
+  }>
+  /** 从当前叶无新 prompt 续跑（continue_from_leaf；引擎帧尚无 expectedLeafId 字段，
+   *  参数透传至客户端面，引擎支持后零改动启用） */
+  continueFromLeaf(options?: { expectedLeafId?: string }): Promise<void>
 }
 
 /** 官配引擎 cli 解析：统一委托 process-manager 的三形态解析
@@ -353,6 +386,27 @@ export function isPromptWaitTimeoutError(err: unknown): boolean {
   )
 }
 
+/** 树变更类 RPC（navigate_tree/edit_assistant_message/continue_from_leaf）忙碌态归一：
+ *  引擎对回合进行中的一切树变更抛 SessionStreamingError / ContinueFromLeafError
+ *  （code="streaming"），RPC 面经 RpcCommandError.errorCode 到达；压缩/导航互斥
+ *  （isCompacting）为无 errorCode 的普通 Error（message 锚定引擎原文前缀）。两者
+ *  映射 ApiError(409, "already_processing")（与 fork/compact 路由层同款语义）；其余
+ *  错误（stale_leaf/leaf_not_assistant 等业务码）原样上抛由上层映射。返回待抛出
+ *  的错误对象（非忙碌态时原样返回 err）。errorCode/code 精确全等锚定（与
+ *  isSessionReopenableError 同款纪律，禁子串宽匹配）。 */
+function mapTreeBusyError(err: unknown): unknown {
+  const e = err as { message?: unknown; errorCode?: unknown; code?: unknown } | null | undefined
+  if (e && typeof e === "object") {
+    if ([e.errorCode, e.code].some((v) => typeof v === "string" && v === "streaming")) {
+      return new ApiError(409, "already_processing", "该会话回合进行中，树导航/编辑前请等待回合结束或中断")
+    }
+    if (typeof e.message === "string" && e.message.startsWith("Wait for the current compaction")) {
+      return new ApiError(409, "already_processing", "该会话正在压缩或树导航中，请稍后再试")
+    }
+  }
+  return err
+}
+
 export class SenpiAdapter implements EngineAdapter {
   readonly capabilities: EngineCapabilities = {
     // 实证：agent 枚举无协议面（docs/verification/05 P1-5）；UI 按 docs/01 预案降级
@@ -362,8 +416,11 @@ export class SenpiAdapter implements EngineAdapter {
     usageStats: true,
     // get_media 协议面在（实例样本缺，失败按占位降级）
     imagePartRead: true,
-    // 消息编辑（分支改写）支持；"编辑后重发" continue_from_leaf 官配引擎不支持（05 P1-6）
+    // 消息编辑（分支改写）支持；"编辑后重发" continue_from_leaf 协议面已随官配引擎
+    // 内置，翻转为 true 待 todo-1 实调结论（F22/F23①）落定
     messageEdit: true,
+    // 会话树导航/树读取（navigate_tree/get_tree）：todo-1 实调结论前默认 true，FAIL 再翻转
+    treeNavigation: true,
     editResend: false,
     // omo CLI --export 实证可用（05 P1-7）
     exportHtml: true,
@@ -825,6 +882,72 @@ export class SenpiAdapter implements EngineAdapter {
     // 引擎侧失败形态（spike 实证）：无更多可压缩内容时 RpcCommandError（"Already
     // compacted" / "Nothing to compact (session too small)"），由运行时层映射业务码。
     return mapCompactResult(await this.rpcOp("compact", () => this.rpc().compact()))
+  }
+
+  /** 树变更三件（navigate/edit/continue）统一忙碌态映射外壳：rpcOp 可重开兕底在外，
+ *  409 映射在内（可重开码不含 streaming/压缩互斥，两层互不干扰） */
+  private async treeOp<T>(op: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await this.rpcOp(op, fn)
+    } catch (err) {
+      throw mapTreeBusyError(err)
+    }
+  }
+
+  async navigateTree(input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult> {
+    this.requireActive()
+    // 寻址守卫（镜像引擎拒绝语义，前置到宿主边界）：entryId/targetId 恰其一且非空
+    const hasEntry = typeof input.entryId === "string" && input.entryId.length > 0
+    const hasTarget = typeof input.targetId === "string" && input.targetId.length > 0
+    if (hasEntry === hasTarget) {
+      throw new EngineAdapterError("bad_options", "navigateTree 需要 entryId 或 targetId 恰好其一（非空）")
+    }
+    // 引擎核心对两种寻址等价，统一以 targetId 形态发帧；回包就地归一
+    // （entryId 形态引擎回 outcome 归一体、targetId 形态回原始体，字段同源）
+    const raw = await this.treeOp("navigate_tree", () =>
+      this.rpc().navigateTree((input.entryId ?? input.targetId) as string, {
+        intent: input.intent,
+        expectedLeafId: input.expectedLeafId,
+      }),
+    )
+    const result: EngineNavigateTreeResult = {
+      leafId: raw.leafId ?? null,
+      cancelled: raw.cancelled === true,
+    }
+    if (typeof raw.editorText === "string") result.editorText = raw.editorText
+    if (raw.aborted === true) result.aborted = true
+    const summary = raw.summaryEntry
+    if (summary && typeof summary.id === "string") result.summaryEntryId = summary.id
+    return result
+  }
+
+  async getTree(): Promise<{ tree: EngineTreeNode[]; leafId: string | null }> {
+    this.requireActive()
+    return this.rpcOp("get_tree", () => this.rpc().getTree())
+  }
+
+  async editAssistantMessage(input: EngineAssistantEditInput): Promise<EngineAssistantEditResult> {
+    this.requireActive()
+    if (typeof input.entryId !== "string" || input.entryId.length === 0 || typeof input.text !== "string") {
+      throw new EngineAdapterError("bad_options", "editAssistantMessage 需要 entryId（非空）与 text")
+    }
+    const raw = await this.treeOp("edit_assistant_message", () =>
+      this.rpc().editAssistantMessage(input.entryId, input.text, { expectedLeafId: input.expectedLeafId }),
+    )
+    const outcome: EngineAssistantEditResult["outcome"] =
+      raw.outcome === "unchanged" || raw.outcome === "cancelled" ? raw.outcome : "edited"
+    const result: EngineAssistantEditResult = { outcome, leafId: raw.leafId ?? null }
+    if (raw.entry !== undefined) result.entry = raw.entry as EngineEntry
+    if (raw.aborted === true) result.aborted = true
+    if (typeof raw.summaryEntryId === "string") result.summaryEntryId = raw.summaryEntryId
+    return result
+  }
+
+  async continueFromLeaf(input?: { expectedLeafId?: string }): Promise<void> {
+    this.requireActive()
+    // 引擎 wire 面（continue_from_leaf 帧）尚无 expectedLeafId 字段：客户端实参当前
+    // 不随帧下发（引擎忽略），宿主接口预留统一 CAS 透传通道，引擎支持后零改动启用
+    await this.treeOp("continue_from_leaf", () => this.rpc().continueFromLeaf(input))
   }
 
   async readImagePart(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }> {

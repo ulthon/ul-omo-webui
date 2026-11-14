@@ -188,6 +188,55 @@ export interface EngineCompactResult {
   estimatedTokensAfter?: number
 }
 
+/** 会话树节点（get_tree 行：引擎 SessionTreeNode 原样——entry + children 递归，
+ *  另携带 label/labelTimestamp 等元数据字段，经索引签名透传不裁剪） */
+export interface EngineTreeNode {
+  entry: EngineEntry
+  children: EngineTreeNode[]
+  [key: string]: unknown
+}
+
+/** 树导航入参（navigate_tree）：entryId/targetId 二选一寻址——引擎核心对两者等价
+ *  （connection-handler 折叠为同一目标 id，差异仅回包形态，适配层就地归一）。
+ *  intent="select" 选中条目（user 消息时引擎回 editorText 供编辑重发回填），
+ *  "resume" 原样续演 assistant 条目；expectedLeafId 乐观锁（CAS：与引擎当前叶
+ *  不等时引擎拒 stale_leaf，防跨端改写竞态）。 */
+export interface EngineNavigateTreeInput {
+  entryId?: string
+  targetId?: string
+  intent: "select" | "resume"
+  expectedLeafId?: string
+}
+
+/** 树导航结果（两种寻址回包形态归一：outcome:"cancelled" 折叠为 cancelled:true，
+ *  summaryEntry 整条目折叠为 summaryEntryId） */
+export interface EngineNavigateTreeResult {
+  leafId: string | null
+  cancelled: boolean
+  /** select 语义下入口为 user 消息时回传的原文（编辑重发回填用） */
+  editorText?: string
+  aborted?: boolean
+  summaryEntryId?: string
+}
+
+/** assistant 消息编辑入参（edit_assistant_message）：改写副本追加为新叶
+ *  （分支改写，原条目与其后分支原样保留树中），不自动续跑——续跑由 continueFromLeaf 触发 */
+export interface EngineAssistantEditInput {
+  entryId: string
+  text: string
+  expectedLeafId?: string
+}
+
+/** assistant 消息编辑结果（wire outcome 原样：edited/unchanged/cancelled） */
+export interface EngineAssistantEditResult {
+  outcome: "edited" | "unchanged" | "cancelled"
+  leafId: string | null
+  /** 编辑后的新叶条目（仅 edited 时回传） */
+  entry?: EngineEntry
+  aborted?: boolean
+  summaryEntryId?: string
+}
+
 /** todo 状态（senpi.todo-state custom entry 的 data.phases，verification/03/05 P1-2） */
 export interface EngineTodoState {
   phases: Array<{
@@ -255,6 +304,11 @@ export interface EngineCapabilities {
   imagePartRead: boolean
   /** 消息编辑（分支改写）；"编辑后立即重发"（continue_from_leaf）官配引擎不支持，见 editResend */
   messageEdit: boolean
+  /** 会话树导航/树读取（navigate_tree/get_tree 协议面已随官配引擎内置）；
+   *  todo-1 实调结论落定前默认 true，结论 FAIL 时再翻转 */
+  treeNavigation: boolean
+  /** "编辑后立即重发"（edit_assistant_message + continue_from_leaf 两段链）：协议面
+   *  已随官配引擎内置，翻转为 true 待 todo-1 实调结论（F22/F23①）落定 */
   editResend: boolean
   /** 导出 HTML（omo CLI --export 实证可用，verification/05 P1-7） */
   exportHtml: boolean
@@ -364,6 +418,30 @@ export interface EngineAdapter {
    * operation first"），调用方须在回合中拒绝（运行时层 streaming 守卫）。
    */
   compactSession(): Promise<EngineCompactResult>
+
+  /**
+   * 树导航（RPC navigate_tree）：把活跃会话叶切到 entryId/targetId 条目，作用于当前
+   * 活跃会话。回合进行中（streaming）或压缩/导航互斥中映射 ApiError(409,
+   * "already_processing")（与 fork/compact 路由层同款语义）；expectedLeafId 乐观锁
+   * 透传，stale 拒绝时引擎报 stale_leaf 由上层映射。
+   */
+  navigateTree(input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult>
+
+  /** 活跃会话全量树读取（RPC get_tree）：{tree, leafId}，节点形态见 EngineTreeNode */
+  getTree(): Promise<{ tree: EngineTreeNode[]; leafId: string | null }>
+
+  /**
+   * 编辑 assistant 回复（RPC edit_assistant_message）：改写副本成新叶（原条目与其后
+   * 分支保留），不自动续跑；streaming/压缩互斥同样映射 409 already_processing。
+   */
+  editAssistantMessage(input: EngineAssistantEditInput): Promise<EngineAssistantEditResult>
+
+  /**
+   * 从当前叶无新 prompt 续跑（RPC continue_from_leaf；典型：编辑后的 assistant 回复
+   * 就位后触发）。叶非 assistant 时引擎拒 leaf_not_assistant。expectedLeafId 乐观锁
+   * 透传（当前引擎 wire 面尚不携带该字段，接口预留统一 CAS 通道，引擎支持后零改动启用）。
+   */
+  continueFromLeaf(input?: { expectedLeafId?: string }): Promise<void>
 
   /** 读取工具产出的图片 part（get_media 协议面；contentIndex 为工具结果 content 数组下标） */
   readImagePart(toolCallId: string, contentIndex: number): Promise<{ type: "image"; data: string; mimeType: string }>

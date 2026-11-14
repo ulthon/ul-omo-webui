@@ -9,7 +9,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SenpiAdapter, isSessionReopenableError, type RpcClientOptions, type SenpiRpcClient } from "../src/adapter/senpi-adapter"
 import { RPC_CLIENT_CAPABILITIES_ENV } from "../src/engine/rpc-capabilities"
-import { EngineAdapterError, type EngineEntry, type EngineEvent } from "../src/adapter/engine-adapter"
+import { EngineAdapterError, type EngineEntry, type EngineEvent, type EngineTreeNode } from "../src/adapter/engine-adapter"
 import { ApiError } from "../src/api/http"
 
 const FIXTURES = new URL("./fixtures/protocol/", import.meta.url).pathname
@@ -173,6 +173,45 @@ class FakeRpcClient implements SenpiRpcClient {
 
   async getMedia(): Promise<{ type: "image"; data: string; mimeType: string }> {
     return { type: "image", data: "ZmFrZQ==", mimeType: "image/png" }
+  }
+
+  /** 树 RPC 面（session-branching todo 2）：健康应答 + 调用记录；失败/归一场景在 adapter-tree.test.ts */
+  async navigateTree(
+    targetId: string,
+    options?: { intent?: "select" | "resume"; expectedLeafId?: string },
+  ): Promise<{
+    cancelled: boolean
+    leafId: string | null
+    editorText?: string
+    aborted?: boolean
+    summaryEntry?: { id?: unknown; [k: string]: unknown } | null
+  }> {
+    this.calls.push({ method: "navigate_tree", args: { targetId, ...options } })
+    return { cancelled: false, leafId: this.leafId }
+  }
+
+  async getTree(): Promise<{ tree: EngineTreeNode[]; leafId: string | null }> {
+    this.calls.push({ method: "get_tree" })
+    return { tree: [], leafId: this.leafId }
+  }
+
+  async editAssistantMessage(
+    entryId: string,
+    text: string,
+    options?: { expectedLeafId?: string },
+  ): Promise<{
+    outcome: "edited" | "unchanged" | "cancelled"
+    entry?: unknown
+    leafId: string | null
+    aborted?: boolean
+    summaryEntryId?: string
+  }> {
+    this.calls.push({ method: "edit_assistant_message", args: { entryId, text, ...options } })
+    return { outcome: "edited", leafId: this.leafId }
+  }
+
+  async continueFromLeaf(options?: { expectedLeafId?: string }): Promise<void> {
+    this.calls.push({ method: "continue_from_leaf", args: options })
   }
 }
 
