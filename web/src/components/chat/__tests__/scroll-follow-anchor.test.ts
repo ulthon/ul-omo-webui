@@ -90,6 +90,8 @@ describe("store 锚点槽（#26）", () => {
           cursor: null,
           leafId: null,
           viewLeafId: null,
+          navigating: false,
+          leafNavSeq: 0,
           loaded: true,
           hasMore: false,
           oldestId: null,

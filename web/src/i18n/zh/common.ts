@@ -16,6 +16,7 @@ export const common = {
   lib: {
     unauthorized: "未登录或会话已过期",
     noModelsSend: "无可用模型，无法发送（请检查引擎模型配置）",
+    navigatingSendBlocked: "叶切换进行中，请稍候再发送",
     sessionListLoadFailed: "会话列表加载失败",
     saveModelPrefFailed: "保存模型偏好失败",
     saveThinkingPrefFailed: "保存思考级别偏好失败",

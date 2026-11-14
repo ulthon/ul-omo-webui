@@ -16,6 +16,7 @@ export const common = {
   lib: {
     unauthorized: "Not signed in or session expired",
     noModelsSend: "No available models; cannot send (check the engine model configuration)",
+    navigatingSendBlocked: "Leaf switch in progress; try sending again shortly",
     sessionListLoadFailed: "Failed to load session list",
     saveModelPrefFailed: "Failed to save model preference",
     saveThinkingPrefFailed: "Failed to save thinking level preference",

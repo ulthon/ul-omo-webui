@@ -8,13 +8,29 @@ import { useEffect, useState } from "react";
 import { useSessionsStore } from "@/stores/sessions";
 
 /** 在 byProject 全项目里找会话行的 active 字段（探询三态：true/false/null；行不存在 = null）。
- * 选择器返回原始值，引用稳定不触发多余重渲染。 */
-function pickActive(s: ReturnType<typeof useSessionsStore.getState>, sessionId: string): boolean | null {
+ * 选择器返回原始值，引用稳定不触发多余重渲染。
+ * 导出供叶切换前置门（stores/messages switchLeaf，session-branching todo 6）复用同一
+ * 读数，不另派一套探询读取。 */
+export function pickActive(
+  s: ReturnType<typeof useSessionsStore.getState>,
+  sessionId: string,
+): boolean | null {
   for (const list of Object.values(s.byProject)) {
     const hit = list.find((item) => item.id === sessionId);
     if (hit) return hit.active;
   }
   return null;
+}
+
+/** 已知运行中：SSE 权威链 running/waiting，或未见 SSE 事件时探询 active=true
+ * （与 session-item StatusDot 的 runStates > active 权威链同口径）——解锁后排队态可用。
+ * 抽为纯函数供 hook 与叶切换前置门（F19 前置门，Composer queueAvailable 同一
+ * 口径）共用，不各自重推导。 */
+export function knownRunningOf(
+  runState: string | undefined,
+  probeActive: boolean | null,
+): boolean {
+  return runState === "running" || runState === "waiting" || (runState === undefined && probeActive === true);
 }
 
 export function useHydrationRunLock(sessionId: string): { hydrationLocked: boolean; knownRunning: boolean } {
@@ -45,9 +61,7 @@ export function useHydrationRunLock(sessionId: string): { hydrationLocked: boole
 
   return {
     hydrationLocked: !unlocked,
-    // 已知运行中：SSE 权威链 running/waiting，或未见 SSE 事件时探询 active=true
-    // （与 session-item StatusDot 的 runStates > active 权威链同口径）——解锁后排队态可用
-    knownRunning:
-      runState === "running" || runState === "waiting" || (runState === undefined && probeActive === true),
+    // 已知运行中（knownRunningOf 纯函数，见上）：与叶切换前置门同一推导
+    knownRunning: knownRunningOf(runState, probeActive),
   };
 }

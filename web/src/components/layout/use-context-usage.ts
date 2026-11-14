@@ -51,6 +51,23 @@ export function useContextUsage(sessionId: string) {
       .catch(() => {});
   }, [runState, sessionId]);
 
+  // 叶导航落定沿（session-branching todo 6 ⑥，刷新时机数组新增第四触发）：switchLeaf
+  // 整替落定 leafNavSeq 自增即重拉——contextUsage 基于当前叶必变（F21），导航后现读。
+  // 同会话 seq 边沿触发；换会话由上方打开快照路径负责（prev.id 岔道防他会话 seq
+  // 带动重拉）；导航中（navigating）不拉，落定沿才拉一次。
+  const leafNavSeq = useMessagesStore((s) => s.bySession[sessionId]?.leafNavSeq ?? 0);
+  const prevNavRef = useRef({ id: sessionId, seq: leafNavSeq });
+  useEffect(() => {
+    const prev = prevNavRef.current;
+    prevNavRef.current = { id: sessionId, seq: leafNavSeq };
+    if (prev.id !== sessionId) return; // 换会话：打开快照路径已拉，不重复
+    if (leafNavSeq === prev.seq) return; // 非落定沿（含初挂载）不拉
+    api
+      .getUsage(sessionId)
+      .then((r) => setStats(toUsageStats(r.usage)))
+      .catch(() => {});
+  }, [leafNavSeq, sessionId]);
+
   // 压缩等非回合路径的水位刷新广播（docs08-r5 任务 8）：立即重拉，即时反映压缩效果
   useEffect(
     () =>

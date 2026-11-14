@@ -18,6 +18,7 @@ import {
   type StreamErrorItem,
 } from "@/components/chat/message-items";
 import { advanceLeaf, lastEntryId } from "@/components/chat/branch-path-data";
+import { knownRunningOf, pickActive } from "@/components/chat/hydration-lock";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -67,6 +68,13 @@ export interface SessionMessages {
    *  的内存态视图锚点，null=跟随文件叶 leafId；setEntries 全量整替后仍在新文件中
    *  则保留、消失回落 null（F15：选中态以导航回传 leafId 为唯一真相） */
   viewLeafId: string | null;
+  /** 叶导航进行中（session-branching todo 6 ⑦ navigating 互斥）：switchLeaf 出网前
+   *  布防、落定/拒绝/异常即拆防；布防期间并发切换（switchLeaf 入口）与发送（api.prompt
+   *  守卫同读此位）一律拒绝 */
+  navigating: boolean;
+  /** 叶导航落定序号（todo 6 ⑥ usage 触发点）：switchLeaf 整替落定沿自增；
+   *  use-context-usage 边沿订阅触发 getUsage 重拉（F21：contextUsage 基于当前叶必变） */
+  leafNavSeq: number;
   /** 是否做过全量加载（gap 全量重取的判据） */
   loaded: boolean;
   /** 任务 16：文件头方向是否还有更早条目（尾窗首载/向上翻页后由服务端 hasMore 同步） */
@@ -114,6 +122,38 @@ export interface DeltaPatch {
   contentIndex: number;
   kind: "text" | "thinking";
   text: string;
+}
+
+/** 叶导航请求载荷（api.SessionNavigateBody 同形，结构兼容；注入解耦测试免 mock api） */
+export interface LeafNavigateCall {
+  entryId: string;
+  intent: "select" | "resume";
+  /** 乐观锁（F13）：本地叶指针透传，引擎拒 stale_leaf 防跨端竞态 */
+  expectedLeafId?: string;
+}
+
+/** 叶导航回执（api.SessionNavigateResult 同形）：leafId 唯一真相（F15，可能是簿记
+ * 条目 id——非消息形不回退，渲染层路径过滤对未知叶平铺兑底）；editorText 由 todo 8
+ * 编辑重发链消费。 */
+export interface LeafNavigateReceipt {
+  sessionId: string;
+  leafId: string;
+  editorText?: string;
+}
+
+/** switchLeaf 注入依赖（fetchEarlierPage/backfillModelTimeline 同款注入先例：测试免
+ * mock api 模块；调用侧 chat-view 传 api.navigate / api.listMessages 包装） */
+export interface SwitchLeafDeps {
+  navigate: (body: LeafNavigateCall) => Promise<LeafNavigateReceipt>;
+  fetchFull: () => Promise<MessagesPage>;
+}
+
+export interface SwitchLeafResult {
+  ok: boolean;
+  /** busy=导航已在途（⑦互斥）；blocked=前置门拒绝（F19 并集）；rejected=引擎/网络拒绝（409 等） */
+  reason?: "busy" | "blocked" | "rejected";
+  /** ok=true 时回传导航落定叶（回执 leafId，唯一真相） */
+  leafId?: string;
 }
 
 interface MessagesState {
@@ -214,6 +254,17 @@ interface MessagesState {
     before: string,
     fetchPage: (opts: { before?: string; full?: boolean }) => Promise<MessagesPage>,
   ): Promise<void>;
+  /** 清本会话流式态（session-branching todo 6 ③，导航成功即调，F19：防迟到
+   * message_end 把半截内容定格进旧视图）；丢弃半截内容——与 settleStreaming 的定格
+   * 并入语义相反，导航后真相以整替页为准。迟到帧随后按幂等 upsert 无害吸收。 */
+  clearStreamingForNavigation(sessionId: string): void;
+  /** 叶切换编排（session-branching todo 6，F19 顺序契约定死）：①前置门（Composer
+   * queueAvailable 同口径并集禁入口）→ ②POST navigate（expectedLeafId 透传）→
+   * ③清流式态 → ④full=1 全量整替（refetchSession 通道，replay 窗口内推迟到窗口
+   * 关闭后落地）→ ⑤回传 leafId 更新 viewLeafId → ⑥leafNavSeq 自增（usage 触发）→
+   * ⑦navigating 互斥拒并发切换与发送。拒绝路径（前置门/409）状态保持：不整替、
+   * 不清流式态、viewLeafId 不动。 */
+  switchLeaf(sessionId: string, entryId: string, deps: SwitchLeafDeps): Promise<SwitchLeafResult>;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
@@ -234,6 +285,8 @@ function emptySessionMessages(): SessionMessages {
     cursor: null,
     leafId: null,
     viewLeafId: null,
+    navigating: false,
+    leafNavSeq: 0,
     loaded: false,
     hasMore: false,
     oldestId: null,
@@ -1154,6 +1207,120 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       }),
 
     settleStreaming: (sessionId, finalMessage) => settle(sessionId, finalMessage),
+
+    clearStreamingForNavigation: (sessionId) =>
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (!cur) return s;
+        if (!cur.streaming && cur.streamingMessage === null && cur.streamingEntryId === null) return s;
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...cur, streaming: false, streamingMessage: null, streamingEntryId: null },
+          },
+        };
+      }),
+
+    switchLeaf: async (sessionId, entryId, deps) => {
+      const cur = get().bySession[sessionId];
+      // ⑦ navigating 互斥：并发切换即拒（UI 禁用之外的状态机兑底）
+      if (cur?.navigating) return { ok: false, reason: "busy" };
+      // ① 前置门（F19）：与 chat-view Composer queueAvailable 同一口径（streaming +
+      // knownRunningOf：SSE 权威 running/waiting 或探询 active 兑底；queued 并集由
+      // queueAvailable 语义覆盖——可排队即不可切）。勿依赖引擎报错做 UX。
+      const sessions = useSessionsStore.getState();
+      if (
+        !cur ||
+        cur.streaming ||
+        knownRunningOf(sessions.runStates[sessionId], pickActive(sessions, sessionId))
+      ) {
+        return { ok: false, reason: "blocked" };
+      }
+      // 布防先于出网：导航在途即拒并发发送（api.prompt 同读此位）与二次切换
+      set((s) => {
+        const slot = s.bySession[sessionId];
+        if (!slot) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...slot, navigating: true } } };
+      });
+      try {
+        // ② POST navigate（F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒 stale_leaf）
+        const receipt = await deps.navigate({
+          entryId,
+          intent: "select",
+          expectedLeafId: cur.leafId ?? undefined,
+        });
+        // ③ 清本会话流式态（防迟到 message_end 把半截内容定格进旧视图）
+        get().clearStreamingForNavigation(sessionId);
+        // ④ full=1 全量整替（refetchSession 通道同款：full 拉取 + setEntries + 槽在位
+        // 检查；勿 cursor 增量——引擎叶已换，本地游标增量窗语义失效）
+        const page = await deps.fetchFull();
+        const apply = () => {
+          const st = get().bySession[sessionId];
+          if (!st) return; // 中途清理（clearSession）：槽已拆即放弃，不复活槽（迟到页丢弃）
+          // ③不变量在落地沿重申：推迟窗内旧分支流的重放帧可能重建流式态（前缀抑制
+          // 不命中时），整替时点统一再清一次，半截内容不落新视图
+          get().clearStreamingForNavigation(sessionId);
+          // ⑤（契约「整替后清 replay 缓冲」支）：缓冲的是旧叶的流式 delta，整替重写
+          // entries 后不得再落新视图
+          replayDeltaBuffer.delete(sessionId);
+          get().setEntries(sessionId, page.entries, page.cursor, page.leafId, {
+            hasMore: page.hasMore ?? false,
+            oldestId: page.oldestId ?? null,
+          });
+          // ⑤ 用回传 leafId 更新视图叶（F15：导航回传为唯一真相；可能是簿记条目 id，
+          // 不假设消息形）。显式覆盖 setEntries 的 keepView 结果（保留/回落均不适用
+          // 导航场景——本次整替的起点就是切换意图本身）。
+          // ⑥ leafNavSeq 自增即「叶导航落定」沿（use-context-usage 边沿触发 getUsage）。
+          // navigating 同步拆防：整个编排（含推迟落地）就此收口。
+          set((s) => {
+            const slot = s.bySession[sessionId];
+            if (!slot) return s;
+            return {
+              bySession: {
+                ...s.bySession,
+                [sessionId]: {
+                  ...slot,
+                  viewLeafId: receipt.leafId,
+                  navigating: false,
+                  leafNavSeq: slot.leafNavSeq + 1,
+                },
+              },
+            };
+          });
+        };
+        if (get().replayRecovering) {
+          // 重放窗口内不整替（F19 ⑤「整替排在 replay_done 后」支）：订阅先行，窗口
+          // 关闭（replay_done / 建连清残窗）后一次性落地；窗口期内会话被拆则放弃。
+          // navigating 保持布防至落地——整替未发生前视图仍在旧叶，放行切换会撕裂。
+          const unsub = useMessagesStore.subscribe((s) => {
+            if (!s.bySession[sessionId]) {
+              unsub();
+              return;
+            }
+            if (!s.replayRecovering) {
+              unsub();
+              apply();
+            }
+          });
+        } else {
+          apply();
+        }
+        return { ok: true, leafId: receipt.leafId };
+      } catch (err) {
+        // 拒绝路径（409 already_processing / stale_leaf / 网络等）：状态保持——不整替、
+        // 不清流式态、viewLeafId 不动，仅拆防回到可切换态
+        set((s) => {
+          const slot = s.bySession[sessionId];
+          if (!slot) return s;
+          return { bySession: { ...s.bySession, [sessionId]: { ...slot, navigating: false } } };
+        });
+        diag.warn("messages", "switch-leaf-rejected", {
+          sessionId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return { ok: false, reason: "rejected" };
+      }
+    },
 
     setStreaming: (sessionId, streaming) =>
       set((s) => {

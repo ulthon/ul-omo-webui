@@ -1,7 +1,11 @@
 // 类型化 REST client：覆盖 server 全部端点（shape 见 .omo/notepads/ul-omo-webui/learnings.md W2 todo 9）。
 // 统一错误形状 {error:{code,message}} 解析；401（未登录/过期）统一跳登录页。
 // prompt 的模型防呆/偏好注入读 ui store（ui.ts 对 api.ts 仅类型引用，无运行时环）。
+// 叶导航互斥守卫（session-branching todo 6 ⑦）读 messages store——messages.ts 对 api.ts
+// 仅类型引用（import type 编译期擦除），api→messages→sessions→api 的环全为调用期读取，
+// 模块求值期零绑定解引用，无 TDZ 风险。
 import { useUiStore } from "@/stores/ui";
+import { useMessagesStore } from "@/stores/messages";
 import { effectiveThinkingLevel } from "@/lib/thinking-level";
 import { t } from "@/i18n/i18n";
 import { diag, newRid8 } from "@/lib/diag";
@@ -141,6 +145,22 @@ export interface MessagesPage {
   hasMore?: boolean;
   /** 任务 16：本窗最旧条目 id（向上翻页 ?before= 游标） */
   oldestId?: string | null;
+}
+
+/** 会话树导航（session-branching todo 3 端点 POST /api/sessions/:id/navigate）请求体 */
+export interface SessionNavigateBody {
+  entryId: string;
+  intent: "select" | "resume";
+  /** 乐观锁（F13）：本地叶指针透传，引擎拒 stale_leaf 防跨端竞态；缺省=不带 */
+  expectedLeafId?: string;
+}
+
+/** 会话树导航回执：leafId 为唯一真相（F15，可能是簿记条目 id，不得假设消息形） */
+export interface SessionNavigateResult {
+  sessionId: string;
+  leafId: string;
+  /** select 命中 user 消息时回传编辑回填文本（编辑重发链消费，todo 8） */
+  editorText?: string;
 }
 
 export interface SessionCreated {
@@ -645,6 +665,11 @@ export const api = {
     const qs = q.toString();
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ""}`);
   },
+  /** 会话树导航（session-branching todo 3 端点）：叶切换编排（stores/messages
+   *  switchLeaf）经此消费；409 already_processing / stale_leaf 由编排按拒绝路径处理。 */
+  async navigate(sessionId: string, body: SessionNavigateBody): Promise<SessionNavigateResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/navigate`, jsonInit("POST", body));
+  },
   /** 模型归因轻量回读（首屏流量直做批）：服务端磁盘精筛只回 model_change 条目
    *  （KB 级），取代 backfill 旧 full=1 全量拉取（长会话单开多至几十 MB、95%
    *  流量来自彼处）；文件不在等场景回空列表。 */
@@ -671,6 +696,13 @@ export const api = {
     const ui = useUiStore.getState();
     if (ui.modelsLoaded && ui.models.length === 0) {
       throw new ApiError(400, "no_models_available", t("common.lib.noModelsSend"));
+    }
+    // 叶导航互斥（session-branching todo 6 ⑦）：navigating 位布防期间拒绝发送（直发与
+    // 排队同经本口，F19 契约“拒并发切换与发送”）；并发切换由 switchLeaf 入口同位拒绝。
+    // 导航落定/拒绝即拆防（switchLeaf 全路径复位），此守卫不吞错——Composer 按既有
+    // ApiError 行内展示路径呈现。
+    if (useMessagesStore.getState().bySession[sessionId]?.navigating) {
+      throw new ApiError(409, "navigating", t("common.lib.navigatingSendBlocked"));
     }
     // 命令门（todo 24）：/ 前缀命中不支持命令时抛 ApiError（chat-view 注册的 commandGate）
     promptGate?.(body.text);

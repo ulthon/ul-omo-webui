@@ -127,6 +127,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const leafId = useMessagesStore((s) => s.bySession[sessionId]?.leafId ?? null);
   const viewLeafId = useMessagesStore((s) => s.bySession[sessionId]?.viewLeafId ?? null);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
+  // 叶导航在途（session-branching todo 6 ⑦）：store 互斥位，切页器随之一并禁用
+  const navigating = useMessagesStore((s) => s.bySession[sessionId]?.navigating ?? false);
   const hasStreamingMessage = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
   const runState = useSessionsStore((s) => s.runStates[sessionId]);
@@ -377,14 +379,26 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 兄弟序位（session-branching todo 5）：全量 entries 一次遍历派生 entryId → 兄弟序位，
   // 往 MessageList 下传——绝不在每个气泡内重算（计划反 slop 线）。
   const siblingPositions = useMemo(() => deriveSiblingPositions(entries ?? []), [entries]);
-  // 叶切换回调（todo 6 接线位占位）：编排（POST /navigate + 整替 + viewLeafId）落地前
-  // 仅记录不动作，无 store/网络副作用；todo 6 替换为 switchLeaf 编排。
-  const onSwitchSibling = useCallback((entryId: string) => {
-    console.debug("[branch-pager] switch to sibling (todo 6 wiring pending)", entryId);
-  }, []);
-  // 忙碌锁（todo 5）：与下方 Composer queueAvailable 同一表达式——流式/已知运行/
-  // 运行/等待中禁止切兄弟（F19 前置门口径复用，不再另派一套判定）。
+  // 叶切换回调（session-branching todo 6）：接线 stores/messages 的 switchLeaf 编排——
+  // F19 全序（前置门→navigate→清流式态→full 整替→viewLeafId→usage 触发→navigating
+  // 互斥）收口在 store；fetcher 注入（fetchEarlierPage 同款先例）。拒绝路径
+  // （blocked/busy/409）状态保持静默 no-op：可切换态下 pager 本就可用，偶发拒绝
+  // （他端并发 stale_leaf）由下次整替对齐，无 UI 反馈面。
+  const onSwitchSibling = useCallback(
+    (entryId: string) => {
+      void useMessagesStore.getState().switchLeaf(sessionId, entryId, {
+        navigate: (body) => api.navigate(sessionId, body),
+        fetchFull: () => api.listMessages(sessionId, { full: true }),
+      });
+    },
+    [sessionId],
+  );
+  // 忙碌锁（todo 5，todo 6 口径注释更新）：与下方 Composer queueAvailable 同一并集——
+  // streaming + knownRunning（SSE 权威 running/waiting 或探询 active 兑底；hydration-lock
+  // knownRunningOf 单推导源，store 侧 switchLeaf 前置门同一推导，不另派判定）。
+  // 叶导航在途（navigating 布防）一并禁切（store 互斥位，见上）。
   const branchSwitchLocked = streaming || knownRunning || runState === "running" || runState === "waiting";
+  const branchSwitchDisabled = branchSwitchLocked || navigating;
 
   const items = useMemo<ChatListItem[]>(
     () =>
@@ -425,7 +439,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         onReachTop={onReachTop}
         siblings={siblingPositions}
         onSwitchSibling={onSwitchSibling}
-        switchDisabled={branchSwitchLocked}
+        switchDisabled={branchSwitchDisabled}
       />
       <PermissionQueue sessionId={sessionId} />
       {/* 待答提问提示条（r11 todo 6d）：卡片改渲染在消息流内锚点位，输入区上方仅细
