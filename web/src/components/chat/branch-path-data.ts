@@ -178,6 +178,63 @@ export function deriveSiblingPositions(
   return positions;
 }
 
+/** 切视图目标叶解析（task-10 缺陷 E-1）：pager 兄弟（user 消息 id）→ 目标分支
+ *  的叶。引擎协议（2026-11-12 实证备忘）：navigate_tree select 命中 user 条目 =
+ *  编辑位语义（叶移到该消息的父位 + 回传 editorText），切视图绝不能拿 user 消息
+ *  id 作 select 目标（视图会落到零消息的空编辑位）。解析规则（确定性）：seed 子树
+ * （全类型，含引擎嫁接簿记链）内最后一条 assistant 消息（分支当前终点）；子树无
+ *  assistant（未获回复的分支）回退子树最后一条条目（文件序，可能是 user 消息自身
+ *  或簿记尾条）；消费侧一律以 resume 意图导航（叶=条目本身，与角色无关，不存在
+ *  编辑位陷阱）。seed 不在场返回 null（调用方回退原 id——resume 语义下仍安全）。
+ *  visited 防环（坏数据 parentId 环收敛不死循环）。 */
+export function resolveBranchLeaf(
+  entries: ReadonlyArray<WireEntry>,
+  seedId: string,
+): string | null {
+  const byId = new Map<string, WireEntry>();
+  const childrenByParent = new Map<string, Array<string>>();
+  for (const e of entries) {
+    const id = e.id;
+    if (typeof id !== "string" || id === "") continue;
+    if (!byId.has(id)) byId.set(id, e);
+    const pid = parentIdOf(e);
+    if (pid !== null) {
+      const arr = childrenByParent.get(pid);
+      if (arr) arr.push(id);
+      else childrenByParent.set(pid, [id]);
+    }
+  }
+  if (!byId.has(seedId)) return null;
+  // 子树 id 集：seed 起沿 children 边收集（全类型；visited 防环）
+  const subtree = new Set<string>([seedId]);
+  const visited = new Set<string>([seedId]);
+  const queue: Array<string> = [seedId];
+  while (queue.length > 0) {
+    const cur = queue.pop() as string;
+    for (const child of childrenByParent.get(cur) ?? []) {
+      if (visited.has(child)) continue; // 环守卫
+      visited.add(child);
+      subtree.add(child);
+      queue.push(child);
+    }
+  }
+  // 文件序单遍：子树内最后一条 assistant 消息 ?? 子树最后一条条目 ?? seed 自身
+  let lastAssistant: string | null = null;
+  let lastEntry: string | null = null;
+  for (const e of entries) {
+    const id = e.id;
+    if (typeof id !== "string" || id === "" || !subtree.has(id)) continue;
+    lastEntry = id;
+    if (
+      e.type === "message" &&
+      (e.message as { role?: unknown } | undefined)?.role === "assistant"
+    ) {
+      lastAssistant = id;
+    }
+  }
+  return lastAssistant ?? lastEntry ?? seedId;
+}
+
 /** filterEntriesToPath 的结果：过滤后的窗口条目（文件序）与路径派生结果 */
 export interface PathWindow {
   windowEntries: WireEntry[];

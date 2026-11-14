@@ -5,7 +5,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "vitest";
 
-const { derivePathEntryIds, filterEntriesToPath, lastEntryId, advanceLeaf } = await import(
+const { derivePathEntryIds, filterEntriesToPath, lastEntryId, advanceLeaf, resolveBranchLeaf } = await import(
   "@/components/chat/branch-path-data"
 );
 
@@ -138,5 +138,78 @@ describe("叶推进与尾条助手（store 共用口径）", () => {
     expect(advanceLeaf("a1", [msg("u1", null)], "n1", "u1", false)).toBe("n1"); // 叶被移除（吸收/孪生收敛）
     expect(advanceLeaf("a1", list, "n1", "u1", false)).toBe("a1"); // 离径不拽
     expect(advanceLeaf("a1", list, "a1", "u1", true)).toBe("a1"); // 已在列（重放回填）不推
+  });
+});
+
+describe("切视图目标叶解析 resolveBranchLeaf（task-10 缺陷 E-1）", () => {
+  const asst = (id, parentId) => ({
+    type: "message",
+    id,
+    parentId,
+    message: { role: "assistant", content: [{ type: "text", text: id }] },
+  });
+  const bk = (id, parentId) => ({ type: "custom", id, parentId, customType: "navigate" });
+
+  test("QA 实测拓扑：user 兄弟 → 子树最深 assistant（绝非 user id 本身——select(user)=编辑位陷阱）", () => {
+    const entries = [
+      msg("seed-u", null),
+      asst("fork", "seed-u"),
+      msg("u1", "fork"),
+      asst("a-b1", "u1"),
+      bk("graft2", "fork"),
+      msg("u2", "graft2"),
+      asst("a-b2", "u2"),
+      bk("graft3", "fork"),
+      msg("u3", "graft3"),
+      asst("a-b3", "u3"),
+    ];
+    expect(resolveBranchLeaf(entries, "u2")).toBe("a-b2");
+    expect(resolveBranchLeaf(entries, "u3")).toBe("a-b3");
+    expect(resolveBranchLeaf(entries, "u1")).toBe("a-b1");
+  });
+
+  test("多轮分支：user 兄弟子树取整支最深 assistant（不是首个回复）", () => {
+    const entries = [
+      msg("u1", null),
+      asst("a1", "u1"),
+      msg("u2", "a1"),
+      asst("a2", "u2"),
+      msg("u2b", "a2"),
+      asst("a2b", "u2b"),
+    ];
+    expect(resolveBranchLeaf(entries, "u2")).toBe("a2b");
+  });
+
+  test("无 assistant 分支（未获回复）：确定性回退子树最后一条条目（user 自身）", () => {
+    const entries = [msg("u1", null), asst("a1", "u1"), msg("u2", "a1")];
+    expect(resolveBranchLeaf(entries, "u2")).toBe("u2");
+  });
+
+  test("子树尾挂簿记：最深 assistant 优先于其后 custom 尾条", () => {
+    const entries = [
+      msg("u1", null),
+      asst("a1", "u1"),
+      msg("u2", "a1"),
+      asst("a2", "u2"),
+      bk("tail-bk", "a2"),
+    ];
+    expect(resolveBranchLeaf(entries, "u2")).toBe("a2");
+  });
+
+  test("pending 提问在 assistant 之后：规约取最深 assistant（确定性优先级，配合 resume 意图消费）", () => {
+    const entries = [
+      msg("u1", null),
+      asst("a1", "u1"),
+      msg("u2", "a1"),
+      asst("a2", "u2"),
+      msg("u3", "a2"), // 已问未答
+    ];
+    expect(resolveBranchLeaf(entries, "u2")).toBe("a2");
+  });
+
+  test("seed 不在场返回 null（调用方回退原 id，resume 语义下仍安全）；children 环守卫不死循环", () => {
+    expect(resolveBranchLeaf([msg("u1", null)], "nope")).toBe(null);
+    const cyc = [bk("g1", "g2"), bk("g2", "g1"), msg("x", "g1"), asst("ax", "x")];
+    expect(resolveBranchLeaf(cyc, "x")).toBe("ax");
   });
 });

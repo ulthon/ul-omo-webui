@@ -72,6 +72,7 @@ export const chat = {
     empty: "No branches to show",
     emptyPreview: "(no text content)",
     compacted: "Compacted",
+    compactedBlocked: "This branch was compacted and cannot be switched to",
     currentLeaf: "Current branch",
     branchCount: "{n} branches",
     switchBusy: "Branch switch in progress, please wait",

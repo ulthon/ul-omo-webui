@@ -72,6 +72,7 @@ export const chat = {
     empty: "暂无可展示的分支",
     emptyPreview: "（无文本内容）",
     compacted: "已压缩",
+    compactedBlocked: "该分支已被压缩，无法切换",
     currentLeaf: "当前分支",
     branchCount: "{n} 个分支",
     switchBusy: "分支切换进行中，请稍候",

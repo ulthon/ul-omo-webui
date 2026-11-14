@@ -1,6 +1,7 @@
 // @ts-nocheck
 // 会话分支树全屏层单测（session-branching todo 7）：fixture 树渲染/当前路径高亮/
-// 离径半透明/不可达禁用+提示/点击可达叶调 switchLeaf 并关闭/Esc 关闭/压缩事件失效
+// 离径半透明/不可达不导航且点击出轻提示（task-10 缺陷 E-2）/点击可达叶调
+// switchLeaf（resume 意图，缺陷 E-1）并关闭/Esc 关闭/压缩事件失效
 // 重拉/空树与缺 activeLeafId malformed 防护/i18n 键存在。
 // 环境说明同 branch-pager.test.tsx：@ts-nocheck + 动态 import + @happy-dom 全局注册
 // + createRoot + dispatchEvent；portal 渲染进 document.body，断言查全文档。
@@ -30,6 +31,7 @@ const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { SessionTreeOverlay } = await import("@/components/chat/session-tree-overlay");
 const { useMessagesStore } = await import("@/stores/messages");
+const { useUiStore } = await import("@/stores/ui");
 const { t: tSnap } = await import("@/i18n/i18n");
 
 const SID = "s-tree-1";
@@ -150,17 +152,22 @@ describe("SessionTreeOverlay（todo 7）", () => {
     expect(u2x.disabled).toBe(false);
   });
 
-  test("(4) 不可达节点禁用 + 「已压缩」提示；点击 no-op 不关浮层", async () => {
+  test("(4) 不可达节点不导航 + 「已压缩」提示；点击出轻提示不关浮层（task-10 缺陷 E-2：禁用态事件穿透静默吞改可反馈）", async () => {
     const onClose = vi.fn();
     const onSwitchLeaf = vi.fn();
     mount({ sessionId: SID, fetchTree: async () => fixture(), onClose, onSwitchLeaf });
     await flush();
     const u9 = q('[data-node-id="u9"] button');
-    expect(u9.disabled).toBe(true);
+    expect(u9.disabled).toBe(false); // 不再 disabled：禁用按钮点击事件穿透只关浮层零反馈
+    expect(u9.getAttribute("aria-disabled")).toBe("true");
     expect(u9.textContent).toContain(tSnap("chat.tree.compacted"));
     clickNode("u9");
     expect(onSwitchLeaf).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    // 每次用户发起的切换尝试必须出网或出反馈：不可达点击出轻提示
+    expect(
+      useUiStore.getState().toasts.some((x) => x.text === tSnap("chat.tree.compactedBlocked")),
+    ).toBe(true);
   });
 
   test("(5) 点击可达叶：switchLeaf 带正确 entryId 调用，浮层关闭回消息流", async () => {
@@ -223,6 +230,7 @@ describe("SessionTreeOverlay（todo 7）", () => {
       "chat.tree.title",
       "chat.tree.close",
       "chat.tree.compacted",
+      "chat.tree.compactedBlocked",
       "chat.tree.currentLeaf",
       "chat.tree.branchCount",
       "chat.tree.empty",
@@ -250,5 +258,76 @@ describe("SessionTreeOverlay（todo 7）", () => {
     mount({ sessionId: SID, fetchTree, onClose: () => {} });
     await flush();
     expect(q('[data-node-id="u2"] button').className).not.toContain("bg-muted/60");
+  });
+
+  // ── task-10 缺陷 E 回归（attempt-3）──
+
+  test("(10) 缺陷 E-2 回归：编辑位空视图态下点可达叶仍出切换（带 leaf id，浮层关闭）", async () => {
+    // E-1 残留态复刻：activeLeafId 落在零消息路径的算记嫁接位（消息流空、无 pager）
+    const editPos = {
+      sessionId: SID,
+      source: "disk",
+      nodes: [
+        node("bk-seed", null, { role: "custom" }),
+        node("graft", "bk-seed", { role: "custom" }),
+        node("u1", "graft"),
+        node("asst1", "u1", { role: "assistant" }),
+      ],
+      activeLeafId: "graft",
+    };
+    const onClose = vi.fn();
+    const onSwitchLeaf = vi.fn();
+    const { useState } = await import("react");
+    function Harness(props) {
+      const [open, setOpen] = useState(true);
+      return open
+        ? createElement(SessionTreeOverlay, {
+            ...props,
+            onClose: () => {
+              props.onClose();
+              setOpen(false);
+            },
+          })
+        : null;
+    }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mounted.push({ host, root });
+    act(() => {
+      root.render(createElement(Harness, { sessionId: SID, fetchTree: async () => editPos, onClose, onSwitchLeaf }));
+    });
+    await flush();
+    // 当前分支标记落在嫁接位（零消息路径），点可达叶 asst1 → 切换出网路径在场
+    expect(q('[data-node-id="graft"] button').textContent).toContain(tSnap("chat.tree.currentLeaf"));
+    clickNode("asst1");
+    expect(onSwitchLeaf).toHaveBeenCalledTimes(1);
+    expect(onSwitchLeaf).toHaveBeenCalledWith("asst1");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(q('[data-testid="session-tree-overlay"]')).toBeNull();
+  });
+
+  test("(11) 缺省包装器意图（缺陷 E-1）：可达叶点击走 store switchLeaf 且带 resume（绝无 select(user) 编辑位陷阱）", async () => {
+    const real = useMessagesStore.getState().switchLeaf;
+    const spy = vi.fn(async () => ({ ok: true, leafId: "x" }));
+    act(() => {
+      useMessagesStore.setState({ switchLeaf: spy });
+    });
+    try {
+      mount({ sessionId: SID, fetchTree: async () => fixture(), onClose: () => {} });
+      await flush();
+      clickNode("u2x"); // user 节点也直点：resume 语义下叶=点击条目本身，非编辑位
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [sid, entryId, deps, intent] = spy.mock.calls[0];
+      expect(sid).toBe(SID);
+      expect(entryId).toBe("u2x");
+      expect(typeof deps.navigate).toBe("function");
+      expect(typeof deps.fetchFull).toBe("function");
+      expect(intent).toBe("resume");
+    } finally {
+      act(() => {
+        useMessagesStore.setState({ switchLeaf: real });
+      });
+    }
   });
 });

@@ -2,9 +2,11 @@
 // Esc / 点遮罩关闭（复刻 image-lightbox.tsx 骨架）。内容 = GET /api/sessions/:id/tree
 // 轻量树（服务端已截 160 字预览，全文绝不下发）：嵌套缩进列表 + role 徽标 +
 // line-clamp 预览 + 时间戳；当前路径（activeLeafId 沿 parentId 回溯）高亮、离径
-// 分支半透明、分支点子数徽标；unreachableIds 节点禁用 +「已压缩」提示（F14 压缩
-// 契约：被压缩剪除的节点仅存于磁盘口径，引擎树已不可达）。点击可达节点 →
-// switchLeaf 编排（todo 6，F19 全序收口在 store）→ 关闭浮层回消息流。
+// 分支半透明、分支点子数徽标；unreachableIds 节点不导航且点击出轻提示（task-10
+// 缺陷 E-2：禁用态事件穿透只关浮层零反馈）+「已压缩」提示（F14 压缩契约：被压缩
+// 剪除的节点仅存于磁盘口径，引擎树已不可达）。点击可达节点 → switchLeaf 编排
+// （todo 6，F19 全序收口在 store；resume 意图——task-10 缺陷 E-1 切视图语义，
+// 叶=目标本身，绝无 select(user) 编辑位陷阱）→ 关闭浮层回消息流。
 // 压缩事件（store compacting 位）置位/结束后树数据失效重拉；不做虚拟化（预览级
 // 载荷）、不做跨会话聚合（仅会话内树）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +16,7 @@ import { api } from "@/lib/api";
 import type { SessionTreeNode, SessionTreePayload } from "@/lib/api";
 import { useT } from "@/i18n/i18n";
 import { useMessagesStore } from "@/stores/messages";
+import { useUiStore } from "@/stores/ui";
 
 /** 扁平节点列表 → parentId 分组（孤儿/悬空 parentId 兜底挂根，绝不让节点消失：
  *  malformed 防护——空树/缺 activeLeafId 渲染空态提示，不白屏） */
@@ -117,10 +120,17 @@ export function SessionTreeOverlay({
     (entryId: string) => {
       (onSwitchLeaf ??
         ((id: string) => {
-          void useMessagesStore.getState().switchLeaf(sessionId, id, {
-            navigate: (body) => api.navigate(sessionId, body),
-            fetchFull: () => api.listMessages(sessionId, { full: true }),
-          });
+          // resume 意图（task-10 缺陷 E-1）：树点击是切视图——叶=目标条目本身
+          //（与角色无关），绝不能以 select 发 user 节点 id（编辑位陷阱）
+          void useMessagesStore.getState().switchLeaf(
+            sessionId,
+            id,
+            {
+              navigate: (body) => api.navigate(sessionId, body),
+              fetchFull: () => api.listMessages(sessionId, { full: true }),
+            },
+            "resume",
+          );
         }))(entryId);
       onClose();
     },
@@ -137,11 +147,17 @@ export function SessionTreeOverlay({
         <li key={node.id} data-testid="session-tree-node" data-node-id={node.id}>
           <button
             type="button"
-            disabled={isUnreachable}
+            aria-disabled={isUnreachable}
             onClick={(e) => {
               // stopPropagation：切叶关闭不走遮罩关闭通道（防双重 onClose）
               e.stopPropagation();
-              if (!isUnreachable) switchLeaf(node.id);
+              // 不可达（压缩剪除）点击出轻提示（task-10 缺陷 E-2：不再静默吞——
+              // 禁用按钮的事件穿透只关浮层零反馈）；仍不导航不关浮层（F14 禁切不变）
+              if (isUnreachable) {
+                useUiStore.getState().showToast(t("chat.tree.compactedBlocked"));
+                return;
+              }
+              switchLeaf(node.id);
             }}
             className={`flex w-full items-start gap-2 rounded-lg border px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted ${
               onPath ? "border-primary/50 bg-muted/60" : "border-transparent"

@@ -26,7 +26,7 @@ import { commandGate } from "./commands";
 import { MessageList, type MessageListHandle } from "./message-list";
 import { buildMessageItems, modelChangeBackfillOf, type ChatListItem } from "./message-items";
 import { SessionTreeOverlay } from "./session-tree-overlay";
-import { filterEntriesToPath, deriveSiblingPositions } from "./branch-path-data";
+import { filterEntriesToPath, deriveSiblingPositions, resolveBranchLeaf } from "./branch-path-data";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionHintBar } from "./question-hint-bar";
 import { ActivityBar } from "./activity-bar";
@@ -389,12 +389,22 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // （409 二次 stale 等）出常驻错误卡，此处不再静默丢结果。
   const onSwitchSibling = useCallback(
     (entryId: string) => {
-      void useMessagesStore.getState().switchLeaf(sessionId, entryId, {
-        navigate: (body) => api.navigate(sessionId, body),
-        fetchFull: () => api.listMessages(sessionId, { full: true }),
-      });
+      // 切视图 ≠ 进编辑（task-10 缺陷 E-1）：pager 兄弟 id 是 user 消息 id，引擎
+      // select(user)=编辑位语义（叶移父位+回 editorText）会把视图落到零消息的空
+      // 编辑位——先解析目标分支叶（子树最深 assistant，无 assistant 回退子树末
+      // 条），再以 resume 意图导航（叶=目标本身，与角色无关，2026-11-12 协议实证）。
+      const leaf = resolveBranchLeaf(entries ?? [], entryId) ?? entryId;
+      void useMessagesStore.getState().switchLeaf(
+        sessionId,
+        leaf,
+        {
+          navigate: (body) => api.navigate(sessionId, body),
+          fetchFull: () => api.listMessages(sessionId, { full: true }),
+        },
+        "resume",
+      );
     },
-    [sessionId],
+    [sessionId, entries],
   );
   // 切换锁（task-10 缺陷 D 收窄）：真忙碌才锁——streaming 或回合在途
   //（turnInFlight：SSE 权威 running 或探询 active 兑底；waiting 是引擎挂接待输入稳态

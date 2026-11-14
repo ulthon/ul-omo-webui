@@ -561,6 +561,59 @@ describe("switchLeaf 编排（F19 全序）", () => {
     expect(st().errors).toHaveLength(0); // 无错误卡（上层可再触发）
     expect(st().navigating).toBe(false);
   });
+
+  // ── task-10 缺陷 E-1：切视图（resume）与进编辑（select 缺省）意图分流 ──
+
+  test("(16) 切视图意图：switchLeaf(...,\"resume\") 以 resume 出网（pager/树点击链，叶=目标本身）；缺省仍 select（编辑语义链不回归）", async () => {
+    seedSlot();
+    const calls = [];
+    await useMessagesStore.getState().switchLeaf(
+      SID,
+      "a2b-leaf",
+      {
+        navigate: async (body) => {
+          calls.push(["navigate", body.entryId, body.intent]);
+          return { sessionId: SID, leafId: "a2b-leaf" };
+        },
+        fetchFull: async () => pageOf(NEW_PAGE, "a2b"),
+      },
+      "resume",
+    );
+    expect(calls).toEqual([["navigate", "a2b-leaf", "resume"]]);
+    expect(st().viewLeafId).toBe("a2b-leaf"); // 视图落在目标分支叶（空编辑位不再出现）
+    // 缺省意图 = select（从此处分支/编辑重发/重试三链不动）
+    const intents = [];
+    await useMessagesStore.getState().switchLeaf(SID, "u1", {
+      navigate: async (body) => {
+        intents.push(body.intent);
+        return { sessionId: SID, leafId: "bk-leaf" };
+      },
+      fetchFull: async () => pageOf(NEW_PAGE, "a2b"),
+    });
+    expect(intents).toEqual(["select"]);
+  });
+
+  test("(17) stale 校准重试保持切视图意图：resume 首拒后重试帧仍 resume（不带回 select 陷阱）", async () => {
+    seedSlot();
+    const seen = [];
+    await useMessagesStore.getState().switchLeaf(
+      SID,
+      "a2b-leaf",
+      {
+        navigate: async (body) => {
+          seen.push([body.intent, body.expectedLeafId]);
+          if (seen.length === 1) throw staleRejection("a2", "calib-9");
+          return { sessionId: SID, leafId: "a2b-leaf" };
+        },
+        fetchFull: async () => pageOf(NEW_PAGE, "calib-9"),
+      },
+      "resume",
+    );
+    expect(seen).toEqual([
+      ["resume", "a2"],
+      ["resume", "calib-9"],
+    ]);
+  });
 });
 
 describe("refreshAfterContinue 编排（session-branching todo 9，edit→continue 后的刷新链）", () => {

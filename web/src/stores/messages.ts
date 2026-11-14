@@ -293,7 +293,15 @@ interface MessagesState {
    * replay 窗口内推迟到窗口关闭后落地）→ ⑤回传 leafId 更新 viewLeafId →
    * ⑥leafNavSeq 自增（usage 触发）→ ⑦navigating 互斥拒并发切换与发送。其余拒绝
    * 路径（前置门外的 409/网络）状态保持：不整替、不清流式态、viewLeafId 不动。 */
-  switchLeaf(sessionId: string, entryId: string, deps: SwitchLeafDeps): Promise<SwitchLeafResult>;
+  switchLeaf(
+    sessionId: string,
+    entryId: string,
+    deps: SwitchLeafDeps,
+    /** 导航意图（task-10 缺陷 E-1）：select（缺省）= 编辑位语义链（从此处分支/
+     *  编辑重发/重试——引擎 select(user) 叶移父位并回 editorText）；resume = 切视图
+ *  （叶=目标条目本身，与角色无关——pager/树点击解析目标分支叶后传入）。 */
+    intent?: "select" | "resume",
+  ): Promise<SwitchLeafResult>;
   /** 409 stale_leaf 校准（session-branching task-10 缺陷 C，F19「全量整替校准」落位）：
    *  full=1 全量整替把本地叶指针重置到文件/引擎当前真值（冷引擎挂接簿记漂移叶后
    *  的一切 CAS 后续以新叶续）。视图叶不动（setEntries keepView 语义天然成立：漂移
@@ -1271,7 +1279,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         };
       }),
 
-    switchLeaf: async (sessionId, entryId, deps) => {
+    switchLeaf: async (sessionId, entryId, deps, intent = "select") => {
       const cur = get().bySession[sessionId];
       // ⑦ navigating 互斥：并发切换即拒（UI 禁用之外的状态机兑底）；拒绝出轻提示
       //（task-10 缺陷 D：前置门拒绝不再静默 no-op；toast 先例 event-dispatch notify）
@@ -1302,14 +1310,15 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       // 二次 stale 已推错误卡的标记（拒绝回执携带，防调用方双推）
       let errorCarded = false;
       try {
-        // ② POST navigate（F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒
+        // ② POST navigate（意图由调用方分流，task-10 缺陷 E-1：select=编辑位链（缺省）、
+        // resume=切视图（叶=目标本身）；F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒
         // stale_leaf；task-10 缺陷 C：冷引擎挂接簿记漂移叶首切必 stale——409 时
         // 全量整替校准后带新叶自动重试恰一次，二次 stale 交常驻错误卡收口）
         let receipt: LeafNavigateReceipt;
         try {
           receipt = await deps.navigate({
             entryId,
-            intent: "select",
+            intent,
             expectedLeafId: cur.leafId ?? undefined,
           });
         } catch (err) {
@@ -1323,7 +1332,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           try {
             receipt = await deps.navigate({
               entryId,
-              intent: "select",
+              intent,
               // CAS 首选引擎拒答自带的新叶（error.data.leafId，与引擎在记忆真叶同拍）
               expectedLeafId: stale.leafId ?? pageLeaf,
             });
