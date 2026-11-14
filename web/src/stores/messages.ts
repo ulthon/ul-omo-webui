@@ -304,6 +304,15 @@ interface MessagesState {
  *  （叶=目标条目本身，与角色无关——pager/树点击解析目标分支叶后传入）。 */
     intent?: "select" | "resume",
   ): Promise<SwitchLeafResult>;
+  /** 发送即回跟活回合（task-10 attempt-7 缺陷 H）：任何视图位（含编辑重发/从此处
+   *  分支后钉在编辑位簿记叶的 viewLeafId）上的 prompt 发送成功即解除显式视图叶——
+   *  回合条目沿 SSE advanceLeaf 推进 leafId，新分支即时可见；保持钉住会把新回合锁
+   *  在视野外（发送后视图停空编辑位、pager 缺席，刷新才见 ‹n/m›，QA attempt-7 实录）。
+   *  与 refreshAfterContinue 的⑤回跟活叶同语义，但不整替不推序号（发送链自有
+   * 乐观入列与 SSE 增量）。仅本端发送解钉（用户意图=跟随自己发出的回合）；他端/
+   *  引擎侧推进不拽视图（todo 4「离径不拽视图」契约不变）。直发与排队两态同解
+   *  （排队投递落在引擎活跃叶下，钉住同样不可见）。 */
+  followLiveTurn(sessionId: string): void;
   /** 409 stale_leaf 校准（session-branching task-10 缺陷 C，F19「全量整替校准」落位）：
    *  full=1 全量整替把本地叶指针重置到文件/引擎当前真值（冷引擎挂接簿记漂移叶后
    *  的一切 CAS 后续以新叶续）。视图叶不动（setEntries keepView 语义天然成立：漂移
@@ -1315,6 +1324,13 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         };
       }),
 
+    followLiveTurn: (sessionId) =>
+      set((s) => {
+        const cur = s.bySession[sessionId];
+        if (!cur || cur.viewLeafId === null) return s;
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, viewLeafId: null } } };
+      }),
+
     switchLeaf: async (sessionId, entryId, deps, intent = "select") => {
       const cur = get().bySession[sessionId];
       // ⑦ navigating 互斥：并发切换即拒（UI 禁用之外的状态机兑底）；拒绝出轻提示
@@ -1345,6 +1361,9 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       });
       // 二次 stale 已推错误卡的标记（拒绝回执携带，防调用方双推）
       let errorCarded = false;
+      // 缺陷 H 门 (ii) 锚点：编排起点的显式视图叶——迟到落地时若它已被移动（发送即
+      // followLiveTurn 解钉等更新近的视图意图），⑤ 的显式重钉即过期，整替一并放弃
+      const viewAnchorAtStart = get().bySession[sessionId]?.viewLeafId ?? null;
       try {
         // ② POST navigate（意图由调用方分流，task-10 缺陷 E-1：select=编辑位链（缺省）、
         // resume=切视图（叶=目标本身）；F13：本地叶指针透传为 expectedLeafId 乐观锁，引擎拒
@@ -1408,6 +1427,33 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         const apply = () => {
           const st = get().bySession[sessionId];
           if (!st) return; // 中途清理（clearSession）：槽已拆即放弃，不复活槽（迟到页丢弃）
+          // 缺陷 H 双门（task-10 attempt-7）：迟到/在途整替不得回旧叶路径。命任一门
+          // 即放弃本次整替（④ 页快照已过期），仅拆防收口，视图交活回合，条目真相由
+          // 回合内 SSE 与其后全量重取收敛：
+          // (i) 落地时点回合在途（SSE 权威 running / 探询 active 兑底）——页快照取自回
+          //     合开始前，整替会把 SSE 已入列的新分支条目整页打回旧集合并清流式（QA
+          //     attempt-7 缺陷 H 的 items 4↔3 振荡写者，estep4 回合内零 REST 帧实证）；
+          //     replay 窗内重放重建的幻影流式态不在此门（runState 无权威 running，
+          //     turnInFlightOf=false），仍由下方③重申清理——todo 6 测试 (7) 契约不变。
+          // (ii) 视图锚自编排起点已被移动（发送即 followLiveTurn 解钉）——⑤ 的显式重
+          //     钉会覆盖更新近的用户视图意图，把发送后的视图锁回发送前旧叶。
+          const sess = useSessionsStore.getState();
+          if (
+            turnInFlightOf(sess.runStates[sessionId], pickActive(sess, sessionId)) ||
+            st.viewLeafId !== viewAnchorAtStart
+          ) {
+            set((s2) => {
+              const slot = s2.bySession[sessionId];
+              if (!slot) return s2;
+              return { bySession: { ...s2.bySession, [sessionId]: { ...slot, navigating: false } } };
+            });
+            diag.info("messages", "switch-leaf-apply-superseded", {
+              sessionId: sessionId.slice(0, 8),
+              turnInFlight: turnInFlightOf(sess.runStates[sessionId], pickActive(sess, sessionId)),
+              viewMoved: st.viewLeafId !== viewAnchorAtStart,
+            });
+            return;
+          }
           // ③不变量在落地沿重申：推迟窗内旧分支流的重放帧可能重建流式态（前缀抑制
           // 不命中时），整替时点统一再清一次，半截内容不落新视图
           get().clearStreamingForNavigation(sessionId);

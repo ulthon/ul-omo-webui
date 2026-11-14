@@ -2,6 +2,10 @@
 // 保存失败写 localStorage 兜底（输入不丢），恢复优先服务端草稿、失败用本地。
 // 竞态防护：回填仅在「输入框为空或非焦点」时进行——用户已经开始打字的内容
 // 永不被异步到达的服务端草稿覆盖（canRestoreRef 由组件按最新状态判定）。
+// 收紧（task-10 attempt-7 侧发现 2）：「非焦点」支路会放行失焦后到达的迟到回填
+// （QA 实录：编辑位导航 15s 冷启后 editorText 回填把用户已打草稿覆盖回旧交本），
+// 回填再叠「空或用户未动过」门（userTouched：上次回填/清空后的任何 update 写入
+// 均视为用户内容，迟到回填一律不覆盖）。
 // 回填时机（session-branching todo 8 起）：①会话打开/切换重挂载 ②uiStore.draftRefill
 // 信号（编辑重发/从此此处分支 putDraft 落库后触发重拉，单一回填源纪律 F20）。
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
@@ -22,6 +26,9 @@ export function useDraft(sessionId: string, canRestoreRef: RefObject<() => boole
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 是否有未落库的修改（成功落库/清空后复位；卸载 flush 只在 dirty 时发 PUT） */
   const dirtyRef = useRef(false);
+  /** 用户未动过标记（侧发现 2）：上次回填落地/清空后的任何 update 写入置位——迟到
+   *  回填（编辑位导航冷启后到达的 editorText）对非空且已动过的输入一律不覆盖 */
+  const userTouchedRef = useRef(false);
 
   const save = useCallback(
     async (content: string) => {
@@ -51,6 +58,7 @@ export function useDraft(sessionId: string, canRestoreRef: RefObject<() => boole
   const update = useCallback(
     (content: string) => {
       textRef.current = content;
+      userTouchedRef.current = true; // 侧发现 2：用户内容写入即钉住，迟到回填不覆盖
       dirtyRef.current = true;
       setText(content);
       scheduleSave(content);
@@ -66,8 +74,13 @@ export function useDraft(sessionId: string, canRestoreRef: RefObject<() => boole
       if (!content) return;
       // 竞态防护：仅输入框为空或非焦点时回填，绝不覆盖用户正在输入的内容
       if (!canRestoreRef.current()) return;
+      // 侧发现 2 空才回填收紧：非空且用户动过（上次回填/清空后有 update 写入）时迟
+      // 到回填不覆盖——「非焦点」支路挡不住失焦后到达的迟到回填（QA 实录覆盖已打
+      // 草稿）；空或未动过照常回填（首开恢复/编辑重发常规链不受影响）
+      if (textRef.current.length > 0 && userTouchedRef.current) return;
       textRef.current = content;
       setText(content);
+      userTouchedRef.current = false; // 本次回填成为新基准：其后用户写入才算「动过」
       if (sync) scheduleSave(content); // 本地兜底内容异步补同步到服务端
     };
     try {
@@ -120,6 +133,7 @@ export function useDraft(sessionId: string, canRestoreRef: RefObject<() => boole
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
     dirtyRef.current = false;
+    userTouchedRef.current = false; // 发送清空即新基准（后续回填按空门放行）
     textRef.current = "";
     setText("");
     clearLocalDraft(sessionId);

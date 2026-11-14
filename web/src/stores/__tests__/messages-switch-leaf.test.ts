@@ -13,6 +13,7 @@ const { useMessagesStore, STALE_RETRY_FLOOR_MS, REPLAY_DEFER_MAX_MS } = await im
 const { useSessionsStore } = await import("@/stores/sessions");
 const { useUiStore } = await import("@/stores/ui");
 const { turnInFlightOf, knownRunningOf } = await import("@/components/chat/hydration-lock");
+const { filterEntriesToPath, deriveSiblingPositions } = await import("@/components/chat/branch-path-data");
 const { api, ApiError } = await import("@/lib/api");
 
 const SID = "t6-switch-leaf";
@@ -848,5 +849,156 @@ describe("refreshAfterContinue 编排（session-branching todo 9，edit→contin
     });
     expect(gone).toEqual({ ok: false }); // 无槽即放弃（fetch 结果丢弃，不建槽不复活）
     expect(useMessagesStore.getState().bySession["no-such-session"]).toBeUndefined();
+  });
+});
+
+// ── task-10 attempt-7 缺陷 H 批：编辑位发送后回跟活回合 + 迟到整替不回旧叶 ──
+// 机制（attempt-7 estep4 实证）：发送前 viewLeafId 钉在编辑位簿记叶；发送后
+// SSE 增量（items=4 新分支）与被 replay 窗口推迟的 switchLeaf ④ 整替（items=3
+// 发送前旧页 + ⑤ 复钉旧叶 + ③ 清流式）对拍振荡，稳态停旧叶空视图，刷新才恢复。
+// 修复双面：①发送即 followLiveTurn 解钉回跟活叶；②迟到/在途整替双门（回合在途
+// /视图锚已动）命中即放弃，仅拆防收口。
+describe("缺陷 H：发送即回跟活回合 + 迟到整替不回旧叶（task-10 attempt-7）", () => {
+  /** 引擎嫁接拓扑（QA 同构）：主干 t1→a1；分支三经簿记 bk3 嫁接；bk4 = 编辑位嫁接
+   *  （navigate select u3 后文件尾），发送前视图钉在 bk4（编辑位空视图） */
+  const PRE_SEND = [
+    msgEntry("t1", null, "user", "主干提问"),
+    msgEntry("a1", "t1", "assistant", "主干回答"),
+    { type: "custom", id: "bk3", parentId: "a1", customType: "graft" },
+    msgEntry("u3", "bk3", "user", "分支三完成"),
+    msgEntry("a3", "u3", "assistant", "分支三回答"),
+    { type: "custom", id: "bk4", parentId: "a1", customType: "graft" }, // 编辑位（文件尾）
+  ];
+
+  /** 种子：发送前编辑位态（refill 已落地：entries 尾=bk4、引擎叶=bk4、视图钉 bk4） */
+  function seedEditPosition(extra = {}) {
+    useMessagesStore.getState().setEntries(SID, PRE_SEND, "bk4", "bk4");
+    useMessagesStore.setState((s) => ({
+      bySession: { ...s.bySession, [SID]: { ...s.bySession[SID], viewLeafId: "bk4", ...extra } },
+    }));
+  }
+
+  const renderablePath = () =>
+    filterEntriesToPath(st().entries, st().viewLeafId, st().leafId, (e) => e.type === "message")
+      .windowEntries.map((e) => e.id);
+
+  test("(22) followLiveTurn 动作：钉住→解钉回跟；无槽/已解钉幂等 no-op", () => {
+    seedSlot(); // viewLeafId=u1
+    useMessagesStore.getState().followLiveTurn(SID);
+    expect(st().viewLeafId).toBe(null);
+    // 幂等：已解钉两连调零变化（同引用不触发重渲染语义由 zustand set 合并保证）
+    useMessagesStore.getState().followLiveTurn(SID);
+    useMessagesStore.getState().followLiveTurn(SID);
+    expect(st().viewLeafId).toBe(null);
+    // 无槽 no-op：不建槽不抛
+    useMessagesStore.getState().followLiveTurn("no-such-session");
+    expect(useMessagesStore.getState().bySession["no-such-session"]).toBeUndefined();
+  });
+
+  test("(23) 编辑位发送全交错：解钉→乐观入列→SSE 增量建新分支→迟到整替被门(ii)放弃→落定新分支可见+pager 派生", async () => {
+    seedEditPosition();
+    // 更早一次 switchLeaf 链的 ④ 被 replay 窗口推迟（estep4 双链叠加形态）
+    useMessagesStore.getState().beginReplayRecovery();
+    const p = useMessagesStore.getState().switchLeaf(SID, "u3", {
+      navigate: async () => ({ sessionId: SID, leafId: "bk4", editorText: "分支三完成" }),
+      fetchFull: async () => pageOf(PRE_SEND, "bk4"), // 发送前页快照（stale by construction）
+    });
+    await flush();
+    expect((await p).ok).toBe(true);
+    expect(st().navigating).toBe(true); // 推迟中布防保持（F19 语义）
+
+    // ── 发送链（composer 同序：解钉→乐观入列→回执 streaming→SSE 增量）──
+    useMessagesStore.getState().followLiveTurn(SID);
+    expect(st().viewLeafId).toBe(null); // 发送即回跟活叶（缺陷 H 主修复位）
+    useMessagesStore.getState().appendLocalUserEntry(SID, "分支四完成");
+    useMessagesStore.getState().setStreaming(SID, true); // 回执 receipt.streaming
+    // SSE：user echo（message 通道，吸收乐观占位）→ entry_appended 真值 u4 → agent_start
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "message_start",
+      message: { role: "user", content: [{ type: "text", text: "分支四完成" }], timestamp: 1 },
+    });
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "entry_appended",
+      entry: {
+        type: "message",
+        id: "u4",
+        parentId: "bk4",
+        message: { role: "user", content: [{ type: "text", text: "分支四完成" }], timestamp: 1 },
+      },
+    });
+    useMessagesStore.getState().applyWireEvent(SID, { type: "agent_start" });
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "message_start",
+      message: { role: "assistant", content: [{ type: "text", text: "分支四" }] },
+    });
+
+    // 活回合中间态：新分支已可见（钉住时永不可见——缺陷 H 症状位）
+    const live = st();
+    expect(live.entries.some((e) => e.id === "u4")).toBe(true);
+    expect(live.entries.some((e) => typeof e.id === "string" && e.id.startsWith("local-"))).toBe(false); // 占位已收敛
+    expect(live.leafId).toBe("u4"); // SSE 推进（合成孪生链收敛后真值继任）
+    expect(live.streaming).toBe(true);
+    expect(live.streamingMessage).not.toBe(null);
+    expect(renderablePath()).toEqual(["t1", "a1", "u4"]); // 回跟活叶：新分支入视图
+
+    // ── 迟到整替落地（关窗触发）：门(ii) 视图锚已动 → 放弃旧页+不复钉+不清流式 ──
+    useMessagesStore.getState().endReplayRecovery();
+    await flush();
+    const gated = st();
+    expect(gated.entries).not.toBe(PRE_SEND); // 未整替为发送前页（SSE 增量不被打回）
+    expect(gated.entries.some((e) => e.id === "u4")).toBe(true);
+    expect(gated.viewLeafId).toBe(null); // 不复钉发送前旧叶（稳态不停空编辑位）
+    expect(gated.navigating).toBe(false); // 拆防收口（切换面不锁死）
+    expect(gated.streaming).toBe(true); // 迟到整替不清活回合流式
+    expect(gated.streamingMessage).not.toBe(null);
+    expect(gated.leafNavSeq).toBe(0); // 未涨（无叶落定沿）
+
+    // ── 回合收尾：定格 + 真值收敛 → 终态新分支完整可见 + pager 派生 ──
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "分支四完成。" }] },
+    });
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "entry_appended",
+      entry: {
+        type: "message",
+        id: "a4",
+        parentId: "u4",
+        message: { role: "assistant", content: [{ type: "text", text: "分支四完成。" }] },
+      },
+    });
+    useMessagesStore.getState().applyWireEvent(SID, { type: "agent_end" });
+
+    const final = st();
+    expect(final.leafId).toBe("a4"); // 回合真值继任
+    expect(renderablePath()).toEqual(["t1", "a1", "u4", "a4"]); // 新分支完整可见（QA：刷新才见 → 修复后实时见）
+    // pager 派生（QA：pager 全程缺席 → 修复后可派生）：u3/u4 经生效父归一同组
+    const pos = deriveSiblingPositions(final.entries);
+    expect(pos.get("u4")).toEqual({ index: 1, count: 2, prevId: "u3", nextId: null });
+    expect(pos.get("u3")).toEqual({ index: 0, count: 2, prevId: null, nextId: "u4" });
+  });
+
+  test("(24) 门(i) 独立生效：回合在途（SSE running）即便视图锚未动，迟到整替同样放弃", async () => {
+    seedEditPosition();
+    const seeded = st().entries;
+    useMessagesStore.getState().beginReplayRecovery();
+    const p = useMessagesStore.getState().switchLeaf(SID, "u3", {
+      navigate: async () => ({ sessionId: SID, leafId: "bk-elsewhere", editorText: "分支三完成" }),
+      // 落地即可见的可区分页（若门失效：entries 被整替、viewLeafId 被重钉 bk-elsewhere）
+      fetchFull: async () => pageOf([msgEntry("x9", null)], "bk-elsewhere"),
+    });
+    await flush();
+    expect((await p).ok).toBe(true);
+    expect(st().viewLeafId).toBe("bk4"); // 锚未动（未发送）
+    // 异端回合在途（agent_start 权威链已落 running；本端未发送、锚未动）
+    useSessionsStore.setState({ runStates: { [SID]: "running" } });
+    useMessagesStore.getState().endReplayRecovery();
+    await flush();
+    const s = st();
+    expect(s.entries).toBe(seeded); // 未整替（旧页快照不覆盖在途回合）
+    expect(s.entries.some((e) => e.id === "x9")).toBe(false);
+    expect(s.viewLeafId).toBe("bk4"); // 未复钉到 bk-elsewhere（无 ⑤ 重钉）
+    expect(s.navigating).toBe(false); // 拆防
+    expect(s.leafNavSeq).toBe(0);
   });
 });

@@ -97,4 +97,52 @@ describe("use-draft 回填信号（todo 8，putDraft 单源 + 空才回填）", 
     expect(getDraftMock).toHaveBeenCalledTimes(1); // sessionId 不命中，无重拉
     unmount();
   });
+
+  test("(4) 侧发现 2（task-10 attempt-7）：用户已输入后迟到回填不覆盖——非空+动过双门拒（canRestore=true 即失焦态也拒），无 PUT 覆盖", async () => {
+    localStorage.clear();
+    getDraftMock.mockClear();
+    putDraftMock.mockClear();
+    const unmount = mountProbe("s1", true); // canRestore=true：旧「非焦点」支路会放行的形态
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    expect(probe.text).toBe("服务端回填"); // 挂载初始恢复（空门放行）
+
+    // 用户已输入自己的草稿（QA 实录：编辑位导航 15s 冷启窗口内已打「分支四」）
+    await act(async () => {
+      probe.update("请只回复一句话：分支四完成");
+      await flushMicrotasks();
+    });
+    expect(probe.text).toBe("请只回复一句话：分支四完成");
+
+    // 迟到的 editorText 回填（refillDraft putDraft 已落库旧交本 + bump 信号）：重拉发生
+    // 但用户内容不破覆盖
+    getDraftMock.mockResolvedValueOnce({
+      sessionId: "s1",
+      draft: { content: "请只回复一句话：分支三完成", updatedAt: "2026-11-15T01:06:24Z" },
+    });
+    await act(async () => {
+      useUiStore.getState().bumpDraftRefill("s1");
+      await flushMicrotasks();
+    });
+    expect(getDraftMock).toHaveBeenCalledTimes(2); // 信号触发重拉（单一回填源纪律不变）
+    expect(probe.text).toBe("请只回复一句话：分支四完成"); // 迟到回填不覆盖已打草稿
+    expect(putDraftMock).not.toHaveBeenCalledWith("s1", "请只回复一句话：分支三完成"); // 无 PUT 覆盖
+
+    // 对照（空门照常）：清空（发送成功同构）后回填恢复常规链
+    await act(async () => {
+      probe.clear();
+      await flushMicrotasks();
+    });
+    getDraftMock.mockResolvedValueOnce({
+      sessionId: "s1",
+      draft: { content: "编辑重发常规回填", updatedAt: "2026-11-15T01:07:00Z" },
+    });
+    await act(async () => {
+      useUiStore.getState().bumpDraftRefill("s1");
+      await flushMicrotasks();
+    });
+    expect(probe.text).toBe("编辑重发常规回填"); // 空+未动过：照常回填（常规链不误伤）
+    unmount();
+  });
 });

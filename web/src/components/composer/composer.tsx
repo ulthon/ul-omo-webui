@@ -579,10 +579,15 @@ export function Composer({
               : { text: outgoingText, images: outgoingImages },
           );
         } catch (err) {
-          if (!(err instanceof ApiError && err.status === 409)) throw err;
+          if (
+            !(err instanceof ApiError && err.status === 409 && err.code === "already_processing")
+          )
+            throw err;
           // 回合结束瞬间竞态（QA 实测）：本地流式位已翻 false 但服务端单驱动守卫
-          // 尚未清位——转排队重试一次。spike F2：实例内回合中带 streamingBehavior
-          // 一律 queued（跨进程从不 409），排队是 already processing 的正确动作。
+          // 尚未清位——转排队重试一次（仅 already_processing；navigating 是客户端
+          // 瞬态互斥，排队重试同样会被拒且无意义，直接交下方分流轻提示）。spike
+          // F2：实例内回合中带 streamingBehavior 一律 queued（跨进程从不 409），排队
+          // 是 already processing 的正确动作。
           receipt = await api.prompt(sessionId, { text: outgoingText, streamingBehavior: queueModeRef.current });
         }
         sendTrace.receipt(sessionId, { disposition: receipt.disposition });
@@ -592,6 +597,7 @@ export function Composer({
         // 入列文本与 prompt 同源（含附件路径行），与引擎落盘消息保持一致。
         const messages = useMessagesStore.getState();
         if (receipt.disposition === "queued") {
+          messages.followLiveTurn(sessionId); // 缺陷 H：发送即回跟活回合（直发/排队同解）
           // 排队接受（回执 queued）：本地排队列表乐观占位（queue_update 确认后转正式
           // 项）。docs08-r7 任务 15：消息流不再插“排队中”占位（单显示源=排队条，
           // 零假象）；投递时服务端 user 帧经载荷身份收敛守卫直接入列。
@@ -609,6 +615,10 @@ export function Composer({
             draftBeforeHistoryRef.current = "";
           }
         } else {
+          // 缺陷 H（task-10 attempt-7）：发送即回跟活回合——解除切叶留下的显式视图叶
+          // 钉（编辑位发送后新分支沿 SSE 推进 leafId，钉住则新消息永不可见）；
+          // 直发与排队同解（排队投递落在引擎活跃叶下，钉住同样不可见）
+          messages.followLiveTurn(sessionId);
           messages.appendLocalUserEntry(sessionId, outgoingText, outgoingImages);
           // 发消息即上浮（任务 13 ②）：直发乐观入列同时上浮会话行（不等待 onSent /
           // agent_start 刷新）；此刻行仍以当前 sessionId 入键（adopt 在其后才换 key）
@@ -652,6 +662,11 @@ export function Composer({
           useMessagesStore
             .getState()
             .pushError(sessionId, collisionCardText(err, t("chat.streamError.sessionBusy")));
+        } else if (err instanceof ApiError && err.status === 409 && err.code === "navigating") {
+          // 叶导航在途门拒（task-10 attempt-7 侧发现 1）：瞬态忙碌门拒绝走轻提示
+          // （switchBusy 同纪律——亚秒级在途态不进常驻错误卡）；草稿保留，导航落定
+          // 后重发即可
+          showToast(err.message, "info");
         } else {
           // 发送失败入流（对齐 CLI 信息流）：会话上下文内错误不再瞬时提示，常驻错误卡可回看
           useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, "chat.streamError.sendFailed"));
