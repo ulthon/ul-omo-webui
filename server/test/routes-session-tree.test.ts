@@ -8,6 +8,8 @@
  * - 文件不在回退引擎 getTree RPC（嵌套树平铺）；网关无树通道 501 tree_unsupported
  * - navigate：happy（select 回 leafId+editorText、CAS expectedLeafId 原样透传）/
  *   resume 无 editorText / 引擎在途 409 already_processing / 坏 body 三连 400
+ * - todo 9：POST /edit-assistant（改写副本成新叶，CAS 透传/outcome/entry 回传/坏 body
+ *   400/409/501）+ POST /continue（从叶无新 prompt 续跑，CAS 透传/409/501）
  * - 鉴权：/api/* cookie 中间件，无 cookie 401
  */
 import { describe, expect, test, afterEach, vi } from "vitest";
@@ -28,6 +30,8 @@ import type {
   EngineMessagesPage,
   EngineNavigateTreeInput,
   EngineNavigateTreeResult,
+  EngineAssistantEditInput,
+  EngineAssistantEditResult,
   EnginePermissionReply,
   EnginePromptInput,
   EngineQueueSnapshot,
@@ -100,6 +104,11 @@ class FakeGateway implements EngineGateway {
   navigateResult: EngineNavigateTreeResult = { leafId: null, cancelled: false };
   navigateError: unknown = null;
   capturedNavigate: Array<{ id: string; input: EngineNavigateTreeInput }> = [];
+  editResult: EngineAssistantEditResult = { outcome: "edited", leafId: null };
+  editError: unknown = null;
+  capturedEdit: Array<{ id: string; input: EngineAssistantEditInput }> = [];
+  continueError: unknown = null;
+  capturedContinue: Array<{ id: string; input?: { expectedLeafId?: string } }> = [];
 
   async sessionPath(_id: string): Promise<string> {
     return this.sessionPathResult;
@@ -115,6 +124,15 @@ class FakeGateway implements EngineGateway {
     this.capturedNavigate.push({ id, input });
     if (this.navigateError) throw this.navigateError;
     return this.navigateResult;
+  }
+  async treeEditAssistant(id: string, input: EngineAssistantEditInput): Promise<EngineAssistantEditResult> {
+    this.capturedEdit.push({ id, input });
+    if (this.editError) throw this.editError;
+    return this.editResult;
+  }
+  async treeContinueFromLeaf(id: string, input?: { expectedLeafId?: string }): Promise<void> {
+    this.capturedContinue.push({ id, input });
+    if (this.continueError) throw this.continueError;
   }
   async sessionsList(): Promise<EngineSessionSummary[]> {
     return [];
@@ -395,6 +413,140 @@ describe("POST /api/sessions/:id/navigate（session-branching todo 3）", () => 
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ entryId: "e3", intent: "select" }),
+    });
+    expect(res.status).toBe(501);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("tree_unsupported");
+  });
+});
+
+// ── POST /api/sessions/:id/edit-assistant（todo 9：edit_assistant_message）──────
+
+describe("POST /api/sessions/:id/edit-assistant（session-branching todo 9）", () => {
+  test("happy：改写副本成新叶，outcome/leafId/entry 回传，CAS expectedLeafId 原样透传", async () => {
+    const gateway = new FakeGateway();
+    gateway.editResult = {
+      outcome: "edited",
+      leafId: "copy-graft-1",
+      entry: FIXTURE_ENTRIES[1]!,
+    };
+    const res = await buildApp(gateway).request("/api/sessions/s1/edit-assistant", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e2", text: "编辑后的回复", expectedLeafId: "e5" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sessionId: string;
+      outcome: string;
+      leafId: string | null;
+      entry?: EngineEntry;
+    };
+    expect(body.sessionId).toBe("s1");
+    expect(body.outcome).toBe("edited");
+    expect(body.leafId).toBe("copy-graft-1");
+    expect(body.entry?.id).toBe("e2");
+    // CAS 透传断言：网关收到的入参与请求体逐字段一致（误导性成功输出防线）
+    expect(gateway.capturedEdit).toEqual([
+      { id: "s1", input: { entryId: "e2", text: "编辑后的回复", expectedLeafId: "e5" } },
+    ]);
+  });
+
+  test("坏 body：缺 entryId / 空 text / 坏 expectedLeafId 各自独立 400 错误码", async () => {
+    const app = buildApp(new FakeGateway());
+    const post = (raw: string) =>
+      app.request("/api/sessions/s1/edit-assistant", { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+
+    const noEntry = await post(JSON.stringify({ text: "x" }));
+    expect(noEntry.status).toBe(400);
+    expect(((await noEntry.json()) as { error: { code: string } }).error.code).toBe("invalid_entry");
+
+    const blankText = await post(JSON.stringify({ entryId: "e2", text: "   " }));
+    expect(blankText.status).toBe(400);
+    expect(((await blankText.json()) as { error: { code: string } }).error.code).toBe("invalid_text");
+
+    const badLeaf = await post(JSON.stringify({ entryId: "e2", text: "x", expectedLeafId: 42 }));
+    expect(badLeaf.status).toBe(400);
+    expect(((await badLeaf.json()) as { error: { code: string } }).error.code).toBe("invalid_leaf");
+  });
+
+  test("引擎在途 409 already_processing（单驱动纪律，treeNavigate 同款）", async () => {
+    const gateway = new FakeGateway();
+    gateway.editError = new ApiError(409, "already_processing", "该会话回合进行中，编辑前请等待回合结束或 abort");
+    const res = await buildApp(gateway).request("/api/sessions/s1/edit-assistant", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e2", text: "x" }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("already_processing");
+  });
+
+  test("网关无编辑通道：501 tree_unsupported", async () => {
+    const gateway = new FakeGateway();
+    (gateway as Partial<EngineGateway>).treeEditAssistant = undefined;
+    const res = await buildApp(gateway).request("/api/sessions/s1/edit-assistant", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entryId: "e2", text: "x" }),
+    });
+    expect(res.status).toBe(501);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("tree_unsupported");
+  });
+});
+
+// ── POST /api/sessions/:id/continue（todo 9：continue_from_leaf）──────────
+
+describe("POST /api/sessions/:id/continue（session-branching todo 9）", () => {
+  test("happy：从叶无新 prompt 续跑，expectedLeafId 透传，回 sessionId", async () => {
+    const gateway = new FakeGateway();
+    const res = await buildApp(gateway).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedLeafId: "copy-graft-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown).toEqual({ sessionId: "s1" });
+    expect(gateway.capturedContinue).toEqual([{ id: "s1", input: { expectedLeafId: "copy-graft-1" } }]);
+  });
+
+  test("空体缺省：不带 expectedLeafId 也可续跑（宿主预留 CAS 通道缺省不发）", async () => {
+    const gateway = new FakeGateway();
+    const res = await buildApp(gateway).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    expect(gateway.capturedContinue).toEqual([{ id: "s1", input: { expectedLeafId: undefined } }]);
+  });
+
+  test("引擎在途 409 already_processing；坏 expectedLeafId 400 invalid_leaf", async () => {
+    const gateway = new FakeGateway();
+    gateway.continueError = new ApiError(409, "already_processing", "该会话回合进行中，续跑前请等待回合结束或 abort");
+    const res = await buildApp(gateway).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("already_processing");
+
+    const badLeaf = await buildApp(new FakeGateway()).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedLeafId: "" }),
+    });
+    expect(badLeaf.status).toBe(400);
+    expect(((await badLeaf.json()) as { error: { code: string } }).error.code).toBe("invalid_leaf");
+  });
+
+  test("网关无续跑通道：501 tree_unsupported", async () => {
+    const gateway = new FakeGateway();
+    (gateway as Partial<EngineGateway>).treeContinueFromLeaf = undefined;
+    const res = await buildApp(gateway).request("/api/sessions/s1/continue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
     });
     expect(res.status).toBe(501);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("tree_unsupported");

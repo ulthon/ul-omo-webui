@@ -3,7 +3,7 @@
  * 覆盖：navigateTree（entryId/targetId 寻址折叠、归一回包、CAS 透传、streaming/压缩互斥
  * 409 映射、寻址守卫、stale_leaf 原样上抛）、getTree（透传）、editAssistantMessage
  * （outcome 归一、CAS 透传、409、参数守卫）、continueFromLeaf（CAS 透传、409）、
- * capabilities 能力位（treeNavigation 默认 true / editResend 维持 false 待翻转）。
+ * capabilities 能力位（treeNavigation=true / editResend 已随 todo-1 实调翻转 true）。
  * 错误形态按引擎实录：RPC 面错误经 RpcCommandError（message+errorCode）鸭子到达；
  * ContinueFromLeafError（code="streaming"）与压缩互斥（无 errorCode 的普通 Error，
  * message 前缀 "Wait for the current compaction"）两种锚定都验。
@@ -356,11 +356,11 @@ describe("continueFromLeaf（RPC continue_from_leaf）", () => {
   })
 })
 
-describe("capabilities 能力位（session-branching todo 2）", () => {
-  test("treeNavigation 默认 true（todo-1 实调结论前）；editResend 维持 false 待翻转", () => {
+describe("capabilities 能力位（session-branching todo 2 + todo 9 翻转）", () => {
+  test("treeNavigation=true；editResend 已随 todo-1 实调结论翻转 true（task-1 证据 §5）", () => {
     const adapter = makeAdapter(new TreeFakeRpcClient())
     expect(adapter.capabilities.treeNavigation).toBe(true)
-    expect(adapter.capabilities.editResend).toBe(false)
+    expect(adapter.capabilities.editResend).toBe(true)
     expect(adapter.capabilities.messageEdit).toBe(true)
   })
 })

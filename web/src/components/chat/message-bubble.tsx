@@ -274,7 +274,16 @@ export const EntryBubble = memo(function EntryBubble({
       durationLabel={originDuration}
       interrupted={role === "assistant" ? interrupted : undefined}
       queued={queued}
-      actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
+      actions={
+        showActions ? (
+          <MessageActions
+            sessionId={sessionId}
+            entryId={entry.id}
+            align={role === "user" ? "end" : "start"}
+            switchDisabled={switchDisabled}
+          />
+        ) : undefined
+      }
       pager={
         showActions ? (
           <BranchPager position={sibling ?? null} disabled={switchDisabled} onSwitchSibling={onSwitchSibling} />

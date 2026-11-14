@@ -4,6 +4,7 @@
 // 组件薄壳传真实实现、测试注入 fake 断言调用序列。
 import type { WireEntry, WireMessage } from "@/lib/api";
 import type { SwitchLeafDeps, SwitchLeafResult } from "@/stores/messages";
+import type { MessageKey } from "@/i18n/i18n";
 
 /** 气泡消息的 markdown 原文：text part 按序拼接（thinking/toolCall/image 等 part 不算原文） */
 export function messageRawText(message: WireMessage): string {
@@ -46,17 +47,33 @@ export function findForkTargetEntry(entries: WireEntry[], entryId: string, role:
   return null;
 }
 
-export type MessageMenuItem = "copy" | "branchFromHere" | "editResend" | "retry";
+export type MessageMenuItem =
+  | "copy"
+  | "branchFromHere"
+  | "editResend"
+  | "editReply"
+  | "copyContinue"
+  | "retry";
 
 /**
- * 消息菜单可见项派生（todo 8）：复制/重试恒在（重试的 fork 目标缺席由组件层
+ * 消息菜单可见项派生（todo 8 + todo 9）：复制/重试恒在（重试的 fork 目标缺席由组件层
  * disabled 兜底）；「从此处分支」「编辑重发」仅 user 条目且 treeNavigation=true
- * （IS-4/IS-5：select 语义挂在 user 消息上，assistant 侧编辑是 todo 9 域）。
+ * （IS-4/IS-5：select 语义挂在 user 消息上）；assistant 侧编辑按 editResend 能力位
+ * 分流（IS-6，D12）：true=「编辑回复」（edit+continue 原会话续跑链，F12）；false=
+ * 降级「复制到新会话续跑」（fork at 含该回复另起会话，功能不砍，F22）。能力位翻转
+ * 回退时仅文案与路径切换，入口永不消失。
  */
-export function messageMenuItems(opts: { role: string | null; treeNavigation: boolean }): MessageMenuItem[] {
+export function messageMenuItems(opts: {
+  role: string | null;
+  treeNavigation: boolean;
+  editResend?: boolean;
+}): MessageMenuItem[] {
   const items: MessageMenuItem[] = ["copy"];
   if (opts.treeNavigation && opts.role === "user") {
     items.push("branchFromHere", "editResend");
+  }
+  if (opts.role === "assistant") {
+    items.push(opts.editResend === false ? "copyContinue" : "editReply");
   }
   items.push("retry");
   return items;
@@ -90,10 +107,31 @@ export interface MessageActionDeps {
   showToast: (text: string) => void;
   /** ApiError → 本地化文案（apiErrorMessage 包装；失败注入返回固定串即可） */
   retryFailedMessage: (err: unknown) => string;
+  /** assistant 回复编辑（todo 9，api.editAssistantMessage）：改写副本成新叶不自动续跑。
+   *  回传 leafId 为编辑后的新叶（可能是副本下的簿记嫁接条目 id，不假设消息形） */
+  editAssistant: (
+    sessionId: string,
+    body: { entryId: string; text: string; expectedLeafId?: string },
+  ) => Promise<{ outcome: string; leafId: string | null; entry?: WireEntry }>;
+  /** 从当前叶无新 prompt 续跑（todo 9，api.continueFromLeaf）：编辑后的副本就位后
+   *  触发真实回合；expectedLeafId 透传（引擎 wire 面暂不携带，宿主预留 CAS 通道） */
+  continueFromLeaf: (sessionId: string, body?: { expectedLeafId?: string }) => Promise<unknown>;
+  /** 续跑后刷新编排（todo 9，stores/messages refreshAfterContinue）：full 整替+回跟
+   *  活叶+usage 沿；fetch 失败返回 ok:false 不抛（状态保持由调用方处置） */
+  refreshAfterContinue: (
+    sessionId: string,
+    deps: Pick<SwitchLeafDeps, "fetchFull">,
+  ) => Promise<{ ok: boolean }>;
+  /** 动作失败文案（apiErrorMessage 包装：editFailed/editContinueFailed/copyContinueFailed
+   *  作 fallbackKey；失败注入返回固定串即可） */
+  actionFailedMessage: (err: unknown, fallbackKey: MessageKey) => string;
   texts: {
     branchNavigateFailed: string;
     retryResent: string;
     retryBranchCreated: string;
+    /** todo 9：降级 fork(at) 成功 toast / 续跑后刷新失败的错误卡文案（静态） */
+    copyContinueCreated: string;
+    editRefreshFailed: string;
   };
 }
 
@@ -190,5 +228,74 @@ export async function runRetry(
     }
   } catch (err) {
     deps.pushError(sessionId, deps.retryFailedMessage(err));
+  }
+}
+
+/**
+ * 「编辑回复」（IS-6 能力位 true 主路径，todo 9；F12 CLI 官配两段链）：
+ * editAssistantMessage（改写副本成新叶，expectedLeafId=本地叶指针 CAS 透传）→
+ * continueFromLeaf（编辑回传叶再作 CAS 透传，从副本无新 prompt 触发真实回合，
+ * 引擎自带 continue-from-leaf system-notice）→ refreshAfterContinue（todo 6 链刷新：
+ * full 整替+回跟活叶+usage 沿）。编辑成功后链路不可回滚（引擎无逆操作）：continue
+ * 失败仍刷新视图让副本可见（用户可稍后重发消息续跑），错误卡明示续跑未启动。
+ */
+export async function runEditReply(
+  sessionId: string,
+  entryId: string,
+  text: string,
+  expectedLeafId: string | undefined,
+  deps: MessageActionDeps,
+): Promise<void> {
+  let editLeafId: string | null;
+  try {
+    const edited = await deps.editAssistant(sessionId, {
+      entryId,
+      text,
+      ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
+    });
+    editLeafId = edited.leafId;
+  } catch (err) {
+    deps.pushError(sessionId, deps.actionFailedMessage(err, "chat.messageActions.editFailed"));
+    return;
+  }
+  let continueError: unknown = null;
+  try {
+    await deps.continueFromLeaf(sessionId, {
+      ...(typeof editLeafId === "string" && editLeafId !== "" ? { expectedLeafId: editLeafId } : {}),
+    });
+  } catch (err) {
+    continueError = err;
+  }
+  const refreshed = await deps.refreshAfterContinue(sessionId, { fetchFull: deps.fetchFull });
+  if (continueError !== null) {
+    deps.pushError(
+      sessionId,
+      deps.actionFailedMessage(continueError, "chat.messageActions.editContinueFailed"),
+    );
+  } else if (!refreshed.ok) {
+    // 续跑已启动但视图未刷新（fetch 失败，状态保持）：错误卡明示，SSE/重开可自愈
+    deps.pushError(sessionId, deps.texts.editRefreshFailed);
+  }
+}
+
+/**
+ * 「复制到新会话续跑」（IS-6 降级路径，能力位 false，F22）：fork(position="at")
+ * 含该 assistant 回复本身另起会话（实调环境差异回退时功能不砍），切到新会话 +
+ * 列表刷新 + toast；不自动发送（用户在新会话自由续写；编辑原文能力不在此重建，
+ * 菜单文案「复制到新会话续跑」已明示语义差异）。
+ */
+export async function runCopyContinueNewSession(
+  sessionId: string,
+  entryId: string,
+  deps: MessageActionDeps,
+): Promise<void> {
+  try {
+    const forked = await deps.forkSession(sessionId, { entryId, position: "at" });
+    // 切到 fork 会话（human 视图不列 fork 子会话，"全部活动"视图按血缘归组可见）+ 列表刷新
+    deps.selectSession(forked.session.id);
+    deps.refreshSessions();
+    deps.showToast(deps.texts.copyContinueCreated);
+  } catch (err) {
+    deps.pushError(sessionId, deps.actionFailedMessage(err, "chat.messageActions.copyContinueFailed"));
   }
 }

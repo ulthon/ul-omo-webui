@@ -138,8 +138,8 @@ assert(
 
 // --- 能力位 ---
 assert(
-  "capabilities（treeNavigation=true 默认 / editResend=false 待翻转）",
-  adapter.capabilities.treeNavigation === true && adapter.capabilities.editResend === false,
+  "capabilities（treeNavigation=true / editResend=true 已随 todo-1 实调翻转）",
+  adapter.capabilities.treeNavigation === true && adapter.capabilities.editResend === true,
 )
 
 if (failed > 0) {

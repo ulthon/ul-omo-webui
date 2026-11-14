@@ -302,13 +302,14 @@ export interface EngineCapabilities {
   usageStats: boolean
   /** 引擎图片 part 读取（get_media 协议面，需 image_ref 占位工具才有实例） */
   imagePartRead: boolean
-  /** 消息编辑（分支改写）；"编辑后立即重发"（continue_from_leaf）官配引擎不支持，见 editResend */
+  /** 消息编辑（分支改写）；"编辑后立即重发"（edit_assistant_message + continue_from_leaf）见 editResend */
   messageEdit: boolean
   /** 会话树导航/树读取（navigate_tree/get_tree 协议面已随官配引擎内置）；
    *  todo-1 实调结论落定前默认 true，结论 FAIL 时再翻转 */
   treeNavigation: boolean
-  /** "编辑后立即重发"（edit_assistant_message + continue_from_leaf 两段链）：协议面
-   *  已随官配引擎内置，翻转为 true 待 todo-1 实调结论（F22/F23①）落定 */
+  /** "编辑后立即重发"（edit_assistant_message + continue_from_leaf 两段链，F22/D12）：
+   *  todo-1 实调结论成立（task-1 证据 §5：edit 副本成新叶 + continue 真实续跑成功）
+   *  已翻转为 true；实调环境差异需回退时置 false，前端降级 fork(at) 路径 */
   editResend: boolean
   /** 导出 HTML（omo CLI --export 实证可用，verification/05 P1-7） */
   exportHtml: boolean

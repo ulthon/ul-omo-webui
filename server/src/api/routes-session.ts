@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type {
   EngineEntry,
   EngineNavigateTreeInput,
+  EngineAssistantEditInput,
   EnginePromptInput,
   EngineSessionSummary,
   EngineThinkingLevel,
@@ -862,9 +863,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
   }));
 
   // 从指定条目 fork 新会话（重试语义）：position 默认 "before"（仅接受 user 消息条目，
-  // 新会话 = 该消息之前的上下文，text 返回原消息文本供前端重发）。
-  // "编辑后重发"降级不在此路由实现——capabilities.editResend=false（verification/05 P1-6：
-  // 官配引擎无 continue_from_leaf），入口不渲染，fork 重试为替代路径。
+  // 新会话 = 该消息之前的上下文，text 返回原消息文本供前端重发）；position="at" 含该条目
+  // 本身（todo 9 assistant 编辑降级路径消费：含该回复另起会话续跑）。
   app.post("/api/sessions/:id/fork", route(async (c: Context) => {
     const id = requireParam(c, "id");
     const body = await parseJsonBody(c);
@@ -982,6 +982,65 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       leafId: result.leafId,
       ...(typeof result.editorText === "string" ? { editorText: result.editorText } : {}),
     });
+  }));
+
+  // assistant 回复编辑（session-branching todo 9，capabilities.editResend 门控入口）：
+  // edit_assistant_message RPC（适配层 editAssistantMessage）——改写副本成新叶（原条目
+  // 与其后分支保留），不自动续跑（续跑由下方 /continue 触发，F12 CLI 官配两段链）。
+  // expectedLeafId 乐观锁原样透传（引擎拒 stale_leaf 防跨端竞态）；单驱动纪律 409
+  // already_processing（treeNavigate 同款，运行时层映射）。
+  app.post("/api/sessions/:id/edit-assistant", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const body = await parseJsonBody(c);
+    if (typeof body.entryId !== "string" || !body.entryId) {
+      throw new ApiError(400, "invalid_entry", "entryId 必填");
+    }
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      throw new ApiError(400, "invalid_text", "text 需为非空字符串");
+    }
+    let expectedLeafId: string | undefined;
+    if (body.expectedLeafId !== undefined && body.expectedLeafId !== null) {
+      if (typeof body.expectedLeafId !== "string" || !body.expectedLeafId) {
+        throw new ApiError(400, "invalid_leaf", "expectedLeafId 需为非空字符串");
+      }
+      expectedLeafId = body.expectedLeafId;
+    }
+    if (!deps.engines.treeEditAssistant) {
+      throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树编辑通道");
+    }
+    const result = await deps.engines.treeEditAssistant(id, {
+      entryId: body.entryId,
+      text: body.text,
+      expectedLeafId,
+    } as EngineAssistantEditInput);
+    return c.json({
+      sessionId: id,
+      outcome: result.outcome,
+      leafId: result.leafId,
+      ...(result.entry !== undefined ? { entry: result.entry } : {}),
+    });
+  }));
+
+  // 从当前叶无新 prompt 续跑（session-branching todo 9）：continue_from_leaf RPC
+  //（适配层 continueFromLeaf）——编辑后的 assistant 副本就位后触发真实回合（引擎注入
+  // continue-from-leaf system-notice，todo-1 实调 §3.4 语义）。SSE 完成检测以
+  // agent_end/message_end wire 事件为准（无树推送，task-1 证据 §6）。回合进行中 409
+  // already_processing；expectedLeafId 透传（引擎 wire 面暂不携带，宿主预留 CAS 通道）。
+  app.post("/api/sessions/:id/continue", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    const body = await parseJsonBody(c);
+    let expectedLeafId: string | undefined;
+    if (body.expectedLeafId !== undefined && body.expectedLeafId !== null) {
+      if (typeof body.expectedLeafId !== "string" || !body.expectedLeafId) {
+        throw new ApiError(400, "invalid_leaf", "expectedLeafId 需为非空字符串");
+      }
+      expectedLeafId = body.expectedLeafId;
+    }
+    if (!deps.engines.treeContinueFromLeaf) {
+      throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树续跑通道");
+    }
+    await deps.engines.treeContinueFromLeaf(id, { expectedLeafId });
+    return c.json({ sessionId: id });
   }));
 
   // 会话 usage 统计（会话级累计，verification/05 P1-4：get_session_stats）；

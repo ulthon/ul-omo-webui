@@ -425,3 +425,85 @@ describe("switchLeaf 编排（F19 全序）", () => {
     expect(after.streamingMessage).toBe(null);
   });
 });
+
+describe("refreshAfterContinue 编排（session-branching todo 9，edit→continue 后的刷新链）", () => {
+  test("(1) happy：full 整替+回跟活叶（viewLeafId=null）+leafNavSeq 自增，流式态不清（活回合合法）", async () => {
+    seedSlot();
+    // 编辑副本后的新分支页（a2c 副本 + 簿记嫁接叶），引擎叶指到嫁接条目
+    const EDITED_PAGE = [
+      msgEntry("u1", null),
+      msgEntry("a1", "u1", "assistant"),
+      msgEntry("u2", "a1"),
+      msgEntry("a2c", "u2", "assistant", "编辑后的副本"),
+    ];
+    // continue 已开启回合：message_start 建立合法流式态（不设 gate——链内无导航）
+    useMessagesStore.setState((s) => ({
+      bySession: {
+        ...s.bySession,
+        [SID]: {
+          ...s.bySession[SID],
+          streaming: true,
+          streamingMessage: { role: "assistant", content: [{ type: "text", text: "续跑中" }] },
+        },
+      },
+    }));
+    const r = await useMessagesStore.getState().refreshAfterContinue(SID, {
+      fetchFull: async () => pageOf(EDITED_PAGE, "copy-graft"),
+    });
+    expect(r).toEqual({ ok: true });
+    const s = st();
+    expect(s.entries).toBe(EDITED_PAGE); // 整替=引用整换
+    expect(s.leafId).toBe("copy-graft"); // 文件叶取自页（引擎叶真相）
+    expect(s.viewLeafId).toBe(null); // 回跟活叶（旧显式叶是编辑前分支锚，保留会把新回合锁在视野外）
+    expect(s.leafNavSeq).toBe(1); // usage 触发沿
+    expect(s.streaming).toBe(true); // 活回合流式态不清（与 switchLeaf ③ 相反，链内无导航）
+    expect(s.streamingMessage).not.toBe(null);
+  });
+
+  test("(2) 竞态防线：fetch 快照后 SSE 追到的 entry_appended 条目不随整替丢列，按 id 回填并推叶", async () => {
+    seedSlot();
+    // fetchFull 模拟：返回快照页（叶 a2）同时，store 已被 SSE 抢先推进（cont-1 链在 a2 下）
+    const SNAPSHOT = [msgEntry("u1", null), msgEntry("a1", "u1", "assistant"), msgEntry("u2", "a1"), msgEntry("a2", "u2", "assistant")];
+    const r = await useMessagesStore.getState().refreshAfterContinue(SID, {
+      fetchFull: async () => {
+        useMessagesStore.setState((s) => ({
+          bySession: {
+            ...s.bySession,
+            [SID]: {
+              ...s.bySession[SID],
+              entries: [...SNAPSHOT, msgEntry("cont-1", "a2", "assistant", "续跑首条")],
+              leafId: "cont-1",
+            },
+          },
+        }));
+        return pageOf(SNAPSHOT, "a2"); // 快照早于 cont-1 落盘
+      },
+    });
+    expect(r).toEqual({ ok: true });
+    const s = st();
+    expect(s.entries.some((e) => e.id === "cont-1")).toBe(true); // 不丢列
+    expect(s.leafId).toBe("cont-1"); // 叶随回填推进（SSE 同口径）
+    expect(s.viewLeafId).toBe(null);
+  });
+
+  test("(3) fetch 失败：ok:false 状态保持（不整替不推叶不涨序号）；(4) 槽拆后放弃不复活", async () => {
+    seedSlot();
+    const before = st();
+    const fail = await useMessagesStore.getState().refreshAfterContinue(SID, {
+      fetchFull: async () => {
+        throw new ApiError(500, "internal", "网络瞬断");
+      },
+    });
+    expect(fail).toEqual({ ok: false });
+    const after = st();
+    expect(after.entries).toBe(before.entries);
+    expect(after.viewLeafId).toBe("u1");
+    expect(after.leafNavSeq).toBe(0);
+
+    const gone = await useMessagesStore.getState().refreshAfterContinue("no-such-session", {
+      fetchFull: async () => pageOf(NEW_PAGE, "a2b"),
+    });
+    expect(gone).toEqual({ ok: false }); // 无槽即放弃（fetch 结果丢弃，不建槽不复活）
+    expect(useMessagesStore.getState().bySession["no-such-session"]).toBeUndefined();
+  });
+});

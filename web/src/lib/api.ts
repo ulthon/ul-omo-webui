@@ -163,6 +163,24 @@ export interface SessionNavigateResult {
   editorText?: string;
 }
 
+/** assistant 回复编辑请求体（session-branching todo 9 端点 POST /api/sessions/:id/edit-assistant） */
+export interface SessionEditAssistantBody {
+  entryId: string;
+  text: string;
+  /** 乐观锁（F13）：本地叶指针透传，引擎拒 stale_leaf 防跨端竞态；缺省=不带 */
+  expectedLeafId?: string;
+}
+
+/** assistant 回复编辑回执（todo 9）：改写副本成新叶（原条目与其后分支保留），
+ *  leafId 为编辑后的新叶（可能是副本下的簿记嫁接条目 id，不假设消息形）；
+ *  不自动续跑——续跑由 continueFromLeaf 触发（F12 两段链） */
+export interface SessionEditAssistantResult {
+  sessionId: string;
+  outcome: "edited" | "unchanged" | "cancelled";
+  leafId: string | null;
+  entry?: WireEntry;
+}
+
 /** 会话树轻量节点（session-branching todo 7）：GET /api/sessions/:id/tree 下发，
  *  preview 服务端已截 160 字，全文绝不下发 */
 export interface SessionTreeNode {
@@ -690,6 +708,17 @@ export const api = {
    *  switchLeaf）经此消费；409 already_processing / stale_leaf 由编排按拒绝路径处理。 */
   async navigate(sessionId: string, body: SessionNavigateBody): Promise<SessionNavigateResult> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/navigate`, jsonInit("POST", body));
+  },
+  /** assistant 回复编辑（session-branching todo 9 端点）：改写副本成新叶不自动续跑，
+   *  续跑由 continueFromLeaf 触发（F12 CLI 官配两段链）；expectedLeafId 乐观锁透传。 */
+  async editAssistantMessage(sessionId: string, body: SessionEditAssistantBody): Promise<SessionEditAssistantResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/edit-assistant`, jsonInit("POST", body));
+  },
+  /** 从当前叶无新 prompt 续跑（session-branching todo 9 端点）：编辑后的 assistant
+   *  副本就位后触发真实回合；expectedLeafId 透传（引擎 wire 面暂不携带，宿主预留
+   *  CAS 通道，缺省不带）；409 already_processing 由编排按拒绝路径处理。 */
+  async continueFromLeaf(sessionId: string, body?: { expectedLeafId?: string }): Promise<{ sessionId: string }> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/continue`, jsonInit("POST", body ?? {}));
   },
   /** 会话树轻量读取（session-branching todo 7）：SessionTreeOverlay 挂载/重开时拉取，
    *  压缩事件后树数据失效由浮层重拉；仅 GET，无写面。 */

@@ -35,6 +35,8 @@ import {
   type EngineModelInfo,
   type EngineNavigateTreeInput,
   type EngineNavigateTreeResult,
+  type EngineAssistantEditInput,
+  type EngineAssistantEditResult,
   type EngineOpenSessionResult,
   type EnginePermissionReply,
   type EngineQuestionFrame,
@@ -207,6 +209,26 @@ export interface EngineGateway {
    * 可选面（同 treeGet）。
    */
   treeNavigate?(sessionId: string, input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult>;
+  /**
+   * assistant 回复编辑（edit_assistant_message RPC，适配层 editAssistantMessage，
+   * session-branching todo 9）：改写副本成新叶（原条目与其后分支保留），不自动续跑。
+   * 单驱动纪律与 treeNavigate 同款；expectedLeafId 乐观锁原样透传，引擎拒
+   * stale_leaf 时适配层映射后原样上抛。可选面（同 treeGet）。
+   */
+  treeEditAssistant?(
+    sessionId: string,
+    input: EngineAssistantEditInput,
+  ): Promise<EngineAssistantEditResult>;
+  /**
+   * 从当前叶无新 prompt 续跑（continue_from_leaf RPC，适配层 continueFromLeaf，
+   * todo 9）：典型为编辑后的 assistant 副本就位后触发真实回合。回合进行中抛
+   * ApiError(409, "already_processing")（treeNavigate 同款）；expectedLeafId 透传
+   * （引擎 wire 面暂不携带，宿主预留 CAS 通道）。可选面（同 treeGet）。
+   */
+  treeContinueFromLeaf?(
+    sessionId: string,
+    input?: { expectedLeafId?: string },
+  ): Promise<void>;
   /**
    * 会话级在途探询（不触发 spawn）：该会话回合进行中 true；引擎未起/空闲 false。
    * GET /tree activeLeafId 双口径判据（在途取引擎 RPC 叶，否则文件末条）。
@@ -2308,6 +2330,27 @@ class ProjectRuntime {
     return bound.adapter.navigateTree(input);
   }
 
+  /** assistant 回复编辑（edit_assistant_message，todo 9）：单驱动纪律守卫同 treeNavigate；
+   *  改写副本成新叶不自动续跑（续跑由 treeContinueFromLeaf 触发）。 */
+  async treeEditAssistant(sessionId: string, input: EngineAssistantEditInput): Promise<EngineAssistantEditResult> {
+    const bound = await this.ensureForSession(sessionId);
+    if (this.runningTurns.has(bound.sessionPath)) {
+      throw new ApiError(409, "already_processing", "该会话回合进行中，编辑前请等待回合结束或 abort");
+    }
+    return bound.adapter.editAssistantMessage(input);
+  }
+
+  /** 从当前叶无新 prompt 续跑（continue_from_leaf，todo 9）：编辑后的 assistant 副本
+   *  就位后触发真实回合；引擎自身对流式态拒绝 streaming（适配层映射 409），
+   *  运行时层守卫与其双层兑底。 */
+  async treeContinueFromLeaf(sessionId: string, input?: { expectedLeafId?: string }): Promise<void> {
+    const bound = await this.ensureForSession(sessionId);
+    if (this.runningTurns.has(bound.sessionPath)) {
+      throw new ApiError(409, "already_processing", "该会话回合进行中，续跑前请等待回合结束或 abort");
+    }
+    await bound.adapter.continueFromLeaf(input);
+  }
+
   /** 会话回合在途探询（不触发 spawn）：activeSessionPaths 并集判据（回合进行中口径）。 */
   async sessionRunning(sessionPath: string): Promise<boolean> {
     const paths = await this.activeSessionPaths();
@@ -2534,6 +2577,16 @@ export class EngineRuntimeRegistry implements EngineGateway {
   async treeNavigate(sessionId: string, input: EngineNavigateTreeInput): Promise<EngineNavigateTreeResult> {
     const rt = await this.resolveRuntime(sessionId);
     return rt.treeNavigate(sessionId, input);
+  }
+
+  async treeEditAssistant(sessionId: string, input: EngineAssistantEditInput): Promise<EngineAssistantEditResult> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.treeEditAssistant(sessionId, input);
+  }
+
+  async treeContinueFromLeaf(sessionId: string, input?: { expectedLeafId?: string }): Promise<void> {
+    const rt = await this.resolveRuntime(sessionId);
+    return rt.treeContinueFromLeaf(sessionId, input);
   }
 
   async peekSessionRunning(sessionId: string): Promise<boolean> {

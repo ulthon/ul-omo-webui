@@ -486,10 +486,10 @@ describe("SenpiAdapter 会话操作（fixture 应答）", () => {
     expect(img.type).toBe("image")
   })
 
-  test("capabilities 如实反映降级（verification/05）", () => {
+  test("capabilities 如实反映降级（verification/05；editResend 已随 todo-1 实调翻转 true）", () => {
     const adapter = makeAdapter(new FakeRpcClient())
     expect(adapter.capabilities.agentsList).toBe(false)
-    expect(adapter.capabilities.editResend).toBe(false)
+    expect(adapter.capabilities.editResend).toBe(true)
     expect(adapter.capabilities.modelsList).toBe(true)
     expect(adapter.capabilities.todoState).toBe(true)
     expect(adapter.capabilities.usageStats).toBe(true)

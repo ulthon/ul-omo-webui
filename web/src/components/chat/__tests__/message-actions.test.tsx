@@ -1,9 +1,10 @@
 // @ts-nocheck
-// 消息级操作单测（session-branching todo 8）：findForkTargetEntry parentId 链上溯
-// （F17 跨支串台修复）、菜单项能力位门控、三个动作体调用序列（从此此处分支不
-// 自动发送 / 编辑重发 putDraft 单源回填 / 重试双路径切换）、组件 trigger smoke。
-// 动作体依赖注入（message-actions-data），无网络无真定时器；环境说明同
-// branch-pager.test.tsx：@ts-nocheck + 动态 import + @happy-dom 全局注册。
+// 消息级操作单测（session-branching todo 8 + todo 9）：findForkTargetEntry parentId 链上溯
+// （F17 跨支串台修复）、菜单项能力位门控（含 assistant 编辑 editResend 分流）、动作体
+// 调用序列（从此此处分支不自动发送 / 编辑重发 putDraft 单源回填 / 重试双路径 /
+// assistant 编辑 edit→continue→refresh 序 + CAS 透传 / 降级 fork(at) / 编辑对话框）、
+// 组件 trigger smoke。动作体依赖注入（message-actions-data），无网络无真定时器；
+// 环境说明同 branch-pager.test.tsx：@ts-nocheck + 动态 import + @happy-dom 全局注册。
 import { describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -21,10 +22,11 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-const { findForkTargetEntry, messageMenuItems, runBranchFromHere, runEditResend, runRetry } = await import(
+const { findForkTargetEntry, messageMenuItems, runBranchFromHere, runEditResend, runRetry, runEditReply, runCopyContinueNewSession } = await import(
   "@/components/chat/message-actions-data"
 );
 const { MessageActions } = await import("@/components/chat/message-actions");
+const { AssistantEditDialog } = await import("@/components/chat/assistant-edit-dialog");
 const { useMessagesStore } = await import("@/stores/messages");
 const { capabilities } = await import("@/lib/capabilities");
 const { createElement, act } = await import("react");
@@ -80,8 +82,19 @@ describe("messageMenuItems（能力位门控）", () => {
     ]);
   });
 
-  test("(7) assistant 条目不渲染两项；(8) treeNavigation=false（IS-8 降级）只剩复制+重试", () => {
-    expect(messageMenuItems({ role: "assistant", treeNavigation: true })).toEqual(["copy", "retry"]);
+  test("(7) assistant 条目按 editResend 分流（todo 9）；(8) treeNavigation=false（IS-8 降级）只剩复制+重试", () => {
+    // 能力位 true：主路径「编辑回复」（IS-6）
+    expect(messageMenuItems({ role: "assistant", treeNavigation: true, editResend: true })).toEqual([
+      "copy",
+      "editReply",
+      "retry",
+    ]);
+    // 能力位 false（回退）：降级「复制到新会话续跑」，入口不消失功能不砍（F22/D12）
+    expect(messageMenuItems({ role: "assistant", treeNavigation: true, editResend: false })).toEqual([
+      "copy",
+      "copyContinue",
+      "retry",
+    ]);
     expect(messageMenuItems({ role: "user", treeNavigation: false })).toEqual(["copy", "retry"]);
   });
 });
@@ -130,7 +143,28 @@ function fakeDeps(overrides = {}) {
       calls.push(`toast:${text}`);
     }),
     retryFailedMessage: vi.fn((err) => `RETRY_FAILED(${String(err)})`),
-    texts: { branchNavigateFailed: "BNF", retryResent: "RR", retryBranchCreated: "RBC" },
+    actionFailedMessage: vi.fn((err, key) => `FAILED(${key}):${String(err)}`),
+    editAssistant: vi.fn(async (sid, body) => {
+      calls.push(`edit:${sid}:${body.entryId}:${body.text}:${body.expectedLeafId ?? "-"}`);
+      if (overrides.editThrows) throw overrides.editThrows;
+      return overrides.editResult ?? { outcome: "edited", leafId: "edit-leaf-1" };
+    }),
+    continueFromLeaf: vi.fn(async (sid, body) => {
+      calls.push(`continue:${sid}:${body?.expectedLeafId ?? "-"}`);
+      if (overrides.continueThrows) throw overrides.continueThrows;
+      return { sessionId: sid };
+    }),
+    refreshAfterContinue: vi.fn(async (sid) => {
+      calls.push(`refresh:${sid}`);
+      return overrides.refreshResult ?? { ok: true };
+    }),
+    texts: {
+      branchNavigateFailed: "BNF",
+      retryResent: "RR",
+      retryBranchCreated: "RBC",
+      copyContinueCreated: "CCC",
+      editRefreshFailed: "ERF",
+    },
   };
   return { deps: d, calls };
 }
@@ -232,6 +266,153 @@ describe("MessageActions 组件（trigger smoke）", () => {
     const root = createRoot(host);
     act(() => {
       root.render(createElement(MessageActions, { sessionId: "s1", entryId: "u2" }));
+    });
+    const btn = host.querySelector('button[aria-label="chat.messageActions.menuLabel"]');
+    expect(btn).not.toBeNull();
+    act(() => root.unmount());
+  });
+});
+
+describe("runEditReply（assistant 编辑续跑：edit→continue→refresh 序，IS-6 主路径 todo 9）", () => {
+  test("(22) happy 全序：edit(CAS=本地叶)→continue(CAS=编辑回传叶)→refresh；无 prompt 无 putDraft", async () => {
+    const { deps, calls } = fakeDeps();
+    await runEditReply("s1", "a1", "编辑后的回复", "leaf-cur", deps);
+    expect(calls).toEqual([
+      "edit:s1:a1:编辑后的回复:leaf-cur",
+      "continue:s1:edit-leaf-1",
+      "refresh:s1",
+    ]);
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.putDraft).not.toHaveBeenCalled();
+  });
+
+  test("(23) CAS 双跳透传：edit 带本地叶指针；continue 带编辑回传叶（F13，expectedLeafId 全程透传）", async () => {
+    const { deps } = fakeDeps({ editResult: { outcome: "edited", leafId: "graft-9" } });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(deps.editAssistant).toHaveBeenCalledWith("s1", { entryId: "a1", text: "文本", expectedLeafId: "leaf-cur" });
+    expect(deps.continueFromLeaf).toHaveBeenCalledWith("s1", { expectedLeafId: "graft-9" });
+  });
+
+  test("(24) 本地叶空：edit 缺省不带 expectedLeafId（undefined 透传语义）", async () => {
+    const { deps } = fakeDeps();
+    await runEditReply("s1", "a1", "文本", undefined, deps);
+    expect(deps.editAssistant).toHaveBeenCalledWith("s1", { entryId: "a1", text: "文本" });
+  });
+
+  test("(25) edit 失败：pushError（editFailed 文案）即止，不 continue 不刷新", async () => {
+    const { deps, calls } = fakeDeps({ editThrows: new Error("stale") });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(calls).toEqual([
+      "edit:s1:a1:文本:leaf-cur",
+      "pushError:FAILED(chat.messageActions.editFailed):Error: stale",
+    ]);
+    expect(deps.continueFromLeaf).not.toHaveBeenCalled();
+    expect(deps.refreshAfterContinue).not.toHaveBeenCalled();
+  });
+
+  test("(26) continue 失败：编辑已落地不可回滚——仍刷新让副本可见，错误卡明示续跑未启动", async () => {
+    const { deps, calls } = fakeDeps({ continueThrows: new Error("409 busy") });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(calls).toEqual([
+      "edit:s1:a1:文本:leaf-cur",
+      "continue:s1:edit-leaf-1",
+      "refresh:s1",
+      "pushError:FAILED(chat.messageActions.editContinueFailed):Error: 409 busy",
+    ]);
+  });
+
+  test("(27) 刷新失败（refresh ok:false）：续跑已启动，静态文案错误卡（editRefreshFailed）", async () => {
+    const { deps, calls } = fakeDeps({ refreshResult: { ok: false } });
+    await runEditReply("s1", "a1", "文本", "leaf-cur", deps);
+    expect(calls).toEqual(["edit:s1:a1:文本:leaf-cur", "continue:s1:edit-leaf-1", "refresh:s1", "pushError:ERF"]);
+  });
+});
+
+describe("runCopyContinueNewSession（IS-6 降级：fork at 含该回复，不自动发送）", () => {
+  test("(28) fork(at) 断言：切会话+列表刷新+toast，无 prompt 无编辑无导航", async () => {
+    const { deps, calls } = fakeDeps();
+    await runCopyContinueNewSession("s1", "a1", deps);
+    expect(calls).toEqual(["fork:s1:a1:at", "select:fork1", "refresh", "toast:CCC"]);
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.editAssistant).not.toHaveBeenCalled();
+  });
+
+  test("(29) fork 失败：错误卡（copyContinueFailed 文案）", async () => {
+    const { deps, calls } = fakeDeps({ forkThrows: new Error("net") });
+    await runCopyContinueNewSession("s1", "a1", deps);
+    expect(calls).toEqual([
+      "fork:s1:a1:at",
+      "pushError:FAILED(chat.messageActions.copyContinueFailed):Error: net",
+    ]);
+  });
+});
+
+describe("AssistantEditDialog（编辑文本采集件，CLI 编辑器同构）", () => {
+  function mountDialog(props) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(createElement(AssistantEditDialog, props));
+    });
+    return { host, root };
+  }
+
+  test("(30) 预填原文；改后确认回传编辑文本", () => {
+    const onConfirm = vi.fn();
+    const { root } = mountDialog({ open: true, onOpenChange: () => {}, initialText: "AI 原回复", onConfirm });
+    const ta = document.querySelector('[data-testid="assistant-edit-textarea"]');
+    expect(ta).not.toBeNull();
+    expect(ta.value).toBe("AI 原回复");
+    // React 受控件：绕过 value tracker 用原型 setter 触发 onChange
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+    act(() => {
+      setter.call(ta, "编辑后的回复");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      document.querySelector('[data-testid="assistant-edit-confirm"]').click();
+    });
+    expect(onConfirm).toHaveBeenCalledWith("编辑后的回复");
+    act(() => root.unmount());
+  });
+
+  test("(31) 流式锁定（locked）与空白文本：确认钮禁用（既有门口径下沉防线）", () => {
+    const onConfirm = vi.fn();
+    const locked = mountDialog({ open: true, onOpenChange: () => {}, initialText: "x", locked: true, onConfirm });
+    expect(document.querySelector('[data-testid="assistant-edit-confirm"]').disabled).toBe(true);
+    act(() => locked.root.unmount());
+
+    const blank = mountDialog({ open: true, onOpenChange: () => {}, initialText: "  ", onConfirm });
+    expect(document.querySelector('[data-testid="assistant-edit-confirm"]').disabled).toBe(true);
+    act(() => blank.root.unmount());
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  test("(32) 取消：onOpenChange(false)，不确认", () => {
+    const onOpenChange = vi.fn();
+    const onConfirm = vi.fn();
+    const { root } = mountDialog({ open: true, onOpenChange, initialText: "x", onConfirm });
+    act(() => {
+      document.querySelector('[data-testid="assistant-edit-cancel"]').click();
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+});
+
+describe("MessageActions 组件（todo 9 smoke）", () => {
+  test("(33) assistant 条目挂载渲染触发钮（能力位 true；菜单内容门控由 messageMenuItems 覆盖）", () => {
+    const entries = [msg("u1", null), msg("a1", "u1", "assistant")];
+    useMessagesStore.getState().setEntries("s1", entries, "a1", "a1", { hasMore: false, oldestId: null });
+    capabilities.treeNavigation = true;
+    capabilities.editResend = true;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(createElement(MessageActions, { sessionId: "s1", entryId: "a1", switchDisabled: false }));
     });
     const btn = host.querySelector('button[aria-label="chat.messageActions.menuLabel"]');
     expect(btn).not.toBeNull();

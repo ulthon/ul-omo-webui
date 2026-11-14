@@ -416,12 +416,15 @@ export class SenpiAdapter implements EngineAdapter {
     usageStats: true,
     // get_media 协议面在（实例样本缺，失败按占位降级）
     imagePartRead: true,
-    // 消息编辑（分支改写）支持；"编辑后重发" continue_from_leaf 协议面已随官配引擎
-    // 内置，翻转为 true 待 todo-1 实调结论（F22/F23①）落定
+    // 消息编辑（分支改写）支持；"编辑后重发"（edit+continue 两段链）已随实调结论翻转见 editResend
     messageEdit: true,
     // 会话树导航/树读取（navigate_tree/get_tree）：todo-1 实调结论前默认 true，FAIL 再翻转
     treeNavigation: true,
-    editResend: false,
+    // "编辑后重发"（edit_assistant_message + continue_from_leaf 两段链，F22/D12）——
+    // todo-1 实调结论（.omo/evidence/ulw/session-branching/task-1-session-branching.md §5）
+    // 已成立：edit 副本成新叶 + continue 从 assistant 叶真实 LLM 回合续跑成功（同会话同序
+    // F12 CLI 官配组合流），旧注释依据（"continue_from_leaf 官配不支持 05 P1-6"）被推翻，翻转为 true
+    editResend: true,
     // omo CLI --export 实证可用（05 P1-7）
     exportHtml: true,
   }

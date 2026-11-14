@@ -268,6 +268,17 @@ interface MessagesState {
    * ⑦navigating 互斥拒并发切换与发送。拒绝路径（前置门/409）状态保持：不整替、
    * 不清流式态、viewLeafId 不动。 */
   switchLeaf(sessionId: string, entryId: string, deps: SwitchLeafDeps): Promise<SwitchLeafResult>;
+  /** assistant 编辑续跑后的刷新编排（session-branching todo 9）：edit 已把引擎叶换到
+   *  副本、continue 已开启真实回合（F12 两段链），故不设前置门/不出 navigate/不清
+   *  流式态（迟到流式帧是合法的活回合，非旧叶残像）——只做 F19 链的④⑤⑥子集：
+   *  full=1 全量整替（fetch 快照与落地间到达的 entry_appended 帧按 id upsert 回
+   *  新页不丢列，与 SSE 同口径）→ viewLeafId=null 回跟活叶（活叶沿 SSE advanceLeaf
+   *  续推，流式回合自然可见）→ leafNavSeq 自增（usage 触发沿）。fetch 失败状态
+   *  保持不动，仅返回 ok:false 由调用方处置。 */
+  refreshAfterContinue(
+    sessionId: string,
+    deps: Pick<SwitchLeafDeps, "fetchFull">,
+  ): Promise<{ ok: boolean }>;
 }
 
 /** 会话级事件行 id 序列（r10 todo 7）：模块级单调递增，仅作流内 React key */
@@ -1323,6 +1334,63 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         });
         return { ok: false, reason: "rejected" };
       }
+    },
+
+    refreshAfterContinue: async (sessionId, deps) => {
+      // T0 快照：fetch 出网前的槽内条目 id 集——整替后不在页内的旧条目按「旧视图
+      // 残留」丢弃（与 switchLeaf ④ 同语义），仅快照之后新到（SSE 抢先推进的续跑
+      // 条目）按竞态增量回填不丢列
+      const before = get().bySession[sessionId];
+      const beforeIds = new Set(
+        (before?.entries ?? []).filter((e) => typeof e.id === "string" && e.id !== "").map((e) => e.id),
+      );
+      let page: Awaited<ReturnType<SwitchLeafDeps["fetchFull"]>>;
+      try {
+        page = await deps.fetchFull();
+      } catch (err) {
+        // fetch 失败状态保持不动（不整替不推叶），仅返回 ok:false 由调用方错误卡处置
+        diag.warn("messages", "refresh-after-continue-failed", {
+          sessionId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return { ok: false };
+      }
+      const cur = get().bySession[sessionId];
+      if (!cur) return { ok: false }; // 中途拆会话（clearSession）：槽已拆即放弃，不复活槽
+      // T0 之后经 SSE entry_appended 到达的新条目（竞态窗口）：按 id upsert 回新页并
+      // 推叶（appendEntryWithLeaf 与 SSE 入列同口径，含合成孪生收敛语义）
+      const pageIds = new Set(
+        page.entries.filter((e) => typeof e.id === "string" && e.id !== "").map((e) => e.id),
+      );
+      const arrivals = cur.entries.filter(
+        (e) => typeof e.id === "string" && !pageIds.has(e.id) && !beforeIds.has(e.id),
+      );
+      let entries = page.entries;
+      let leafId = page.leafId;
+      for (const arrival of arrivals) {
+        const merged = appendEntryWithLeaf({ ...cur, entries, leafId }, arrival, entries);
+        entries = merged.entries;
+        leafId = merged.leafId;
+      }
+      // ④ 全量整替（setEntries 通道：水合/keepView 等语义与 refetchSession 同源）
+      get().setEntries(sessionId, entries, page.cursor, leafId, {
+        hasMore: page.hasMore ?? false,
+        oldestId: page.oldestId ?? null,
+      });
+      // ⑤⑥ viewLeafId=null 回跟活叶（F15：活叶沿 SSE advanceLeaf 续推，续跑回合的
+      // 流式条目自然可见；旧显式叶是编辑前分支的锚，保留会把新回合锁在视野外）
+      // + leafNavSeq 自增（usage 触发沿，IS-9 导航后刷新）
+      set((s) => {
+        const slot = s.bySession[sessionId];
+        if (!slot) return s;
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: { ...slot, viewLeafId: null, leafNavSeq: slot.leafNavSeq + 1 },
+          },
+        };
+      });
+      return { ok: true };
     },
 
     setStreaming: (sessionId, streaming) =>
