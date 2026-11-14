@@ -1001,4 +1001,107 @@ describe("缺陷 H：发送即回跟活回合 + 迟到整替不回旧叶（task-
     expect(s.navigating).toBe(false); // 拆防
     expect(s.leafNavSeq).toBe(0);
   });
+
+  test("(25) 缺陷 I 回合簿记悬空：图谱修复并集合并+活叶锚定（QA attempt-8 estep2 同构）", async () => {
+    seedEditPosition();
+    // 发送链：解钉→乐观入列→回执 streaming→SSE user echo（吸收占位）
+    useMessagesStore.getState().followLiveTurn(SID);
+    useMessagesStore.getState().appendLocalUserEntry(SID, "分支四完成");
+    useMessagesStore.getState().setStreaming(SID, true);
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "message_start",
+      message: { role: "user", content: [{ type: "text", text: "分支四完成" }], timestamp: 1 },
+    });
+    // 真实引擎形态（estep2 实证）：u4.parentId = 回合簿记链尾 tbk（oauth/env/custom，
+    // SSE 白名单不入列）——而非测试 (23) 的直挂 bk4。嫁接尾 bk4 与 u4 之间的链断。
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "entry_appended",
+      entry: {
+        type: "message",
+        id: "u4",
+        parentId: "tbk",
+        message: { role: "user", content: [{ type: "text", text: "分支四完成" }], timestamp: 1 },
+      },
+    });
+    useMessagesStore.getState().applyWireEvent(SID, { type: "agent_start" });
+    useMessagesStore.getState().applyWireEvent(SID, {
+      type: "message_start",
+      message: { role: "assistant", content: [{ type: "text", text: "分支四" }] },
+    });
+
+    // 缺陷 I 症状位（修复动作缺席时的断链态）：u4 已入列但悬空——直发变体（message
+    // 通道孪生吸收把叶拖到 u4，estep2 排队变体则叶冻死嫁接尾 0 气泡，同一断链两形态）：
+    // 路径自 u4 回溯撞悬空 tbk 即断——主干掉出路径、pager 无从派生
+    const broken = st();
+    expect(broken.entries.some((e) => e.id === "u4")).toBe(true);
+    expect(broken.leafId).toBe("u4"); // 孪生吸收拖叶（悬空链上继任，非路径延伸）
+    expect(renderablePath()).toEqual(["u4"]); // 路径截断：主干不在场（悬空父断链）
+    expect(deriveSiblingPositions(broken.entries).get("u4")).toBeUndefined();
+
+    // 图谱修复：full=1 返回完整服务端真相（含 tbk 簿记链与 a4 回合尾）
+    const REPAIRED = [
+      ...PRE_SEND,
+      { type: "custom", id: "tbk", parentId: "bk4", customType: "turn-context" },
+      msgEntry("u4", "tbk", "user", "分支四完成"),
+      msgEntry("a4", "u4", "assistant", "分支四完成。"),
+    ];
+    let fetchCalls = 0;
+    await useMessagesStore.getState().repairEntriesGraph(SID, {
+      fetchFull: async () => {
+        fetchCalls++;
+        return pageOf(REPAIRED, "a4");
+      },
+    });
+
+    const healed = st();
+    expect(fetchCalls).toBe(1);
+    expect(healed.entries.some((e) => e.id === "tbk")).toBe(true); // 祖先链补齐
+    expect(healed.leafId).toBe("a4"); // 活叶锚定（新页文件叶）
+    expect(renderablePath()).toEqual(["t1", "a1", "u4", "a4"]); // 新分支完整可见
+    const pos = deriveSiblingPositions(healed.entries);
+    expect(pos.get("u4")).toEqual({ index: 1, count: 2, prevId: "u3", nextId: null }); // u3/u4 经生效父归一同组 ‹2/2›
+    expect(healed.viewLeafId).toBe(null); // 不动视图锚（keepView：null 保持）
+    expect(healed.streaming).toBe(true); // 活回合流式不清
+    expect(healed.streamingMessage).not.toBe(null);
+    expect(healed.leafNavSeq).toBe(0); // 无导航发生不涨
+
+    // 在途去重：并发第二连发不再出网
+    let gate;
+    const hold = new Promise((r) => (gate = r));
+    const p1 = useMessagesStore.getState().repairEntriesGraph(SID, {
+      fetchFull: () => hold.then(() => pageOf(REPAIRED, "a4")),
+    });
+    await flush();
+    const p2 = useMessagesStore.getState().repairEntriesGraph(SID, {
+      fetchFull: async () => {
+        fetchCalls += 10; // 若误出网则计数爆增暴露
+        return pageOf(REPAIRED, "a4");
+      },
+    });
+    await flush();
+    gate(); // 放行在途取数
+    await Promise.all([p1, p2]);
+    expect(fetchCalls).toBe(1);
+
+    // 取数期间 SSE 抢先推进的活条目不丢（并集合并非「残留丢弃」）：a5 在页外入列
+    await useMessagesStore.getState().repairEntriesGraph(SID, {
+      fetchFull: async () => {
+        // 模拟取数在途时 a5 到达（页快照不含）
+        useMessagesStore.getState().applyWireEvent(SID, {
+          type: "entry_appended",
+          entry: {
+            type: "message",
+            id: "a5",
+            parentId: "a4",
+            message: { role: "assistant", content: [{ type: "text", text: "回合尾新段" }] },
+          },
+        });
+        return pageOf(REPAIRED, "a4");
+      },
+    });
+    const merged = st();
+    expect(merged.entries.some((e) => e.id === "a5")).toBe(true); // 活条目不丢列
+    expect(merged.leafId).toBe("a5"); // 活叶沿页叶+活增量推进
+    expect(renderablePath()).toEqual(["t1", "a1", "u4", "a4", "a5"]);
+  });
 });

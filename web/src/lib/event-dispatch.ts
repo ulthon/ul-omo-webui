@@ -19,7 +19,7 @@
 // 别名）时，清态兜底落到唯一活跃会话或触发服务端对账（见 orphanEndTarget），孤儿键
 // 不写 runStates；(C) 每帧刷新 lastFrameAt，60s 清扫节拍对 waiting 会话帧静默超
 // 120s 且无待答卡时置提示条抑制标志（纯 UI 派生，runStates/30min 陈旧档不动）。
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type MessagesPage } from "@/lib/api";
 import { diag, sendTrace } from "@/lib/diag";
 import { sseDebugEnabled } from "@/lib/events";
 import { t } from "@/i18n/i18n";
@@ -30,6 +30,7 @@ import { usePermissionsStore, type PermissionMethod, type PermissionRequest } fr
 import { useQuestionsStore, type QuestionRequest, type QuestionSpec } from "@/stores/questions";
 import { useQueueStore } from "@/stores/queue";
 import { BACKGROUND_STALE_MS, RUNNING_STALE_MS, useSessionsStore, WAITING_STALE_MS } from "@/stores/sessions";
+import { pickActive, turnInFlightOf } from "@/components/chat/hydration-lock";
 import { useTasksStore } from "@/stores/tasks";
 import { useUiStore } from "@/stores/ui";
 
@@ -45,6 +46,44 @@ const reconciling = new Set<string>();
 
 /** 进行中的回前台运行态对账（r10 todo 9，单飞去重；resetDispatchState 复位） */
 let visibleReconcileInFlight = false;
+
+/** 回合内迟滞的全量整替页（task-10 缺陷 I 第二写者治理，fix7）：refetchSession 的页
+ *  快照若在回合在途时盲落地，会把 SSE 已入列的回合条目整页打回（items N↔M 振荡类，
+ *  QA attempt-6/7 实录）且共叶指针可能回拉到快照时刻——与 fix6 双门拦截的 switchLeaf
+ *  ④ 迟到整替同属一类写者。回合在途（turnInFlightOf：SSE 权威 running / 探询 active
+ *  兑底；waiting 挂接稳态不算，不卡死）时页入迟滞账本，回合收尾（真实收尾帧/
+ *  synthetic settle/清扫回落任何一条链把 runState 离开 running）后经图谱修复动作
+ *  并集落地（页补缺 + SSE 活条目不丢）。同会话新页覆盖旧页（最新快照胜）。 */
+const deferredFullReplaces = new Map<string, MessagesPage>();
+let deferredReplaceUnsub: (() => void) | null = null;
+
+/** 迟滞页扫需：runState 离开在途即落地（sessions store 任一状态变更部触发；账本空
+ *  时零开销）。槽已拆的页丢弃。 */
+function sweepDeferredReplaces(): void {
+  if (deferredFullReplaces.size === 0) return;
+  const sessions = useSessionsStore.getState();
+  for (const [sid, page] of [...deferredFullReplaces.entries()]) {
+    if (!useMessagesStore.getState().bySession[sid]) {
+      deferredFullReplaces.delete(sid);
+      continue;
+    }
+    if (!turnInFlightOf(sessions.runStates[sid], pickActive(sessions, sid))) {
+      deferredFullReplaces.delete(sid);
+      void useMessagesStore.getState().repairEntriesGraph(sid, {
+        fetchFull: () => Promise.resolve(page),
+      });
+    }
+  }
+}
+
+/** 页入迟滞账本并布防扫需订阅（首次布防，模块级常驻，账本空时 no-op） */
+function deferFullReplaceUntilTurnEnd(sessionId: string, page: MessagesPage): void {
+  deferredFullReplaces.set(sessionId, page);
+  if (deferredReplaceUnsub === null) {
+    deferredReplaceUnsub = useSessionsStore.subscribe(() => sweepDeferredReplaces());
+  }
+  sweepDeferredReplaces(); // 布防时刻即可能已不在回合（亮转算毫秒级）
+}
 
 /** wire handle → durable id 学习账本（r11 todo 12b 收尾帧归属）：任何同时携带 wire
  * sessionId 与信封 durableSessionId 的帧都是一次映射观察（服务端 handleToDurable
@@ -202,6 +241,11 @@ export function resetDispatchState(): void {
   visibleReconcileInFlight = false;
   wireToDurable.clear();
   epochActiveSessions.clear();
+  deferredFullReplaces.clear();
+  if (deferredReplaceUnsub !== null) {
+    deferredReplaceUnsub();
+    deferredReplaceUnsub = null;
+  }
   disarmRunStateSweep();
 }
 
@@ -219,6 +263,13 @@ function refetchSession(sessionId: string): void {
     .then((page) => {
       // 重取完成时会话可能已被 clearSession（删除/切换清理），仅在仍存在时替换
       if (useMessagesStore.getState().bySession[sessionId]) {
+        // 缺陷 I 第二写者治理（fix7）：回合在途不盲落地——页入迟滞账本，回合收尾后
+        // 经图谱修复动作并集落地（SSE 活条目不丢、叶不回拉）
+        const sessions = useSessionsStore.getState();
+        if (turnInFlightOf(sessions.runStates[sessionId], pickActive(sessions, sessionId))) {
+          deferFullReplaceUntilTurnEnd(sessionId, page);
+          return;
+        }
         useMessagesStore.getState().setEntries(sessionId, page.entries, page.cursor, page.leafId);
       }
     })
@@ -850,4 +901,49 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
 
   // 消息主通道（未知类型在 store 内静默忽略）
   useMessagesStore.getState().applyWireEvent(sessionId, wire);
+
+  // 缺陷 I 图谱修复触发（task-10 fix7）：活回合的消息增量携悬空 parentId（父链不在
+  // 本地图谱——引擎在导航嫁接位与 user 消息间插入的回合簿记链 oauth/env/custom 不在
+  // SSE 白名单内，永不入列；QA attempt-8 estep2 实证：leafId 冻死嫁接尾、91s 0 气泡
+  // 无 pager，reload 即愈；fix7 首轮活体探针又实证：多腿回合中 assistant 腿父挂
+  // toolResult/custom 同样悬空，视图截断只显末腿）时，触发全量重取重建图谱并锚定活叶。
+  // 在途判据 = streaming **或** runState running/waiting **或** turnInFlightOf（探询
+  // active 兑底）：排队投递形态引擎不发新 agent_start（首轮探针实测：整回合
+  // streaming=false 而 runState 全程 running），仅认 streaming 会一击 miss；二轮探针
+  // 又实证多腿回合中 Ask 提问把 runState 打成 waiting（缺陷 D 口径为锁面设计，
+  // waiting 不锁切换面——但回合仍在途，末段腿悬空追加同样需修），故 waiting 也入
+  // 触发面（idle/error/unknown 不入：开旧会话尾窗/真空闲他端追加不误触；unknown 的
+  // active=true 兑底由 turnInFlightOf 覆盖）。修复是数据对账非 UI 锁，与缺陷 D 的
+  // 判据分层互不影响。门条件另一腿：viewLeafId=null（回跟活叶的用户；钉住视图
+  // 的用户不受他端回合批拽，todo 4 离径不拽契约保持）。修复动作在途去重、并集
+  // 合并不丢 SSE 活条目，与 fix6 双门正交（门拦过期投影，修复只落新鲜页）。
+  if (wire.type === "entry_appended") {
+    const appended = wire.entry as
+      | { type?: unknown; id?: unknown; parentId?: unknown }
+      | null
+      | undefined;
+    const slot = useMessagesStore.getState().bySession[sessionId];
+    const sessions = useSessionsStore.getState();
+    const runState = sessions.runStates[sessionId];
+    if (
+      slot !== undefined &&
+      slot.viewLeafId === null &&
+      (slot.streaming ||
+        runState === "running" ||
+        runState === "waiting" ||
+        turnInFlightOf(runState, pickActive(sessions, sessionId))) &&
+      appended !== null &&
+      typeof appended === "object" &&
+      appended.type === "message" &&
+      typeof appended.id === "string" &&
+      appended.id !== "" &&
+      typeof appended.parentId === "string" &&
+      appended.parentId !== "" &&
+      !slot.entries.some((e) => e.id === appended.parentId)
+    ) {
+      void useMessagesStore.getState().repairEntriesGraph(sessionId, {
+        fetchFull: () => api.listMessages(sessionId, { full: true }),
+      });
+    }
+  }
 }

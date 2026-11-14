@@ -323,6 +323,19 @@ interface MessagesState {
     sessionId: string,
     deps: Pick<SwitchLeafDeps, "fetchFull">,
   ): Promise<string | null>;
+  /** entries 图谱修复（task-10 缺陷 I，fix7）：活回合增量携带悬空 parentId（父链条目
+   *  不在本地图谱——引擎在嫁接位与 user 消息之间插入的回合簿记链 oauth/env/custom
+   *  永不经 SSE 白名单入列，QA attempt-8 实证）时，全量重取重建图谱并锚定到当前
+   *  活叶。与 refreshAfterContinue 的「旧视图残留丢弃」相反，本动作是**并集合并**：
+   *  页只补缺（祖先链/簿记），SSE 已入列的活条目一条不丢——修复页是落地时新取的
+   *  快照（非被门放弃的过期页），不存在回滚 SSE 增量的问题，与 fix4 落地守卫/
+   * fix6 双门语义正交组合（门拦过期投影，修复只落新鲜页）。viewLeafId 不动
+   *  （keepView 语义）、leafNavSeq 不涨（无导航发生）、流式态不清（活回合合法）。
+   *  在途按会话去重；fetch 失败静默（下次悬空增量再兜底）。 */
+  repairEntriesGraph(
+    sessionId: string,
+    deps: Pick<SwitchLeafDeps, "fetchFull">,
+  ): Promise<void>;
   /** assistant 编辑续跑后的刷新编排（session-branching todo 9）：edit 已把引擎叶换到
    *  副本、continue 已开启真实回合（F12 两段链），故不设前置门/不出 navigate/不清
    *  流式态（迟到流式帧是合法的活回合，非旧叶残像）——只做 F19 链的④⑤⑥子集：
@@ -347,6 +360,9 @@ let streamErrorSeq = 0;
  *  流式 delta 不逐帧 set，按会话缓冲；replay_done（或建连清残窗）时一次性快进 flush
  *  ——合并语义与逐帧应用等价，渲染只落最新一拍。前台流式（窗口外）零改动。 */
 const replayDeltaBuffer = new Map<string, DeltaPatch[]>();
+
+/** 进行中的图谱修复（task-10 缺陷 I，按会话去重：悬空增量连击时不重复拉取） */
+const graphRepairInFlight = new Set<string>();
 
 function emptySessionMessages(): SessionMessages {
   return {
@@ -1552,6 +1568,54 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         oldestId: page.oldestId ?? null,
       });
       return fresh;
+    },
+
+    /** 缺陷 I 图谱修复（fix7）：并集合并实现——页补缺不丢活，叶锚定新页文件叶后沿
+     *  本地活增量（页取数期间经 SSE 到达的条目）按 appendEntryWithLeaf 同口径推进。
+     *  语义依据见接口注释；不触 viewLeafId/navigating/leafNavSeq/流式态。 */
+    repairEntriesGraph: async (sessionId, deps) => {
+      if (graphRepairInFlight.has(sessionId)) return;
+      if (!get().bySession[sessionId]) return;
+      graphRepairInFlight.add(sessionId);
+      try {
+        let page: MessagesPage;
+        try {
+          page = await deps.fetchFull();
+        } catch (err) {
+          // 取数失败静默（同 refetchSession 兜底哲学）：下次悬空增量 / 全量重取再收敛
+          diag.warn("messages", "graph-repair-failed", {
+            sessionId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          return;
+        }
+        const cur = get().bySession[sessionId];
+        if (!cur) return; // 中途拆会话（clearSession）：槽已拆即放弃，不复活槽
+        const pageIds = new Set(
+          page.entries
+            .filter((e) => typeof e.id === "string" && e.id !== "")
+            .map((e) => e.id as string),
+        );
+        let entries = page.entries;
+        let leafId = page.leafId;
+        for (const arrival of cur.entries) {
+          if (typeof arrival.id !== "string" || arrival.id === "" || pageIds.has(arrival.id)) continue;
+          const merged = appendEntryWithLeaf({ ...cur, entries, leafId }, arrival, entries);
+          entries = merged.entries;
+          leafId = merged.leafId;
+        }
+        get().setEntries(sessionId, entries, page.cursor, leafId, {
+          hasMore: page.hasMore ?? false,
+          oldestId: page.oldestId ?? null,
+        });
+        diag.info("messages", "graph-repair", {
+          sessionId: sessionId.slice(0, 8),
+          pageEntries: page.entries.length,
+          liveArrivals: entries.length - page.entries.length,
+        });
+      } finally {
+        graphRepairInFlight.delete(sessionId);
+      }
     },
 
     refreshAfterContinue: async (sessionId, deps) => {

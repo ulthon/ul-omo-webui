@@ -83,7 +83,10 @@ beforeEach(() => {
   MockEventSource.reset();
   resetDispatchState();
   useMessagesStore.setState({ bySession: {} });
-  useSessionsStore.setState({ byProject: {}, selectedId: null, loading: false });
+  // runStates 一并复位（fix7 隔离修复）：前序用例 dispatch agent_start 泄漏的 running
+  // 幻影态会让 refetchSession 走「回合内迟滞」新路径，gap 兑底断言误红（真实契约不变：
+  // 无回合在途即立即落地，迟滞仅覆盖真在途回合，见 event-dispatch-graph-repair ③）
+  useSessionsStore.setState({ byProject: {}, runStates: {}, selectedId: null, loading: false });
   useUiStore.setState({ connection: "online" });
 });
 
