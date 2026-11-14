@@ -387,6 +387,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   // 互斥）收口在 store；fetcher 注入（fetchEarlierPage 同款先例）。拒绝反馈收口在
   // store（task-10 缺陷 C/D）：前置门拒绝（busy/blocked）出轻提示 toast，引擎拒绝
   // （409 二次 stale 等）出常驻错误卡，此处不再静默丢结果。
+  // ‹n/m› pager 与分支树浮层共用本回调（task-10 缺陷 G ③：单一 resolveBranchLeaf+
+  // switchLeaf(resume) 代码路径，浮层不再自带平行实现）。
   const onSwitchSibling = useCallback(
     (entryId: string) => {
       // 切视图 ≠ 进编辑（task-10 缺陷 E-1）：pager 兄弟 id 是 user 消息 id，引擎
@@ -469,7 +471,8 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           {/* 分支树入口（session-branching todo 7）：与叶切换同一忙碌锁口径
               （branchSwitchDisabled = streaming+运行态并集+navigating），流式中禁用；
-              浮层点击可达叶走 switchLeaf 编排后关闭回消息流 */}
+              浮层点击可达叶走 switchLeaf 编排后关闭回消息流（onSwitchLeaf 注入 pager
+              同款 onSwitchSibling，缺陷 G 单一代码路径） */}
           <div className="flex items-center">
             <button
               type="button"
@@ -513,7 +516,13 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         </div>
       </div>
       {!isMobile && <StatusBar sessionId={sessionId} />}
-      {treeOpen && <SessionTreeOverlay sessionId={sessionId} onClose={() => setTreeOpen(false)} />}
+      {treeOpen && (
+        <SessionTreeOverlay
+          sessionId={sessionId}
+          onClose={() => setTreeOpen(false)}
+          onSwitchLeaf={onSwitchSibling}
+        />
+      )}
     </div>
   );
 }

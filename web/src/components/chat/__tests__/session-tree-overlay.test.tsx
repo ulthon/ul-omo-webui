@@ -3,6 +3,8 @@
 // 离径半透明/不可达不导航且点击出轻提示（task-10 缺陷 E-2）/点击可达叶调
 // switchLeaf（resume 意图，缺陷 E-1）并关闭/Esc 关闭/压缩事件失效
 // 重拉/空树与缺 activeLeafId malformed 防护/i18n 键存在。
+// task-10 缺陷 G 补充：缩进改 paddingLeft（扁平行，按钮撑满 li 命中盒）+
+// 卡内非按钮点击不关浮层（卡片层 stopPropagation）回归。
 // 环境说明同 branch-pager.test.tsx：@ts-nocheck + 动态 import + @happy-dom 全局注册
 // + createRoot + dispatchEvent；portal 渲染进 document.body，断言查全文档。
 // fetchTree/onSwitchLeaf 注入（switchLeaf deps 同款先例），免 mock api 模块；
@@ -116,7 +118,7 @@ function setCompacting(value) {
 }
 
 describe("SessionTreeOverlay（todo 7）", () => {
-  test("(1) fixture 树渲染：嵌套缩进/role 徽标/预览/时间戳/分支点子数徽标", async () => {
+  test("(1) fixture 树渲染：缩进（paddingLeft，缺陷 G 扁平行）/role 徽标/预览/时间戳/分支点子数徽标", async () => {
     const fetchTree = vi.fn(async () => fixture());
     mount({ sessionId: SID, fetchTree, onClose: () => {} });
     await flush();
@@ -126,9 +128,10 @@ describe("SessionTreeOverlay（todo 7）", () => {
     // 分支点徽标（childCount>1）
     const badge = u1.querySelector('[data-testid="session-tree-branch-count"]');
     expect(badge.textContent).toBe(tSnap("chat.tree.branchCount", { n: 2 }).replace("{n}", "2"));
-    // 缩进：子代 marginLeft 大于根代
+    // 缩进（缺陷 G：marginLeft→paddingLeft，按钮 w-full 撑满 li 命中盒）：子代缩进大于根代
     const a1 = q('[data-node-id="a1"] button');
-    expect(parseInt(a1.style.marginLeft)).toBeGreaterThan(parseInt(u1.style.marginLeft));
+    expect(parseInt(a1.style.paddingLeft)).toBeGreaterThan(parseInt(u1.style.paddingLeft));
+    expect(parseInt(u1.style.paddingLeft)).toBe(8); // 根行与 px-2 等宽（视觉不变）
     // role 徽标与预览文本（misleading_success_output 防护：断言渲染结构非日志）
     expect(a1.textContent).toContain("assistant");
     expect(a1.textContent).toContain("preview-a1");
@@ -329,5 +332,33 @@ describe("SessionTreeOverlay（todo 7）", () => {
         useMessagesStore.setState({ switchLeaf: real });
       });
     }
+  });
+
+  // ── task-10 缺陷 G 回归（attempt-5）──
+
+  test("(12) 缺陷 G 回归：卡内非按钮点击（死区）不关浮层不丢动作——卡片层 stopPropagation + 扁平行命中盒", async () => {
+    const onClose = vi.fn();
+    const onSwitchLeaf = vi.fn();
+    mount({ sessionId: SID, fetchTree: async () => fixture(), onClose, onSwitchLeaf });
+    await flush();
+    // 旧行为复现锚：点卡体（头部/行间隙同属卡内非按钮区）冒泡到遮罩根 onClick=onClose
+    // 静默关浮层——修复后卡片层 stopPropagation，点卡体不再关闭
+    act(() => {
+      q('[data-testid="session-tree-body"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(q('[data-testid="session-tree-overlay"]')).not.toBeNull();
+    // 扁平行结构锁（happy-dom 无命中测试，结构等价断言）：行 li 只含自身按钮一个
+    // 元素子节点（无子树 ul），按钮 w-full 撑满 li 命中盒（行中心点击必落按钮）
+    const li = q('[data-node-id="a1"]');
+    const elementChildren = Array.from(li.children).filter((c) => c.tagName === "UL");
+    expect(elementChildren.length).toBe(0); // 无嵌套子树：li 盒=按钮盒
+    expect(li.querySelector("button")).not.toBeNull();
+    expect(li.querySelector("button").className).toContain("w-full");
+    // 点遮罩本身仍关闭（遮罩根 onClick 保留，仅卡内被拦截）
+    act(() => {
+      q('[data-testid="session-tree-overlay"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
