@@ -126,4 +126,8 @@ export const errors = {
   rebindConflict: "A session file with the same name already exists in this project",
   // Engine process admin (2026-11-04 batch, routes-engines stop)
   unknownProject: "Unknown project",
+  // Session tree gateway (session-branching todo 3, routes-session)
+  invalidIntent: "Invalid navigation intent (only select|resume are supported)",
+  invalidLeaf: "Invalid leaf id (must be a non-empty string)",
+  treeUnsupported: "The current gateway does not implement the session tree channel",
 } as const;

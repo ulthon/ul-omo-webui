@@ -87,9 +87,11 @@ const SCANNED_CODES = [
   "invalid_ids",
   "invalid_images",
   "invalid_import",
+  "invalid_intent",
   "invalid_json",
   "invalid_kind",
   "invalid_last_opened_at",
+  "invalid_leaf",
   "invalid_limit",
   "invalid_model",
   "invalid_name",
@@ -154,6 +156,7 @@ const SCANNED_CODES = [
   "target_exists",
   "title_gen_failed",
   "title_gen_unavailable",
+  "tree_unsupported",
   "unauthorized",
   "unknown_project",
   "unknown_session",
@@ -204,12 +207,12 @@ beforeEach(() => {
 });
 
 describe("任务11 ApiError code → 词典键映射", () => {
-  test("映射恰好覆盖 server 扫描集（112 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids）", () => {
+  test("映射恰好覆盖 server 扫描集（115 个：活扫 == 留痕清单 == 映射键集，含计数断言；平铺直编批 +invalid_ids/duplicate_ids；session-branching todo 3 +invalid_intent/invalid_leaf/tree_unsupported）", () => {
     const scanned = scanServerCodes();
     expect(scanned).toEqual(SCANNED_CODES);
-    expect(scanned).toHaveLength(112);
+    expect(scanned).toHaveLength(115);
     expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual(scanned);
-    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(112);
+    expect(Object.keys(ERROR_CODE_KEYS)).toHaveLength(115);
   });
 
   test("每个映射键在 zh/en 双语目录均存在且为非空字符串", () => {

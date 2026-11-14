@@ -98,6 +98,10 @@ export const ERROR_CODE_KEYS: Record<string, MessageKey> = {
   unknown_project: "errors.unknownProject",
   // 多会话并行批次（T5 定向停单会话引擎网关新增 1 码）
   unknown_session: "errors.unknownSession",
+  // 会话树网关（session-branching todo 3 routes-session 新增 3 码）
+  invalid_intent: "errors.invalidIntent",
+  invalid_leaf: "errors.invalidLeaf",
+  tree_unsupported: "errors.treeUnsupported",
   purge_requires_deleted: "errors.purgeRequiresDeleted",
   rebind_conflict: "errors.rebindConflict",
   schedule_limit: "errors.scheduleLimit",
