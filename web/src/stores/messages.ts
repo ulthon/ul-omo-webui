@@ -17,6 +17,7 @@ import {
   type SessionEventLine,
   type StreamErrorItem,
 } from "@/components/chat/message-items";
+import { advanceLeaf, lastEntryId } from "@/components/chat/branch-path-data";
 import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
@@ -59,7 +60,13 @@ export interface SessionMessages {
   entries: WireEntry[];
   /** 分页游标：GET messages?cursor= 传回取增量；null=已最新 */
   cursor: string | null;
+  /** 文件叶 id（get_entries page.leafId 落库，与 cursor 同值）：按叶路径渲染的默认
+   *  起点；随各变更点推进（advanceLeaf 统一口径，session-branching todo 4） */
   leafId: string | null;
+  /** 显式视图叶（session-branching todo 4 落位、todo 6 叶切换编排消费）：用户切叶
+   *  的内存态视图锚点，null=跟随文件叶 leafId；setEntries 全量整替后仍在新文件中
+   *  则保留、消失回落 null（F15：选中态以导航回传 leafId 为唯一真相） */
+  viewLeafId: string | null;
   /** 是否做过全量加载（gap 全量重取的判据） */
   loaded: boolean;
   /** 任务 16：文件头方向是否还有更早条目（尾窗首载/向上翻页后由服务端 hasMore 同步） */
@@ -226,6 +233,7 @@ function emptySessionMessages(): SessionMessages {
     entries: [],
     cursor: null,
     leafId: null,
+    viewLeafId: null,
     loaded: false,
     hasMore: false,
     oldestId: null,
@@ -408,6 +416,29 @@ function stripSyntheticTwins(list: WireEntry[], incoming: ReadonlyArray<WireEntr
   return out;
 }
 
+/** entry_appended 通用入列 + 叶推进（session-branching todo 4）：真实条目原样入列
+ *  （parentId 引擎真相）；延伸当前路径或替换当前叶引用（listAfterRemovals 为孪生/
+ *  占位收敛后的列表）时推叶，重放幂等回填（已在列）不推。 */
+function appendEntryWithLeaf(
+  cur: SessionMessages,
+  stored: WireEntry,
+  listAfterRemovals: WireEntry[],
+): { entries: WireEntry[]; leafId: string | null } {
+  const id = typeof stored.id === "string" && stored.id !== "" ? stored.id : null;
+  const parentId = typeof stored.parentId === "string" && stored.parentId !== "" ? stored.parentId : null;
+  if (id === null) return { entries: upsertEntry(listAfterRemovals, stored), leafId: cur.leafId };
+  return {
+    entries: upsertEntry(listAfterRemovals, stored),
+    leafId: advanceLeaf(
+      cur.leafId,
+      listAfterRemovals,
+      id,
+      parentId,
+      listAfterRemovals.some((e) => e.id === id),
+    ),
+  };
+}
+
 function upsertToolRun(
   session: SessionMessages,
   toolCallId: string,
@@ -432,13 +463,27 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         return cur.streaming ? { bySession: { ...s.bySession, [sessionId]: { ...cur, streaming: false } } } : s;
       }
       const id = cur.streamingEntryId ?? syntheticId(msg);
-      const entry: WireEntry = { type: "message", id, message: msg };
+      // 合成孪生 parentId 注入 + 叶推进（session-branching todo 4，F5 关键坑：不挂
+      // parentId 的合成条目会掉出路径=消息消失）。仅 live 定格（有流式态）挂当前尾
+      // 条并推进叶；重放窗内无流式态的 end 帧回放是旧消息的孪生伪影——不挂路径不推
+      // 叶（entry_appended 真值收敛后自然消失）。
+      const live = cur.streamingMessage != null || cur.streamingEntryId != null;
+      const tailId = live ? lastEntryId(cur.entries, id) : null;
+      const entry: WireEntry = {
+        type: "message",
+        id,
+        ...(tailId !== null ? { parentId: tailId } : {}),
+        message: msg,
+      };
       return {
         bySession: {
           ...s.bySession,
           [sessionId]: {
             ...cur,
             entries: upsertEntry(cur.entries, entry),
+            leafId: live
+              ? advanceLeaf(cur.leafId, cur.entries, id, tailId, cur.entries.some((e) => e.id === id))
+              : cur.leafId,
             streamingMessage: null,
             streamingEntryId: null,
             streaming: false,
@@ -627,20 +672,29 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
     setEntries: (sessionId, entries, cursor, leafId, paging) => {
       // 打开会话/刷新/_gap 重取的水合点（任务 27a）：先落生效模型再入消息槽
       hydrateAppliedModel(sessionId, entries);
-      set((s) => ({
-        bySession: {
-          ...s.bySession,
-          [sessionId]: {
-            ...emptySessionMessages(),
-            ...s.bySession[sessionId],
-            entries,
-            cursor,
-            leafId,
-            loaded: true,
-            ...(paging ?? { hasMore: false, oldestId: null }),
+      set((s) => {
+        const prev = s.bySession[sessionId];
+        // viewLeafId 生命周期（todo 6 契约提前落位）：全量整替后显式视图叶仍在新文件
+        // 中则保留，消失回落 null=跟随文件叶 leafId
+        const keepView = prev?.viewLeafId ?? null;
+        const viewLeafId =
+          keepView !== null && entries.some((e) => e.id === keepView) ? keepView : null;
+        return {
+          bySession: {
+            ...s.bySession,
+            [sessionId]: {
+              ...emptySessionMessages(),
+              ...prev,
+              viewLeafId,
+              entries,
+              cursor,
+              leafId,
+              loaded: true,
+              ...(paging ?? { hasMore: false, oldestId: null }),
+            },
           },
-        },
-      }));
+        };
+      });
     },
 
     setCursor: (sessionId, cursor) =>
@@ -661,7 +715,20 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         // 消息经 REST 补齐后不再双列（根因与口径见 stripSyntheticTwins）。
         let list = stripSyntheticTwins(cur.entries, entries);
         for (const entry of entries) list = upsertEntry(list, entry);
-        return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
+        // 叶推进（session-branching todo 4）：REST 增量窗带回的新尾按文件序逐条延伸
+        // ——延伸当前路径或收敛掉当前叶引用（孪生被真值整替）时推进，离径（他端分
+        // 支操作）不拽视图；重放幂等回填（此前已在列）不推。
+        const known = new Set<string>();
+        for (const e of cur.entries) if (typeof e.id === "string") known.add(e.id);
+        let leafId = cur.leafId;
+        for (const entry of entries) {
+          const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : null;
+          if (id === null) continue;
+          const parentId =
+            typeof entry.parentId === "string" && entry.parentId !== "" ? entry.parentId : null;
+          leafId = advanceLeaf(leafId, list, id, parentId, known.has(id));
+        }
+        return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list, leafId } } };
       });
     },
 
@@ -806,9 +873,23 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               if (id === sid && typeof msg.timestamp === "number" && hasSamePayloadUserEntry(list, msg)) {
                 return { bySession: { ...s.bySession, [sessionId]: { ...cur, entries: list } } };
               }
-              const stored: WireEntry = { ...entry, type: "message", id };
+              // parentId 注入 + 叶推进（session-branching todo 4）：事件携 parentId
+              //（引擎真相）保留，缺席（message 通道帧常态）挂当前尾条；吸收/孪生收敛
+              // 移除当前叶引用（乐观占位被吸收）时叶随真值推进；重放幂等回填不推。
+              const parentId =
+                typeof entry.parentId === "string" && entry.parentId !== ""
+                  ? entry.parentId
+                  : lastEntryId(list, id);
+              const stored: WireEntry = { ...entry, type: "message", id, parentId };
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(list, stored) } },
+                bySession: {
+                  ...s.bySession,
+                  [sessionId]: {
+                    ...cur,
+                    entries: upsertEntry(list, stored),
+                    leafId: advanceLeaf(cur.leafId, list, id, parentId, list.some((e) => e.id === id)),
+                  },
+                },
               };
             });
           }
@@ -956,11 +1037,15 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               set((s) => {
                 const cur = s.bySession[sessionId] ?? emptySessionMessages();
                 const twinId = syntheticId(appendedMsg);
+                const kept = cur.entries.filter((e) => e.id !== twinId);
                 const stored: WireEntry = { ...entry, type: "message", message: appendedMsg };
+                // 叶推进（session-branching todo 4）：真实条目原样入列（parentId 引擎
+                // 真相）；孪生收敛移除当前叶引用时随真值推进，重放幂等回填不推
+                const merged = appendEntryWithLeaf(cur, stored, kept);
                 return {
                   bySession: {
                     ...s.bySession,
-                    [sessionId]: { ...cur, entries: upsertEntry(cur.entries.filter((e) => e.id !== twinId), stored) },
+                    [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId },
                   },
                 };
               });
@@ -975,8 +1060,11 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           if (entry.type === "compaction" && typeof entry.id === "string" && entry.id !== "") {
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              // 叶推进（todo 4）：压缩摘要条目在文件尾延伸当前路径时推叶（标记块在
+              // 当前路径可见）；重放幂等回填不推
+              const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
               };
             });
             break;
@@ -996,8 +1084,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           if (parseTaskCompletionEntry(entry) !== null) {
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
+              const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
               };
             });
             break;
@@ -1005,8 +1095,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           if (!isMemoryAppendedEntry(entry)) break;
           set((s) => {
             const cur = s.bySession[sessionId] ?? emptySessionMessages();
+            // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
+            const merged = appendEntryWithLeaf(cur, entry, cur.entries);
             return {
-              bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+              bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
             };
           });
           break;
@@ -1099,13 +1191,29 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           });
           if (dup) return s;
         }
+        // parentId 注入 + 叶推进（session-branching todo 4，F5 关键坑）：乐观占位挂
+        // 当前尾条（空会话首条无尾=根）并即时成为当前叶——否则按叶路径过滤启动后
+        // 占位掉出路径=消息消失；服务端真值到达由既有 absorb/adopt 收敛链收敛（链
+        // 路不动），叶随真值推进。
+        const tailId = lastEntryId(cur.entries);
+        // 合成 id 本地生成必为 string；独立成 const 让类型跟上事实（WireEntry.id 宽
+        // 形态 string|undefined，entry.id 直接喂 advanceLeaf 过不了类型）。
+        const entryId = `${LOCAL_ENTRY_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         const entry: WireEntry = {
           type: "message",
-          id: `${LOCAL_ENTRY_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          id: entryId,
+          parentId: tailId,
           message: { role: "user", content },
         };
         return {
-          bySession: { ...s.bySession, [sessionId]: { ...cur, entries: upsertEntry(cur.entries, entry) } },
+          bySession: {
+            ...s.bySession,
+            [sessionId]: {
+              ...cur,
+              entries: upsertEntry(cur.entries, entry),
+              leafId: advanceLeaf(cur.leafId, cur.entries, entryId, tailId, false),
+            },
+          },
         };
       }),
 

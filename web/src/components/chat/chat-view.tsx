@@ -25,6 +25,7 @@ import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList, type MessageListHandle } from "./message-list";
 import { buildMessageItems, modelChangeBackfillOf, type ChatListItem } from "./message-items";
+import { filterEntriesToPath } from "./branch-path-data";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionHintBar } from "./question-hint-bar";
 import { ActivityBar } from "./activity-bar";
@@ -99,6 +100,15 @@ function isModelChangeEntry(entry: WireEntry): entry is WireEntry & { id: string
   return entry.type === "model_change" && typeof entry.id === "string";
 }
 
+/** 可见条目总门（四守卫并集）：chat-view 渲染口径的 typeOk。显式谓词签名供
+ *  filterEntriesToPath 调用后再 .filter 同函数收窄回 WireEntry & { id: string }
+ *  （布尔函数形参跨模块传递会丢推断谓词，收窄必须在消费侧显式恢复）。 */
+function isRenderableEntry(entry: WireEntry): entry is WireEntry & { id: string } {
+  return (
+    isMessageEntry(entry) || isCustomMessageEntry(entry) || isCustomEntry(entry) || isModelChangeEntry(entry)
+  );
+}
+
 /** 单会话视图：sessionId 变化时整体重挂载（key 保证滚动/状态干净） */
 function ChatSession({ sessionId }: { sessionId: string }) {
   const [loadState, setLoadState] = useState<"loading" | "done" | "error">("loading");
@@ -112,6 +122,10 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const listRef = useRef<MessageListHandle | null>(null);
 
   const entries = useMessagesStore((s) => s.bySession[sessionId]?.entries);
+  // 按叶路径渲染数据源（session-branching todo 4）：store leafId（get_entries
+  // page.leafId 落库的文件叶）与 viewLeafId（todo 6 叶切换编排位，null=跟随文件叶）
+  const leafId = useMessagesStore((s) => s.bySession[sessionId]?.leafId ?? null);
+  const viewLeafId = useMessagesStore((s) => s.bySession[sessionId]?.viewLeafId ?? null);
   const streaming = useMessagesStore((s) => s.bySession[sessionId]?.streaming ?? false);
   const hasStreamingMessage = useMessagesStore((s) => s.bySession[sessionId]?.streamingMessage != null);
   const hasPendingPermission = usePermissionsStore((s) => (s.bySession[sessionId]?.length ?? 0) > 0);
@@ -339,14 +353,20 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const modelBackfill = useMessagesStore((s) => s.bySession[sessionId]?.modelBackfill);
 
   const messageEntries = useMemo(() => {
-    const windowEntries = (entries ?? []).filter(
-      (e) => isMessageEntry(e) || isCustomMessageEntry(e) || isCustomEntry(e) || isModelChangeEntry(e),
-    );
+    // 按叶路径渲染（session-branching todo 4）：先用全类型 entries 推导路径集
+    // （parentId 链要穿过 tool/custom 等不可见条目，类型过滤必须在路径推导之后），
+    // 只保留当前分支路径上的条目——兄弟分支不再串台（IS-1）；起点 viewLeafId
+    //（todo 6 编排位）?? store leafId。路径集为空（空会话/悬空叶：吸收竞态残留）时
+    // 不启用过滤——平铺兜底，绝不因缺叶空屏（缺叶由下次 setEntries 对齐）。
+    const { windowEntries } = filterEntriesToPath(entries ?? [], viewLeafId, leafId, isRenderableEntry);
+    // 窄化恢复（纯类型层）：typeOk 以布尔函数形参跨模块传递后推断谓词丢失，消费侧
+    // 以显式谓词再滤一遍补回 WireEntry & { id: string }——谓词幂等，运行时零变化。
+    const visibleEntries = windowEntries.filter(isRenderableEntry);
     // 窗口外 model_change 前插（回读变更点全部早于尾窗，前插即时间序；id 去重幂等）
-    // ——单遍时间线解析的归因覆盖全程
-    const backfilled = modelBackfill !== undefined ? modelChangeBackfillOf(modelBackfill, windowEntries) : [];
-    return backfilled.length > 0 ? [...backfilled, ...windowEntries] : windowEntries;
-  }, [entries, modelBackfill]);
+    // ——单遍时间线解析的归因覆盖全程（回填条目不在 store entries，不参与路径过滤）
+    const backfilled = modelBackfill !== undefined ? modelChangeBackfillOf(modelBackfill, visibleEntries) : [];
+    return backfilled.length > 0 ? [...backfilled, ...visibleEntries] : visibleEntries;
+  }, [entries, leafId, viewLeafId, modelBackfill]);
 
   // 变体名解析数据源（docs08 2026-10-22 批次任务 18）：注册表 = GET /api/models 行
   // （服务端已合并 upstreamId）；appliedModel = 会话内最新生效（内存态，刷新后空），
