@@ -99,6 +99,46 @@ export function derivePathEntryIds(
   return { ids, hasPartialPath, leafFound: true };
 }
 
+/** 兄弟序位（session-branching todo 5）：路径条目在同类兄弟中的位置与前后兄弟 id。
+ *  index 0 基；prevId/nextId 为 null 表示到头（对应箭头禁用）。 */
+export interface SiblingPosition {
+  index: number;
+  count: number;
+  prevId: string | null;
+  nextId: string | null;
+}
+
+/** 兄弟序位派生（todo 5）：全量 entries 一次遍历建 childrenByParent（有效 parentId
+ *  分组，无 parentId 的根条目同汇 "" 组——多根场景也有序位），同组 >=2 条时按
+ *  entries 文件序记每位兄弟的 index/前后 id。消费侧（chat-view）每份 entries 只算
+ *  一次往下传，绝不在每个气泡内重算（计划 F4 反 slop 线）。 */
+export function deriveSiblingPositions(
+  entries: ReadonlyArray<WireEntry>,
+): Map<string, SiblingPosition> {
+  const childrenByParent = new Map<string, Array<WireEntry & { id: string }>>();
+  for (const e of entries) {
+    const id = e.id;
+    if (typeof id !== "string" || id === "") continue;
+    const key = parentIdOf(e) ?? "";
+    const arr = childrenByParent.get(key);
+    if (arr) arr.push(e as WireEntry & { id: string });
+    else childrenByParent.set(key, [e as WireEntry & { id: string }]);
+  }
+  const positions = new Map<string, SiblingPosition>();
+  for (const siblings of childrenByParent.values()) {
+    if (siblings.length < 2) continue;
+    for (let i = 0; i < siblings.length; i++) {
+      positions.set(siblings[i].id, {
+        index: i,
+        count: siblings.length,
+        prevId: i > 0 ? siblings[i - 1].id : null,
+        nextId: i < siblings.length - 1 ? siblings[i + 1].id : null,
+      });
+    }
+  }
+  return positions;
+}
+
 /** filterEntriesToPath 的结果：过滤后的窗口条目（文件序）与路径派生结果 */
 export interface PathWindow {
   windowEntries: WireEntry[];

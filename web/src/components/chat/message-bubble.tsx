@@ -10,6 +10,8 @@ import { PartsView, ToolResultLine, StreamingParts, MessageErrorBanner, Streamin
 import { useLocaleStore, useT } from "@/i18n/i18n";
 import { ImagePart } from "./image-lightbox";
 import { MessageActions } from "./message-actions";
+import { BranchPager } from "./branch-pager";
+import type { SiblingPosition } from "./branch-path-data";
 import type { RestoreDigestNotice } from "./message-items";
 import { isLongUserText } from "./user-text-collapse";
 import { originAgentName, originDurationLabel } from "./message-origin";
@@ -84,6 +86,8 @@ export function BubbleShell({
   live,
   queued,
   actions,
+  /** 分支切换器（session-branching todo 5）：多兄弟条目气泡下缘挂点，EntryBubble 组装 */
+  pager,
   children,
 }: {
   role: "user" | "assistant";
@@ -101,6 +105,9 @@ export function BubbleShell({
   live?: boolean;
   queued?: boolean;
   actions?: React.ReactNode;
+  /** 分支切换器（session-branching todo 5）：多兄弟条目在气泡下缘渲染，user 右对齐/
+   *  assistant 左对齐（气泡同侧）；内容由 EntryBubble 组装。 */
+  pager?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const t = useT();
@@ -108,20 +115,24 @@ export function BubbleShell({
   const time = formatTime(timestamp, locale);
   if (role === "user") {
     return (
-      <div className="group flex w-full items-center justify-end gap-1">
-        {actions}
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-primary-foreground">
-          {/* 排队中徽标（docs08-r4 任务 11）：本地排队占位专属；服务端真值事件吸收占位后消失 */}
-          {queued && (
-            <span
-              data-testid="queued-badge"
-              className="mb-1 block w-fit rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[11px] leading-4"
-            >
-              {t("chat.messageBubble.queued")}
-            </span>
-          )}
-          {children}
+      // 外层改纵向列（session-branching todo 5）：原横向右对齐行保持不变，切换器在行下缘同侧右对齐
+      <div className="group flex w-full flex-col items-end">
+        <div className="flex w-full items-center justify-end gap-1">
+          {actions}
+          <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-primary-foreground">
+            {/* 排队中徽标（docs08-r4 任务 11）：本地排队占位专属；服务端真值事件吸收占位后消失 */}
+            {queued && (
+              <span
+                data-testid="queued-badge"
+                className="mb-1 block w-fit rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[11px] leading-4"
+              >
+                {t("chat.messageBubble.queued")}
+              </span>
+            )}
+            {children}
+          </div>
         </div>
+        {pager && <div className="mt-0.5 flex justify-end">{pager}</div>}
       </div>
     );
   }
@@ -161,6 +172,7 @@ export function BubbleShell({
         {actions}
       </div>
       <div className="pl-0.5">{children}</div>
+      {pager && <div className="mt-0.5 flex">{pager}</div>}
     </div>
   );
 }
@@ -215,11 +227,20 @@ export const EntryBubble = memo(function EntryBubble({
   entryId,
   interrupted,
   model,
+  /** 兄弟序位（todo 5）：chat-view 全量派生后下传，单兄弟/缺席不渲染切换器 */
+  sibling,
+  /** 叶切换回调（todo 6 接线位）：本层透传给 BranchPager，不自行编排 */
+  onSwitchSibling,
+  /** 切换禁用（流式/运行/等待中，chat-view 与 Composer queueAvailable 同一口径） */
+  switchDisabled,
 }: {
   sessionId: string;
   entryId: string;
   interrupted: boolean;
   model?: ResolvedModelName | null;
+  sibling?: SiblingPosition | null;
+  onSwitchSibling?: (entryId: string) => void;
+  switchDisabled?: boolean;
 }) {
   const entry = useMessagesStore((s) => {
     const entries = s.bySession[sessionId]?.entries;
@@ -254,6 +275,11 @@ export const EntryBubble = memo(function EntryBubble({
       interrupted={role === "assistant" ? interrupted : undefined}
       queued={queued}
       actions={showActions ? <MessageActions sessionId={sessionId} entryId={entry.id} align={role === "user" ? "end" : "start"} /> : undefined}
+      pager={
+        showActions ? (
+          <BranchPager position={sibling ?? null} disabled={switchDisabled} onSwitchSibling={onSwitchSibling} />
+        ) : undefined
+      }
     >
       <MessageContent message={message} sessionId={sessionId} live={false} entryId={entry.id} />
     </BubbleShell>

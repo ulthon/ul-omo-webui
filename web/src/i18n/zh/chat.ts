@@ -55,6 +55,12 @@ export const chat = {
   customMessage: {
     unsupported: "未支持内容：{customType}",
   },
+  // branch-pager.tsx 分支切换器（session-branching todo 5）
+  branch: {
+    switchToSibling: "切换到此消息的其他分支",
+    prevSibling: "上一分支",
+    nextSibling: "下一分支",
+  },
   // message-bubble.tsx CLI 恢复摘要静音行（2026-11-02）
   restoreDigest: {
     label: "CLI 恢复摘要",

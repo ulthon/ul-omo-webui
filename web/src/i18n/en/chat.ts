@@ -54,6 +54,12 @@ export const chat = {
   customMessage: {
     unsupported: "Unsupported content: {customType}",
   },
+  // branch-pager.tsx branch pager (session-branching todo 5)
+  branch: {
+    switchToSibling: "Switch to another branch of this message",
+    prevSibling: "Previous branch",
+    nextSibling: "Next branch",
+  },
   // message-bubble.tsx CLI restore digest muted line (2026-11-02)
   restoreDigest: {
     label: "CLI restore digest",

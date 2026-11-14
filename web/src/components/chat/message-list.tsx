@@ -17,6 +17,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
+import type { SiblingPosition } from "./branch-path-data";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
@@ -228,7 +229,22 @@ export const StreamErrorCardBlock = memo(function StreamErrorCardBlock({ session
   );
 });
 
-const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; sessionId: string }) {
+const Row = memo(function Row({
+  item,
+  sessionId,
+  siblings,
+  onSwitchSibling,
+  switchDisabled,
+}: {
+  item: ChatListItem;
+  sessionId: string;
+  /** 分支切换器（session-branching todo 5）：兄弟序位 chat-view 全量派生后下传 */
+  siblings?: Map<string, SiblingPosition>;
+  /** 叶切换回调（todo 6 接线位，本层透传） */
+  onSwitchSibling?: (entryId: string) => void;
+  /** 切换禁用（与 Composer queueAvailable 同口径） */
+  switchDisabled?: boolean;
+}) {
   if (item.kind === "streaming") return <StreamingBubble sessionId={sessionId} />;
   if (item.kind === "memoryMarker") return <MemoryMarkerBlock marker={item.marker} />;
   if (item.kind === "customMessage") return <CustomMessageBubble sessionId={sessionId} entryId={item.entryId} />;
@@ -245,7 +261,17 @@ const Row = memo(function Row({ item, sessionId }: { item: ChatListItem; session
     );
   if (item.kind === "questionResolved") return <QuestionResolvedLineBlock summary={item.summary} />;
   if (item.kind === "streamError") return <StreamErrorCardBlock sessionId={sessionId} error={item.error} />;
-  return <EntryBubble sessionId={sessionId} entryId={item.entryId} interrupted={item.interrupted} model={item.model} />;
+  return (
+    <EntryBubble
+      sessionId={sessionId}
+      entryId={item.entryId}
+      interrupted={item.interrupted}
+      model={item.model}
+      sibling={siblings?.get(item.entryId) ?? null}
+      onSwitchSibling={onSwitchSibling}
+      switchDisabled={switchDisabled}
+    />
+  );
 });
 
 /** 触顶增量同步阈值（scrollTop 小于该值触发向上翻页） */
@@ -335,6 +361,12 @@ export function MessageList({
   sessionId,
   syncing,
   onReachTop,
+  /** 分支切换器数据（session-branching todo 5）：entryId → 兄弟序位，chat-view 派生 */
+  siblings,
+  /** 叶切换回调（todo 6 接线位，本层透传） */
+  onSwitchSibling,
+  /** 切换禁用（与 Composer queueAvailable 同口径） */
+  switchDisabled,
 }: {
   /** React 19 ref-as-prop：命令句柄（scrollToQuestion，提示条点击定位用） */
   ref?: React.Ref<MessageListHandle>;
@@ -342,6 +374,9 @@ export function MessageList({
   sessionId: string;
   syncing: boolean;
   onReachTop: () => void;
+  siblings?: Map<string, SiblingPosition>;
+  onSwitchSibling?: (entryId: string) => void;
+  switchDisabled?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
@@ -627,7 +662,13 @@ export function MessageList({
                   transform: `translateY(${vi.start}px)`,
                 }}
               >
-                <Row item={mergedItems[vi.index]} sessionId={sessionId} />
+                <Row
+                  item={mergedItems[vi.index]}
+                  sessionId={sessionId}
+                  siblings={siblings}
+                  onSwitchSibling={onSwitchSibling}
+                  switchDisabled={switchDisabled}
+                />
               </div>
             ))}
           </div>

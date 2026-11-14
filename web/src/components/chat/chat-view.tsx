@@ -25,7 +25,7 @@ import { useHydrationRunLock } from "./hydration-lock";
 import { commandGate } from "./commands";
 import { MessageList, type MessageListHandle } from "./message-list";
 import { buildMessageItems, modelChangeBackfillOf, type ChatListItem } from "./message-items";
-import { filterEntriesToPath } from "./branch-path-data";
+import { filterEntriesToPath, deriveSiblingPositions } from "./branch-path-data";
 import { PermissionQueue } from "./permission-queue";
 import { QuestionHintBar } from "./question-hint-bar";
 import { ActivityBar } from "./activity-bar";
@@ -374,6 +374,18 @@ function ChatSession({ sessionId }: { sessionId: string }) {
   const models = useUiStore((s) => s.models);
   const appliedModel = useSessionsStore((s) => s.appliedModels[sessionId] ?? null);
 
+  // 兄弟序位（session-branching todo 5）：全量 entries 一次遍历派生 entryId → 兄弟序位，
+  // 往 MessageList 下传——绝不在每个气泡内重算（计划反 slop 线）。
+  const siblingPositions = useMemo(() => deriveSiblingPositions(entries ?? []), [entries]);
+  // 叶切换回调（todo 6 接线位占位）：编排（POST /navigate + 整替 + viewLeafId）落地前
+  // 仅记录不动作，无 store/网络副作用；todo 6 替换为 switchLeaf 编排。
+  const onSwitchSibling = useCallback((entryId: string) => {
+    console.debug("[branch-pager] switch to sibling (todo 6 wiring pending)", entryId);
+  }, []);
+  // 忙碌锁（todo 5）：与下方 Composer queueAvailable 同一表达式——流式/已知运行/
+  // 运行/等待中禁止切兄弟（F19 前置门口径复用，不再另派一套判定）。
+  const branchSwitchLocked = streaming || knownRunning || runState === "running" || runState === "waiting";
+
   const items = useMemo<ChatListItem[]>(
     () =>
       buildMessageItems(messageEntries, {
@@ -405,7 +417,16 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <MessageList ref={listRef} items={items} sessionId={sessionId} syncing={syncing} onReachTop={onReachTop} />
+      <MessageList
+        ref={listRef}
+        items={items}
+        sessionId={sessionId}
+        syncing={syncing}
+        onReachTop={onReachTop}
+        siblings={siblingPositions}
+        onSwitchSibling={onSwitchSibling}
+        switchDisabled={branchSwitchLocked}
+      />
       <PermissionQueue sessionId={sessionId} />
       {/* 待答提问提示条（r11 todo 6d）：卡片改渲染在消息流内锚点位，输入区上方仅细
           提示条；点击定位队首 pending 卡（权限卡位置行为不动，仍在其上） */}
@@ -430,7 +451,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
               byProject，浮到新 id 才不落空 */}
           <Composer
             sessionId={sessionId}
-            queueAvailable={streaming || knownRunning || runState === "running" || runState === "waiting"}
+            queueAvailable={branchSwitchLocked}
             permissionLocked={hasPendingPermission}
             hydrationLocked={hydrationLocked}
             onSent={() => {
