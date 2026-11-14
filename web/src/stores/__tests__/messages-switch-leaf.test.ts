@@ -98,7 +98,8 @@ describe("switchLeaf 编排（F19 全序）", () => {
     seedSlot();
     const calls = [];
     const r = await useMessagesStore.getState().switchLeaf(SID, "u2", happyDeps(calls));
-    expect(r).toEqual({ ok: true, leafId: "bk-leaf" });
+    // todo 8：SwitchLeafResult 透传回执 editorText（编辑重发/从此此处分支回填源）
+    expect(r).toEqual({ ok: true, leafId: "bk-leaf", editorText: "第二条" });
     // 顺序断言（非日志）：navigate 先行；fetchFull 调用时点流式态已清（③ 先于 ④）
     expect(calls).toEqual([
       ["navigate", "u2", "select", "a2"],

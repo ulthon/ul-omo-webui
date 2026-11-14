@@ -154,6 +154,9 @@ export interface SwitchLeafResult {
   reason?: "busy" | "blocked" | "rejected";
   /** ok=true 时回传导航落定叶（回执 leafId，唯一真相） */
   leafId?: string;
+  /** ok=true 且 select 命中 user 消息时的编辑回填文本（todo 8 从此此处分支/编辑重发
+   * 消费——CLI 同款：select 后编辑器携带原文，改后发送长新分支） */
+  editorText?: string;
 }
 
 interface MessagesState {
@@ -1305,7 +1308,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
         } else {
           apply();
         }
-        return { ok: true, leafId: receipt.leafId };
+        return { ok: true, leafId: receipt.leafId, editorText: receipt.editorText };
       } catch (err) {
         // 拒绝路径（409 already_processing / stale_leaf / 网络等）：状态保持——不整替、
         // 不清流式态、viewLeafId 不动，仅拆防回到可切换态

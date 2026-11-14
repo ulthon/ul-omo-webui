@@ -2,8 +2,11 @@
 // 保存失败写 localStorage 兜底（输入不丢），恢复优先服务端草稿、失败用本地。
 // 竞态防护：回填仅在「输入框为空或非焦点」时进行——用户已经开始打字的内容
 // 永不被异步到达的服务端草稿覆盖（canRestoreRef 由组件按最新状态判定）。
+// 回填时机（session-branching todo 8 起）：①会话打开/切换重挂载 ②uiStore.draftRefill
+// 信号（编辑重发/从此此处分支 putDraft 落库后触发重拉，单一回填源纪律 F20）。
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { api } from "@/lib/api";
+import { useUiStore } from "@/stores/ui";
 import {
   DRAFT_DEBOUNCE_MS,
   clearLocalDraft,
@@ -55,36 +58,48 @@ export function useDraft(sessionId: string, canRestoreRef: RefObject<() => boole
     [scheduleSave],
   );
 
-  // 恢复（会话打开/切换/刷新后重挂载时执行一次）：服务端优先，失败用本地。
-  // 回填受 canRestoreRef 竞态防护约束（见文件头注释）。
-  useEffect(() => {
-    let cancelled = false;
+  // 恢复（会话打开/切换/刷新后重挂载时执行一次 + todo 8 回填信号触发）：服务端优先，
+  // 失败用本地。回填受 canRestoreRef 竞态防护约束（见文件头注释）。
+  const restore = useCallback(async () => {
     const local = readLocalDraft(sessionId);
     const apply = (content: string, sync: boolean) => {
-      if (cancelled || !content) return;
+      if (!content) return;
       // 竞态防护：仅输入框为空或非焦点时回填，绝不覆盖用户正在输入的内容
       if (!canRestoreRef.current()) return;
       textRef.current = content;
       setText(content);
       if (sync) scheduleSave(content); // 本地兜底内容异步补同步到服务端
     };
-    api
-      .getDraft(sessionId)
-      .then((res) => {
-        const resolved = resolveDraftSource(res.draft, local);
-        // 本地兜底胜出（较新）时该内容尚未落服务端，恢复即补同步
-        apply(resolved.content, resolved.source === "local");
-      })
-      .catch(() => {
-        const localContent = local?.content ?? "";
-        apply(localContent, Boolean(localContent)); // 服务端不可达 → 全靠本地兜底，恢复即补同步
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const res = await api.getDraft(sessionId);
+      const resolved = resolveDraftSource(res.draft, local);
+      // 本地兜底胜出（较新）时该内容尚未落服务端，恢复即补同步
+      apply(resolved.content, resolved.source === "local");
+    } catch {
+      const localContent = local?.content ?? "";
+      apply(localContent, Boolean(localContent)); // 服务端不可达 → 全靠本地兜底，恢复即补同步
+    }
     // canRestoreRef 是 ref，不进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, scheduleSave]);
+
+  useEffect(() => {
+    void restore();
+  }, [restore]);
+
+  // 回填信号（session-branching todo 8）：编辑重发/从此此处分支 putDraft 落库后
+  // uiStore.draftRefill bump——本输入框按 sessionId 命中重拉服务端草稿回填。
+  // 单一回填源纪律（F20）：信号只触发重拉，文本永远来自服务端草稿；canRestoreRef
+  // 空才回填守卫同款生效（用户正在输入时不覆盖，草稿留在服务端下次打开可恢复）。
+  useEffect(() => {
+    const unsub = useUiStore.subscribe((s, prev) => {
+      const cur = s.draftRefill;
+      if (cur?.sessionId !== sessionId) return;
+      if (cur.seq === prev.draftRefill?.seq) return;
+      void restore();
+    });
+    return unsub;
+  }, [sessionId, restore]);
 
   // 卸载（切会话）兜底 flush：未落库的修改立即直发，失败落 localStorage
   useEffect(

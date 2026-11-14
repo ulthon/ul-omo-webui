@@ -169,6 +169,11 @@ interface UiState {
   slashCommandsVersion: number;
   /** 输入框回填注入（速清批 27c）：排队条「编辑」撤销后取回文本进输入框 */
   composerInject: { seq: number; text: string } | null;
+  /** 草稿回填信号（session-branching todo 8）：编辑重发/从此此处分支 putDraft 落库后
+   *  bump，输入框（use-draft）按 sessionId 命中重拉服务端草稿回填。单一回填源纪律
+   *  （F20）：信号只触发拉取，文本永远来自服务端草稿，不经内存直传；空才回填守卫
+   *  （canRestoreRef）在 use-draft 重拉时同款生效。 */
+  draftRefill: { sessionId: string; seq: number } | null;
   toasts: Toast[];
   notifications: ToastNotification[];
 
@@ -209,6 +214,7 @@ interface UiState {
   setOverviewNotesCount(n: number): void;
   bumpSlashCommandsVersion(): void;
   injectComposerDraft(text: string): void;
+  bumpDraftRefill(sessionId: string): void;
   showToast(text: string, kind?: "info" | "error"): void;
   dismissToast(id: number): void;
   clearNotifications(): void;
@@ -283,6 +289,7 @@ export const useUiStore = create<UiState>()((set) => ({
   overviewNotesCount: DEFAULT_OVERVIEW_NOTES_COUNT,
   slashCommandsVersion: 0,
   composerInject: null,
+  draftRefill: null,
   toasts: [],
   notifications: [],
   globalNotifs: [],
@@ -321,6 +328,8 @@ export const useUiStore = create<UiState>()((set) => ({
   bumpSlashCommandsVersion: () => set((s) => ({ slashCommandsVersion: s.slashCommandsVersion + 1 })),
   injectComposerDraft: (text) =>
     set((s) => ({ composerInject: { seq: (s.composerInject?.seq ?? 0) + 1, text } })),
+  bumpDraftRefill: (sessionId) =>
+    set((s) => ({ draftRefill: { sessionId, seq: (s.draftRefill?.seq ?? 0) + 1 } })),
   showToast: (text, kind = "info") => {
     const id = ++toastSeq;
     set((s) => {

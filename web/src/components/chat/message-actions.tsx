@@ -1,10 +1,14 @@
-// 消息级操作菜单（计划 todo 25）：复制 markdown 原文 + 重试（fork 分支后自动重发原文）。
-// "编辑后重发"按降级约定不渲染入口：capabilities.editResend=false（verification/05 P1-6，
-// 官配引擎无 continue_from_leaf 协议面），fork 重试为替代路径，代码层无该入口。
+// 消息级操作菜单（todo 25 → session-branching todo 8）：复制 markdown 原文 /
+// 重试（treeNavigation=true 走 navigate+prompt 原会话路径，false 保留 fork 降级
+// IS-8）/「从此此处分支」「编辑重发」（user 条目 + treeNavigation 门控，IS-4/IS-5）。
+// 动作体在 message-actions-data（依赖注入，测试免 mock）；编辑回填单一源纪律
+// （F20）：文本只走 api.putDraft 服务端草稿 + uiStore.draftRefill 信号触发输入框
+// 重拉，putDraft 之后绝无内存 handoff（composerInject 通道不复用）。
 import { useMemo, useState } from "react";
-import { Copy, Loader2, MoreVertical, RotateCcw } from "lucide-react";
+import { Copy, GitBranch, Loader2, MoreVertical, PencilLine, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
 import type { WireMessage } from "@/lib/api";
+import { capabilities } from "@/lib/capabilities";
 import { copyText } from "@/lib/clipboard";
 import { useMessagesStore } from "@/stores/messages";
 import { useSessionsStore } from "@/stores/sessions";
@@ -18,7 +22,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { entryRole, findForkTargetEntry, messageRawText } from "./message-actions-data";
+import {
+  entryRole,
+  findForkTargetEntry,
+  messageMenuItems,
+  messageRawText,
+  runBranchFromHere,
+  runEditResend,
+  runRetry,
+  type MessageActionDeps,
+} from "./message-actions-data";
 
 export function MessageActions({ sessionId, entryId, align = "start" }: { sessionId: string; entryId: string; align?: "start" | "end" }) {
   const showToast = useUiStore((s) => s.showToast);
@@ -40,28 +53,62 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
 
   if (!entry || (role !== "user" && role !== "assistant")) return null;
 
+  const menuItems = messageMenuItems({ role, treeNavigation: capabilities.treeNavigation });
+
+  // 真实依赖装配（chat-view onSwitchSibling 同款注入先例；动作体见 message-actions-data）
+  const deps = (): MessageActionDeps => ({
+    switchLeaf: (sid, eid, d) => useMessagesStore.getState().switchLeaf(sid, eid, d),
+    navigate: (body) => api.navigate(sessionId, body),
+    fetchFull: () => api.listMessages(sessionId, { full: true }),
+    putDraft: (sid, content) => api.putDraft(sid, content),
+    bumpDraftRefill: (sid) => useUiStore.getState().bumpDraftRefill(sid),
+    prompt: (sid, body) => api.prompt(sid, body),
+    forkSession: (sid, body) => api.forkSession(sid, body),
+    selectSession: (sid) => useSessionsStore.getState().select(sid),
+    refreshSessions: () => void useSessionsStore.getState().refreshSessions(),
+    pushError: (sid, message) => useMessagesStore.getState().pushError(sid, message),
+    showToast: (text) => showToast(text),
+    retryFailedMessage: (err) => apiErrorMessage(err, "chat.messageActions.retryFailed"),
+    texts: {
+      branchNavigateFailed: t("chat.messageActions.branchNavigateFailed"),
+      retryResent: t("chat.messageActions.retryResent"),
+      retryBranchCreated: t("chat.messageActions.retryBranchCreated"),
+    },
+  });
+
   const onCopy = async () => {
     const ok = await copyText(messageRawText(entry.message as WireMessage));
     showToast(ok ? t("chat.messageActions.copied") : t("chat.messageActions.copyFailed"), ok ? undefined : "error");
   };
 
+  // 从此此处分支（IS-5）：select 该 user 条目 → switchLeaf 编排，不自动发送
+  const onBranchFromHere = async () => {
+    if (!forkTarget || busy) return;
+    setBusy(true);
+    try {
+      await runBranchFromHere(sessionId, forkTarget.id, deps());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 编辑重发（IS-4）：select → putDraft 单源回填 → 用户改后经既有 prompt 长新分支
+  const onEditResend = async () => {
+    if (!forkTarget || busy) return;
+    setBusy(true);
+    try {
+      await runEditResend(sessionId, forkTarget.id, forkTarget.text, deps());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 重试（IS-8 双路径）：treeNavigation=true 原会话 navigate+prompt；false fork 降级
   const onRetry = async () => {
     if (!forkTarget || busy) return;
     setBusy(true);
     try {
-      const forked = await api.forkSession(sessionId, { entryId: forkTarget.id, position: "before" });
-      // 切到 fork 会话（human 视图不列 fork 子会话，"全部活动"视图按血缘归组可见）+ 列表刷新
-      // （W3 任务 11 起 bootstrap 包装退役，直调 store 聚合口径刷新）
-      useSessionsStore.getState().select(forked.session.id);
-      void useSessionsStore.getState().refreshSessions();
-      showToast(t("chat.messageActions.retryBranchCreated"));
-      // 重试语义：fork 的新会话是该消息之前的上下文，自动重发原消息触发新一轮生成
-      if (forked.text) {
-        await api.prompt(forked.session.id, { text: forked.text });
-      }
-    } catch (err) {
-      // 重试失败入流（对齐 CLI）：会话上下文内错误常驻错误卡可回看，不再瞬时 toast
-      useMessagesStore.getState().pushError(sessionId, apiErrorMessage(err, "chat.messageActions.retryFailed"));
+      await runRetry(sessionId, forkTarget.id, forkTarget.text, capabilities.treeNavigation, deps());
     } finally {
       setBusy(false);
     }
@@ -81,11 +128,35 @@ export function MessageActions({ sessionId, entryId, align = "start" }: { sessio
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-48">
-        <DropdownMenuItem onSelect={() => void onCopy()}>
+        <DropdownMenuItem data-testid="message-action-copy" onSelect={() => void onCopy()}>
           <Copy className="mr-2 size-4" />
           {t("chat.messageActions.copy")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={busy || !forkTarget} onSelect={() => void onRetry()}>
+        {menuItems.includes("branchFromHere") && (
+          <DropdownMenuItem
+            data-testid="message-action-branch-from-here"
+            disabled={busy || !forkTarget}
+            onSelect={() => void onBranchFromHere()}
+          >
+            <GitBranch className="mr-2 size-4" />
+            {t("chat.messageActions.branchFromHere")}
+          </DropdownMenuItem>
+        )}
+        {menuItems.includes("editResend") && (
+          <DropdownMenuItem
+            data-testid="message-action-edit-resend"
+            disabled={busy || !forkTarget}
+            onSelect={() => void onEditResend()}
+          >
+            <PencilLine className="mr-2 size-4" />
+            {t("chat.messageActions.editResend")}
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          data-testid="message-action-retry"
+          disabled={busy || !forkTarget}
+          onSelect={() => void onRetry()}
+        >
           <RotateCcw className="mr-2 size-4" />
           {t("chat.messageActions.retry")}
         </DropdownMenuItem>
