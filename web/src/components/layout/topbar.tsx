@@ -11,7 +11,7 @@ import { Check, ChevronDown, FolderOpen, Keyboard, ListTodo, Menu, Settings, X }
 import { api } from "@/lib/api";
 import type { ModelInfo, SessionListItem, TagDefinition } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
-import { scheduleModelPreferencePersist } from "@/lib/preferences";
+import { selectModel } from "@/lib/model-cycle";
 import { resolveSiteName, useUiStore } from "@/stores/ui";
 import { useT } from "@/i18n/i18n";
 import { useSessionsStore } from "@/stores/sessions";
@@ -236,11 +236,8 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
     ? t("login.topbar.noModels")
     : (selectedModel ?? (models.length > 0 ? `${models[0].provider}/${models[0].id}` : t("login.topbar.modelLoading")));
 
-  const selectModel = (value: string) => {
-    if (useUiStore.getState().selectedModel === value) return;
-    useUiStore.getState().setSelectedModel(value);
-    scheduleModelPreferencePersist();
-  };
+  // 模型选中统一走 lib/model-cycle.selectModel（选中埋点 + 防抖持久化单一化；
+  // 原内联「同值守卫 + 写 store + 持久化」逐行同义，迁移零行为变化）
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">

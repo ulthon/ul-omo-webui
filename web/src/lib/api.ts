@@ -788,10 +788,22 @@ export const api = {
     // lib/thinking-level 共用）；调用方显式传值以其为准。
     const selectedModelInfo = model ? ui.models.find((m) => `${m.provider}/${m.id}` === model) : undefined;
     const thinkingLevel = body.thinkingLevel ?? effectiveThinkingLevel(selectedModelInfo, ui.selectedThinkingLevel);
-    return request(
+    const receipt = await request<PromptReceipt>(
       `/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
       jsonInit("POST", { ...body, model, thinkingLevel }),
     );
+    // 注入模型与回执 appliedModel 不一致 → 切换未按预期生效的直接观测面（2026-11-18
+    // 用户反馈「切了但没换」排查补点）。键空间同源已核实（model-pending.ts 注释），
+    // 不一致即真实异常记 warn；一致时零输出（成功帧由 SSE model_changed → diag run/model
+    // 记录，不双记）；排队/未携带 model 不比对。
+    if (model && typeof receipt.appliedModel === "string" && receipt.appliedModel && receipt.appliedModel !== model) {
+      diag.warn("model-select", "receipt_mismatch", {
+        session: sessionId.slice(0, 8),
+        sent: model,
+        applied: receipt.appliedModel,
+      });
+    }
+    return receipt;
   },
   async abort(sessionId: string): Promise<{ ok: boolean; sessionId: string }> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, jsonInit("POST", {}));

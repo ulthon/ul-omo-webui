@@ -3,7 +3,9 @@
 // 内 wrap 循环。nextFavoriteModel 是纯函数（无 store 依赖，单测直测）；selectModel 是
 // chips.tsx 弹层选中内联逻辑油出的共用过程——chip 点击与键盘循环走同一条
 // 「写 selectedModel + 防抖持久化」路径（同值不重复写、不触发持久化）。
+import { diag } from "@/lib/diag";
 import { scheduleModelPreferencePersist, scheduleThinkingPreferencePersist } from "@/lib/preferences";
+import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
 export type CycleDirection = 1 | -1;
@@ -30,10 +32,18 @@ export function nextFavoriteModel(
   return favoriteModels[(idx + direction + favoriteModels.length) % favoriteModels.length];
 }
 
-/** 选中模型并防抖持久化偏好（chip 点击 / Ctrl+P 循环共用；chips.tsx 原内联逻辑油出） */
+/** 选中模型并防抖持久化偏好（chip 点击 / Ctrl+P 循环 / 顶栏下拉共用；chips.tsx 原内联逻辑油出） */
 export function selectModel(value: string): void {
   const ui = useUiStore.getState();
   if (ui.selectedModel === value) return;
+  // 选中即留痕（2026-11-18 用户反馈「切了但没换」排查）：与 thinking-level user_change
+  // 同款来源分级日志。选中只是本地偏好，生效在下一条 prompt（api.ts 注入 + 回执比对
+  // receipt_mismatch）；生效/拒绝帧另有 SSE model_changed / model_change_rejected 埋点。
+  diag.info("model-select", "user_change", {
+    from: ui.selectedModel ?? "unknown",
+    to: value,
+    session: useSessionsStore.getState().selectedId ?? "unknown",
+  });
   ui.setSelectedModel(value);
   scheduleModelPreferencePersist();
 }
