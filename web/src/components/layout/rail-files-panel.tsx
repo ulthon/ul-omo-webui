@@ -28,6 +28,7 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
+import { dirsAfterOp, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
@@ -238,8 +239,12 @@ export function RailFilesPanel() {
   const loaded = loadedKey === currentKey && !listError ? entries : null;
   const sorted = useMemo(() => (loaded ? ([...loaded] as ListEntry[]).sort(compareEntries) : null), [loaded]);
 
-  // 树刷新版本：任意写操作成功后 +1，FileTree 以 key 重挂载自取
-  const [treeVersion, setTreeVersion] = useState(0);
+  // 树控制器（files-ux-revamp 任务 3）：面板级唯一树数据源。写操作后经 dirsAfterOp
+  // 失效矩阵局部刷新（refresh 回源、evict 逐出，展开态保留），不再 key 重挂载。
+  // project 为空（无项目可用）时注入静默取数器抑制根加载（不发假请求）；project
+  // 就位后经控制器项目切换重置自然回源（同 pages/files.tsx）
+  const treeSilentFetch = useCallback((): Promise<never> => new Promise(() => {}), []);
+  const treeController = useFileTreeController(project ?? "", project ? undefined : { fetch: treeSilentFetch });
   const [dialog, setDialog] = useState<OpDialog | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
@@ -270,10 +275,22 @@ export function RailFilesPanel() {
     };
   }, [deleteConfirm, project]);
 
-  const refetchAfterOp = useCallback(() => {
+  /** 写操作成功后统一收口：重取当前目录（列表）+ 树按失效矩阵局部刷新
+   * （refresh 回源、evict 逐出；展开态保留，不做乐观更新——同 pages/files.tsx） */
+  const refetchAfterOp = useCallback(
+    (plan: FsOpPlan) => {
+      if (project) loadDir(project, dir);
+      const { refresh, evict } = dirsAfterOp(plan);
+      treeController.refreshDirs(refresh, evict);
+    },
+    [project, dir, loadDir, treeController],
+  );
+
+  /** 工具栏刷新：列表重取 + 树全量局部刷新（refreshAll = 已加载目录集回源，保留展开态） */
+  const onToolbarRefresh = useCallback(() => {
     if (project) loadDir(project, dir);
-    setTreeVersion((v) => v + 1);
-  }, [project, dir, loadDir]);
+    treeController.refreshAll();
+  }, [project, dir, loadDir, treeController]);
 
   const confirmDelete = async () => {
     if (!project || !deleteConfirm || deleteBusy) return;
@@ -282,7 +299,7 @@ export function RailFilesPanel() {
       await api.fsDelete(project, deleteConfirm.path);
       if (selected === deleteConfirm.path) setSelected(null);
       setDeleteConfirm(null);
-      refetchAfterOp();
+      refetchAfterOp({ op: "delete", path: deleteConfirm.path });
     } catch (err) {
       if (err instanceof ApiError && err.code === "engine_busy") {
         pushGlobalError(t("files.confirm.engineBusy"));
@@ -305,7 +322,7 @@ export function RailFilesPanel() {
         choice === "overwrite" ? { overwrite: true } : { conflict: "rename" },
       );
       setConflict(null);
-      refetchAfterOp();
+      refetchAfterOp({ op: "move", from: conflict.from, to: conflict.target });
     } catch (err) {
       pushGlobalError(apiErrorMessage(err, "files.op.moveFailed"));
     } finally {
@@ -385,10 +402,11 @@ export function RailFilesPanel() {
         }
       }
     }
-    refetchAfterOp();
+    refetchAfterOp({ op: "upload", dir: targetDir });
   };
 
-  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 支持跨目录） */
+  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 支持跨目录）；
+   * 成功后携操作计划局部刷新（create/mkdir 刷新父目录，move 刷新源/目标父目录） */
   const runDialog = async () => {
     if (!project || !dialog || dialogBusy) return;
     const target = dialog.value.trim();
@@ -396,15 +414,23 @@ export function RailFilesPanel() {
     setDialogBusy(true);
     const kind = dialog.kind;
     try {
+      let plan: FsOpPlan;
       if (kind === "newFile") {
-        await api.fsCreateFile(project, joinRel(dir, target));
+        const path = joinRel(dir, target);
+        await api.fsCreateFile(project, path);
+        plan = { op: "create", path };
       } else if (kind === "newDir") {
-        await api.fsMkdir(project, joinRel(dir, target));
+        const path = joinRel(dir, target);
+        await api.fsMkdir(project, path);
+        plan = { op: "mkdir", path };
       } else if (dialog.from !== null) {
         await api.fsMove(project, dialog.from, target);
+        plan = { op: "move", from: dialog.from, to: target };
+      } else {
+        return;
       }
       setDialog(null);
-      refetchAfterOp();
+      refetchAfterOp(plan);
     } catch (err) {
       if (kind === "move" && dialog.from !== null && err instanceof ApiError && err.status === 409 && err.code === "target_exists") {
         setDialog(null);
@@ -627,7 +653,7 @@ export function RailFilesPanel() {
         <Upload className="size-4" aria-hidden />
         {t("files.toolbar.upload")}
       </Button>
-      <Button variant="ghost" size="sm" data-testid="rail-files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={refetchAfterOp}>
+      <Button variant="ghost" size="sm" data-testid="rail-files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={onToolbarRefresh}>
         <RefreshCw className="size-4" aria-hidden />
       </Button>
     </div>
@@ -705,7 +731,7 @@ export function RailFilesPanel() {
   ) : null;
 
   const treeContent = (
-    <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} />
+    <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} controller={treeController} />
   );
   const listContent = (
     <>
@@ -846,7 +872,7 @@ export function RailFilesPanel() {
       {project ? (
         layout === "stacked" ? (
           <>
-            {/* 窄档（容器 ≤600）：树约 1/3 高度，可滚动；写操作后 key 重挂载自取最新 */}
+            {/* 窄档（容器 ≤600）：树约 1/3 高度，可滚动；写操作后局部刷新保留展开态 */}
             <div data-testid="rail-files-tree-pane" className="max-h-64 min-h-32 shrink-0 overflow-y-auto border-b p-1">
               {treeContent}
             </div>
