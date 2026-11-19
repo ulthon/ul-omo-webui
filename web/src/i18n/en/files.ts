@@ -126,6 +126,10 @@ export const files = {
     railTreeAriaLabel: "Resize file tree pane",
     railListAriaLabel: "Resize file list pane",
   },
+  // 窄档单列推入壳（files-ux-revamp 任务 4）：预览层返回列表钮
+  narrow: {
+    backAria: "Back to list",
+  },
   op: {
     createFileFailed: "Failed to create file",
     createDirFailed: "Failed to create folder",
