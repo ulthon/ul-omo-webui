@@ -143,6 +143,10 @@ export const files = {
     railTreeAriaLabel: "拖动调整文件树列宽度",
     railListAriaLabel: "拖动调整文件列表列宽度",
   },
+  // 窄档单列推入壳（files-ux-revamp 任务 4）：预览层返回列表钮
+  narrow: {
+    backAria: "返回列表",
+  },
   // 操作结果 toast 兜底文案（成功/失败）
   op: {
     createFileFailed: "新建文件失败",

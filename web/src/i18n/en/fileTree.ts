@@ -35,6 +35,12 @@ export const fileTree = {
     binaryFile: "Binary file, content not rendered",
     emptyFile: "Empty file",
     tooLarge: "File is large (full size {size}); only the first 2 MB is shown. Preview is read-only, open the original file in a local editor to view the full content.",
+    // git status badge (files-ux-revamp task 11)
+    gitModified: "Modified",
+    gitAdded: "Added/untracked",
+    gitDeleted: "Deleted",
+    gitRenamed: "Renamed",
+    gitChanged: "Changed",
   },
   // file-picker.tsx @ file picker (task 10)
   picker: {

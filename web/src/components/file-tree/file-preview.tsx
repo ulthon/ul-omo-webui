@@ -3,13 +3,25 @@
 // 服务端契约（todo 9）：fs/file 对二进制（NUL 探测）返回 binary=true 且 content=null——
 // 位图（png/jpg 等真二进制图片）拿不到字节，前端识别类型后展示占位说明（降级记录）；
 // 文本型图片（svg）content 可用，转 data URL 真内联。
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Ban, FileText, FileWarning, ImageIcon, LoaderCircle } from "lucide-react";
 import { api, type FsFileResponse } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 // tSnap：异步续体（promise 回调）取词用快照态；渲染期文本走 useT 响应式
 import { t as tSnap, useT } from "@/i18n/i18n";
 import { baseName, formatBytes, imageMimeOf } from "./file-tree-logic";
+import { highlight } from "@/lib/highlight-client";
+import {
+  fetchGitStatusMap,
+  gitBadgeInfo,
+  GIT_BADGE_TONE_CLASS,
+  GIT_BADGE_TONE_KEY,
+  shikiLangOf,
+  type GitStatusCacheEntry,
+} from "./preview-git-badge";
+
+/** 超过该长度的文本不做 Shiki 高亮（与聊天侧 markdown.tsx 同阈值） */
+const PREVIEW_HIGHLIGHT_MAX_CHARS = 10_000;
 
 type PreviewState =
   | { kind: "loading" }
@@ -36,6 +48,12 @@ export function FilePreview({
   const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   // 初始即 loading；调用方以 key={path} 重挂载派生重置，effect 只发请求不同步 setState
   const [state, setState] = useState<PreviewState>({ kind: "loading" });
+  // Shiki 高亮：先渲染纯文本 pre，worker 返回后整体换入（null/失败保持纯文本）
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  // 图片放大灯箱：null = 关闭；src 为完整 img src（下载端点或 svg data URL）
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  // git 状态映射（per-project 缓存，换文件零额外请求）
+  const [gitStatus, setGitStatus] = useState<GitStatusCacheEntry | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +73,44 @@ export function FilePreview({
     };
   }, [project, path, pushGlobalError]);
 
+  // git 状态：项目级缓存，mount 取一次；失败也缓存（fetchGitStatusMap 内部降级空表）
+  useEffect(() => {
+    let cancelled = false;
+    fetchGitStatusMap(project).then((entry) => {
+      if (!cancelled) setGitStatus(entry);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
+
+  // Shiki 高亮：仅非截断、非空、可识别语言的文本分支进 worker；渲染不等待（纯文本先出）
+  useEffect(() => {
+    if (state.kind !== "file" || state.data.binary || state.data.truncated) return;
+    const content = state.data.content ?? "";
+    const lang = shikiLangOf(path);
+    if (!lang || content === "" || content.length > PREVIEW_HIGHLIGHT_MAX_CHARS) return;
+    let cancelled = false;
+    highlight(content, lang).then((html) => {
+      if (!cancelled && html) setHighlighted(html);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [state, path]);
+
+  // 灯箱 Escape 关闭
+  useEffect(() => {
+    if (lightboxSrc === null) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setLightboxSrc(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxSrc]);
+
+  const closeLightbox = useCallback(() => setLightboxSrc(null), []);
+
   const t = useT();
   const mime = imageMimeOf(path);
 
@@ -62,8 +118,20 @@ export function FilePreview({
     <div data-testid="file-preview" className="flex min-h-0 flex-col gap-2">
       <div className="flex shrink-0 items-center gap-2 border-b pb-2">
         <div className="flex min-w-0 flex-1 flex-col">
-          <span data-testid="preview-path" className="truncate font-mono text-xs" title={path}>
-            {path}
+          <span data-testid="preview-path" className="flex items-center gap-1.5 font-mono text-xs" title={path}>
+            <span className="truncate">{path}</span>
+            {gitStatus?.ok && gitStatus.map.has(path) && (() => {
+              const badge = gitBadgeInfo(gitStatus.map.get(path) ?? "");
+              return (
+                <span
+                  data-testid="preview-git-badge"
+                  title={t(GIT_BADGE_TONE_KEY[badge.tone])}
+                  className={`shrink-0 rounded px-1.5 py-0.5 font-sans text-[10px] font-semibold ${GIT_BADGE_TONE_CLASS[badge.tone]}`}
+                >
+                  {badge.letter}
+                </span>
+              );
+            })()}
           </span>
           {state.kind === "file" && (
             <span className="text-xs text-muted-foreground">
@@ -112,7 +180,8 @@ export function FilePreview({
                     data-testid="preview-image"
                     src={api.fsDownloadUrl(project, path)}
                     alt={baseName(path)}
-                    className="max-h-64 max-w-full rounded-lg border"
+                    onClick={() => setLightboxSrc(api.fsDownloadUrl(project, path))}
+                    className="max-h-64 max-w-full cursor-zoom-in rounded-lg border"
                   />
                 </div>
               );
@@ -159,9 +228,16 @@ export function FilePreview({
                     data-testid="preview-image"
                     src={`data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(data.content ?? "")))}`}
                     alt={baseName(path)}
-                    className="max-h-64 max-w-full rounded-lg border"
+                    onClick={() => setLightboxSrc(`data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(data.content ?? "")))}`)}
+                    className="max-h-64 max-w-full cursor-zoom-in rounded-lg border"
                   />
                 </div>
+              ) : highlighted ? (
+                <pre
+                  data-testid="preview-text"
+                  className="min-h-0 flex-1 overflow-auto rounded-lg bg-muted/40 p-3 font-mono text-xs leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: highlighted }}
+                />
               ) : (
                 <pre
                   data-testid="preview-text"
@@ -173,6 +249,15 @@ export function FilePreview({
             </div>
           );
         })()}
+      {lightboxSrc !== null && (
+        <div
+          data-testid="preview-lightbox"
+          onClick={closeLightbox}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+        >
+          <img src={lightboxSrc} alt={baseName(path)} className="max-h-[85vh] max-w-full rounded-lg" />
+        </div>
+      )}
     </div>
   );
 }
