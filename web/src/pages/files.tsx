@@ -422,6 +422,15 @@ export function FilesPage() {
   const treeSilentFetch = useCallback((): Promise<never> => new Promise(() => {}), []);
   const treeController = useFileTreeController(project ?? "", project ? undefined : { fetch: treeSilentFetch });
 
+  // 目录导航 → 树自动揭示（files-ux-revamp 任务 8 / IS-5）：dir 单向同步到树。reveal
+  // 幂等：列表导航、面包屑回跳、树点击（onDirectoryOpen→setDir）全部流经同一 effect，
+  // 已展开/已缓存的祖先为 no-op，只有滚动定位+高亮发生；reveal 结果不回写 dir（单向）
+  const revealTree = treeController.reveal;
+  useEffect(() => {
+    if (!project) return;
+    void revealTree(dir);
+  }, [dir, project, revealTree]);
+
   // ---- 操作面（任务 6）：工具栏 + 右键菜单 + 对话框 + 上传队列 ----
   const [menu, setMenu] = useState<ContextMenuTarget | null>(null);
   const [dialog, setDialog] = useState<OpDialog | null>(null);
