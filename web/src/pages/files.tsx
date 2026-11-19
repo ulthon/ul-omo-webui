@@ -12,7 +12,7 @@
 // 跨目录路径）；操作成功后重取当前目录与树（不做乐观更新）；失败 toast
 // （apiErrorMessage 错误码词典文案）。无拖拽、无批量勾选（后续任务也不做，计划 Must NOT）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, DragEvent as ReactDragEvent } from "react";
 import { ChevronRight, Eye, EyeOff, Pencil, RefreshCw, Upload, X } from "lucide-react";
 import { api, ApiError, FsUploadConflictError } from "@/lib/api";
 import type { FsFileResponse, FsTreeEntry } from "@/lib/api";
@@ -30,6 +30,7 @@ import { NarrowStack } from "@/components/files/narrow-stack";
 import { QuickOpen } from "@/components/files/quick-open";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
+import { extractDropFiles, useDragDropUpload } from "@/components/files/drop-upload";
 import {
   FILES_LEFT_DEFAULT,
   FILES_LEFT_MAX,
@@ -207,6 +208,7 @@ function compareEntries(a: ListEntry, b: ListEntry, sort: SortState): number {
 export function FilesPage() {
   const t = useT();
   const pushGlobalError = useUiStore((s) => s.pushGlobalError);
+  const showToast = useUiStore((s) => s.showToast);
   const storeProjects = useUiStore((s) => s.projects);
   const setStoreProjects = useUiStore((s) => s.setProjects);
   const activeProject = useActiveProject();
@@ -575,7 +577,7 @@ export function FilesPage() {
 
   /** 多选逐个排队上传：每文件进度回写队列态；409 冲突（FsUploadConflictError 携带
    * existing）本任务仅 toast（确认弹窗/三选属任务 7）；全部结束后重取列表与树 */
-  const onFilesPicked = async (fileList: FileList | null) => {
+  const onFilesPicked = async (fileList: FileList | File[] | null) => {
     // 先快照 FileList 再清空 input.value：e.target.files 与 input 是同一活对象，
     // 先清空会让快照变空（真实浏览器实测）
     const proj = project;
@@ -632,6 +634,34 @@ export function FilesPage() {
       }
     }
     refetchAfterOp({ op: "upload", dir: targetDir });
+  };
+
+  /** 定向上传（拖放用）：临时改写 uploadDirRef 走既有队列（进度/409 三选/刷新全复用），
+   * 结束后恢复原值，不影响后续文件选择器目标 */
+  const beginUpload = (targetDir: string, files: File[]) => {
+    const prev = uploadDirRef.current;
+    uploadDirRef.current = targetDir;
+    void onFilesPicked(files).finally(() => {
+      uploadDirRef.current = prev;
+    });
+  };
+  // 桌面拖放（任务 10 / IS-7）：窄档（触屏语义）不启用；覆盖层文案指向当前目录。
+  // 目录行 drop 会 stopPropagation，容器收尾不再执行，由 onTreeRowDrop 内自行 hideOverlay
+  const drop = useDragDropUpload({
+    enabled: !isMobile && project !== null,
+    onDropFiles: (files, dirOverride) => beginUpload(dirOverride ?? dir, files),
+    onDirUnsupported: () => showToast(t("files.drop.dirUnsupported"), "info"),
+  });
+  const onTreeRowDrop = (path: string, e: ReactDragEvent<HTMLButtonElement>) => {
+    const { files, hasDirEntry } = extractDropFiles(e.dataTransfer);
+    if (hasDirEntry) {
+      showToast(t("files.drop.dirUnsupported"), "info");
+      drop.hideOverlay();
+      return;
+    }
+    drop.hideOverlay();
+    if (files.length === 0) return;
+    beginUpload(path, files);
   };
 
   /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 为目标相对路径，跨目录合法）；
@@ -877,7 +907,7 @@ export function FilesPage() {
   const treePane = (
     <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto" onContextMenu={onTreeContextMenu}>
       {project ? (
-        <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} controller={treeController} />
+        <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} onRowDrop={onTreeRowDrop} controller={treeController} />
       ) : null}
     </div>
   );
@@ -1107,7 +1137,7 @@ export function FilesPage() {
   );
 
   return (
-    <div data-testid="files-page" className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div data-testid="files-page" className="fixed inset-0 z-50 flex flex-col bg-background" {...drop.dragHandlers}>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
         <Button
           variant="ghost"
@@ -1207,6 +1237,18 @@ export function FilesPage() {
         className="hidden"
         onChange={(e) => void onFilesPicked(e.target.files)}
       />
+      {/* 拖放覆盖层（任务 10）：仅提示用，pointer-events-none 让 drop 穿透到目录行 */}
+      {drop.showOverlay ? (
+        <div
+          data-testid="files-dropzone"
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70"
+        >
+          <div className="rounded-lg border border-dashed border-ring bg-background/90 px-6 py-4 text-sm text-foreground shadow-lg">
+            {t("files.drop.overlayHint", { dir: dir || "/" })}
+          </div>
+        </div>
+      ) : null}
       {menuNode}
       {dialogNode}
       {deleteConfirm ? (

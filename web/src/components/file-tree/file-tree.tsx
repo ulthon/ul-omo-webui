@@ -2,6 +2,7 @@
 // 性能取舍：单目录条目渲染不做虚拟化——服务端单层分片天然限制单次渲染量，数百行 DOM
 // 直渲染无感知卡顿（QA 实测记录）；真实卡顿出现再考虑虚拟化。
 import { useCallback, useEffect, useRef } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import {
   ChevronRight,
   File as FileIcon,
@@ -58,6 +59,10 @@ interface TreeRowProps {
   /** 是否渲染噪音目录（files-ux-revamp 任务 6）：false 时不渲染名字命中
    * TREE_HIDDEN_DIRS 的目录行（任意深度）；缓存仍存原始条目，切换即时生效零请求 */
   showHiddenDirs?: boolean;
+  /** 可选（files-ux-revamp 任务 10 / IS-7）：文件拖放到目录行时上抛（宿主定向该目录
+   * 上传）；仅目录行接管 dragover/drop（高亮 + data 属性），未传则零开销、既有消费方
+   * 行为不变 */
+  onRowDrop?: (path: string, e: ReactDragEvent<HTMLButtonElement>) => void;
 }
 
 function TreeRow({
@@ -71,6 +76,7 @@ function TreeRow({
   toggle,
   onDirectoryOpen,
   showHiddenDirs,
+  onRowDrop,
   registerRow,
 }: TreeRowProps) {
   const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
@@ -102,6 +108,38 @@ function TreeRow({
           selected ? "bg-muted text-foreground" : ""
         } ${flash ? "ring-1 ring-ring" : ""}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
+        // 拖放定向（任务 10）：仅目录行可接 drop；dragover 高亮（classList + data 属性），
+        // drop 上抛并阻断向宿主容器冒泡（避免容器再按当前目录上传一次）
+        data-droppable={isDir && onRowDrop ? "true" : undefined}
+        onDragOver={
+          isDir && onRowDrop
+            ? (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+                e.currentTarget.classList.add("ring-1", "ring-ring");
+                e.currentTarget.setAttribute("data-dragover", "true");
+              }
+            : undefined
+        }
+        onDragLeave={
+          isDir && onRowDrop
+            ? (e) => {
+                e.currentTarget.classList.remove("ring-1", "ring-ring");
+                e.currentTarget.removeAttribute("data-dragover");
+              }
+            : undefined
+        }
+        onDrop={
+          isDir && onRowDrop
+            ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.remove("ring-1", "ring-ring");
+                e.currentTarget.removeAttribute("data-dragover");
+                onRowDrop(path, e);
+              }
+            : undefined
+        }
       >
         {isDir ? (
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
@@ -133,6 +171,7 @@ function TreeRow({
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
             showHiddenDirs={showHiddenDirs}
+            onRowDrop={onRowDrop}
             registerRow={registerRow}
           />
         ))}
@@ -147,6 +186,7 @@ export function FileTree({
   onDirectoryOpen,
   controller,
   showHiddenDirs = false,
+  onRowDrop,
 }: {
   project: string;
   selectedPath: string | null;
@@ -158,6 +198,8 @@ export function FileTree({
   controller?: FileTreeController;
   /** files-ux-revamp 任务 6：false（默认）时渲染层隐藏任意深度的噪音目录，见 TreeRowProps 注释 */
   showHiddenDirs?: boolean;
+  /** 可选（files-ux-revamp 任务 10 / IS-7）：拖放到目录行的上抛挂点，见 TreeRowProps 注释 */
+  onRowDrop?: (path: string, e: ReactDragEvent<HTMLButtonElement>) => void;
 }) {
   const t = useT();
   // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）；
@@ -235,6 +277,7 @@ export function FileTree({
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
             showHiddenDirs={showHiddenDirs}
+            onRowDrop={onRowDrop}
             registerRow={registerRow}
           />
         ))

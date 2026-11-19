@@ -140,6 +140,11 @@ export const files = {
     railTreeAriaLabel: "拖动调整文件树列宽度",
     railListAriaLabel: "拖动调整文件列表列宽度",
   },
+  // 桌面拖放上传（files-ux-revamp 任务 10 / IS-7）：全屏覆盖层 + 目录项忽略提示
+  drop: {
+    overlayHint: "释放以拖放上传到目录 {dir}",
+    dirUnsupported: "暂不支持拖入文件夹，已忽略",
+  },
   // 窄档单列推入壳（files-ux-revamp 任务 4）：预览层返回列表钮
   narrow: {
     backAria: "返回列表",

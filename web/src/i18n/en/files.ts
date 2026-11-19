@@ -123,6 +123,11 @@ export const files = {
     railTreeAriaLabel: "Resize file tree pane",
     railListAriaLabel: "Resize file list pane",
   },
+  // Desktop drag-drop upload (files-ux-revamp task 10 / IS-7): fullscreen overlay + folder-drop notice
+  drop: {
+    overlayHint: "Drop to upload into {dir}",
+    dirUnsupported: "Folders are not supported and were ignored",
+  },
   // 窄档单列推入壳（files-ux-revamp 任务 4）：预览层返回列表钮
   narrow: {
     backAria: "Back to list",
