@@ -142,6 +142,13 @@ export const files = {
   narrow: {
     backAria: "返回列表",
   },
+  // 工具栏模糊快速打开（files-ux-revamp 任务 7 / IS-3）
+  quickOpen: {
+    openAria: "快速打开文件",
+    placeholder: "输入路径过滤…",
+    noMatch: "无匹配文件",
+    scanning: "正在扫描项目文件…",
+  },
   // 操作结果 toast 兜底文案（成功/失败）
   op: {
     createFileFailed: "新建文件失败",
