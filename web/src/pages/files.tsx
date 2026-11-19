@@ -13,7 +13,7 @@
 // （apiErrorMessage 错误码词典文案）。无拖拽、无批量勾选（后续任务也不做，计划 Must NOT）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ChevronRight, Pencil, RefreshCw, Upload, X } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, Pencil, RefreshCw, Upload, X } from "lucide-react";
 import { api, ApiError, FsUploadConflictError } from "@/lib/api";
 import type { FsFileResponse, FsTreeEntry } from "@/lib/api";
 import { useIsMobile } from "@/lib/use-is-mobile";
@@ -40,8 +40,10 @@ import {
   clampFilesRightWidth,
   readFilesLeftWidthPreference,
   readFilesRightWidthPreference,
+  readFilesShowHiddenPreference,
   writeFilesLeftWidthPreference,
   writeFilesRightWidthPreference,
+  writeFilesShowHiddenPreference,
 } from "./files-resize";
 import { Button } from "@/components/ui/button";
 import {
@@ -246,6 +248,14 @@ export function FilesPage() {
   // 左栏手柄右移变宽，右栏手柄左移变宽。移动端三态切换不消费。
   const [leftWidth, setLeftWidth] = useState(() => readFilesLeftWidthPreference());
   const [rightWidth, setRightWidth] = useState(() => readFilesRightWidthPreference());
+  // 文件树噪音目录显示开关（files-ux-revamp 任务 6）：localStorage 记忆，切换即时生效
+  const [showHiddenDirs, setShowHiddenDirs] = useState(() => readFilesShowHiddenPreference());
+  const toggleShowHiddenDirs = () => {
+    setShowHiddenDirs((v) => {
+      writeFilesShowHiddenPreference(!v);
+      return !v;
+    });
+  };
   const leftWidthRef = useRef(leftWidth);
   const rightWidthRef = useRef(rightWidth);
   const leftDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
@@ -844,7 +854,7 @@ export function FilesPage() {
   const treePane = (
     <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto" onContextMenu={onTreeContextMenu}>
       {project ? (
-        <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} controller={treeController} />
+        <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} controller={treeController} />
       ) : null}
     </div>
   );
@@ -863,6 +873,17 @@ export function FilesPage() {
       </Button>
       <Button variant="ghost" size="sm" data-testid="files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={onToolbarRefresh}>
         <RefreshCw className="size-4" aria-hidden />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        data-testid="files-toggle-hidden"
+        aria-pressed={showHiddenDirs}
+        aria-label={showHiddenDirs ? t("files.toolbar.hideHiddenDirs") : t("files.toolbar.showHiddenDirs")}
+        title={showHiddenDirs ? t("files.toolbar.hideHiddenDirs") : t("files.toolbar.showHiddenDirs")}
+        onClick={toggleShowHiddenDirs}
+      >
+        {showHiddenDirs ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
       </Button>
     </div>
   );

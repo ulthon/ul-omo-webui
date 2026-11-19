@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useT } from "@/i18n/i18n";
 import { type FsTreeEntry } from "@/lib/api";
-import { imageMimeOf } from "./file-tree-logic";
+import { TREE_HIDDEN_DIRS, imageMimeOf } from "./file-tree-logic";
 import { useFileTreeController, type FileTreeController, type FileTreeData, type TreeFetcher } from "./file-tree-controller";
 
 export type TreeLoadState = "idle" | "loading" | "error";
@@ -55,6 +55,9 @@ interface TreeRowProps {
   /** 可选（builtin-file-management 任务 2）：目录行被点击时上抛路径（文件管理页左栏
    * 同步中栏列表用）；既有消费方（composer @引用、添加项目弹窗）不传，行为不变 */
   onDirectoryOpen?: (path: string) => void;
+  /** 是否渲染噪音目录（files-ux-revamp 任务 6）：false 时不渲染名字命中
+   * TREE_HIDDEN_DIRS 的目录行（任意深度）；缓存仍存原始条目，切换即时生效零请求 */
+  showHiddenDirs?: boolean;
 }
 
 function TreeRow({
@@ -67,6 +70,7 @@ function TreeRow({
   onSelect,
   toggle,
   onDirectoryOpen,
+  showHiddenDirs,
   registerRow,
 }: TreeRowProps) {
   const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
@@ -114,7 +118,9 @@ function TreeRow({
         <span className="min-w-0 truncate">{entry.name}</span>
       </button>
       {isDir && expanded &&
-        (children ?? []).map((child) => (
+        (children ?? [])
+          .filter((child) => showHiddenDirs || child.type !== "directory" || !TREE_HIDDEN_DIRS.has(child.name))
+          .map((child) => (
           <TreeRow
             key={child.name}
             dirPath={path}
@@ -126,6 +132,7 @@ function TreeRow({
             onSelect={onSelect}
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
+            showHiddenDirs={showHiddenDirs}
             registerRow={registerRow}
           />
         ))}
@@ -139,6 +146,7 @@ export function FileTree({
   onSelect,
   onDirectoryOpen,
   controller,
+  showHiddenDirs = false,
 }: {
   project: string;
   selectedPath: string | null;
@@ -148,6 +156,8 @@ export function FileTree({
   /** 可选（files-ux-revamp 任务 2）：外部受控的 headless controller；缺省时组件内部自控，
    * 行为与既有消费方（file-picker 等）完全一致 */
   controller?: FileTreeController;
+  /** files-ux-revamp 任务 6：false（默认）时渲染层隐藏任意深度的噪音目录，见 TreeRowProps 注释 */
+  showHiddenDirs?: boolean;
 }) {
   const t = useT();
   // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）；
@@ -210,7 +220,9 @@ export function FileTree({
       ) : root === null ? (
         <div className="p-3 text-sm text-muted-foreground">{t("fileTree.tree.empty")}</div>
       ) : (
-        root.map((entry) => (
+        root
+          .filter((entry) => showHiddenDirs || entry.type !== "directory" || !TREE_HIDDEN_DIRS.has(entry.name))
+          .map((entry) => (
           <TreeRow
             key={entry.name}
             dirPath=""
@@ -222,6 +234,7 @@ export function FileTree({
             onSelect={onSelect}
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
+            showHiddenDirs={showHiddenDirs}
             registerRow={registerRow}
           />
         ))

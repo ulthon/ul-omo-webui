@@ -16,6 +16,8 @@ import {
   ArrowRightLeft,
   ChevronRight,
   Download,
+  Eye,
+  EyeOff,
   Pencil,
   RefreshCw,
   Trash2,
@@ -49,6 +51,7 @@ import {
   writeRailFilesListWidthPreference,
   writeRailFilesTreeWidthPreference,
 } from "@/components/layout/rail-files-resize";
+import { readFilesShowHiddenPreference, writeFilesShowHiddenPreference } from "@/pages/files-resize";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -532,6 +535,14 @@ export function RailFilesPanel() {
   // 右移变宽，列表手柄左移变宽（预览列恒为剩余宽自适应）。纵向堆叠档不消费。
   const [treeWidth, setTreeWidth] = useState(() => readRailFilesTreeWidthPreference());
   const [listWidth, setListWidth] = useState(() => readRailFilesListWidthPreference());
+  // 文件树噪音目录显示开关（files-ux-revamp 任务 6）：localStorage 键与独立文件页共用，切换即时生效
+  const [showHiddenDirs, setShowHiddenDirs] = useState(() => readFilesShowHiddenPreference());
+  const toggleShowHiddenDirs = () => {
+    setShowHiddenDirs((v) => {
+      writeFilesShowHiddenPreference(!v);
+      return !v;
+    });
+  };
   const treeWidthRef = useRef(treeWidth);
   const listWidthRef = useRef(listWidth);
   const treeDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
@@ -690,6 +701,17 @@ export function RailFilesPanel() {
       <Button variant="ghost" size="sm" data-testid="rail-files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={onToolbarRefresh}>
         <RefreshCw className="size-4" aria-hidden />
       </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        data-testid="rail-files-toggle-hidden"
+        aria-pressed={showHiddenDirs}
+        aria-label={showHiddenDirs ? t("files.toolbar.hideHiddenDirs") : t("files.toolbar.showHiddenDirs")}
+        title={showHiddenDirs ? t("files.toolbar.hideHiddenDirs") : t("files.toolbar.showHiddenDirs")}
+        onClick={toggleShowHiddenDirs}
+      >
+        {showHiddenDirs ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
+      </Button>
     </div>
   );
 
@@ -765,7 +787,7 @@ export function RailFilesPanel() {
   ) : null;
 
   const treeContent = (
-    <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} controller={treeController} />
+    <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} controller={treeController} />
   );
   const listContent = (
     <>

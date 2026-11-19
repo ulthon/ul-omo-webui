@@ -95,6 +95,9 @@ export const SCAN_IGNORE_DIRS = new Set([
   ".cache",
 ]);
 
+/** 文件树渲染层默认隐藏的噪音目录名（与扫描忽略同集合：任意深度命中即不进入/不渲染） */
+export const TREE_HIDDEN_DIRS = SCAN_IGNORE_DIRS;
+
 export interface ScanLimits {
   maxDepth: number;
   maxEntries: number;
@@ -105,6 +108,7 @@ export const DEFAULT_SCAN_LIMITS: ScanLimits = { maxDepth: 8, maxEntries: 3000 }
 /**
  * 有界 BFS 全量路径扫描（@ 选择器模糊过滤数据源）：从根逐层列目录，直至深度/条目上限。
  * 达到上限即停（返回已收集部分），不递归 symlink。失败的单层目录跳过不中断。
+ * 噪音目录（SCAN_IGNORE_DIRS）任意深度命中即不进入（todo 6：原仅根层忽略）。
  */
 export async function collectProjectPaths(
   project: string,
@@ -131,7 +135,7 @@ export async function collectProjectPaths(
         const child = path ? `${path}/${entry.name}` : entry.name;
         count++;
         if (entry.type === "directory") {
-          if (path === "" && SCAN_IGNORE_DIRS.has(entry.name)) continue;
+          if (SCAN_IGNORE_DIRS.has(entry.name)) continue;
           if (child.split("/").length - 1 >= limits.maxDepth) {
             // 深度耗尽：目录本身仍计入（可在树中展开），不再下探
             out.push(child);

@@ -70,6 +70,8 @@ export const files = {
     newDir: "New folder",
     upload: "Upload",
     refresh: "Refresh",
+    showHiddenDirs: "Show noise dirs",
+    hideHiddenDirs: "Hide noise dirs",
   },
   menu: {
     download: "Download",

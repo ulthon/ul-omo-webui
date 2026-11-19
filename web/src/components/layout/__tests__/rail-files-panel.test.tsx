@@ -389,3 +389,22 @@ describe("rail files panel responsive layout (#36)", () => {
     expect(q("[data-testid='rail-files-narrow-stack']")?.getAttribute("data-level")).toBe("list");
   });
 });
+
+describe("files-ux-revamp 任务 6：噪音目录切换（rail 工具栏）", () => {
+  test("眼睛开关：存在、aria-pressed 翻转、localStorage 记忆重挂载回读", async () => {
+    const c1 = await renderPanelDirectly();
+    const btn1 = c1.querySelector('[data-testid="rail-files-toggle-hidden"]');
+    if (!btn1) throw new Error("missing rail-files-toggle-hidden");
+    expect(btn1.getAttribute("aria-pressed")).toBe("false");
+    await clickButton("rail-files-toggle-hidden");
+    expect(btn1.getAttribute("aria-pressed")).toBe("true");
+    expect(window.localStorage.getItem("ul-omo-webui:files:show-hidden")).toBe("1");
+    // 重挂载回读记忆
+    window.localStorage.clear();
+    window.localStorage.setItem("ul-omo-webui:files:show-hidden", "1");
+    const c2 = await renderPanelDirectly();
+    const btn2 = c2.querySelector('[data-testid="rail-files-toggle-hidden"]');
+    if (!btn2) throw new Error("missing rail-files-toggle-hidden (remount)");
+    expect(btn2.getAttribute("aria-pressed")).toBe("true");
+  });
+});

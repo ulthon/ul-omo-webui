@@ -431,3 +431,67 @@ describe("files-ux-revamp 任务 5：手机档窄栈单列推入", () => {
 });
 });
 
+
+describe("files-ux-revamp 任务 6：噪音目录切换（独立文件页）", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  function noiseClick(el: HTMLElement): Promise<void> {
+    return act(async () => {
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  test("树默认隐藏根层与深层噪音目录，工具栏切换即时生效且零新树请求", async () => {
+    const origRoot = TREE_FIXTURE[""];
+    const origDocs = TREE_FIXTURE.docs;
+    TREE_FIXTURE[""] = [
+      { name: "node_modules", type: "directory", size: null, mtime: 1700000000000 },
+      { name: ".git", type: "directory", size: null, mtime: 1700000000000 },
+      ...origRoot,
+    ];
+    TREE_FIXTURE.docs = [{ name: "node_modules", type: "directory", size: null, mtime: 1700000000000 }];
+    try {
+      const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+      const { container, root } = await mountPage(calls);
+      expect(container.querySelector('[data-testid="tree-row-node_modules"]')).toBeNull();
+      expect(container.querySelector('[data-testid="tree-row-.git"]')).toBeNull();
+      // 展开深层同样被过滤
+      await noiseClick(q(container, '[data-testid="tree-row-docs"]'));
+      expect(container.querySelector('[data-testid="tree-row-docs/node_modules"]')).toBeNull();
+      // 工具栏开关翻转：即时生效，不发出任何新树请求
+      const callsBefore = calls.tree.length;
+      const btn = q(container, '[data-testid="files-toggle-hidden"]');
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
+      await noiseClick(btn);
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
+      expect(calls.tree.length).toBe(callsBefore);
+      expect(q(container, '[data-testid="tree-row-node_modules"]')).toBeTruthy();
+      expect(q(container, '[data-testid="tree-row-docs/node_modules"]')).toBeTruthy();
+      expect(window.localStorage.getItem("ul-omo-webui:files:show-hidden")).toBe("1");
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      TREE_FIXTURE[""] = origRoot;
+      TREE_FIXTURE.docs = origDocs;
+    }
+  });
+
+  test("localStorage 记忆跨重挂载回读（默认关 → 置 1 → 重挂载为开）", async () => {
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    expect(q(container, '[data-testid="files-toggle-hidden"]').getAttribute("aria-pressed")).toBe("false");
+    await act(async () => {
+      root.unmount();
+    });
+    window.localStorage.setItem("ul-omo-webui:files:show-hidden", "1");
+    const calls2: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const m2 = await mountPage(calls2);
+    expect(q(m2.container, '[data-testid="files-toggle-hidden"]').getAttribute("aria-pressed")).toBe("true");
+    await act(async () => {
+      m2.root.unmount();
+    });
+  });
+});

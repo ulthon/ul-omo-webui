@@ -59,3 +59,24 @@ export function clampFilesLeftWidth(width: number): number {
 export function clampFilesRightWidth(width: number): number {
   return Math.min(FILES_RIGHT_MAX, Math.max(FILES_RIGHT_MIN, Math.round(width)));
 }
+
+/** 文件树噪音目录显示开关的 localStorage 键（files-ux-revamp 任务 6，同上命名风格） */
+export const FILES_SHOW_HIDDEN_KEY = "ul-omo-webui:files:show-hidden";
+
+/** 读取噪音目录显示偏好：缺失/异常值落回 false（默认隐藏）；storage 不可用同降级 */
+export function readFilesShowHiddenPreference(): boolean {
+  try {
+    return window.localStorage.getItem(FILES_SHOW_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 写入噪音目录显示偏好（切换时调用）；storage 不可用静默降级 */
+export function writeFilesShowHiddenPreference(show: boolean): void {
+  try {
+    window.localStorage.setItem(FILES_SHOW_HIDDEN_KEY, show ? "1" : "0");
+  } catch {
+    // storage 不可用：忽略（页面生命周期内 state 仍生效）
+  }
+}

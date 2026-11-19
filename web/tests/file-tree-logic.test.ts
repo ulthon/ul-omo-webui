@@ -1,14 +1,34 @@
 // 文件树纯逻辑单测（todo 20）：@ 引用插入、模糊过滤、类型识别、大小格式化。
 // 树导航/预览/弹窗交互与端到端发送走浏览器 QA（.omo/qa/W4/file-tree.md）。
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  TREE_HIDDEN_DIRS,
   baseName,
+  collectProjectPaths,
   filterPaths,
   formatBytes,
   fuzzyScore,
   imageMimeOf,
   insertMention,
 } from "@/components/file-tree/file-tree-logic";
+
+// collectProjectPaths 取数经 api.fsTree：用 vi.hoisted 固定装置接管（可逐用例重置）
+const { fsTreeFixture, fsTreeCalls } = vi.hoisted(() => ({
+  fsTreeFixture: { current: {} as Record<string, Array<{ name: string; type: string }>> },
+  fsTreeCalls: { list: [] as Array<string | undefined> },
+}));
+vi.mock("@/lib/api", () => ({
+  api: {
+    fsTree: async (project: string, path?: string) => {
+      fsTreeCalls.list.push(path);
+      return {
+        project,
+        path: path ?? "",
+        entries: fsTreeFixture.current[path ?? ""] ?? [],
+      };
+    },
+  },
+}));
 
 describe("insertMention", () => {
   test("键入 @ 触发：替换 [trigger, caret) 区间的 @ 字符", () => {
@@ -112,5 +132,58 @@ describe("imageMimeOf / formatBytes / baseName", () => {
   test("baseName 取叶子", () => {
     expect(baseName("src/lib/deep.ts")).toBe("deep.ts");
     expect(baseName("README.md")).toBe("README.md");
+  });
+});
+
+describe("collectProjectPaths（files-ux-revamp 任务 6：噪音目录任意深度忽略）", () => {
+  beforeEach(() => {
+    fsTreeCalls.list = [];
+    fsTreeFixture.current = {
+      "": [
+        { name: "node_modules", type: "directory" },
+        { name: ".git", type: "directory" },
+        { name: "docs", type: "directory" },
+        { name: "README.md", type: "file" },
+      ],
+      docs: [
+        { name: "src", type: "directory" },
+        { name: "node_modules", type: "directory" },
+        { name: "guide.md", type: "file" },
+      ],
+      "docs/src": [
+        { name: "index.ts", type: "file" },
+        { name: ".git", type: "directory" },
+      ],
+      "docs/src/.git": [{ name: "config", type: "file" }],
+      "docs/node_modules": [{ name: "pkg", type: "directory" }],
+    };
+  });
+
+  test("根层与嵌套的 node_modules/.git 均被排除，普通目录不受影响", async () => {
+    const paths = await collectProjectPaths("/p");
+    expect(paths).toContain("docs");
+    expect(paths).toContain("README.md");
+    expect(paths).toContain("docs/src");
+    expect(paths).toContain("docs/src/index.ts");
+    expect(paths).toContain("docs/guide.md");
+    expect(paths).not.toContain("node_modules");
+    expect(paths).not.toContain(".git");
+    expect(paths).not.toContain("docs/node_modules");
+    expect(paths).not.toContain("docs/src/.git");
+    expect(paths).not.toContain("docs/node_modules/pkg");
+  });
+
+  test("被忽略目录不被下探（不发出其子层请求）", async () => {
+    await collectProjectPaths("/p");
+    expect(fsTreeCalls.list).not.toContain("node_modules");
+    expect(fsTreeCalls.list).not.toContain(".git");
+    expect(fsTreeCalls.list).not.toContain("docs/node_modules");
+    expect(fsTreeCalls.list).not.toContain("docs/src/.git");
+  });
+
+  test("TREE_HIDDEN_DIRS 导出集合含核心噪音目录", () => {
+    expect(TREE_HIDDEN_DIRS.has("node_modules")).toBe(true);
+    expect(TREE_HIDDEN_DIRS.has(".git")).toBe(true);
+    expect(TREE_HIDDEN_DIRS.has("dist")).toBe(true);
   });
 });
