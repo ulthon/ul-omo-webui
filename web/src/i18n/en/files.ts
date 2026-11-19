@@ -83,12 +83,20 @@ export const files = {
   dialog: {
     newFileTitle: "New file",
     newDirTitle: "New folder",
-    renameTitle: "Rename",
-    moveTitle: "Move",
     nameLabel: "Name (relative to current directory)",
-    targetLabel: "Target relative path (cross-directory allowed)",
     confirm: "OK",
     cancel: "Cancel",
+  },
+  // Inline in-place rename (task 9): shared inline input aria
+  inline: {
+    renameAria: "Rename",
+  },
+  // Tree-based move picker (task 9 / IS-6): directories-only FileTree target choice
+  move: {
+    title: "Move",
+    targetLabel: "Pick a target directory (click a directory row)",
+    destination: "Destination: {path}",
+    confirm: "Move",
   },
   upload: {
     queueTitle: "Upload queue",

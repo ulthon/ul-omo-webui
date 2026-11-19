@@ -2,8 +2,14 @@
 // 纯展示组件（重试调用与队列推进由 FilesPage 持有）。无“跳过确认”记忆项（计划 Must NOT）。
 // 任务 9 追加：SaveConflictDialog 保存 409 file_changed「重载/覆盖」两选弹窗
 // （修正轮按计划契约补覆盖；两选与关闭行为由 FileEditor 持有，仍为纯展示）。
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useT } from "@/i18n/i18n";
+import { ApiError, api } from "@/lib/api";
+import { apiErrorMessage } from "@/i18n/errors";
+import { useUiStore } from "@/stores/ui";
+import { FileTree } from "@/components/file-tree/file-tree";
+import { parentOf, useFileTreeController } from "@/components/file-tree/file-tree-controller";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -155,5 +161,125 @@ export function SaveConflictDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** 项目内相对路径拼接（"" 根特判，同 files.tsx 本地副本） */
+function joinRel(dir: string, name: string): string {
+  return dir ? `${dir}/${name}` : name;
+}
+
+/** 末段路径（源条目名） */
+function baseName(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
+}
+
+/** 树形移动选择器（files-ux-revamp 任务 9 / IS-6）：替换旧的 typed-path 移动对话框。
+ * 内嵌 directoriesOnly FileTree 选目标目录（数据源自持 controller，不复用
+ * DirectoryTree——数据源不同，明确出界）；打开时经 controller.reveal 预展开源父目录
+ * 并默认选中它；确认即以 joinRel(targetDir, baseName(from)) 发起 fsMove，409
+ * target_exists 复用既有三选弹窗（覆盖/保留两者/取消，取消后留在本弹窗可改选目标），
+ * 成功经 onDone(moved, to) 交宿主统一收口刷新（refetchAfterOp 归宿主持有）。 */
+export function FsMoveDialog({
+  project,
+  from,
+  onDone,
+  onClose,
+}: {
+  project: string;
+  /** 移动源相对路径 */
+  from: string;
+  /** 成功（含冲突重试成功）回调：moved 恒 true，to 为最终目标相对路径；宿主据此收口刷新 */
+  onDone: (moved: boolean, to: string | null) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
+  const sourceParent = parentOf(from);
+  const [targetDir, setTargetDir] = useState(sourceParent);
+  const [busy, setBusy] = useState(false);
+  // 409 冲突中的目标路径（null = 无冲突弹窗）；重试参数契约与旧流一致
+  const [conflictTo, setConflictTo] = useState<string | null>(null);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const controller = useFileTreeController(project);
+  const reveal = controller.reveal;
+  useEffect(() => {
+    void reveal(sourceParent);
+  }, [reveal, sourceParent]);
+
+  const destination = joinRel(targetDir, baseName(from));
+
+  const attempt = async (to: string, params?: { overwrite?: true; conflict?: "rename" }) => {
+    setBusy(true);
+    try {
+      await api.fsMove(project, from, to, params);
+      onDone(true, to);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "target_exists") {
+        setConflictTo(to);
+      } else {
+        pushGlobalError(apiErrorMessage(err, "files.op.moveFailed"));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolveConflict = async (choice: "overwrite" | "rename") => {
+    if (!conflictTo || conflictBusy) return;
+    setConflictBusy(true);
+    try {
+      await api.fsMove(project, from, conflictTo, choice === "overwrite" ? { overwrite: true } : { conflict: "rename" });
+      setConflictTo(null);
+      onDone(true, conflictTo);
+    } catch (err) {
+      pushGlobalError(apiErrorMessage(err, "files.op.moveFailed"));
+    } finally {
+      setConflictBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent data-testid="files-move-dialog">
+          <DialogHeader>
+            <DialogTitle>{t("files.move.title")}</DialogTitle>
+            <DialogDescription>{t("files.move.targetLabel")}</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 min-h-0 overflow-y-auto">
+            <FileTree
+              project={project}
+              selectedPath={targetDir}
+              onSelect={() => {}}
+              onDirectoryOpen={setTargetDir}
+              controller={controller}
+              directoriesOnly
+            />
+          </div>
+          <p data-testid="files-move-destination" className="text-sm text-muted-foreground">
+            {t("files.move.destination", { path: destination })}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" data-testid="files-move-cancel" disabled={busy} onClick={onClose}>
+              {t("files.conflict.cancel")}
+            </Button>
+            <Button data-testid="files-move-confirm" disabled={busy} onClick={() => void attempt(destination)}>
+              {t("files.move.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {conflictTo ? (
+        <FsConflictDialog
+          desc={t("files.conflict.moveDesc", { path: conflictTo })}
+          busy={conflictBusy}
+          onOverwrite={() => void resolveConflict("overwrite")}
+          onKeepBoth={() => void resolveConflict("rename")}
+          onCancel={() => setConflictTo(null)}
+        />
+      ) : null}
+    </>
   );
 }

@@ -30,14 +30,15 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
-import { dirsAfterOp, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
+import { dirsAfterOp, parentOf, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
 import { invalidateGitStatusCache } from "@/components/file-tree/preview-git-badge";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { NarrowStack } from "@/components/files/narrow-stack";
 import { QuickOpen } from "@/components/files/quick-open";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
-import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
+import { DeleteConfirmDialog, FsConflictDialog, FsMoveDialog } from "@/components/files/fs-dialogs";
+import { InlineRenameInput } from "@/components/files/inline-rename";
 import {
   RAIL_FILES_LIST_DEFAULT,
   RAIL_FILES_LIST_MAX,
@@ -63,13 +64,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type OpDialogKind = "newFile" | "newDir" | "rename" | "move";
+// files-ux-revamp 任务 9：rename/move 走行内编辑与 FsMoveDialog，对话框只余新建类
+type OpDialogKind = "newFile" | "newDir";
 
-/** 打开中的操作对话框（value 为目标相对路径输入框当前值） */
+/** 打开中的操作对话框（value 为新建条目名输入框当前值；仅新建类） */
 interface OpDialog {
   kind: OpDialogKind;
-  /** rename/move 的源路径；新建类为 null */
-  from: string | null;
   value: string;
 }
 
@@ -132,11 +132,9 @@ const TYPE_KEY: Record<FsTreeEntry["type"], "files.type.directory" | "files.type
   other: "files.type.other",
 };
 
-const DIALOG_TITLE_KEY: Record<OpDialogKind, "files.dialog.newFileTitle" | "files.dialog.newDirTitle" | "files.dialog.renameTitle" | "files.dialog.moveTitle"> = {
+const DIALOG_TITLE_KEY: Record<OpDialogKind, "files.dialog.newFileTitle" | "files.dialog.newDirTitle"> = {
   newFile: "files.dialog.newFileTitle",
   newDir: "files.dialog.newDirTitle",
-  rename: "files.dialog.renameTitle",
-  move: "files.dialog.moveTitle",
 };
 
 /** 目录恒优先 + 名称升序（窄栏固定序，不做排序切换） */
@@ -284,6 +282,10 @@ export function RailFilesPanel() {
   }, [dir, project, revealTree]);
   const [dialog, setDialog] = useState<OpDialog | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
+  // 行内原地重命名（files-ux-revamp 任务 9 / IS-6）：正在重命名的条目相对路径；null = 无行在编辑
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  // 树形移动选择器（任务 9）：打开中的移动源
+  const [moveDialog, setMoveDialog] = useState<{ from: string } | null>(null);
   const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadDirRef = useRef<string>("");
@@ -449,46 +451,46 @@ export function RailFilesPanel() {
     refetchAfterOp({ op: "upload", dir: targetDir });
   };
 
-  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 支持跨目录）；
-   * 成功后携操作计划局部刷新（create/mkdir 刷新父目录，move 刷新源/目标父目录） */
+  /** 行内重命名提交：同目录改名拼接后走共用 fsMove 流（409 三选不变；错误文案用重命名词典） */
+  const commitRename = (from: string, newName: string) => {
+    setRenamingPath(null);
+    void submitMove(from, joinRel(parentOf(from), newName), "files.op.renameFailed");
+  };
+
+  /** 行内重命名/树形移动共用提交流（files-ux-revamp 任务 9）：成功后携 move 计划
+   * 局部刷新；409 target_exists 进既有三选弹窗；其余 toast */
+  const submitMove = async (from: string, to: string, fallbackKey: "files.op.renameFailed" | "files.op.moveFailed") => {
+    if (!project) return;
+    try {
+      await api.fsMove(project, from, to);
+      refetchAfterOp({ op: "move", from, to });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "target_exists") {
+        setConflict({ kind: "move", from, target: to, file: null, uploadId: null, existing: null });
+      } else {
+        pushGlobalError(apiErrorMessage(err, fallbackKey));
+      }
+    }
+  };
+
+  /** 对话框提交（仅新建类）：新建走当前目录拼接；成功后携操作计划局部刷新 */
   const runDialog = async () => {
     if (!project || !dialog || dialogBusy) return;
-    const target = dialog.value.trim();
-    if (!target || target === ".") return;
+    const name = dialog.value.trim();
+    if (!name || name === ".") return;
     setDialogBusy(true);
     const kind = dialog.kind;
     try {
-      let plan: FsOpPlan;
+      const path = joinRel(dir, name);
       if (kind === "newFile") {
-        const path = joinRel(dir, target);
         await api.fsCreateFile(project, path);
-        plan = { op: "create", path };
-      } else if (kind === "newDir") {
-        const path = joinRel(dir, target);
-        await api.fsMkdir(project, path);
-        plan = { op: "mkdir", path };
-      } else if (dialog.from !== null) {
-        await api.fsMove(project, dialog.from, target);
-        plan = { op: "move", from: dialog.from, to: target };
       } else {
-        return;
+        await api.fsMkdir(project, path);
       }
       setDialog(null);
-      refetchAfterOp(plan);
+      refetchAfterOp({ op: kind === "newFile" ? "create" : "mkdir", path });
     } catch (err) {
-      if (kind === "move" && dialog.from !== null && err instanceof ApiError && err.status === 409 && err.code === "target_exists") {
-        setDialog(null);
-        setConflict({ kind: "move", from: dialog.from, target, file: null, uploadId: null, existing: null });
-        return;
-      }
-      const fallbackKey =
-        kind === "newFile"
-          ? "files.op.createFileFailed"
-          : kind === "newDir"
-            ? "files.op.createDirFailed"
-            : kind === "rename"
-              ? "files.op.renameFailed"
-              : "files.op.moveFailed";
+      const fallbackKey = kind === "newFile" ? "files.op.createFileFailed" : "files.op.createDirFailed";
       pushGlobalError(apiErrorMessage(err, fallbackKey));
     } finally {
       setDialogBusy(false);
@@ -709,10 +711,10 @@ export function RailFilesPanel() {
 
   const toolbar = (
     <div data-testid="rail-files-toolbar" className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
-      <Button variant="outline" size="sm" data-testid="rail-files-toolbar-new-file" onClick={() => setDialog({ kind: "newFile", from: null, value: "" })}>
+      <Button variant="outline" size="sm" data-testid="rail-files-toolbar-new-file" onClick={() => setDialog({ kind: "newFile", value: "" })}>
         {t("files.toolbar.newFile")}
       </Button>
-      <Button variant="outline" size="sm" data-testid="rail-files-toolbar-new-dir" onClick={() => setDialog({ kind: "newDir", from: null, value: "" })}>
+      <Button variant="outline" size="sm" data-testid="rail-files-toolbar-new-dir" onClick={() => setDialog({ kind: "newDir", value: "" })}>
         {t("files.toolbar.newDir")}
       </Button>
       <Button variant="outline" size="sm" data-testid="rail-files-toolbar-upload" onClick={() => openUploadPicker(dir)}>
@@ -781,13 +783,11 @@ export function RailFilesPanel() {
       <DialogContent data-testid="rail-files-dialog">
         <DialogHeader>
           <DialogTitle>{t(DIALOG_TITLE_KEY[dialog.kind])}</DialogTitle>
-          <DialogDescription>
-            {dialog.kind === "newFile" || dialog.kind === "newDir" ? t("files.dialog.nameLabel") : t("files.dialog.targetLabel")}
-          </DialogDescription>
+          <DialogDescription>{t("files.dialog.nameLabel")}</DialogDescription>
         </DialogHeader>
         <input
           data-testid="rail-files-dialog-input"
-          aria-label={dialog.kind === "newFile" || dialog.kind === "newDir" ? t("files.dialog.nameLabel") : t("files.dialog.targetLabel")}
+          aria-label={t("files.dialog.nameLabel")}
           value={dialog.value}
           autoFocus
           onChange={(e) => setDialog((d) => (d ? { ...d, value: e.target.value } : d))}
@@ -826,10 +826,21 @@ export function RailFilesPanel() {
       {sorted?.map((entry) => {
         const path = joinRel(dir, entry.name);
         const isDir = entry.type === "directory";
+        const renaming = renamingPath === path;
         const iconBtn =
           "flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground";
         return (
           <div key={entry.name} data-testid={`rail-files-row-${entry.name}`} className="flex items-center gap-1 border-b border-border/40 py-0.5">
+            {renaming ? (
+              <div className="min-w-0 flex-1">
+                <InlineRenameInput
+                  initial={entry.name}
+                  testId={`rail-files-rename-input-${entry.name}`}
+                  onCommit={(newName) => commitRename(path, newName)}
+                  onCancel={() => setRenamingPath(null)}
+                />
+              </div>
+            ) : (
             <button
               type="button"
               data-testid={`rail-files-row-name-${entry.name}`}
@@ -840,7 +851,7 @@ export function RailFilesPanel() {
               {isDir ? <span className="mr-1" aria-hidden>▸</span> : null}
               {entry.name}
             </button>
-            <span className="shrink-0 text-xs text-muted-foreground">
+            )}            <span className="shrink-0 text-xs text-muted-foreground">
               {entry.size == null ? t(TYPE_KEY[entry.type]) : formatSize(entry.size)}
             </span>
             {isDir ? (
@@ -871,7 +882,7 @@ export function RailFilesPanel() {
               data-testid={`rail-files-rename-${entry.name}`}
               aria-label={t("files.menu.rename")}
               title={t("files.menu.rename")}
-              onClick={() => setDialog({ kind: "rename", from: path, value: baseName(path) })}
+              onClick={() => setRenamingPath(path)}
               className={iconBtn}
             >
               <Pencil className="size-3.5" aria-hidden />
@@ -881,7 +892,7 @@ export function RailFilesPanel() {
               data-testid={`rail-files-move-${entry.name}`}
               aria-label={t("files.menu.move")}
               title={t("files.menu.move")}
-              onClick={() => setDialog({ kind: "move", from: path, value: path })}
+              onClick={() => setMoveDialog({ from: path })}
               className={iconBtn}
             >
               <ArrowRightLeft className="size-3.5" aria-hidden />
@@ -1065,6 +1076,17 @@ export function RailFilesPanel() {
         onChange={(e) => void onFilesPicked(e.target.files)}
       />
       {dialogNode}
+      {moveDialog && project ? (
+        <FsMoveDialog
+          project={project}
+          from={moveDialog.from}
+          onDone={(moved, to) => {
+            setMoveDialog(null);
+            if (moved && to) refetchAfterOp({ op: "move", from: moveDialog.from, to });
+          }}
+          onClose={() => setMoveDialog(null)}
+        />
+      ) : null}
       {deleteConfirm ? (
         <DeleteConfirmDialog
           path={deleteConfirm.path}
