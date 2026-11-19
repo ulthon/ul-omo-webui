@@ -4,13 +4,19 @@
 // recording fetch。覆盖计划验收：项目下拉渲染已注册项且默认取最近活跃会话项目；
 // 列表列头排序（目录恒优先）；切项目后树/列表刷新（stale_state 对抗项）；目录进入与
 // 文件预览面板挂载；项目接口失败/目录加载失败错误态不崩溃（malformed 对抗项）。
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 if (!(globalThis as { window?: unknown }).window) {
   GlobalRegistrator.register();
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+// code-mirror-loader mock（files-ux-revamp 任务 5）：宽→窄转换用例会进入编辑层，
+// happy-dom 不真实加载 CodeMirror（同 file-editor.test.tsx 惯例）
+vi.mock("@/components/files/code-mirror-loader", () => ({
+  createEditor: async () => ({ destroy: () => {}, getText: () => "" }),
+}));
 
 const { createElement } = await import("react");
 const { act } = await import("react");
@@ -22,6 +28,7 @@ const { useSessionsStore } = await import("@/stores/sessions");
 const ORIGINAL_FETCH = globalThis.fetch;
 const REAL_MATCH_MEDIA = window.matchMedia.bind(window);
 const MOBILE_FILES_QUERY = "(max-width: 768px)";
+let mqlChangeListeners: Array<(e: { matches: boolean }) => void> = [];
 
 function project(path: string, createdAt: string): Record<string, unknown> {
   return { projectPath: path, preferredModel: null, createdAt };
@@ -86,17 +93,36 @@ function installFetch(calls: Calls): void {
 }
 
 function stubMatchMedia(matches768: boolean): void {
+  mqlChangeListeners = [];
   window.matchMedia = ((query: string) =>
     ({
       matches: matches768 && query === MOBILE_FILES_QUERY,
       media: query,
       onchange: null,
-      addEventListener: () => {},
+      // 只记录 768 断点的监听器：fireViewport 模拟跨断点时避免误触其他查询
+      addEventListener: (_type: string, cb: (e: { matches: boolean }) => void) => {
+        if (query === MOBILE_FILES_QUERY) mqlChangeListeners.push(cb);
+      },
       removeEventListener: () => {},
       addListener: () => {},
       removeListener: () => {},
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
+}
+
+/** 模拟跨断点：驱动已挂载页面 useIsMobile 的 change 订阅（只动 768 查询） */
+async function fireViewport(matches768: boolean): Promise<void> {
+  await act(async () => {
+    for (const cb of mqlChangeListeners) cb({ matches: matches768 });
+  });
+}
+
+/** 等异步条件成立（编辑钮等 FilePreview 拉完才渲染） */
+async function waitFor(pred: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 100 && !pred(); i += 1) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  if (!pred()) throw new Error(`timeout: ${what}`);
 }
 
 beforeEach(() => {
@@ -285,27 +311,123 @@ describe("builtin-file-management 任务 2：文件管理页三栏布局", () =>
     });
   });
 
-  test("手机档（≤768px）单栏层叠：段切换钮切树/列表/预览", async () => {
+describe("files-ux-revamp 任务 5：手机档窄栈单列推入", () => {
+  test("无三段切换钮；默认 list 层（工具栏+列表），树不在窄档渲染", async () => {
     stubMatchMedia(true);
     const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
     const { container, root } = await mountPage(calls);
-    expect(q(container, '[data-testid="files-mobile-tabs"]')).not.toBeNull();
-    // 默认列表段
-    expect(q(container, '[data-testid="files-list-pane"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="files-mobile-tabs"]')).toBeNull();
+    const stack = q(container, '[data-testid="files-narrow-stack"]');
+    expect(stack.getAttribute("data-level")).toBe("list");
+    // 树不在窄档渲染：无树容器也无树行
     expect(container.querySelector('[data-testid="files-tree-pane"]')).toBeNull();
-    // 切到树段
+    expect(stack.querySelector("[data-testid^='tree-row-']")).toBeNull();
+    // 工具栏经窄栈 toolbar 槽位渲染，列表行可见
+    expect(q(stack, '[data-testid="files-toolbar-new-file"]')).not.toBeNull();
+    expect(q(stack, '[data-testid="files-row-alpha.md"]')).not.toBeNull();
     await act(async () => {
-      q(container, '[data-testid="files-mobile-tab-tree"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      root.unmount();
     });
-    expect(q(container, '[data-testid="files-tree-pane"]')).not.toBeNull();
-    // 树中目录点击 → 进入目录并自动切回列表段
+  });
+
+  test("文件行点击推入 preview 层并拉取内容；返回钮回 list；重按同一行再次推入（openSeq 回归）", async () => {
+    stubMatchMedia(true);
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
     await act(async () => {
-      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      q(container, '[data-testid="files-row-alpha.md"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(q(container, '[data-testid="files-list-pane"]')).not.toBeNull();
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("preview");
+    expect(calls.file.some((c) => c.project === "/data/proj-a" && c.path === "alpha.md")).toBe(true);
+    expect(q(container, '[data-testid="files-preview-pane"]').textContent).toContain("alpha.md");
+    // 返回钮：dismissed 置位回 list 层
+    await act(async () => {
+      q(container, '[data-testid="files-narrow-stack-back"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("list");
+    // 重按同一行：openSeq 自增换新复合键 => 再次推入（若忘记自增则停在 list，本断言变红）
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.md"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("preview");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("面包屑导航：目录行进入子目录，点根段回跳根列表", async () => {
+    stubMatchMedia(true);
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("list");
     expect(calls.tree.some((c) => c.path === "docs")).toBe(true);
+    expect(q(container, '[data-testid="files-row-readme.md"]')).not.toBeNull();
+    await act(async () => {
+      q(container, '[data-testid="files-breadcrumb-root"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-row-alpha.md"]')).not.toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("X1：preview 层切项目 → 重挂载回 list 层，无残留预览", async () => {
+    stubMatchMedia(true);
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.md"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("preview");
+    // 切项目：changeProject 清 dir/selected + key={project} 重挂载窄栈（dismissed 不跨项目残留）
+    const select = q(container, '[data-testid="files-project-select"]') as HTMLSelectElement;
+    await act(async () => {
+      select.value = "/data/proj-b";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("list");
+    expect(container.querySelector('[data-testid="files-narrow-stack-preview"]')).toBeNull();
+    expect(container.querySelector('[data-testid="file-preview"]')).toBeNull();
+    expect(calls.tree.some((c) => c.project === "/data/proj-b" && c.path === "")).toBe(true);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("宽→窄转换落在最深活动层：未选→list；选中→preview；编辑→edit", async () => {
+    // 桌面挂载（beforeEach 已 stub false）
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    // 未选：跨到窄档 → list 层
+    await fireViewport(true);
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("list");
+    // 回宽档选中文件（预览落在右栏），再跨窄档 → preview 层
+    await fireViewport(false);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.md"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-preview-pane"]').textContent).toContain("alpha.md");
+    await fireViewport(true);
+    expect(q(container, '[data-testid="files-narrow-stack"]').getAttribute("data-level")).toBe("preview");
+    // 回宽档进入编辑（FilePreview 拉完后编辑钮可用），再跨窄档 → edit 层
+    await fireViewport(false);
+    await waitFor(() => container.querySelector('[data-testid="files-edit-button"]') !== null, "edit button");
+    await act(async () => {
+      q(container, '[data-testid="files-edit-button"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await fireViewport(true);
+    const stack = q(container, '[data-testid="files-narrow-stack"]');
+    expect(stack.getAttribute("data-level")).toBe("edit");
+    expect(q(container, '[data-testid="files-narrow-stack-edit"]')).not.toBeNull();
+    // 编辑层无窄栈返回钮（返回语义由 FileEditor 自带 onBack 承担）
+    expect(container.querySelector('[data-testid="files-narrow-stack-back"]')).toBeNull();
     await act(async () => {
       root.unmount();
     });
   });
 });
+});
+

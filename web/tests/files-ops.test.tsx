@@ -47,6 +47,7 @@ interface Calls {
   del: string[];
   createFile: string[];
   createDir: string[];
+  gitStatus: string[];
   fail: { deleteCode?: string; createFileStatus?: number; createFileCode?: string };
 }
 
@@ -54,6 +55,11 @@ function installFetch(calls: Calls): void {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/projects")) return okJson({ projects: PROJECTS });
+    if (url.includes("/api/git/status")) {
+      const qs = new URL(url, "http://localhost").searchParams;
+      (calls.gitStatus ??= []).push(qs.get("project") ?? "");
+      return okJson({ project: qs.get("project"), entries: [] });
+    }
     if (url.includes("/api/fs/tree")) {
       const qs = new URL(url, "http://localhost").searchParams;
       calls.tree.push(qs.get("path") ?? "");
@@ -173,7 +179,7 @@ function typeValue(input: HTMLInputElement, value: string): void {
 
 describe("builtin-file-management 任务 6：文件操作面", () => {
   test("工具栏渲染四个操作钮（新建文件/新建目录/上传/刷新）与隐藏多选文件 input", async () => {
-    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], gitStatus: [], fail: {} };
     const { container, root } = await mountPage(calls);
     for (const id of ["files-toolbar-new-file", "files-toolbar-new-dir", "files-toolbar-upload", "files-toolbar-refresh"]) {
       expect(q(container, `[data-testid="${id}"]`)).not.toBeNull();
@@ -378,6 +384,38 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     expect(useUiStore.getState().globalNotifs.length).toBeGreaterThanOrEqual(2);
     expect(calls.createFile.length).toBe(1);
     expect(calls.tree.length).toBe(treeCallsBefore);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("写操作后 git 徽标缓存失效：重命名成功后下一次 gitStatus 取数重新回源（files-ux-revamp 任务 5）", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], gitStatus: [], fail: {} };
+    installFetch(calls);
+    const { fetchGitStatusMap } = await import("@/components/file-tree/preview-git-badge");
+    // 预热缓存：首次取数回源一次，再次取数命中缓存 promise（请求数不变）
+    await fetchGitStatusMap("/data/proj-a");
+    expect(calls.gitStatus).toEqual(["/data/proj-a"]);
+    await fetchGitStatusMap("/data/proj-a");
+    expect(calls.gitStatus).toEqual(["/data/proj-a"]);
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    await act(async () => {
+      typeValue(input, "gamma.txt");
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.move).toEqual([{ from: "alpha.txt", to: "gamma.txt" }]);
+    // 写操作已失效缓存：再次取数重新回源（若未失效则命中旧 promise，请求数不变，本断言变红）
+    await fetchGitStatusMap("/data/proj-a");
+    expect(calls.gitStatus).toEqual(["/data/proj-a", "/data/proj-a"]);
     await act(async () => {
       root.unmount();
     });
