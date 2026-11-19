@@ -39,6 +39,12 @@ export const fileTree = {
     binaryFile: "二进制文件，不渲染内容",
     emptyFile: "空文件",
     tooLarge: "文件较大（完整 {size}），仅显示前 2 MB。预览为只读，请用本地编辑器打开原文件查看完整内容。",
+    // git 状态角标（files-ux-revamp 任务 11）
+    gitModified: "已修改",
+    gitAdded: "已新增/未跟踪",
+    gitDeleted: "已删除",
+    gitRenamed: "已重命名",
+    gitChanged: "有变更",
   },
   // file-picker.tsx @ 文件选择器（任务 10 编排补入）
   picker: {
