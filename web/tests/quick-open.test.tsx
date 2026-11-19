@@ -62,19 +62,26 @@ interface Calls {
   file: Array<{ project: string; path: string }>;
 }
 
-function installFetch(calls: Calls, gateRoot?: { promise: Promise<void> }): void {
+function installFetch(
+  calls: Calls,
+  gateRoot?: { promise: Promise<void> },
+  /** 按项目区分的树夹具（缺省一律 TREE_FIXTURE）；项目切换重扫用例用 */
+  treesByProject?: Record<string, typeof TREE_FIXTURE>,
+): void {
   globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/projects")) return okJson({ projects: PROJECTS });
     if (url.includes("/api/fs/tree")) {
       const qs = new URL(url, "http://localhost").searchParams;
       const path = (qs.get("path") ?? "").replace(/\/+$/, "");
-      calls.tree.push({ project: qs.get("project") ?? "", path });
+      const proj = qs.get("project") ?? "";
+      const fixture = treesByProject?.[proj] ?? TREE_FIXTURE;
+      calls.tree.push({ project: proj, path });
       if (path === "" && gateRoot) {
         // 扫描根目录回包可编程延迟：驱动“扫描中”提示的确定性断言
         await gateRoot.promise;
       }
-      return okJson({ project: qs.get("project"), path, entries: TREE_FIXTURE[path] ?? [] });
+      return okJson({ project: proj, path, entries: fixture[path] ?? [] });
     }
     if (url.includes("/api/fs/file")) {
       const qs = new URL(url, "http://localhost").searchParams;
@@ -235,6 +242,48 @@ describe("QuickOpen 组件", () => {
     await typeInto(container, "[data-testid=qo-input]", "!@#$%");
     expect(q(container, "[data-testid=qo-no-match]").textContent).toContain("无匹配文件");
     root.unmount();
+  });
+
+  // F3b ADV-3 回归：扫描索引与项目绑定，项目 prop 变化即作废旧索引重扫，
+  // 命中与回调都是新项目路径（旧实现一次性扫描永不重扫，切项目后命中旧路径且
+  // 选中报“路径不存在”）
+  test("F3b ADV-3：项目切换后重扫，命中新项目路径并回调新项目路径", async () => {
+    const PROJECT_B = "/data/proj-b";
+    const TREE_B = {
+      "": [{ name: "docs", type: "directory", size: null, mtime: 1700000000000 }],
+      docs: [{ name: "readme.md", type: "file", size: 9, mtime: 1700000000000 }],
+    };
+    const calls: Calls = { tree: [], file: [] };
+    installFetch(calls, undefined, { [PROJECT]: TREE_FIXTURE, [PROJECT_B]: TREE_B });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onOpen = vi.fn();
+    await act(async () => {
+      root.render(createElement(QuickOpen, { project: PROJECT, testId: "qo", onOpen }));
+    });
+    await clickInto(container, "[data-testid=qo]");
+    await waitFor(() => calls.tree.some((c) => c.project === PROJECT && c.path === "src"), "A scan finished");
+    await typeInto(container, "[data-testid=qo-input]", "app");
+    // A 项目索引内命中确认
+    expect([...container.querySelectorAll("[data-testid^=qo-match-]")].length).toBe(1);
+
+    // 切到项目 B：旧索引作废，以 B 重扫
+    await act(async () => {
+      root.render(createElement(QuickOpen, { project: PROJECT_B, testId: "qo", onOpen }));
+    });
+    await waitFor(() => calls.tree.some((c) => c.project === PROJECT_B && c.path === "docs"), "B rescan finished");
+    // 旧查询 "app" 在 B 内无命中（不是 A 的旧路径）
+    expect(q(container, "[data-testid=qo-no-match]").textContent).toContain("无匹配文件");
+    await typeInto(container, "[data-testid=qo-input]", "readme");
+    const matches = [...container.querySelectorAll("[data-testid^=qo-match-]")];
+    expect(matches.map((el) => el.textContent)).toEqual(["readme.mddocs/readme.md"]);
+    await keyInto(container, "[data-testid=qo-input]", "Enter");
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledWith("docs/readme.md");
+    await act(async () => {
+      root.unmount();
+    });
   });
 });
 

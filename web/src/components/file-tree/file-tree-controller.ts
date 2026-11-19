@@ -237,13 +237,21 @@ export function useFileTreeController(
   const inflightRef = useRef<Map<string, Promise<boolean>>>(new Map());
 
   const revealEpochRef = useRef(0);
-  // 定位/高亮与项目绑定（派生重置）：项目 prop 变化时读侧直接归零，无需 setState；
-  // 修改只发生在 reveal 事件链与高亮定时器回调里（函数式更新，不依赖重置时序）
+  // 定位/高亮与项目绑定：loc.project 是当前绑定的项目快照；写入方（reveal 事件链与
+  // 高亮定时器回调）在函数式更新里落章 projectRef.current，不依赖重置时序。项目 prop
+  // 变化（切换或挂载后才解析出真实项目）在渲染期重绑并清空目标/高亮——React 官方
+  // “props 变化时调整派生状态”模式，不进 effect、无时序窗口：任一方向的切换后陈旧
+  // 定位立即作废，之后的 reveal 以新项目落章即恢复生效（旧实现写入沿用挂载时绑定、
+  // 读侧惰性归零且无恢复路径，项目一旦偏离挂载值定位永久失效，F3b ADV-1）
   const [loc, setLoc] = useState<{ project: string; target: string | null; highlight: string | null }>(() => ({
     project,
     target: null,
     highlight: null,
   }));
+  if (loc.project !== project) {
+    setLoc({ project, target: null, highlight: null });
+  }
+  // 读侧兜底：重绑落地前的窗口（如项目切换提交与写入方落章之间）不外泄陈旧定位
   const locCurrent = loc.project === project ? loc : { project, target: null, highlight: null };
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -325,7 +333,8 @@ export function useFileTreeController(
 
   const flashHighlight = useCallback((path: string) => {
     if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current);
-    setLoc((prev) => ({ ...prev, highlight: path }));
+    // 落章当前项目：项目切换后旧绑定已作废，新写入必须携当前项目才被读侧放行
+    setLoc((prev) => ({ ...prev, project: projectRef.current, highlight: path }));
     highlightTimerRef.current = setTimeout(() => {
       highlightTimerRef.current = null;
       setLoc((prev) => ({ ...prev, highlight: null }));
@@ -335,8 +344,9 @@ export function useFileTreeController(
   const reveal = useCallback(
     async (rawPath: string): Promise<RevealResult> => {
       const epoch = ++revealEpochRef.current; // 后发调用作废在途：新 reveal 开始
-      setLoc((prev) => ({ ...prev, target: null })); // 新目标确立前清空旧定位
       const startProject = projectRef.current;
+      // 新目标确立前清空旧定位；以当前项目落章（切换后旧绑定已作废）
+      setLoc((prev) => ({ ...prev, project: startProject, target: null }));
       // 归一化：空段与 "." 过滤；含 ".." 段视为非法（树是项目内相对路径，不允许上跳）
       const segs = rawPath.split("/").filter((s) => s !== "" && s !== ".");
       if (segs.some((s) => s === "..")) return { kind: "missing", at: "", reason: "invalid_path" };
@@ -381,7 +391,7 @@ export function useFileTreeController(
         return { kind: "missing", at: cur, reason: "project_changed" };
       }
       if (!checkEpoch()) return { kind: "superseded" };
-      setLoc((prev) => ({ ...prev, target: cur }));
+      setLoc((prev) => ({ ...prev, project: startProject, target: cur }));
       flashHighlight(cur);
       return { kind: "revealed", path: cur };
     },
@@ -389,7 +399,7 @@ export function useFileTreeController(
   );
 
   // 项目切换：清代号/信任集/在途表、reveal 纪元自增作废在途、清高亮定时器、
-  // projectRef 对齐、整树经 apply 转移函数归位（定位态由派生归零，无 effect 内 setState）
+  // projectRef 对齐、整树经 apply 转移函数归位（定位态在渲染期重绑清空，见 loc 注释）
   useEffect(() => {
     resetRef.current += 1;
     genRef.current = new Map();

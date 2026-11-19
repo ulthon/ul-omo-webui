@@ -1,6 +1,7 @@
 // 工具栏模糊快速打开（files-ux-revamp 任务 7 / IS-3）：图标钮展开内联输入框，
 // 首次展开即后台有界扫描项目路径全集（file-picker 同款 collectProjectPaths；
-// 索引只活在本组件实例，卸载即弃，无跨挂载缓存）。键入 filterPaths 模糊过滤，
+// 索引与项目绑定，项目变化即作废旧索引待重扫，只活在本组件实例，卸载即弃，
+// 无跨挂载缓存）。键入 filterPaths 模糊过滤，
 // ↑↓ 移动 active 项，Enter/点击回调 onOpen；Escape/失焦关闭并清词。扫描完成前
 // 只能匹配已收集部分（本实现为一次性 promise，完成前显示扫描提示，与 picker 同口径）。
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,22 +24,26 @@ export function QuickOpen({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // null = 扫描进行中；[] = 扫描完成且为空
-  const [allPaths, setAllPaths] = useState<string[] | null>(null);
+  // 扫描索引与项目绑定：scan.project 落后于组件 project 时视为未扫描（派生 null）。
+  // null = 扫描进行中（或待扫描）；[] = 扫描完成且为空
+  const [scan, setScan] = useState<{ project: string; paths: string[] | null }>(() => ({ project, paths: null }));
+  const allPaths = scan.project === project ? scan.paths : null;
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const t = useT();
 
-  // 首次展开即后台扫描（有界）；失败静默落空集（输入仍可关闭，不影响宿主）
+  // 展开且当前项目未扫描时后台扫描（有界）；失败静默落空集（输入仍可关闭，不影响宿主）。
+  // 项目变化（含展开中切换）经 allPaths 派生为未扫描、cancelled 抛弃旧在途回包，
+  // 下次 effect 以新项目重扫（F3b ADV-3：切项目后命中旧项目路径）
   useEffect(() => {
     if (!open || !project || allPaths !== null) return;
     let cancelled = false;
     collectProjectPaths(project)
       .then((paths) => {
-        if (!cancelled) setAllPaths(paths);
+        if (!cancelled) setScan({ project, paths });
       })
       .catch(() => {
-        if (!cancelled) setAllPaths([]);
+        if (!cancelled) setScan({ project, paths: [] });
       });
     return () => {
       cancelled = true;
