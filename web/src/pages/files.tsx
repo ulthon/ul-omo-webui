@@ -23,8 +23,10 @@ import { useUiStore } from "@/stores/ui";
 import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { dirsAfterOp, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
+import { invalidateGitStatusCache } from "@/components/file-tree/preview-git-badge";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
+import { NarrowStack } from "@/components/files/narrow-stack";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import {
@@ -53,7 +55,6 @@ import {
 
 type SortKey = "name" | "size" | "mtime" | "type";
 type SortDir = "asc" | "desc";
-type MobilePane = "tree" | "list" | "preview";
 type OpDialogKind = "newFile" | "newDir" | "rename" | "move";
 
 /** 右键菜单目标（列表行/树行统一形状；scope 供菜单项差异：目录才有“在此上传”） */
@@ -145,12 +146,6 @@ const TYPE_KEY: Record<FsTreeEntry["type"], "files.type.directory" | "files.type
   file: "files.type.file",
   symlink: "files.type.symlink",
   other: "files.type.other",
-};
-
-const MOBILE_PANE_KEY: Record<MobilePane, "files.mobile.tree" | "files.mobile.list" | "files.mobile.preview"> = {
-  tree: "files.mobile.tree",
-  list: "files.mobile.list",
-  preview: "files.mobile.preview",
 };
 
 interface SortState {
@@ -331,6 +326,10 @@ export function FilesPage() {
   };
 
   const [selected, setSelected] = useState<string | null>(null);
+  // 打开令牌（files-ux-revamp 任务 5）：每次文件打开动作自增（含重按同一文件），
+  // 与 selected 组成复合键 `${selected}#${openSeq}` 供窄栈判定“新一次推入”；
+  // selected 变回 null 的路径（changeProject/confirmDelete）内联归零
+  const [openSeq, setOpenSeq] = useState(0);
   // 在线编辑态（任务 8）：editingPath = 正在编辑的文件；editDirtyRef 为编辑器脏态
   // 上报（FileEditor 契约，NotesView dirtyRef 先例）。所有切走路径先过 guardDirty。
   const [editingPath, setEditingPath] = useState<string | null>(null);
@@ -360,13 +359,15 @@ export function FilesPage() {
     },
     [project, editingPath],
   );
-  // 切项目清路径与选中（事件处理器内做，不走 effect）；编辑中先过脏态守卫
+  // 切项目清路径与选中（事件处理器内做，不走 effect）；编辑中先过脏态守卫；
+  // openSeq 随选中一并归零（窄栈复合键回未选中态）
   const changeProject = (next: string) => {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
     setPickedProject(next);
     setDir("");
     setSelected(null);
+    setOpenSeq(0);
   };
 
   // 中栏目录列表：项目或路径变化即重取。响应带键名缓存比对：键不匹配（切项目/切路径窗口）
@@ -403,8 +404,6 @@ export function FilesPage() {
   const toggleSort = (key: SortKey) => {
     setSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
   };
-
-  const [mobilePane, setMobilePane] = useState<MobilePane>("list");
 
   // 树控制器（files-ux-revamp 任务 3）：页面级唯一树数据源。写操作后经 dirsAfterOp
   // 失效矩阵局部刷新（refresh 回源、evict 逐出，展开态保留），不再 key 重挂载。
@@ -459,7 +458,10 @@ export function FilesPage() {
     setDeleteBusy(true);
     try {
       await api.fsDelete(project, deleteConfirm.path);
-      if (selected === deleteConfirm.path) setSelected(null);
+      if (selected === deleteConfirm.path) {
+        setSelected(null);
+        setOpenSeq(0);
+      }
       setDeleteConfirm(null);
       refetchAfterOp({ op: "delete", path: deleteConfirm.path });
     } catch (err) {
@@ -503,7 +505,11 @@ export function FilesPage() {
    * 不做乐观更新——计划口径） */
   const refetchAfterOp = useCallback(
     (plan: FsOpPlan) => {
-      if (project) loadDir(project, dir);
+      if (project) {
+        loadDir(project, dir);
+        // git 状态角标缓存失效（files-ux-revamp 任务 5）：写操作后不得再供旧 XY
+        invalidateGitStatusCache(project);
+      }
       const { refresh, evict } = dirsAfterOp(plan);
       treeController.refreshDirs(refresh, evict);
     },
@@ -795,12 +801,12 @@ export function FilesPage() {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
     setDir(path);
-    if (isMobile) setMobilePane("list");
   };
   const onSelectTreePath = (path: string | null) => {
     if (path !== null && editingPath && !guardDirty()) return;
     setEditingPath(null);
     setSelected(path);
+    if (path !== null) setOpenSeq((n) => n + 1);
   };
   const onListRowClick = (entry: FsTreeEntry) => {
     const path = joinRel(dir, entry.name);
@@ -813,7 +819,7 @@ export function FilesPage() {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
     setSelected(path);
-    if (isMobile) setMobilePane("preview");
+    setOpenSeq((n) => n + 1);
   };
 
   const breadcrumbs = useMemo(() => dir.split("/").filter(Boolean), [dir]);
@@ -903,7 +909,6 @@ export function FilesPage() {
 
   const listPane = (
     <div data-testid="files-list-pane" className="flex min-h-0 flex-col">
-      {toolbar}
       {uploadPanel}
       <table className="w-full border-collapse text-sm">
         <thead>
@@ -1029,6 +1034,33 @@ export function FilesPage() {
     </div>
   );
 
+  // 当前路径面包屑：根（项目名）+ 逐段可点回跳（窄档经窄栈 breadcrumb 槽位渲染，
+  // 仅 list/preview 两层可见；编辑层不带面包屑）
+  const breadcrumbNav = (
+    <nav aria-label={t("files.list.heading")} data-testid="files-breadcrumb" className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-3 text-xs text-muted-foreground">
+      <button
+        type="button"
+        data-testid="files-breadcrumb-root"
+        onClick={() => setDir("")}
+        className="rounded px-1 transition-colors hover:text-foreground"
+      >
+        {project ? baseName(project) : t("files.breadcrumb.root")}
+      </button>
+      {breadcrumbs.map((seg, i) => (
+        <span key={`${i}-${seg}`} className="flex items-center">
+          <ChevronRight className="size-3" aria-hidden />
+          <button
+            type="button"
+            onClick={() => setDir(breadcrumbs.slice(0, i + 1).join("/"))}
+            className="rounded px-1 transition-colors hover:text-foreground"
+          >
+            {seg}
+          </button>
+        </span>
+      ))}
+    </nav>
+  );
+
   return (
     <div data-testid="files-page" className="fixed inset-0 z-50 flex flex-col bg-background">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
@@ -1051,64 +1083,36 @@ export function FilesPage() {
           {projectSelect}
         </div>
       </header>
-      {/* 当前路径面包屑：根（项目名）+ 逐段可点回跳 */}
-      <nav aria-label={t("files.list.heading")} data-testid="files-breadcrumb" className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-3 text-xs text-muted-foreground">
-        <button
-          type="button"
-          data-testid="files-breadcrumb-root"
-          onClick={() => setDir("")}
-          className="rounded px-1 transition-colors hover:text-foreground"
-        >
-          {project ? baseName(project) : t("files.breadcrumb.root")}
-        </button>
-        {breadcrumbs.map((seg, i) => (
-          <span key={`${i}-${seg}`} className="flex items-center">
-            <ChevronRight className="size-3" aria-hidden />
-            <button
-              type="button"
-              onClick={() => setDir(breadcrumbs.slice(0, i + 1).join("/"))}
-              className="rounded px-1 transition-colors hover:text-foreground"
-            >
-              {seg}
-            </button>
-          </span>
-        ))}
-      </nav>
       {projectsError && projects.length === 0 ? (
         <div data-testid="files-projects-error" className="flex flex-1 items-center justify-center p-4 text-sm text-destructive">
           {t("files.error.projectsLoadFailed")}
         </div>
       ) : isMobile ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div role="tablist" aria-label={t("files.mobile.switcherAria")} data-testid="files-mobile-tabs" className="flex shrink-0 border-b">
-            {(["tree", "list", "preview"] as const).map((pane) => (
-              <button
-                key={pane}
-                type="button"
-                role="tab"
-                aria-selected={mobilePane === pane}
-                data-testid={`files-mobile-tab-${pane}`}
-                onClick={() => setMobilePane(pane)}
-                className={`flex-1 py-2 text-sm transition-colors ${
-                  mobilePane === pane ? "border-b-2 border-primary font-medium text-foreground" : "text-muted-foreground"
-                }`}
-              >
-                {t(MOBILE_PANE_KEY[pane])}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            {mobilePane === "tree" ? treePane : mobilePane === "list" ? listPane : previewPane}
-          </div>
-        </div>
+        // 窄档单列推入式（files-ux-revamp 任务 5）：list -> preview -> edit 三层由窄栈
+        // 派生渲染，不再有三段切换钮；树不在窄档渲染。key={project} 保证切项目重挂载
+        // （X1：dismissed 局部态不跨项目残留）；openSeq 每次打开自增驱动“重按同一文件
+        // 再次推入”
+        <NarrowStack
+          key={project}
+          testId="files-narrow-stack"
+          breadcrumb={breadcrumbNav}
+          toolbar={toolbar}
+          list={listPane}
+          preview={previewPane}
+          editing={editingPath !== null && selected !== null}
+          selectionKey={selected === null ? null : `${selected}#${openSeq}`}
+          onBackGuard={guardDirty}
+        />
       ) : (
-        <div
-          className="relative grid min-h-0 flex-1"
-          style={{ gridTemplateColumns: `${leftWidth}px 1fr ${rightWidth}px` }}
-        >
-          <div className="min-h-0 border-r p-2">{treePane}</div>
-          <div className="min-h-0 overflow-y-auto p-3">{listPane}</div>
-          <div className="min-h-0 border-l p-3">{previewPane}</div>
+        <>
+          {breadcrumbNav}
+          <div
+            className="relative grid min-h-0 flex-1"
+            style={{ gridTemplateColumns: `${leftWidth}px 1fr ${rightWidth}px` }}
+          >
+            <div className="min-h-0 border-r p-2">{treePane}</div>
+            <div className="min-h-0 overflow-y-auto p-3">{toolbar}{listPane}</div>
+            <div className="min-h-0 border-l p-3">{previewPane}</div>
           {/* 两根拖宽手柄：骑跨栏缘边框（w-1.5 命中区，绝对定位），仅桌面渲染 */}
           <div
             role="separator"
@@ -1146,7 +1150,8 @@ export function FilesPage() {
             style={{ right: rightWidth - 3 }}
             className="absolute inset-y-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 focus-visible:outline-none"
           />
-        </div>
+          </div>
+        </>
       )}
       {/* 隐藏文件选择器（多选；目标目录由 openUploadPicker 预置） */}
       <input

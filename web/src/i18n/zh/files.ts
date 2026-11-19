@@ -57,6 +57,8 @@ export const files = {
     reasonTruncated: "文件过大被截断，无法在线编辑",
     reasonBinary: "二进制文件无法在线编辑",
     confirmLeave: "有未保存的修改，确定离开吗？",
+    // 面板项目随会话派生变化时强制放弃编辑的告知（X2：不可确认、不可回滚）
+    projectSwitchDiscard: "项目已随会话切换，未保存的编辑内容已放弃",
     statusSaving: "保存中",
     statusSaved: "已保存",
     statusFailed: "保存失败",
@@ -73,13 +75,6 @@ export const files = {
   // 页面级错误
   error: {
     projectsLoadFailed: "项目列表加载失败",
-  },
-  // 手机档单栏层叠面板切换（≤768px）
-  mobile: {
-    tree: "目录",
-    list: "列表",
-    preview: "预览",
-    switcherAria: "切换面板",
   },
   // 操作面工具栏（任务 6）
   toolbar: {

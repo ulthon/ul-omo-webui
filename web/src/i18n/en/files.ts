@@ -48,6 +48,7 @@ export const files = {
     reasonTruncated: "File was truncated and cannot be edited online",
     reasonBinary: "Binary files cannot be edited online",
     confirmLeave: "You have unsaved changes. Leave anyway?",
+    projectSwitchDiscard: "Project switched with the session; unsaved edits were discarded",
     statusSaving: "Saving",
     statusSaved: "Saved",
     statusFailed: "Save failed",
@@ -63,12 +64,6 @@ export const files = {
   },
   error: {
     projectsLoadFailed: "Failed to load project list",
-  },
-  mobile: {
-    tree: "Folders",
-    list: "Files",
-    preview: "Preview",
-    switcherAria: "Switch pane",
   },
   toolbar: {
     newFile: "New file",

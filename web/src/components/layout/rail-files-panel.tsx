@@ -29,8 +29,10 @@ import { useUiStore } from "@/stores/ui";
 import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
 import { dirsAfterOp, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
+import { invalidateGitStatusCache } from "@/components/file-tree/preview-git-badge";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
+import { NarrowStack } from "@/components/files/narrow-stack";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import {
@@ -154,6 +156,7 @@ export function filesRailLayout(width: number): FilesRailLayout {
 export function RailFilesPanel() {
   const t = useT();
   const pushGlobalError = useUiStore((s) => s.pushGlobalError);
+  const showToast = useUiStore((s) => s.showToast);
   const storeProjects = useUiStore((s) => s.projects);
   const setStoreProjects = useUiStore((s) => s.setProjects);
   const activeProject = useActiveProject();
@@ -184,6 +187,10 @@ export function RailFilesPanel() {
 
   const [dir, setDir] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  // 打开令牌（files-ux-revamp 任务 5）：每次文件打开动作自增（含重按同一文件），
+  // 与 selected 组成复合键 `${selected}#${openSeq}` 供窄栈判定“新一次推入”；
+  // selected 变回 null 的路径（X2 效果/confirmDelete）内联归零
+  const [openSeq, setOpenSeq] = useState(0);
   // 在线编辑态：editingPath + 编辑器脏态上报（FileEditor 契约，NotesView 先例）
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const editDirtyRef = useRef(false);
@@ -209,6 +216,24 @@ export function RailFilesPanel() {
     },
     [project, editingPath],
   );
+
+  // X2（files-ux-revamp 任务 5）：本面板无项目切换器，项目随选中会话派生变化；
+  // 变化发生时编辑中内容无法跟迁移（会话切换不可回滚，不做可确认守卫）——强制清
+  // 编辑态并 toast 告知未保存内容已放弃；顺带清目录/选中/打开令牌，避免旧项目
+  // 路径串进新项目
+  const prevProjectRef = useRef<string | null>(project);
+  useEffect(() => {
+    if (prevProjectRef.current === project) return;
+    prevProjectRef.current = project;
+    setDir("");
+    setSelected(null);
+    setOpenSeq(0);
+    if (editingPath !== null) {
+      editDirtyRef.current = false;
+      setEditingPath(null);
+      showToast(t("files.edit.projectSwitchDiscard"), "info");
+    }
+  }, [project, editingPath, showToast, t]);
 
   // 当前目录列表：项目或路径变化即重取，键名缓存比对防切窗口串态（同 files.tsx）
   const [{ key: loadedKey, entries, listError }, setList] = useState<{ key: string; entries: FsTreeEntry[] | null; listError: boolean }>({
@@ -279,7 +304,11 @@ export function RailFilesPanel() {
    * （refresh 回源、evict 逐出；展开态保留，不做乐观更新——同 pages/files.tsx） */
   const refetchAfterOp = useCallback(
     (plan: FsOpPlan) => {
-      if (project) loadDir(project, dir);
+      if (project) {
+        loadDir(project, dir);
+        // git 状态角标缓存失效（files-ux-revamp 任务 5）：写操作后不得再供旧 XY
+        invalidateGitStatusCache(project);
+      }
       const { refresh, evict } = dirsAfterOp(plan);
       treeController.refreshDirs(refresh, evict);
     },
@@ -297,7 +326,10 @@ export function RailFilesPanel() {
     setDeleteBusy(true);
     try {
       await api.fsDelete(project, deleteConfirm.path);
-      if (selected === deleteConfirm.path) setSelected(null);
+      if (selected === deleteConfirm.path) {
+        setSelected(null);
+        setOpenSeq(0);
+      }
       setDeleteConfirm(null);
       refetchAfterOp({ op: "delete", path: deleteConfirm.path });
     } catch (err) {
@@ -462,6 +494,7 @@ export function RailFilesPanel() {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
     setSelected(path);
+    setOpenSeq((n) => n + 1);
   };
 
   const onTreeDirectoryOpen = (path: string) => {
@@ -473,6 +506,7 @@ export function RailFilesPanel() {
     if (path !== null && editingPath && !guardDirty()) return;
     setEditingPath(null);
     setSelected(path);
+    if (path !== null) setOpenSeq((n) => n + 1);
   };
 
   const breadcrumbs = useMemo(() => dir.split("/").filter(Boolean), [dir]);
@@ -838,54 +872,79 @@ export function RailFilesPanel() {
     </div>
   );
 
+  // 当前路径面包屑：根（项目名）+ 逐段可点回跳。窄档经窄栈 breadcrumb 槽位渲染
+  // （list/preview 两层可见），宽档在面板顶部共享位置渲染
+  const breadcrumbNav = (
+    <nav
+      aria-label={t("files.list.heading")}
+      data-testid="rail-files-breadcrumb"
+      className="flex h-8 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-2 text-xs text-muted-foreground"
+    >
+      <button
+        type="button"
+        data-testid="rail-files-breadcrumb-root"
+        onClick={() => setDir("")}
+        className="rounded px-1 transition-colors hover:text-foreground"
+      >
+        {project ? baseName(project) : t("files.breadcrumb.root")}
+      </button>
+      {breadcrumbs.map((seg, i) => (
+        <span key={`${i}-${seg}`} className="flex items-center">
+          <ChevronRight className="size-3" aria-hidden />
+          <button
+            type="button"
+            onClick={() => setDir(breadcrumbs.slice(0, i + 1).join("/"))}
+            className="rounded px-1 transition-colors hover:text-foreground"
+          >
+            {seg}
+          </button>
+        </span>
+      ))}
+    </nav>
+  );
+
+  // 窄档列表槽位：上传队列 + 列表行（滚动由窄栈 list 槽位承担）
+  const stackedListPane = (
+    <>
+      {uploadPanel}
+      <div data-testid="rail-files-list-pane" className="flex flex-col px-2 py-1">
+        {listContent}
+      </div>
+    </>
+  );
+
+  const emptyState = (
+    <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
+      {t("files.project.empty")}
+    </div>
+  );
+
   return (
     <div ref={rootRef} data-testid="rail-files-panel" data-layout={layout} className="flex h-full min-h-0 flex-col">
-      {toolbar}
-      {/* 当前路径面包屑：根（项目名）+ 逐段可点回跳 */}
-      <nav
-        aria-label={t("files.list.heading")}
-        data-testid="rail-files-breadcrumb"
-        className="flex h-8 shrink-0 items-center gap-0.5 overflow-x-auto border-b px-2 text-xs text-muted-foreground"
-      >
-        <button
-          type="button"
-          data-testid="rail-files-breadcrumb-root"
-          onClick={() => setDir("")}
-          className="rounded px-1 transition-colors hover:text-foreground"
-        >
-          {project ? baseName(project) : t("files.breadcrumb.root")}
-        </button>
-        {breadcrumbs.map((seg, i) => (
-          <span key={`${i}-${seg}`} className="flex items-center">
-            <ChevronRight className="size-3" aria-hidden />
-            <button
-              type="button"
-              onClick={() => setDir(breadcrumbs.slice(0, i + 1).join("/"))}
-              className="rounded px-1 transition-colors hover:text-foreground"
-            >
-              {seg}
-            </button>
-          </span>
-        ))}
-      </nav>
-      {uploadPanel}
-      {project ? (
-        layout === "stacked" ? (
-          <>
-            {/* 窄档（容器 ≤600）：树约 1/3 高度，可滚动；写操作后局部刷新保留展开态 */}
-            <div data-testid="rail-files-tree-pane" className="max-h-64 min-h-32 shrink-0 overflow-y-auto border-b p-1">
-              {treeContent}
-            </div>
-            {/* 文件列表：名称 + 大小 + 行内操作钮（下载/重命名/移动/删除） */}
-            <div data-testid="rail-files-list-pane" className="min-h-0 shrink overflow-y-auto px-2 py-1">
-              {listContent}
-            </div>
-            {/* 预览/编辑：编辑态替换预览（与 files.tsx 同判据），空态文案复用 */}
-            <div data-testid="rail-files-preview-pane" className="min-h-0 flex-1 overflow-y-auto border-t p-2">
-              {previewContent}
-            </div>
-          </>
+      {layout === "stacked" ? (
+        project ? (
+          // 窄档单列推入式（files-ux-revamp 任务 5）：list -> preview -> edit 三层由
+          // 窄栈派生渲染，树不在窄档渲染；openSeq 每次打开自增驱动“重按同一文件
+          // 再次推入”
+          <NarrowStack
+            testId="rail-files-narrow-stack"
+            breadcrumb={breadcrumbNav}
+            toolbar={toolbar}
+            list={stackedListPane}
+            preview={previewContent}
+            editing={editingPath !== null && selected !== null}
+            selectionKey={selected === null ? null : `${selected}#${openSeq}`}
+            onBackGuard={guardDirty}
+          />
         ) : (
+          emptyState
+        )
+      ) : (
+        <>
+          {toolbar}
+          {breadcrumbNav}
+          {uploadPanel}
+          {project ? (
           /* 宽档（>600）：树列宽可拖拽记忆（rail-files-resize，默认 14rem）+ 右侧内容区；
              split（601-899）内容区上下分（仅树手柄），columns（≥900）列表列宽可拖拽
              记忆（默认 20rem），预览列恒为剩余宽自适应 */
@@ -947,11 +1006,10 @@ export function RailFilesPanel() {
               </div>
             </div>
           </div>
-        )
-      ) : (
-        <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
-          {t("files.project.empty")}
-        </div>
+          ) : (
+            emptyState
+          )}
+        </>
       )}
       {/* 隐藏文件选择器（多选；目标目录由 openUploadPicker 预置） */}
       <input
