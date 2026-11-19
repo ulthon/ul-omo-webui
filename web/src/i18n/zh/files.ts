@@ -82,6 +82,8 @@ export const files = {
     newDir: "新建目录",
     upload: "上传",
     refresh: "刷新",
+    showHiddenDirs: "显示噪音目录",
+    hideHiddenDirs: "隐藏噪音目录",
   },
   // 右键菜单（列表与树共用；目录多“在此上传”）
   menu: {

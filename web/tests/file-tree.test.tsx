@@ -77,6 +77,7 @@ interface Mounted {
 async function mountSelfControlled(props: {
   selectedPath?: string | null;
   onSelect?: (path: string) => void;
+  showHiddenDirs?: boolean;
 } = {}): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -86,6 +87,7 @@ async function mountSelfControlled(props: {
       project: PROJECT,
       selectedPath: props.selectedPath ?? null,
       onSelect: props.onSelect ?? (() => {}),
+      showHiddenDirs: props.showHiddenDirs,
     }));
   });
   return { container, root };
@@ -205,6 +207,90 @@ describe("FileTree 自控模式（不传 controller）", () => {
     expect(second.container.querySelector('[data-testid="tree-row-docs/sub"]')).toBeNull();
     await act(async () => {
       await second.root.unmount();
+    });
+  });
+});
+
+describe("FileTree 噪音目录渲染过滤（files-ux-revamp 任务 6）", () => {
+  const ORIGINAL_ROOT = TREE_FIXTURE[""];
+  const ORIGINAL_DOCS = TREE_FIXTURE.docs;
+  beforeEach(() => {
+    TREE_FIXTURE[""] = [
+      { name: "node_modules", type: "directory", size: null, mtime: 1700000000000 },
+      { name: ".git", type: "directory", size: null, mtime: 1700000000000 },
+      { name: "docs", type: "directory", size: null, mtime: 1700000000000 },
+      { name: "alpha.txt", type: "file", size: 10, mtime: 1700000000000 },
+    ];
+    TREE_FIXTURE.docs = [
+      { name: "node_modules", type: "directory", size: null, mtime: 1700000000000 },
+      { name: "sub", type: "directory", size: null, mtime: 1700000000000 },
+    ];
+    installGlobalTreeFetch([]);
+  });
+  afterEach(() => {
+    TREE_FIXTURE[""] = ORIGINAL_ROOT;
+    TREE_FIXTURE.docs = ORIGINAL_DOCS;
+    globalThis.fetch = ORIGINAL_FETCH;
+    document.body.innerHTML = "";
+  });
+
+  test("默认隐藏：根层与深层噪音目录不渲染", async () => {
+    const treeCalls: string[] = [];
+    installGlobalTreeFetch(treeCalls);
+    const { container, root } = await mountSelfControlled();
+    expect(container.querySelector('[data-testid="tree-row-node_modules"]')).toBeNull();
+    expect(container.querySelector('[data-testid="tree-row-.git"]')).toBeNull();
+    expect(q(container, '[data-testid="tree-row-docs"]')).toBeTruthy();
+    // 展开后深层同样被过滤
+    await act(async () => {
+      click(q(container, '[data-testid="tree-row-docs"]'));
+    });
+    expect(container.querySelector('[data-testid="tree-row-docs/node_modules"]')).toBeNull();
+    expect(q(container, '[data-testid="tree-row-docs/sub"]')).toBeTruthy();
+    await act(async () => {
+      await root.unmount();
+    });
+  });
+
+  test("showHiddenDirs=true 时任意深度的噪音目录都渲染", async () => {
+    const treeCalls: string[] = [];
+    installGlobalTreeFetch(treeCalls);
+    const { container, root } = await mountSelfControlled({ showHiddenDirs: true });
+    expect(q(container, '[data-testid="tree-row-node_modules"]')).toBeTruthy();
+    expect(q(container, '[data-testid="tree-row-.git"]')).toBeTruthy();
+    await act(async () => {
+      click(q(container, '[data-testid="tree-row-docs"]'));
+    });
+    expect(q(container, '[data-testid="tree-row-docs/node_modules"]')).toBeTruthy();
+    await act(async () => {
+      await root.unmount();
+    });
+  });
+
+  test("切换即时生效且零请求（缓存保留原始条目）", async () => {
+    const treeCalls: string[] = [];
+    installGlobalTreeFetch(treeCalls);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    let props = { showHiddenDirs: false };
+    await act(async () => {
+      root.render(createElement(FileTree, { project: PROJECT, selectedPath: null, onSelect: () => {}, ...props }));
+    });
+    await act(async () => {
+      click(q(container, '[data-testid="tree-row-docs"]'));
+    });
+    expect(treeCalls).toEqual(["", "docs"]);
+    expect(container.querySelector('[data-testid="tree-row-docs/node_modules"]')).toBeNull();
+    // 翻转开关：同实例重渲染，不发出任何新请求，噪音目录立即出现
+    await act(async () => {
+      props = { showHiddenDirs: true };
+      root.render(createElement(FileTree, { project: PROJECT, selectedPath: null, onSelect: () => {}, ...props }));
+    });
+    expect(treeCalls).toEqual(["", "docs"]);
+    expect(q(container, '[data-testid="tree-row-docs/node_modules"]')).toBeTruthy();
+    await act(async () => {
+      await root.unmount();
     });
   });
 });

@@ -46,6 +46,8 @@ const apiState = {
     { name: "README.md", type: "file" },
   ],
   calls: [] as { method: string; args: unknown[] }[],
+  // 按路径夹具（files-ux-revamp 任务 8 用例）：缺省回落 treeEntries
+  entriesByPath: {} as Record<string, Array<{ name: string; type: string }>>,
 };
 
 vi.mock("@/lib/api", () => {
@@ -72,7 +74,8 @@ vi.mock("@/lib/api", () => {
       listProjects: () => Promise.resolve({ projects: [{ projectPath: "/repo/alpha", name: "alpha" }, { projectPath: "/repo/beta", name: "beta" }] }),
       fsTree: (project: string, path?: string) => {
         apiState.calls.push({ method: "fsTree", args: [project, path] });
-        return Promise.resolve({ project, path: path ?? "", entries: apiState.treeEntries });
+        const entries = apiState.entriesByPath[path ?? ""] ?? apiState.treeEntries;
+        return Promise.resolve({ project, path: path ?? "", entries });
       },
       fsDownloadUrl: (project: string, path: string) => `/api/fs/download?project=${project}&path=${path}`,
       fsFile: (project: string, path: string) =>
@@ -387,5 +390,61 @@ describe("rail files panel responsive layout (#36)", () => {
     expect(q("[data-testid='rail-files-narrow-stack']")?.getAttribute("data-level")).toBe("preview");
     await clickButton("rail-files-narrow-stack-back");
     expect(q("[data-testid='rail-files-narrow-stack']")?.getAttribute("data-level")).toBe("list");
+  });
+});
+
+describe("files-ux-revamp 任务 6：噪音目录切换（rail 工具栏）", () => {
+  test("眼睛开关：存在、aria-pressed 翻转、localStorage 记忆重挂载回读", async () => {
+    const c1 = await renderPanelDirectly();
+    const btn1 = c1.querySelector('[data-testid="rail-files-toggle-hidden"]');
+    if (!btn1) throw new Error("missing rail-files-toggle-hidden");
+    expect(btn1.getAttribute("aria-pressed")).toBe("false");
+    await clickButton("rail-files-toggle-hidden");
+    expect(btn1.getAttribute("aria-pressed")).toBe("true");
+    expect(window.localStorage.getItem("ul-omo-webui:files:show-hidden")).toBe("1");
+    // 重挂载回读记忆
+    window.localStorage.clear();
+    window.localStorage.setItem("ul-omo-webui:files:show-hidden", "1");
+    const c2 = await renderPanelDirectly();
+    const btn2 = c2.querySelector('[data-testid="rail-files-toggle-hidden"]');
+    if (!btn2) throw new Error("missing rail-files-toggle-hidden (remount)");
+    expect(btn2.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("files-ux-revamp 任务 8：目录导航树自动揭示（rail）", () => {
+  test("列表进入子目录：树祖先自动展开；面包屑回跳后重进零重复拉取（reveal 幂等）", async () => {
+    // 两层夹具：进入 src/lib 时祖先 src 必须在树里自动展开（reveal 语义：展开祖先、
+    // 定位目标行；目标目录本身不展开）
+    apiState.entriesByPath = {
+      src: [
+        { name: "lib", type: "directory" },
+        { name: "index.ts", type: "file" },
+      ],
+      "src/lib": [{ name: "util.ts", type: "file" }],
+    };
+    try {
+      await renderPanelDirectly();
+      // 宽档才渲染树（split/columns）
+      await fireResize(700);
+      // 进入 src/lib：列表拉 src+src/lib，树 reveal 拉祖先 src
+      await clickButton("rail-files-row-name-src");
+      await waitFor(() => q("[data-testid='rail-files-row-name-lib']") !== null, "lib row");
+      await clickButton("rail-files-row-name-lib");
+      const srcRow = q("[data-testid='tree-row-src']");
+      if (!srcRow) throw new Error("missing tree-row-src");
+      await waitFor(() => srcRow.getAttribute("aria-expanded") === "true", "src expanded");
+      const srcCount = () => apiState.calls.filter((c) => c.method === "fsTree" && c.args[1] === "src").length;
+      expect(srcCount()).toBe(2); // 列表 src + 树 reveal src
+      // 回根后再进入：列表各拉一次，reveal 命中已展开已缓存路径零新增请求
+      await clickButton("rail-files-breadcrumb-root");
+      await clickButton("rail-files-row-name-src");
+      await waitFor(() => q("[data-testid='rail-files-row-name-lib']") !== null, "lib row again");
+      await clickButton("rail-files-row-name-lib");
+      expect(srcCount()).toBe(3); // 仅列表重拉 src
+      expect(srcRow.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      apiState.entriesByPath = {};
+    }
   });
 });

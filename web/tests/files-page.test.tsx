@@ -431,3 +431,167 @@ describe("files-ux-revamp 任务 5：手机档窄栈单列推入", () => {
 });
 });
 
+
+describe("files-ux-revamp 任务 6：噪音目录切换（独立文件页）", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  function noiseClick(el: HTMLElement): Promise<void> {
+    return act(async () => {
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  test("树默认隐藏根层与深层噪音目录，工具栏切换即时生效且零新树请求", async () => {
+    const origRoot = TREE_FIXTURE[""];
+    const origDocs = TREE_FIXTURE.docs;
+    TREE_FIXTURE[""] = [
+      { name: "node_modules", type: "directory", size: null, mtime: 1700000000000 },
+      { name: ".git", type: "directory", size: null, mtime: 1700000000000 },
+      ...origRoot,
+    ];
+    TREE_FIXTURE.docs = [{ name: "node_modules", type: "directory", size: null, mtime: 1700000000000 }];
+    try {
+      const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+      const { container, root } = await mountPage(calls);
+      expect(container.querySelector('[data-testid="tree-row-node_modules"]')).toBeNull();
+      expect(container.querySelector('[data-testid="tree-row-.git"]')).toBeNull();
+      // 展开深层同样被过滤
+      await noiseClick(q(container, '[data-testid="tree-row-docs"]'));
+      expect(container.querySelector('[data-testid="tree-row-docs/node_modules"]')).toBeNull();
+      // 工具栏开关翻转：即时生效，不发出任何新树请求
+      const callsBefore = calls.tree.length;
+      const btn = q(container, '[data-testid="files-toggle-hidden"]');
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
+      await noiseClick(btn);
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
+      expect(calls.tree.length).toBe(callsBefore);
+      expect(q(container, '[data-testid="tree-row-node_modules"]')).toBeTruthy();
+      expect(q(container, '[data-testid="tree-row-docs/node_modules"]')).toBeTruthy();
+      expect(window.localStorage.getItem("ul-omo-webui:files:show-hidden")).toBe("1");
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      TREE_FIXTURE[""] = origRoot;
+      TREE_FIXTURE.docs = origDocs;
+    }
+  });
+
+  test("localStorage 记忆跨重挂载回读（默认关 → 置 1 → 重挂载为开）", async () => {
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    expect(q(container, '[data-testid="files-toggle-hidden"]').getAttribute("aria-pressed")).toBe("false");
+    await act(async () => {
+      root.unmount();
+    });
+    window.localStorage.setItem("ul-omo-webui:files:show-hidden", "1");
+    const calls2: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const m2 = await mountPage(calls2);
+    expect(q(m2.container, '[data-testid="files-toggle-hidden"]').getAttribute("aria-pressed")).toBe("true");
+    await act(async () => {
+      m2.root.unmount();
+    });
+  });
+});
+
+
+describe("files-ux-revamp 任务 8：目录导航树自动揭示", () => {
+  /** 记录 scrollIntoView 调用者行的 testid（reveal 滚动定位断言用） */
+  function scrollTargetIds(spy: ReturnType<typeof vi.spyOn>): string[] {
+    return spy.mock.contexts.map((el) => (el as HTMLElement).getAttribute("data-testid") ?? "");
+  }
+
+  async function clickRow(container: HTMLElement, testid: string): Promise<void> {
+    await act(async () => {
+      q(container, `[data-testid="${testid}"]`).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  test("列表进入子目录：树祖先自动展开，目标行滚动定位（scrollIntoView）", async () => {
+    // 夹具加深一层：进入 docs/sub 时，祖先 docs 必须在树里自动展开（reveal 语义：
+    // 展开祖先、定位目标行；目标目录本身不展开）
+    const origDocs = TREE_FIXTURE.docs;
+    TREE_FIXTURE.docs = [...origDocs, { name: "sub", type: "directory", size: null, mtime: 1700000000000 }];
+    TREE_FIXTURE["docs/sub"] = [{ name: "a.md", type: "file", size: 1, mtime: 1700000000000 }];
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    try {
+      const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+      const { container, root } = await mountPage(calls);
+      await clickRow(container, "files-row-docs");
+      await waitFor(() => container.querySelector('[data-testid="files-row-sub"]') !== null, "sub row");
+      await clickRow(container, "files-row-sub");
+      // reveal 展开祖先 docs
+      const docsRow = q(container, '[data-testid="tree-row-docs"]');
+      await waitFor(() => docsRow.getAttribute("aria-expanded") === "true", "docs expanded");
+      // revealTarget 落地后经双 rAF 滚动定位到目标行 docs/sub
+      await waitFor(() => scrollTargetIds(spy).includes("tree-row-docs/sub"), "scrollIntoView on docs/sub row");
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      TREE_FIXTURE.docs = origDocs;
+      delete TREE_FIXTURE["docs/sub"];
+      spy.mockRestore();
+    }
+  });
+
+  test("面包屑/列表回跳后再次进入：已展开已缓存路径零重复拉取（reveal 幂等）", async () => {
+    const origDocs = TREE_FIXTURE.docs;
+    TREE_FIXTURE.docs = [...origDocs, { name: "sub", type: "directory", size: null, mtime: 1700000000000 }];
+    TREE_FIXTURE["docs/sub"] = [{ name: "a.md", type: "file", size: 1, mtime: 1700000000000 }];
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    try {
+      const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+      const { container, root } = await mountPage(calls);
+      // 首次进入 docs/sub：列表拉 docs+docs/sub，树 reveal 只拉祖先 docs（目标段不回源）= 共 3 次
+      await clickRow(container, "files-row-docs");
+      await waitFor(() => container.querySelector('[data-testid="files-row-sub"]') !== null, "sub row");
+      await clickRow(container, "files-row-sub");
+      const docsRow = q(container, '[data-testid="tree-row-docs"]');
+      await waitFor(() => docsRow.getAttribute("aria-expanded") === "true", "docs expanded");
+      const docsTotal = () => treeDocsFetchCount(calls, "docs") + treeDocsFetchCount(calls, "docs/sub");
+      expect(docsTotal()).toBe(3);
+      // 回根后再进入：列表各拉一次（+2），reveal 命中已展开已缓存路径零新增请求
+      await clickRow(container, "files-breadcrumb-root");
+      await clickRow(container, "files-row-docs");
+      await waitFor(() => container.querySelector('[data-testid="files-row-sub"]') !== null, "sub row again");
+      await clickRow(container, "files-row-sub");
+      expect(docsTotal()).toBe(5);
+      // 第二次定位同样发生：先等目标行 flash（revealTarget 已落地），随后滚动触发
+      await waitFor(() => q(container, '[data-testid="tree-row-docs/sub"]')?.hasAttribute("data-flash") === true, "flash on re-enter");
+      await waitFor(() => scrollTargetIds(spy).includes("tree-row-docs/sub"), "re-scrolled on re-enter");
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      TREE_FIXTURE.docs = origDocs;
+      delete TREE_FIXTURE["docs/sub"];
+      spy.mockRestore();
+    }
+  });
+
+  /** 统计指定路径的 fs/tree 调用次数（列表与树 reveal 共用同一接口，按路径计数） */
+  function treeDocsFetchCount(calls: Calls, path: string): number {
+    return calls.tree.filter((c) => c.project === "/data/proj-a" && c.path === path).length;
+  }
+
+  test("列表进入子目录：树祖先自动展开，目标行滚动定位（scrollIntoView）", async () => {
+    const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+    const { container, root } = await mountPage(calls);
+    // 树上点击未展开的 docs：toggle 展开（拉一次 docs）+ onDirectoryOpen setDir → reveal
+    await clickRow(container, "tree-row-docs");
+    const docsRow = q(container, '[data-testid="tree-row-docs"]');
+    await waitFor(() => docsRow.getAttribute("aria-expanded") === "true", "docs expanded");
+    expect(rowNames(container)).toEqual(["readme.md"]); // 中栏已同步进入 docs
+    const afterClick = treeDocsFetchCount(calls, "docs");
+    // reveal 走同一幂等调用：稳定后请求计数不再增长（不二次展开/拉取）
+    await waitFor(() => treeDocsFetchCount(calls, "docs") > 0, "settled");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(treeDocsFetchCount(calls, "docs")).toBe(afterClick);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+});
