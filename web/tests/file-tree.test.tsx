@@ -247,6 +247,29 @@ describe("FileTree 受控模式（controller 注入）", () => {
     });
   });
 
+  test("受控模式回退 hook 静默：全局 fetch 零请求，仅控制器取数器发根加载（files-ux-revamp 任务 3 钉测）", async () => {
+    let globalFetchCalls = 0;
+    globalThis.fetch = (async () => {
+      globalFetchCalls += 1;
+      return okJson({});
+    }) as typeof fetch;
+    const treeCalls: string[] = [];
+    const { container, root } = await mountControlled({
+      fetch: makeRecordingFetch(treeCalls) as never,
+    });
+    expect(treeCalls).toEqual([""]);
+    await act(async () => {
+      click(q(container, '[data-testid="tree-row-docs"]'));
+    });
+    expect(treeCalls).toEqual(["", "docs"]);
+    // hooks 规则下回退 hook 仍被无条件调用，但被静默取数器抑制：不向 api.fsTree
+    // 发任何请求（若退化回直连 fetch，这里会是 2——挂载与展开各多发一次）
+    expect(globalFetchCalls).toBe(0);
+    await act(async () => {
+      await root.unmount();
+    });
+  });
+
   test("契约钉：container/row testid 不变；selectedPath 仅该行 aria-selected=true", async () => {
     const { container, root } = await mountControlled({
       fetch: makeRecordingFetch([]) as never,

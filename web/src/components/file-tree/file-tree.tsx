@@ -16,9 +16,17 @@ import {
 import { useT } from "@/i18n/i18n";
 import { type FsTreeEntry } from "@/lib/api";
 import { imageMimeOf } from "./file-tree-logic";
-import { useFileTreeController, type FileTreeController, type FileTreeData } from "./file-tree-controller";
+import { useFileTreeController, type FileTreeController, type FileTreeData, type TreeFetcher } from "./file-tree-controller";
 
 export type TreeLoadState = "idle" | "loading" | "error";
+
+/** 受控模式的回退 hook 取数器：永不 settle（files-ux-revamp 任务 3）。hooks 规则要求
+ * fallback 无条件调用，其挂载/项目切换的 loadDir 会落到这条静默 promise 上——不发出
+ * 任何请求（受控模式下回退树的数据本就不被渲染）。模块级常量保证 opts?.fetch 身份
+ * 稳定，useFileTreeController 的 loadDir/effect 不因它重入；永不 settle 也意味着回包
+ * 回调永不触发，无卸载后 setState、无错误上报 */
+const SILENT_TREE_FETCH: TreeFetcher = () => new Promise(() => {});
+const SILENT_TREE_FETCH_OPTS = { fetch: SILENT_TREE_FETCH };
 
 
 function entryIcon(entry: FsTreeEntry, expanded: boolean, size: string) {
@@ -142,8 +150,9 @@ export function FileTree({
   controller?: FileTreeController;
 }) {
   const t = useT();
-  // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）
-  const fallback = useFileTreeController(project);
+  // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）；
+  // 受控模式：hook 仍需无条件调用（hooks 规则），但注入静默取数器使回退树零请求
+  const fallback = useFileTreeController(project, controller ? SILENT_TREE_FETCH_OPTS : undefined);
   const ctl = controller ?? fallback;
   const { data, toggleDir, revealTarget, highlightPath } = ctl;
 

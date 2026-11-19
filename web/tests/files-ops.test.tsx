@@ -1,8 +1,9 @@
 // @ts-nocheck
 // 文件管理页操作面单测（builtin-file-management 任务 6）。惯例同 files-page.test.tsx：
 // @happy-dom 全局注册 + createRoot/act 真实点击，api 层走 recording fetch/XHR。
-// 覆盖计划验收：工具栏渲染；列表/树右键菜单项（目录多"在此上传"）；上传进度回调触发
-// 与队列结果态；操作成功后重取当前目录与树（recording 断言）；409/403 失败 toast。
+// 覆盖计划验收：工具栏渲染；列表/树右键菜单项（目录多“在此上传”）；上传进度回调触发
+// 与队列结果态；操作成功后重取当前目录 + 树按失效矩阵局部刷新（recording 断言，
+// files-ux-revamp 任务 3：展开态保留、不重挂载）；409/403 失败 toast。
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -29,6 +30,7 @@ const TREE_FIXTURE: Record<string, Array<{ name: string; type: string; size: num
     { name: "docs", type: "directory", size: null, mtime: 1700000000000 },
     { name: "alpha.txt", type: "file", size: 10, mtime: 1700000000000 },
   ],
+  docs: [{ name: "readme.md", type: "file", size: 7, mtime: 1700000000000 }],
 };
 
 function okJson(payload: unknown): Response {
@@ -243,9 +245,10 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
       q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(calls.move).toEqual([{ from: "alpha.txt", to: "gamma.txt" }]);
-    // 成功后重取当前目录：列表重拉 + FileTree 重挂载自拉，均同路径
+    // 成功后局部刷新：中栏列表重拉（""）+ 树 refreshDirs 刷新根（同目录重命名 →
+    // refresh=[""]，根已加载过 → 回源一次）；两次取数都落在 ""
     expect(calls.tree.length).toBe(treeCallsBefore + 2);
-    expect(calls.tree.at(-1)).toBe("");
+    expect(calls.tree.slice(-2)).toEqual(["", ""]);
     await act(async () => {
       root.unmount();
     });
@@ -265,7 +268,10 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
       q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(calls.createFile).toEqual(["docs/new.txt"]);
-    expect(calls.tree.length).toBeGreaterThanOrEqual(2);
+    // 局部刷新：中栏列表重拉（""）+1；树的 refresh 集只有父目录 docs —— 树里 docs
+    // 从未加载过，refreshDirs 不回源（懒加载语义），不再整树重拉
+    expect(calls.tree.length).toBe(3);
+    expect(calls.tree.at(-1)).toBe("");
     await act(async () => {
       root.unmount();
     });
@@ -293,8 +299,9 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     expect(fakeXhrLog[0]!.url).toContain("name=u1.txt");
     expect(fakeXhrLog[1]!.url).toContain("name=u2.txt");
     expect(container.querySelector('[role="progressbar"]')).toBeNull();
-    // 上传完成后重取目录：列表重拉 + FileTree 重挂载自拉
+    // 上传完成后局部刷新：中栏列表重拉（""）+ 树 refreshDirs([""]，目标目录为根）
     expect(calls.tree.length).toBe(treeCallsBefore + 2);
+    expect(calls.tree.slice(-2)).toEqual(["", ""]);
     await act(async () => {
       root.unmount();
     });
@@ -371,6 +378,190 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     expect(useUiStore.getState().globalNotifs.length).toBeGreaterThanOrEqual(2);
     expect(calls.createFile.length).toBe(1);
     expect(calls.tree.length).toBe(treeCallsBefore);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+});
+
+describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + 不重挂载）", () => {
+  test("同目录重命名：树不重挂载、展开目录仍展开；挂载取数恰好两次（受控回退 hook 零请求）", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    // 挂载取数恰好两次：中栏列表 "" + 页面控制器根加载 ""（FileTree 受控模式下回退
+    // hook 被静默取数器抑制，不再多发一次根请求）
+    expect(calls.tree).toEqual(["", ""]);
+    // 展开目录 docs（树懒加载拉 docs 一层）
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    expect(q(container, '[data-testid="tree-row-docs/readme.md"]')).not.toBeNull();
+    // 测试侧给树容器打身份标记（非生产代码）：写操作后必须是同一 DOM 节点仍在文档中
+    const treeEl = q(container, '[data-testid="file-tree"]');
+    treeEl.setAttribute("data-no-remount-probe", "1");
+    // 点击树行 docs 已同步把中栏带入 docs，直接对其中的文件重命名（同目录 rename）
+    await act(async () => {
+      q(container, '[data-testid="files-row-readme.md"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    await act(async () => {
+      typeValue(input, "docs/renamed.md");
+    });
+    const treeCallsBefore = calls.tree.length;
+    await act(async () => {
+      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.move).toEqual([{ from: "docs/readme.md", to: "docs/renamed.md" }]);
+    // IS-2 核心：展开目录行仍在 DOM 且保持展开
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    // 树容器未被重挂载：同一节点、测试标记仍在、仍挂在文档上
+    const treeElAfter = q(container, '[data-testid="file-tree"]');
+    expect(treeElAfter).toBe(treeEl);
+    expect(treeElAfter.getAttribute("data-no-remount-probe")).toBe("1");
+    expect(document.body.contains(treeEl)).toBe(true);
+    // 局部刷新口径：中栏列表重拉 docs + 树 refreshDirs(["docs"]) 各一次（快照后
+    // 恰好 +2，缺一不可——防误过：预操作的导航取数不能再计入）
+    expect(calls.tree.length).toBe(treeCallsBefore + 2);
+    expect(calls.tree.slice(-2)).toEqual(["docs", "docs"]);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("跨目录移动：树同时刷新源与目标父目录（展开态保留）", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const treeEl = q(container, '[data-testid="file-tree"]');
+    treeEl.setAttribute("data-no-remount-probe", "1");
+    // 点击树行已把中栏带入 docs：面包屑回根后再从根列表移动 alpha.txt
+    await act(async () => {
+      q(container, '[data-testid="files-breadcrumb-root"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-move"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    await act(async () => {
+      typeValue(input, "docs/alpha.txt");
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.move).toEqual([{ from: "alpha.txt", to: "docs/alpha.txt" }]);
+    // move 失效矩阵：refresh = [源父 ""，目标父 docs]（都已加载 → 都回源）+ evict = [源]；
+    // 外加中栏列表重拉 ""，共 +3 次
+    expect(calls.tree.slice(-3)).toEqual(["", "", "docs"]);
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("上传局部刷新目标目录：树上“在此上传”后只拉目标目录且不重挂载", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 点击树行已展开并加载 docs、把中栏带入 docs：面包屑回根，后续列表重拉落在 ""
+    await act(async () => {
+      q(container, '[data-testid="files-breadcrumb-root"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-upload-here"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(container, '[data-testid="files-upload-input"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [new File(["x"], "up.txt")], configurable: true });
+    const treeEl = q(container, '[data-testid="file-tree"]');
+    treeEl.setAttribute("data-no-remount-probe", "1");
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="files-upload-item-up.txt"]').getAttribute("data-status")).toBe("done");
+    // upload 失效矩阵：中栏列表重拉（当前目录 ""）+ 树只刷目标目录 docs
+    expect(calls.tree.slice(-2)).toEqual(["", "docs"]);
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("删除目录：树刷新父目录且被删目录收起（死亡子树不留展开态）", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    const treeEl = q(container, '[data-testid="file-tree"]');
+    treeEl.setAttribute("data-no-remount-probe", "1");
+    // 点击树行已把中栏带入 docs：面包屑回根，从根列表右键 docs 行删除（目录先拉子条目数）
+    await act(async () => {
+      q(container, '[data-testid="files-breadcrumb-root"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      q(container, '[data-testid="files-row-docs"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-delete"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const treeCallsBefore = calls.tree.length;
+    await act(async () => {
+      q(document, '[data-testid="files-delete-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.del).toEqual(["docs"]);
+    // delete 失效矩阵：中栏列表重拉 "" + 树 refresh=[""] 回源；docs 被 evict ——
+    // 行仍在（根列表回包带回）但收起，死亡目录不能留展开态
+    expect(calls.tree.slice(-2)).toEqual(["", ""]);
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("false");
+    // 删除也是写操作：树容器同样不重挂载
+    expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
+    expect(q(container, '[data-testid="file-tree"]').getAttribute("data-no-remount-probe")).toBe("1");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("工具栏刷新：树全量局部刷新（已加载目录集回源，展开态保留不重挂载）", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const treeEl = q(container, '[data-testid="file-tree"]');
+    treeEl.setAttribute("data-no-remount-probe", "1");
+    // 点击树行已把中栏带入 docs：面包屑回根，刷新时列表重拉落在 ""
+    await act(async () => {
+      q(container, '[data-testid="files-breadcrumb-root"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      q(container, '[data-testid="files-toolbar-refresh"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // refreshAll：中栏列表重拉 "" + 树对已加载目录集 {""，docs} 全部回源（保留展开）
+    expect(calls.tree.slice(-3)).toEqual(["", "", "docs"]);
+    expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
+    expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
+    // 总取数：挂载 2 + 展开导航 2（树 docs/列表 docs）+ 面包屑回根 1 + 刷新 3
+    expect(calls.tree.length).toBe(8);
     await act(async () => {
       root.unmount();
     });

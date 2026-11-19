@@ -22,6 +22,7 @@ import { apiErrorMessage } from "@/i18n/errors";
 import { useUiStore } from "@/stores/ui";
 import { useActiveProject } from "@/stores/sessions";
 import { FileTree } from "@/components/file-tree/file-tree";
+import { dirsAfterOp, useFileTreeController, type FsOpPlan } from "@/components/file-tree/file-tree-controller";
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
@@ -405,9 +406,14 @@ export function FilesPage() {
 
   const [mobilePane, setMobilePane] = useState<MobilePane>("list");
 
+  // 树控制器（files-ux-revamp 任务 3）：页面级唯一树数据源。写操作后经 dirsAfterOp
+  // 失效矩阵局部刷新（refresh 回源、evict 逐出，展开态保留），不再 key 重挂载。
+  // project 为空（无项目可用）时注入静默取数器抑制根加载（不发假请求）；project
+  // 就位后经控制器项目切换重置自然回源
+  const treeSilentFetch = useCallback((): Promise<never> => new Promise(() => {}), []);
+  const treeController = useFileTreeController(project ?? "", project ? undefined : { fetch: treeSilentFetch });
+
   // ---- 操作面（任务 6）：工具栏 + 右键菜单 + 对话框 + 上传队列 ----
-  // 树刷新版本：任意写操作成功后 +1，FileTree 以 key 重挂载自取（无命令式刷新口，简单一致）
-  const [treeVersion, setTreeVersion] = useState(0);
   const [menu, setMenu] = useState<ContextMenuTarget | null>(null);
   const [dialog, setDialog] = useState<OpDialog | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
@@ -455,7 +461,7 @@ export function FilesPage() {
       await api.fsDelete(project, deleteConfirm.path);
       if (selected === deleteConfirm.path) setSelected(null);
       setDeleteConfirm(null);
-      refetchAfterOp();
+      refetchAfterOp({ op: "delete", path: deleteConfirm.path });
     } catch (err) {
       if (err instanceof ApiError && err.code === "engine_busy") {
         pushGlobalError(t("files.confirm.engineBusy"));
@@ -479,7 +485,7 @@ export function FilesPage() {
         choice === "overwrite" ? { overwrite: true } : { conflict: "rename" },
       );
       setConflict(null);
-      refetchAfterOp();
+      refetchAfterOp({ op: "move", from: conflict.from, to: conflict.target });
     } catch (err) {
       pushGlobalError(apiErrorMessage(err, "files.op.moveFailed"));
     } finally {
@@ -492,11 +498,24 @@ export function FilesPage() {
     uploadConflictChoiceRef.current?.(choice);
   };
 
-  /** 写操作成功后统一收口：重取当前目录 + 树（不做乐观更新，计划口径） */
-  const refetchAfterOp = useCallback(() => {
+  /** 写操作成功后统一收口：重取当前目录（中栏列表）+ 树按失效矩阵局部刷新
+   * （refresh 集中已加载/展开目录回源、evict 集只逐出不回源；展开态保留，
+   * 不做乐观更新——计划口径） */
+  const refetchAfterOp = useCallback(
+    (plan: FsOpPlan) => {
+      if (project) loadDir(project, dir);
+      const { refresh, evict } = dirsAfterOp(plan);
+      treeController.refreshDirs(refresh, evict);
+    },
+    [project, dir, loadDir, treeController],
+  );
+
+  /** 工具栏刷新：中栏列表重取 + 树全量局部刷新（refreshAll = 已加载目录集回源，
+   * 保留展开态；替代旧的全量重挂载） */
+  const onToolbarRefresh = useCallback(() => {
     if (project) loadDir(project, dir);
-    setTreeVersion((v) => v + 1);
-  }, [project, dir, loadDir]);
+    treeController.refreshAll();
+  }, [project, dir, loadDir, treeController]);
 
   const openMenu = (e: ReactMouseEvent, path: string, isDir: boolean) => {
     e.preventDefault();
@@ -586,10 +605,11 @@ export function FilesPage() {
         }
       }
     }
-    refetchAfterOp();
+    refetchAfterOp({ op: "upload", dir: targetDir });
   };
 
-  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 为目标相对路径，跨目录合法） */
+  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 为目标相对路径，跨目录合法）；
+   * 成功后携操作计划局部刷新（create/mkdir 刷新父目录，move 刷新源/目标父目录） */
   const runDialog = async () => {
     if (!project || !dialog || dialogBusy) return;
     const target = dialog.value.trim();
@@ -597,15 +617,23 @@ export function FilesPage() {
     setDialogBusy(true);
     const kind = dialog.kind;
     try {
+      let plan: FsOpPlan;
       if (kind === "newFile") {
-        await api.fsCreateFile(project, joinRel(dir, target));
+        const path = joinRel(dir, target);
+        await api.fsCreateFile(project, path);
+        plan = { op: "create", path };
       } else if (kind === "newDir") {
-        await api.fsMkdir(project, joinRel(dir, target));
+        const path = joinRel(dir, target);
+        await api.fsMkdir(project, path);
+        plan = { op: "mkdir", path };
       } else if (dialog.from !== null) {
         await api.fsMove(project, dialog.from, target);
+        plan = { op: "move", from: dialog.from, to: target };
+      } else {
+        return;
       }
       setDialog(null);
-      refetchAfterOp();
+      refetchAfterOp(plan);
     } catch (err) {
       // move 409 target_exists → 三选弹窗（任务 7）；其余照旧 toast
       if (
@@ -810,7 +838,7 @@ export function FilesPage() {
   const treePane = (
     <div data-testid="files-tree-pane" className="flex min-h-0 flex-col overflow-y-auto" onContextMenu={onTreeContextMenu}>
       {project ? (
-        <FileTree key={treeVersion} project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} />
+        <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} controller={treeController} />
       ) : null}
     </div>
   );
@@ -827,7 +855,7 @@ export function FilesPage() {
         <Upload className="size-4" aria-hidden />
         {t("files.toolbar.upload")}
       </Button>
-      <Button variant="ghost" size="sm" data-testid="files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={refetchAfterOp}>
+      <Button variant="ghost" size="sm" data-testid="files-toolbar-refresh" aria-label={t("files.toolbar.refresh")} onClick={onToolbarRefresh}>
         <RefreshCw className="size-4" aria-hidden />
       </Button>
     </div>
