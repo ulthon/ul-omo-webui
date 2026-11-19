@@ -1,7 +1,7 @@
 // 懒加载目录树（todo 20）：展开目录时逐级拉取 GET /api/fs/tree（单层），文件行点击上抛选中。
 // 性能取舍：单目录条目渲染不做虚拟化——服务端单层分片天然限制单次渲染量，数百行 DOM
 // 直渲染无感知卡顿（QA 实测记录）；真实卡顿出现再考虑虚拟化。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   ChevronRight,
   File as FileIcon,
@@ -14,19 +14,12 @@ import {
   Package,
 } from "lucide-react";
 import { useT } from "@/i18n/i18n";
-import { api, type FsTreeEntry } from "@/lib/api";
-import { useUiStore } from "@/stores/ui";
-import { apiErrorMessage } from "@/i18n/errors";
+import { type FsTreeEntry } from "@/lib/api";
 import { imageMimeOf } from "./file-tree-logic";
+import { useFileTreeController, type FileTreeController, type FileTreeData } from "./file-tree-controller";
 
 export type TreeLoadState = "idle" | "loading" | "error";
 
-interface TreeData {
-  /** 目录路径（"" 为根）→ 子条目；null = 尚未加载 */
-  children: Map<string, FsTreeEntry[] | null>;
-  expanded: Set<string>;
-  loading: Set<string>;
-}
 
 function entryIcon(entry: FsTreeEntry, expanded: boolean, size: string) {
   const cls = `${size} shrink-0 text-muted-foreground`;
@@ -43,27 +36,45 @@ interface TreeRowProps {
   dirPath: string;
   entry: FsTreeEntry;
   depth: number;
-  data: TreeData;
+  data: FileTreeData;
   selectedPath: string | null;
+  /** reveal 定位高亮：命中该路径的行渲染瞬时高亮（纯视觉，不碰 aria-selected） */
+  highlightPath: string | null;
   onSelect: (path: string) => void;
   toggle: (dirPath: string, entry: FsTreeEntry) => void;
+  /** 行 DOM 注册表：reveal 滚动定位用（卸载/重渲染时以 null 注销） */
+  registerRow: (path: string, el: HTMLElement | null) => void;
   /** 可选（builtin-file-management 任务 2）：目录行被点击时上抛路径（文件管理页左栏
    * 同步中栏列表用）；既有消费方（composer @引用、添加项目弹窗）不传，行为不变 */
   onDirectoryOpen?: (path: string) => void;
 }
 
-function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle, onDirectoryOpen }: TreeRowProps) {
+function TreeRow({
+  dirPath,
+  entry,
+  depth,
+  data,
+  selectedPath,
+  highlightPath,
+  onSelect,
+  toggle,
+  onDirectoryOpen,
+  registerRow,
+}: TreeRowProps) {
   const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
   const isDir = entry.type === "directory";
   const expanded = data.expanded.has(path);
   const loading = data.loading.has(path);
   const children = data.children.get(path);
   const selected = selectedPath === path;
+  const flash = highlightPath === path;
 
   return (
     <div>
       <button
         type="button"
+        ref={(el) => registerRow(path, el)}
+        data-flash={flash || undefined}
         data-testid={`tree-row-${path}`}
         aria-expanded={isDir ? expanded : undefined}
         aria-selected={selected || undefined}
@@ -77,7 +88,7 @@ function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle, 
         }}
         className={`flex h-11 w-full items-center gap-1 rounded-lg px-1.5 text-left text-sm transition-colors hover:bg-muted ${
           selected ? "bg-muted text-foreground" : ""
-        }`}
+        } ${flash ? "ring-1 ring-ring" : ""}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
         {isDir ? (
@@ -103,9 +114,11 @@ function TreeRow({ dirPath, entry, depth, data, selectedPath, onSelect, toggle, 
             depth={depth + 1}
             data={data}
             selectedPath={selectedPath}
+            highlightPath={highlightPath}
             onSelect={onSelect}
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
+            registerRow={registerRow}
           />
         ))}
     </div>
@@ -117,76 +130,63 @@ export function FileTree({
   selectedPath,
   onSelect,
   onDirectoryOpen,
+  controller,
 }: {
   project: string;
   selectedPath: string | null;
   onSelect: (path: string) => void;
   /** 可选（builtin-file-management 任务 2）：目录行点击时上抛路径，见 TreeRowProps 注释 */
   onDirectoryOpen?: (path: string) => void;
+  /** 可选（files-ux-revamp 任务 2）：外部受控的 headless controller；缺省时组件内部自控，
+   * 行为与既有消费方（file-picker 等）完全一致 */
+  controller?: FileTreeController;
 }) {
-  const pushGlobalError = useUiStore((s) => s.pushGlobalError);
   const t = useT();
-  // Map/Set 装在同一个对象里整体替换，保证浅比较触发重渲染；根目录（""）挂载即在加载中
-  const [data, setData] = useState<TreeData>(() => ({
-    children: new Map(),
-    expanded: new Set(),
-    loading: new Set([""]),
-  }));
+  // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）
+  const fallback = useFileTreeController(project);
+  const ctl = controller ?? fallback;
+  const { data, toggleDir, revealTarget, highlightPath } = ctl;
 
-  // 发起目录请求（loading 置位由调用方负责：挂载在初始 state、展开在事件处理器）
-  const fetchDir = useCallback(
-    (path: string) => {
-      api
-        .fsTree(project, path || undefined)
-        .then((res) => {
-          setData((prev) => {
-            const children = new Map(prev.children);
-            const loading = new Set(prev.loading);
-            children.set(path, res.entries);
-            loading.delete(path);
-            return { ...prev, children, loading };
-          });
-        })
-        .catch((err: unknown) => {
-          setData((prev) => {
-            const expanded = new Set(prev.expanded);
-            const loading = new Set(prev.loading);
-            expanded.delete(path);
-            loading.delete(path);
-            return { ...prev, expanded, loading };
-          });
-          pushGlobalError(apiErrorMessage(err, "fileTree.tree.loadFailed"));
-        });
-    },
-    [project, pushGlobalError],
-  );
+  // 行 DOM 注册表：reveal 命中行滚动到视口中央
+  const rowsRef = useRef(new Map<string, HTMLElement>());
+  const registerRow = useCallback((path: string, el: HTMLElement | null) => {
+    if (el) rowsRef.current.set(path, el);
+    else rowsRef.current.delete(path);
+  }, []);
 
+  // reveal 定位：目标行渲染进 DOM 后（双 rAF 让位于绘制）滚动到中央；
+  // 行仍未出现则重试一次，再不出现静默放弃——revealed 语义由 controller 拥有，渲染层不回滚
   useEffect(() => {
-    fetchDir("");
-  }, [fetchDir]);
+    if (revealTarget == null) return;
+    let cancelled = false;
+    const doubleRaf = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+    void (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await doubleRaf();
+        if (cancelled) return;
+        const el = rowsRef.current.get(revealTarget);
+        if (el) {
+          el.scrollIntoView({ block: "center" });
+          return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [revealTarget]);
 
+  // 点击统一走 controller.toggleDir：内部经 dataRef 读最新树（无闭包时序依赖）
   const toggle = useCallback(
     (dirPath: string, entry: FsTreeEntry) => {
-      const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
-      if (data.expanded.has(path)) {
-        setData((prev) => {
-          const expanded = new Set(prev.expanded);
-          expanded.delete(path);
-          return { ...prev, expanded };
-        });
-        return;
-      }
-      setData((prev) => {
-        const expanded = new Set(prev.expanded);
-        const loading = new Set(prev.loading);
-        expanded.add(path);
-        if (prev.children.get(path) == null && !prev.loading.has(path)) loading.add(path);
-        return { ...prev, expanded, loading };
-      });
-      // 懒加载：展开且无缓存时拉取该层
-      if (data.children.get(path) == null && !data.loading.has(path)) fetchDir(path);
+      toggleDir(dirPath ? `${dirPath}/${entry.name}` : entry.name);
     },
-    [data.expanded, data.children, data.loading, fetchDir],
+    [toggleDir],
   );
 
   const root = data.children.get("");
@@ -209,9 +209,11 @@ export function FileTree({
             depth={0}
             data={data}
             selectedPath={selectedPath}
+            highlightPath={highlightPath}
             onSelect={onSelect}
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
+            registerRow={registerRow}
           />
         ))
       )}
