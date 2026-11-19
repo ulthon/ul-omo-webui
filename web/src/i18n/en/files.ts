@@ -127,6 +127,13 @@ export const files = {
   narrow: {
     backAria: "Back to list",
   },
+  // Toolbar fuzzy quick-open (files-ux-revamp task 7 / IS-3)
+  quickOpen: {
+    openAria: "Quick open a file",
+    placeholder: "Filter paths…",
+    noMatch: "No matching files",
+    scanning: "Scanning project files…",
+  },
   op: {
     createFileFailed: "Failed to create file",
     createDirFailed: "Failed to create folder",

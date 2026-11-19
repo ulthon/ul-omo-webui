@@ -27,6 +27,7 @@ import { invalidateGitStatusCache } from "@/components/file-tree/preview-git-bad
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { NarrowStack } from "@/components/files/narrow-stack";
+import { QuickOpen } from "@/components/files/quick-open";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import {
@@ -827,6 +828,19 @@ export function FilesPage() {
     setSelected(path);
     if (path !== null) setOpenSeq((n) => n + 1);
   };
+  // 快速打开（files-ux-revamp 任务 7 / IS-3）：与行点击同一条打开路径——
+  // setDir(父目录) + setSelected + openSeq 自增（重按同一文件也推入窄栈预览）+
+  // 树 reveal 逐段导航定位；编辑中且脏时先过守卫
+  const onQuickOpenPath = (path: string) => {
+    if (editingPath && !guardDirty()) return;
+    setEditingPath(null);
+    const i = path.lastIndexOf("/");
+    setDir(i >= 0 ? path.slice(0, i) : "");
+    setSelected(path);
+    setOpenSeq((n) => n + 1);
+    void treeController.reveal(path);
+  };
+
   const onListRowClick = (entry: FsTreeEntry) => {
     const path = joinRel(dir, entry.name);
     if (entry.type === "directory") {
@@ -894,6 +908,7 @@ export function FilesPage() {
       >
         {showHiddenDirs ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
       </Button>
+      <QuickOpen project={project ?? ""} testId="files-quick-open" onOpen={onQuickOpenPath} />
     </div>
   );
 

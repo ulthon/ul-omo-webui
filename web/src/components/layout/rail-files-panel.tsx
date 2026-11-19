@@ -35,6 +35,7 @@ import { invalidateGitStatusCache } from "@/components/file-tree/preview-git-bad
 import { FilePreview } from "@/components/file-tree/file-preview";
 import { FileEditor } from "@/components/files/file-editor";
 import { NarrowStack } from "@/components/files/narrow-stack";
+import { QuickOpen } from "@/components/files/quick-open";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog } from "@/components/files/fs-dialogs";
 import {
@@ -508,6 +509,18 @@ export function RailFilesPanel() {
     setOpenSeq((n) => n + 1);
   };
 
+  // 快速打开（files-ux-revamp 任务 7 / IS-3）：同 files.tsx——父目录入列 + 选中 +
+  // openSeq 自增（重按同一文件也推入窄栈预览）+ 树 reveal 定位
+  const onQuickOpenPath = (path: string) => {
+    if (editingPath && !guardDirty()) return;
+    setEditingPath(null);
+    const i = path.lastIndexOf("/");
+    setDir(i >= 0 ? path.slice(0, i) : "");
+    setSelected(path);
+    setOpenSeq((n) => n + 1);
+    void treeController.reveal(path);
+  };
+
   const onTreeDirectoryOpen = (path: string) => {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
@@ -720,6 +733,7 @@ export function RailFilesPanel() {
       >
         {showHiddenDirs ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
       </Button>
+      <QuickOpen project={project ?? ""} testId="rail-files-quick-open" onOpen={onQuickOpenPath} />
     </div>
   );
 
