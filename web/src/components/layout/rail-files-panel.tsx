@@ -10,7 +10,7 @@
 // 复用件（只读 import）：file-tree/file-preview、files/file-editor、files/fs-dialogs、
 // lib/api.ts fs 方法；不改右栏拖宽机制，不加服务端路由。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, DragEvent as ReactDragEvent } from "react";
 import type { HTMLAttributes } from "react";
 import {
   ArrowRightLeft,
@@ -39,6 +39,7 @@ import { QuickOpen } from "@/components/files/quick-open";
 import { editBlockReasonKey, isEditableFile } from "@/components/files/edit-eligibility";
 import { DeleteConfirmDialog, FsConflictDialog, FsMoveDialog } from "@/components/files/fs-dialogs";
 import { InlineRenameInput } from "@/components/files/inline-rename";
+import { extractDropFiles, useDragDropUpload } from "@/components/files/drop-upload";
 import {
   RAIL_FILES_LIST_DEFAULT,
   RAIL_FILES_LIST_MAX,
@@ -395,7 +396,7 @@ export function RailFilesPanel() {
     fileInputRef.current?.click();
   };
 
-  const onFilesPicked = async (fileList: FileList | null) => {
+  const onFilesPicked = async (fileList: FileList | File[] | null) => {
     // 先快照 FileList 再清空 input.value（同一活对象，顺序不可反）
     const proj = project;
     const files = Array.from(fileList ?? []);
@@ -474,6 +475,18 @@ export function RailFilesPanel() {
   };
 
   /** 对话框提交（仅新建类）：新建走当前目录拼接；成功后携操作计划局部刷新 */
+  /** 定向上传（拖放用）：临时改写 uploadDirRef 走既有队列（进度/409 三选/刷新全复用），
+   * 结束后恢复原值，不影响后续文件选择器目标 */
+  const beginUpload = (targetDir: string, files: File[]) => {
+    const prev = uploadDirRef.current;
+    uploadDirRef.current = targetDir;
+    void onFilesPicked(files).finally(() => {
+      uploadDirRef.current = prev;
+    });
+  };
+
+  /** 对话框提交：新建走当前目录拼接；重命名/移动交 fsMove（to 支持跨目录）；
+   * 成功后携操作计划局部刷新（create/mkdir 刷新父目录，move 刷新源/目标父目录） */
   const runDialog = async () => {
     if (!project || !dialog || dialogBusy) return;
     const name = dialog.value.trim();
@@ -552,6 +565,24 @@ export function RailFilesPanel() {
     return () => ro.disconnect();
   }, []);
   const layout = filesRailLayout(containerWidth);
+  // 桌面拖放（files-ux-revamp 任务 10 / IS-7）：stacked 窄档（触屏语义）不启用；
+  // 目录行 drop 会 stopPropagation，容器收尾不再执行，由 onTreeRowDrop 内自行 hideOverlay
+  const drop = useDragDropUpload({
+    enabled: layout !== "stacked" && project !== null,
+    onDropFiles: (files, dirOverride) => beginUpload(dirOverride ?? dir, files),
+    onDirUnsupported: () => showToast(t("files.drop.dirUnsupported"), "info"),
+  });
+  const onTreeRowDrop = (path: string, e: ReactDragEvent<HTMLButtonElement>) => {
+    const { files, hasDirEntry } = extractDropFiles(e.dataTransfer);
+    if (hasDirEntry) {
+      showToast(t("files.drop.dirUnsupported"), "info");
+      drop.hideOverlay();
+      return;
+    }
+    drop.hideOverlay();
+    if (files.length === 0) return;
+    beginUpload(path, files);
+  };
 
   // 宽档横向列宽拖拽记忆（rail-files-resize）：仿 pages/files.tsx 手柄模式——state +
   // ref 镜像，pointer capture 拖拽实时钳制，pointerup 落记忆，双击重置默认；树手柄
@@ -809,7 +840,7 @@ export function RailFilesPanel() {
   ) : null;
 
   const treeContent = (
-    <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} controller={treeController} />
+    <FileTree project={project} selectedPath={selected} onSelect={onSelectTreePath} onDirectoryOpen={onTreeDirectoryOpen} showHiddenDirs={showHiddenDirs} onRowDrop={onTreeRowDrop} controller={treeController} />
   );
   const listContent = (
     <>
@@ -975,7 +1006,7 @@ export function RailFilesPanel() {
   );
 
   return (
-    <div ref={rootRef} data-testid="rail-files-panel" data-layout={layout} className="flex h-full min-h-0 flex-col">
+    <div ref={rootRef} data-testid="rail-files-panel" data-layout={layout} className="flex h-full min-h-0 flex-col" {...drop.dragHandlers}>
       {layout === "stacked" ? (
         project ? (
           // 窄档单列推入式（files-ux-revamp 任务 5）：list -> preview -> edit 三层由
@@ -1075,6 +1106,18 @@ export function RailFilesPanel() {
         className="hidden"
         onChange={(e) => void onFilesPicked(e.target.files)}
       />
+      {/* 拖放覆盖层（任务 10）：仅提示用，pointer-events-none 让 drop 穿透到目录行 */}
+      {drop.showOverlay ? (
+        <div
+          data-testid="rail-files-dropzone"
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70"
+        >
+          <div className="rounded-lg border border-dashed border-ring bg-background/90 px-6 py-4 text-sm text-foreground shadow-lg">
+            {t("files.drop.overlayHint", { dir: dir || "/" })}
+          </div>
+        </div>
+      ) : null}
       {dialogNode}
       {moveDialog && project ? (
         <FsMoveDialog

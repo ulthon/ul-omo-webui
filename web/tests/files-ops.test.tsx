@@ -17,6 +17,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { FilesPage } = await import("@/pages/files");
 const { useUiStore } = await import("@/stores/ui");
+const { zh } = await import("@/i18n/zh");
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_XHR = globalThis.XMLHttpRequest;
@@ -710,6 +711,173 @@ describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + �
     expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
     // 总取数：挂载 2 + 展开导航 2（树 docs/列表 docs）+ 面包屑回根 1 + 刷新 3
     expect(calls.tree.length).toBe(8);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+});
+
+// —— 拖放上传（files-ux-revamp 任务 10 / IS-7）：合成 DragEvent + DataTransfer 垫片 ——
+// happy-dom 无原生 DataTransfer，用形状垫片：types/files/items(webkitGetAsEntry)。
+// DragEvent 构造器不可携 dataTransfer，统一 MouseEvent + defineProperty 注入。
+
+function dropDataTransfer(files: File[], dirEntry = false): DataTransfer {
+  return {
+    types: ["Files"],
+    files: files as unknown as FileList,
+    items: dirEntry
+      ? [{ kind: "directory", webkitGetAsEntry: () => ({ kind: "directory" }) }]
+      : [],
+    dropEffect: "copy",
+  } as unknown as DataTransfer;
+}
+
+function nonFileDataTransfer(): DataTransfer {
+  return { types: ["text/plain"], files: [], items: [] } as unknown as DataTransfer;
+}
+
+function dragEvent(type: string, dt: DataTransfer): MouseEvent {
+  const ev = new MouseEvent(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: dt });
+  return ev;
+}
+
+describe("files-ux-revamp 任务 10：桌面拖放上传", () => {
+  test("dragenter 文件拖入显示覆盖层，非文件拖入不显示；dragleave 隐藏", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const list = q(container, '[data-testid="files-list-pane"]');
+    // 非文件类型：不启用覆盖层
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", nonFileDataTransfer()));
+    });
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    // 文件拖入：覆盖层出现且文案指向当前目录（根）
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    const dz = q(document, '[data-testid="files-dropzone"]');
+    expect(dz.textContent).toContain("/");
+    // 子元素闪烁型 dragleave 由计数守卫吸收；末条真正离开才收尾
+    await act(async () => {
+      dz.dispatchEvent(dragEvent("dragleave", dropDataTransfer([])));
+    });
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragleave", dropDataTransfer([])));
+    });
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("drop 到列表区域：走既有队列上传到当前目录，覆盖层收起", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const list = q(container, '[data-testid="files-list-pane"]');
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    await act(async () => {
+      list.dispatchEvent(dragEvent("drop", dropDataTransfer([new File(["x"], "u1.txt")])));
+    });
+    expect(fakeXhrLog).toHaveLength(1);
+    // dirPath="" → path 参数为空
+    expect(fakeXhrLog[0]!.url).toContain("path=&");
+    expect(q(document, '[data-testid="files-upload-item-u1.txt"]').getAttribute("data-status")).toBe("done");
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("drop 到目录树行：dragover 高亮，上传定向该目录", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const row = q(container, '[data-testid="tree-row-docs"]');
+    expect(row.getAttribute("data-droppable")).toBe("true");
+    await act(async () => {
+      container.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    await act(async () => {
+      row.dispatchEvent(dragEvent("dragover", dropDataTransfer([])));
+    });
+    expect(row.getAttribute("data-dragover")).toBe("true");
+    expect(row.className).toContain("ring-ring");
+    await act(async () => {
+      row.dispatchEvent(dragEvent("drop", dropDataTransfer([new File(["x"], "u2.txt")])));
+    });
+    // 高亮清除；上传落到 docs 目录；行内 drop 阻断冒泡，容器不再按当前目录重传
+    expect(row.getAttribute("data-dragover")).toBeNull();
+    expect(fakeXhrLog).toHaveLength(1);
+    expect(fakeXhrLog[0]!.url).toContain("path=docs");
+    expect(q(document, '[data-testid="files-upload-item-u2.txt"]').getAttribute("data-status")).toBe("done");
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("包含目录条目的 drop：整批忽略 + dirUnsupported toast", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const list = q(container, '[data-testid="files-list-pane"]');
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    await act(async () => {
+      list.dispatchEvent(
+        dragEvent("drop", dropDataTransfer([new File(["x"], "u3.txt")], true)),
+      );
+    });
+    expect(fakeXhrLog).toHaveLength(0);
+    expect(useUiStore.getState().toasts.some((x) => x.text === zh.files.drop.dirUnsupported)).toBe(true);
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("空文件列表 drop：无上传无崩溃，覆盖层收起", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const list = q(container, '[data-testid="files-list-pane"]');
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    await act(async () => {
+      list.dispatchEvent(dragEvent("drop", dropDataTransfer([])));
+    });
+    expect(fakeXhrLog).toHaveLength(0);
+    expect(document.querySelector('[data-testid="files-dropzone"]')).toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("dragleave 后 drop 不上传；重复 drop 也不重复上传", async () => {
+    stubXHR();
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    const list = q(container, '[data-testid="files-list-pane"]');
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragenter", dropDataTransfer([])));
+    });
+    await act(async () => {
+      list.dispatchEvent(dragEvent("dragleave", dropDataTransfer([])));
+    });
+    const file = new File(["x"], "u4.txt");
+    await act(async () => {
+      list.dispatchEvent(dragEvent("drop", dropDataTransfer([file])));
+    });
+    await act(async () => {
+      list.dispatchEvent(dragEvent("drop", dropDataTransfer([file])));
+    });
+    expect(fakeXhrLog).toHaveLength(0);
     await act(async () => {
       root.unmount();
     });
