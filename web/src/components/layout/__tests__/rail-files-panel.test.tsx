@@ -269,21 +269,23 @@ describe("rail files panel", () => {
     expect(q("[data-testid='files-delete-dialog']")).not.toBeNull();
   });
 
-  test("重命名：行内重命名钮打开移动/重命名对话框并预填当前路径", async () => {
+  test("行内重命名：行内重命名钮使行变输入框并预填原名", async () => {
     await renderPanelDirectly();
     await clickButton("rail-files-rename-README.md");
-    const input = q("[data-testid='rail-files-dialog-input']") as HTMLInputElement | null;
+    const input = q("[data-testid='rail-files-rename-input-README.md']") as HTMLInputElement | null;
     expect(input?.value).toBe("README.md");
   });
 
-  test("写操作后失效 git 徽标缓存：重命名成功后 invalidateGitStatusCache 以当前项目调用（files-ux-revamp 任务 5）", async () => {
+  test("写操作后失效 git 徽标缓存：行内重命名提交（Enter）后 invalidateGitStatusCache 以当前项目调用（files-ux-revamp 任务 5）", async () => {
     await renderPanelDirectly();
     await clickButton("rail-files-rename-README.md");
-    const input = q("[data-testid='rail-files-dialog-input']") as HTMLInputElement;
+    const input = q("[data-testid='rail-files-rename-input-README.md']") as HTMLInputElement;
     await act(async () => {
       typeValue(input, "RENAMED.md");
     });
-    await clickButton("rail-files-dialog-confirm");
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
     expect(apiState.calls.some((c) => c.method === "fsMove")).toBe(true);
     // 写操作成功收口里失效当前项目的 git 角标缓存（未接线则空数组，本断言变红）
     expect(gitInvalidateCalls).toContainEqual(["/repo/alpha"]);

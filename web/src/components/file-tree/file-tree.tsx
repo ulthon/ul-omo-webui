@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useT } from "@/i18n/i18n";
 import { type FsTreeEntry } from "@/lib/api";
+import { InlineRenameInput } from "@/components/files/inline-rename";
 import { TREE_HIDDEN_DIRS, imageMimeOf } from "./file-tree-logic";
 import { useFileTreeController, type FileTreeController, type FileTreeData, type TreeFetcher } from "./file-tree-controller";
 
@@ -58,6 +59,16 @@ interface TreeRowProps {
   /** 是否渲染噪音目录（files-ux-revamp 任务 6）：false 时不渲染名字命中
    * TREE_HIDDEN_DIRS 的目录行（任意深度）；缓存仍存原始条目，切换即时生效零请求 */
   showHiddenDirs?: boolean;
+  /** 行内重命名（files-ux-revamp 任务 9 / IS-6）：命中该路径的行渲染内联输入框
+   * （预填原名，Enter 提交 / Esc 与失焦取消）；缺省 null 无行进入编辑态（既有
+   * 消费方 file-picker 等不传，行为不变） */
+  renamingPath?: string | null;
+  /** 行内重命名提交（宿主校验后的合法新名，由宿主发 fsMove）与取消回调 */
+  onRenameCommit?: (path: string, newName: string) => void;
+  onRenameCancel?: () => void;
+  /** 目录-only 选择模式（files-ux-revamp 任务 9 / FsMoveDialog）：文件行渲染为
+   * 禁用（保留结构），目录行点击行为不变 */
+  directoriesOnly?: boolean;
 }
 
 function TreeRow({
@@ -71,6 +82,10 @@ function TreeRow({
   toggle,
   onDirectoryOpen,
   showHiddenDirs,
+  renamingPath,
+  onRenameCommit,
+  onRenameCancel,
+  directoriesOnly,
   registerRow,
 }: TreeRowProps) {
   const path = dirPath ? `${dirPath}/${entry.name}` : entry.name;
@@ -80,9 +95,24 @@ function TreeRow({
   const children = data.children.get(path);
   const selected = selectedPath === path;
   const flash = highlightPath === path;
+  const renaming = renamingPath === path;
 
   return (
     <div>
+      {renaming ? (
+        <div
+          className="pr-1.5"
+          style={{ paddingLeft: `${depth * 14 + 6}px` }}
+        >
+          <InlineRenameInput
+            initial={entry.name}
+            testId={`tree-rename-input-${path}`}
+            className="h-9 w-full min-w-0 rounded-lg border border-input bg-transparent px-1.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+            onCommit={(name) => onRenameCommit?.(path, name)}
+            onCancel={() => onRenameCancel?.()}
+          />
+        </div>
+      ) : (
       <button
         type="button"
         ref={(el) => registerRow(path, el)}
@@ -90,6 +120,8 @@ function TreeRow({
         data-testid={`tree-row-${path}`}
         aria-expanded={isDir ? expanded : undefined}
         aria-selected={selected || undefined}
+        disabled={directoriesOnly && !isDir}
+        aria-disabled={directoriesOnly && !isDir || undefined}
         onClick={() => {
           if (isDir) {
             toggle(dirPath, entry);
@@ -100,7 +132,7 @@ function TreeRow({
         }}
         className={`flex h-11 w-full items-center gap-1 rounded-lg px-1.5 text-left text-sm transition-colors hover:bg-muted ${
           selected ? "bg-muted text-foreground" : ""
-        } ${flash ? "ring-1 ring-ring" : ""}`}
+        } ${flash ? "ring-1 ring-ring" : ""} ${directoriesOnly && !isDir ? "cursor-not-allowed opacity-50" : ""}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
         {isDir ? (
@@ -117,6 +149,7 @@ function TreeRow({
         {entryIcon(entry, expanded, "size-4")}
         <span className="min-w-0 truncate">{entry.name}</span>
       </button>
+      )}
       {isDir && expanded &&
         (children ?? [])
           .filter((child) => showHiddenDirs || child.type !== "directory" || !TREE_HIDDEN_DIRS.has(child.name))
@@ -133,6 +166,10 @@ function TreeRow({
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
             showHiddenDirs={showHiddenDirs}
+            renamingPath={renamingPath}
+            onRenameCommit={onRenameCommit}
+            onRenameCancel={onRenameCancel}
+            directoriesOnly={directoriesOnly}
             registerRow={registerRow}
           />
         ))}
@@ -147,6 +184,10 @@ export function FileTree({
   onDirectoryOpen,
   controller,
   showHiddenDirs = false,
+  renamingPath = null,
+  onRenameCommit,
+  onRenameCancel,
+  directoriesOnly = false,
 }: {
   project: string;
   selectedPath: string | null;
@@ -158,6 +199,12 @@ export function FileTree({
   controller?: FileTreeController;
   /** files-ux-revamp 任务 6：false（默认）时渲染层隐藏任意深度的噪音目录，见 TreeRowProps 注释 */
   showHiddenDirs?: boolean;
+  /** files-ux-revamp 任务 9 / IS-6：行内重命名与目录-only 选择，见 TreeRowProps 注释；
+   * 全部可选，既有消费方（file-picker、composer @引用）不传零行为变化 */
+  renamingPath?: string | null;
+  onRenameCommit?: (path: string, newName: string) => void;
+  onRenameCancel?: () => void;
+  directoriesOnly?: boolean;
 }) {
   const t = useT();
   // 自控模式：内部 hook（挂载/项目切换的根加载、gen 竞态防护都在 controller 内）；
@@ -235,6 +282,10 @@ export function FileTree({
             toggle={toggle}
             onDirectoryOpen={onDirectoryOpen}
             showHiddenDirs={showHiddenDirs}
+            renamingPath={renamingPath}
+            onRenameCommit={onRenameCommit}
+            onRenameCancel={onRenameCancel}
+            directoriesOnly={directoriesOnly}
             registerRow={registerRow}
           />
         ))

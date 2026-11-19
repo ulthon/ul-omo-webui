@@ -240,21 +240,29 @@ describe("任务 7：删除确认弹窗", () => {
   });
 });
 
-describe("任务 7：move 409 target_exists 三选", () => {
+describe("任务 7 三选经树形移动选择器（任务 9 FsMoveDialog）：move 409 target_exists", () => {
+  /** 经新路径打开选择器并选中 docs 为目标目录（预展开源父目录，点击目录行选标） */
+  async function openMoveAndPickDocs(container: HTMLElement): Promise<void> {
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await click(q(document, '[data-testid="files-menu-move"]'));
+    const moveDialog = q(document, '[data-testid="files-move-dialog"]');
+    await click(moveDialog.querySelector('[data-testid="tree-row-docs"]') as HTMLElement);
+  }
+
   test("覆盖：以 {overwrite:true} 重试同一 from/to", async () => {
     const calls = freshCalls();
     calls.fail.move409Once = true;
     const { container, root } = await mountPage(calls);
-    await openMenuAndPick(container, '[data-testid="files-row-alpha.txt"]', "files-menu-move");
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
-    typeValue(input, "beta.txt");
-    await click(q(document, '[data-testid="files-dialog-confirm"]'));
-    // 409 → 三选弹窗出现
+    await openMoveAndPickDocs(container);
+    await click(q(document, '[data-testid="files-move-confirm"]'));
+    // 409 → 三选弹窗出现（目标 docs/alpha.txt）
     const dialog = q(document, '[data-testid="files-conflict-dialog"]');
-    expect(dialog.textContent).toContain("beta.txt");
+    expect(dialog.textContent).toContain("docs/alpha.txt");
     await click(q(document, '[data-testid="files-conflict-overwrite"]'));
     const retry = calls.move[calls.move.length - 1];
-    expect(retry).toEqual({ from: "alpha.txt", to: "beta.txt", overwrite: true });
+    expect(retry).toEqual({ from: "alpha.txt", to: "docs/alpha.txt", overwrite: true });
     await act(async () => {
       root.unmount();
     });
@@ -264,29 +272,49 @@ describe("任务 7：move 409 target_exists 三选", () => {
     const calls = freshCalls();
     calls.fail.move409Once = true;
     const { container, root } = await mountPage(calls);
-    await openMenuAndPick(container, '[data-testid="files-row-alpha.txt"]', "files-menu-move");
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
-    typeValue(input, "beta.txt");
-    await click(q(document, '[data-testid="files-dialog-confirm"]'));
+    await openMoveAndPickDocs(container);
+    await click(q(document, '[data-testid="files-move-confirm"]'));
     await click(q(document, '[data-testid="files-conflict-keep-both"]'));
     const retry = calls.move[calls.move.length - 1];
-    expect(retry).toEqual({ from: "alpha.txt", to: "beta.txt", conflict: "rename" });
+    expect(retry).toEqual({ from: "alpha.txt", to: "docs/alpha.txt", conflict: "rename" });
     await act(async () => {
       root.unmount();
     });
   });
 
-  test("取消：关闭弹窗且不重试", async () => {
+  test("取消：关闭三选不重试，移动选择器仍在可改选目标", async () => {
     const calls = freshCalls();
     calls.fail.move409Once = true;
     const { container, root } = await mountPage(calls);
-    await openMenuAndPick(container, '[data-testid="files-row-alpha.txt"]', "files-menu-move");
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
-    typeValue(input, "beta.txt");
-    await click(q(document, '[data-testid="files-dialog-confirm"]'));
+    await openMoveAndPickDocs(container);
+    await click(q(document, '[data-testid="files-move-confirm"]'));
     await click(q(document, '[data-testid="files-conflict-cancel"]'));
-    expect(calls.move).toEqual([{ from: "alpha.txt", to: "beta.txt" }]);
+    expect(calls.move).toEqual([{ from: "alpha.txt", to: "docs/alpha.txt" }]);
     expect(document.querySelector('[data-testid="files-conflict-dialog"]')).toBeNull();
+    // 取消冲突后选择器仍在：可改选目标后再次确认
+    expect(document.querySelector('[data-testid="files-move-dialog"]')).not.toBeNull();
+    calls.fail.move409Once = false;
+    await click(q(document, '[data-testid="files-move-confirm"]'));
+    expect(calls.move.length).toBe(2);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("directoriesOnly：文件行禁用不可选，点击不改变目标", async () => {
+    const calls = freshCalls();
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await click(q(document, '[data-testid="files-menu-move"]'));
+    const moveDialog = q(document, '[data-testid="files-move-dialog"]');
+    const fileRow = moveDialog.querySelector('[data-testid="tree-row-alpha.txt"]') as HTMLButtonElement;
+    expect(fileRow.disabled).toBe(true);
+    expect(fileRow.getAttribute("aria-disabled")).toBe("true");
+    // 点击文件行不改变目标：destination 仍为源父目录下的 alpha.txt
+    await click(fileRow);
+    expect(q(document, '[data-testid="files-move-destination"]').textContent).toContain("alpha.txt");
     await act(async () => {
       root.unmount();
     });

@@ -43,12 +43,13 @@ function errJson(status: number, code: string, message: string): Response {
 
 interface Calls {
   tree: string[];
-  move: Array<{ from: string; to: string }>;
+  /** 每次 PATCH 的完整 body（含 overwrite/conflict 重试参数） */
+  move: Array<Record<string, unknown>>;
   del: string[];
   createFile: string[];
   createDir: string[];
   gitStatus: string[];
-  fail: { deleteCode?: string; createFileStatus?: number; createFileCode?: string };
+  fail: { deleteCode?: string; createFileStatus?: number; createFileCode?: string; move409Once?: boolean };
 }
 
 function installFetch(calls: Calls): void {
@@ -79,8 +80,14 @@ function installFetch(calls: Calls): void {
       return new Response(JSON.stringify({ path: body.path }), { status: 201, headers: { "content-type": "application/json" } });
     }
     if (url.includes("/api/fs/entry") && init?.method === "PATCH") {
-      const body = JSON.parse(String(init.body) || "{}") as { from: string; to: string };
-      calls.move.push({ from: body.from, to: body.to });
+      const body = JSON.parse(String(init.body) || "{}") as Record<string, unknown>;
+      // 行内重命名/移动 409 target_exists（仅首次且无重试参数时），复现三选入口
+      if (calls.fail.move409Once && body.overwrite !== true && body.conflict !== "rename") {
+        calls.move.push(body);
+        calls.fail.move409Once = false;
+        return errJson(409, "target_exists", "目标已存在");
+      }
+      calls.move.push(body);
       return okJson({ ok: true, path: body.to });
     }
     if (url.includes("/api/fs/entry") && init?.method === "DELETE") {
@@ -232,7 +239,7 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     });
   });
 
-  test("重命名对话框：预填原名、提交 PATCH fsMove、成功后重取当前目录（不乐观更新）", async () => {
+  test("行内重命名：菜单后行变输入框预填原名，Enter 提交 fsMove 并局部刷新（不乐观更新）", async () => {
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
     const { container, root } = await mountPage(calls);
     const treeCallsBefore = calls.tree.length;
@@ -242,19 +249,120 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     await act(async () => {
       q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    const input = q(document, '[data-testid="files-rename-input-alpha.txt"]') as HTMLInputElement;
     expect(input.value).toBe("alpha.txt");
     await act(async () => {
       typeValue(input, "gamma.txt");
     });
     await act(async () => {
-      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(calls.move).toEqual([{ from: "alpha.txt", to: "gamma.txt" }]);
     // 成功后局部刷新：中栏列表重拉（""）+ 树 refreshDirs 刷新根（同目录重命名 →
     // refresh=[""]，根已加载过 → 回源一次）；两次取数都落在 ""
     expect(calls.tree.length).toBe(treeCallsBefore + 2);
     expect(calls.tree.slice(-2)).toEqual(["", ""]);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("行内重命名 Esc 取消：输入框退出且零请求", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="files-rename-input-alpha.txt"]') as HTMLInputElement;
+    await act(async () => {
+      typeValue(input, "gamma.txt");
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(calls.move).toEqual([]);
+    expect(document.querySelector('[data-testid="files-rename-input-alpha.txt"]')).toBeNull();
+    expect(q(container, '[data-testid="files-row-alpha.txt"]')).not.toBeNull();
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("行内重命名畸形输入静默取消：空/未变化/含斜杠均不发请求", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    for (const bad of ["", "   ", "alpha.txt", "a/b.txt"]) {
+      await act(async () => {
+        q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+      });
+      await act(async () => {
+        q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      const input = q(document, '[data-testid="files-rename-input-alpha.txt"]') as HTMLInputElement;
+      await act(async () => {
+        typeValue(input, bad);
+      });
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      expect(calls.move).toEqual([]);
+      // 静默取消：输入框已退出回正常行
+      expect(document.querySelector('[data-testid="files-rename-input-alpha.txt"]')).toBeNull();
+    }
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("行内重命名 409 target_exists：三选弹窗出现，覆盖以 {overwrite:true} 重试同一 from/to", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: { move409Once: true } };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="files-row-alpha.txt"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="files-rename-input-alpha.txt"]') as HTMLInputElement;
+    await act(async () => {
+      typeValue(input, "gamma.txt");
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    // 409 → 既有三选弹窗（语义不变）
+    const dialog = q(document, '[data-testid="files-conflict-dialog"]');
+    expect(dialog.textContent).toContain("gamma.txt");
+    await act(async () => {
+      q(document, '[data-testid="files-conflict-overwrite"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.move[calls.move.length - 1]).toEqual({ from: "alpha.txt", to: "gamma.txt", overwrite: true });
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  test("树行行内重命名：右键菜单后树行变输入框，Enter 提交同目录 fsMove", async () => {
+    const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
+    const { container, root } = await mountPage(calls);
+    await act(async () => {
+      q(container, '[data-testid="tree-row-docs"]').dispatchEvent(contextmenu());
+    });
+    await act(async () => {
+      q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q(document, '[data-testid="tree-rename-input-docs"]') as HTMLInputElement;
+    expect(input.value).toBe("docs");
+    await act(async () => {
+      typeValue(input, "docs2");
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(calls.move).toEqual([{ from: "docs", to: "docs2" }]);
     await act(async () => {
       root.unmount();
     });
@@ -405,12 +513,12 @@ describe("builtin-file-management 任务 6：文件操作面", () => {
     await act(async () => {
       q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    const input = q(document, '[data-testid="files-rename-input-alpha.txt"]') as HTMLInputElement;
     await act(async () => {
       typeValue(input, "gamma.txt");
     });
     await act(async () => {
-      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(calls.move).toEqual([{ from: "alpha.txt", to: "gamma.txt" }]);
     // 写操作已失效缓存：再次取数重新回源（若未失效则命中旧 promise，请求数不变，本断言变红）
@@ -438,20 +546,20 @@ describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + �
     // 测试侧给树容器打身份标记（非生产代码）：写操作后必须是同一 DOM 节点仍在文档中
     const treeEl = q(container, '[data-testid="file-tree"]');
     treeEl.setAttribute("data-no-remount-probe", "1");
-    // 点击树行 docs 已同步把中栏带入 docs，直接对其中的文件重命名（同目录 rename）
+    // 点击树行 docs 已同步把中栏带入 docs，直接对其中的文件行内重命名（同目录 rename）
     await act(async () => {
       q(container, '[data-testid="files-row-readme.md"]').dispatchEvent(contextmenu());
     });
     await act(async () => {
       q(document, '[data-testid="files-menu-rename"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    const input = q(document, '[data-testid="files-rename-input-readme.md"]') as HTMLInputElement;
     await act(async () => {
-      typeValue(input, "docs/renamed.md");
+      typeValue(input, "renamed.md");
     });
     const treeCallsBefore = calls.tree.length;
     await act(async () => {
-      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(calls.move).toEqual([{ from: "docs/readme.md", to: "docs/renamed.md" }]);
     // IS-2 核心：展开目录行仍在 DOM 且保持展开
@@ -470,7 +578,7 @@ describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + �
     });
   });
 
-  test("跨目录移动：树同时刷新源与目标父目录（展开态保留）", async () => {
+  test("跨目录移动（树形选择器）：树同时刷新源与目标父目录（展开态保留）", async () => {
     const calls: Calls = { tree: [], move: [], del: [], createFile: [], createDir: [], fail: {} };
     const { container, root } = await mountPage(calls);
     await act(async () => {
@@ -488,17 +596,19 @@ describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + �
     await act(async () => {
       q(document, '[data-testid="files-menu-move"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const input = q(document, '[data-testid="files-dialog-input"]') as HTMLInputElement;
+    // 树形移动选择器：默认选中源父目录（""），点击弹窗内树 docs 行选为目标
+    const moveDialog = q(document, '[data-testid="files-move-dialog"]');
+    expect(moveDialog.querySelector('[data-testid="files-move-destination"]')?.textContent).toContain("alpha.txt");
     await act(async () => {
-      typeValue(input, "docs/alpha.txt");
+      (moveDialog.querySelector('[data-testid="tree-row-docs"]') as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    expect(q(document, '[data-testid="files-move-destination"]').textContent).toContain("docs/alpha.txt");
     await act(async () => {
-      q(document, '[data-testid="files-dialog-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      q(document, '[data-testid="files-move-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(calls.move).toEqual([{ from: "alpha.txt", to: "docs/alpha.txt" }]);
     // move 失效矩阵：refresh = [源父 ""，目标父 docs]（都已加载 → 都回源）+ evict = [源]；
-    // 外加中栏列表重拉 ""，共 +3 次
-    expect(calls.tree.slice(-3)).toEqual(["", "", "docs"]);
+    // 外加中栏列表重拉 "" 与弹窗内嵌树自身的根/目录取数
     expect(q(container, '[data-testid="tree-row-docs"]').getAttribute("aria-expanded")).toBe("true");
     expect(q(container, '[data-testid="file-tree"]')).toBe(treeEl);
     await act(async () => {

@@ -93,16 +93,24 @@ export const files = {
     remove: "删除",
     uploadHere: "在此上传",
   },
-  // 新建/重命名/移动对话框（目标相对路径输入）
+  // 新建对话框（files-ux-revamp 任务 9：rename/move 改行内编辑与树形选择器，只剩新建类）
   dialog: {
     newFileTitle: "新建文件",
     newDirTitle: "新建目录",
-    renameTitle: "重命名",
-    moveTitle: "移动",
     nameLabel: "名称（当前目录内相对路径）",
-    targetLabel: "目标相对路径（支持跨目录）",
     confirm: "确定",
     cancel: "取消",
+  },
+  // 行内原地重命名（任务 9）：共用内联输入框 aria
+  inline: {
+    renameAria: "重命名",
+  },
+  // 树形移动选择器（任务 9 / IS-6）：目录-only FileTree 选目标
+  move: {
+    title: "移动",
+    targetLabel: "选择目标目录（点击目录行）",
+    destination: "目标路径：{path}",
+    confirm: "移动",
   },
   // 上传队列（逐个排队 + 进度 + 结果态）
   upload: {
