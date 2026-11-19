@@ -3,7 +3,8 @@
 // / settings-page.test.tsx：@happy-dom 全局注册 + createRoot/act 真实点击，api 层走
 // recording fetch。覆盖计划验收：项目下拉渲染已注册项且默认取最近活跃会话项目；
 // 列表列头排序（目录恒优先）；切项目后树/列表刷新（stale_state 对抗项）；目录进入与
-// 文件预览面板挂载；项目接口失败/目录加载失败错误态不崩溃（malformed 对抗项）。
+// 文件预览面板挂载；项目接口失败/目录加载失败错误态不崩溃（malformed 对抗项）；
+// files-ux-revamp F3 修复回归（快速打开首开 reveal 竞态）。
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
@@ -593,5 +594,61 @@ describe("files-ux-revamp 任务 8：目录导航树自动揭示", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+});
+
+describe("files-ux-revamp F3 修复回归：快速打开首开 reveal 竞态", () => {
+  // 夹具加深一层：web/tests/file-tree-logic.test.ts（三层，与 F3 复现同构），
+  // 快速打开该文件时 dir 从 "" 跳到 "web/tests"，触发 dir→reveal effect 竞态窗口
+  function seedDeepFixture(): () => void {
+    const origRoot = TREE_FIXTURE[""];
+    TREE_FIXTURE[""] = [...origRoot, { name: "web", type: "directory", size: null, mtime: 1700000000000 }];
+    TREE_FIXTURE.web = [{ name: "tests", type: "directory", size: null, mtime: 1700000000000 }];
+    TREE_FIXTURE["web/tests"] = [{ name: "file-tree-logic.test.ts", type: "file", size: 3, mtime: 1700000000000 }];
+    return () => {
+      TREE_FIXTURE[""] = origRoot;
+      delete TREE_FIXTURE.web;
+      delete TREE_FIXTURE["web/tests"];
+    };
+  }
+
+  test("干净项目首次快速打开：文件行即被定位（祖先链展开、data-flash 命中文件行）", async () => {
+    const restore = seedDeepFixture();
+    try {
+      const calls: Calls = { tree: [], file: [], failTree: false, failProjects: false };
+      const { container, root } = await mountPage(calls);
+      // 打开快速输入框并查询（首次展开即全量路径扫描，扫描完成出匹配）
+      await act(async () => {
+        (q(container, '[data-testid="files-quick-open"]') as HTMLElement).click();
+      });
+      const input = q(container, '[data-testid="files-quick-open-input"]') as HTMLInputElement;
+      await act(async () => {
+        // 受控输入经 native setter 赋值触发 React onChange
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(input, "ftl");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await waitFor(() => container.querySelector('[data-testid="files-quick-open-match-0"]') !== null, "matches rendered");
+      await act(async () => {
+        (q(container, '[data-testid="files-quick-open-match-0"]') as HTMLElement).click();
+      });
+      // 竞态回归断言：首开即完成文件定位。修复前 reveal(file) 被 dir 同步 reveal 的
+      // 后发纪元作废，文件行永不出现（第二次重试才出，真机 3/3 复现）
+      const fileRow = () => container.querySelector('[data-testid="tree-row-web/tests/file-tree-logic.test.ts"]');
+      await waitFor(() => fileRow() !== null, "file row revealed on first quick-open");
+      expect(q(container, '[data-testid="tree-row-web"]').getAttribute("aria-expanded")).toBe("true");
+      expect(q(container, '[data-testid="tree-row-web/tests"]').getAttribute("aria-expanded")).toBe("true");
+      expect(fileRow()!.getAttribute("aria-selected")).toBe("true");
+      // 定位高亮落在文件行（修复前落在被作废链路的目录行）且全树唯一
+      expect(fileRow()!.getAttribute("data-flash")).toBe("true");
+      const flashed = [...container.querySelectorAll("[data-flash='true']")];
+      expect(flashed.length).toBe(1);
+      expect(flashed[0].getAttribute("data-testid")).toBe("tree-row-web/tests/file-tree-logic.test.ts");
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      restore();
+    }
   });
 });

@@ -275,10 +275,18 @@ export function RailFilesPanel() {
   const treeController = useFileTreeController(project ?? "", project ? undefined : { fetch: treeSilentFetch });
   // 目录导航 → 树自动揭示（files-ux-revamp 任务 8 / IS-5）：dir 单向同步到树。reveal
   // 幂等：列表导航、面包屑回跳、树点击（onDirectoryOpen→setDir）全部流经同一 effect，
-  // 已展开/已缓存的祖先为 no-op，只有滚动定位+高亮发生；reveal 结果不回写 dir（单向）
+  // 已展开/已缓存的祖先为 no-op，只有滚动定位+高亮发生；reveal 结果不回写 dir（单向）。
+  // 快速打开例外（F3 item 2 首开竞态）：它自带 reveal(file)，逐段导航已覆盖父目录链，
+  // 若 effect 再同步 reveal(父目录)，后发纪元会作废在途的 reveal(file)，干净项目首次
+  // 快速打开因此丢文件定位——由 onQuickOpenPath 置位、本 effect 消费一次跳过
   const revealTree = treeController.reveal;
+  const skipDirRevealRef = useRef(false);
   useEffect(() => {
     if (!project) return;
+    if (skipDirRevealRef.current) {
+      skipDirRevealRef.current = false;
+      return;
+    }
     void revealTree(dir);
   }, [dir, project, revealTree]);
   const [dialog, setDialog] = useState<OpDialog | null>(null);
@@ -530,7 +538,12 @@ export function RailFilesPanel() {
     if (editingPath && !guardDirty()) return;
     setEditingPath(null);
     const i = path.lastIndexOf("/");
-    setDir(i >= 0 ? path.slice(0, i) : "");
+    const parent = i >= 0 ? path.slice(0, i) : "";
+    if (parent !== dir) {
+      // 本次 dir 变更抑制同步 reveal（见上方 effect 注释）：reveal(file) 独占导航
+      skipDirRevealRef.current = true;
+      setDir(parent);
+    }
     setSelected(path);
     setOpenSeq((n) => n + 1);
     void treeController.reveal(path);
