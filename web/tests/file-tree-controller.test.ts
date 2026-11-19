@@ -179,7 +179,7 @@ describe("文件树纯转移函数", () => {
     expect(e.loading.has("dead")).toBe(false);
   });
 
-  test("treeInvalidate 子树逐出：子/孙缓存、展开项与 loading 一并移除", () => {
+  test("treeInvalidate 子树逐出：子/孙缓存与 loading 一并移除；expanded 保留", () => {
     const d: logic.FileTreeData = {
       children: new Map([
         ["", [dir("a"), dir("x")]],
@@ -192,12 +192,12 @@ describe("文件树纯转移函数", () => {
     };
     const out = logic.treeInvalidate(d, ["a"]);
     expect([...out.children.keys()].sort()).toEqual(["", "x"]);
-    expect(out.expanded.size).toBe(0);
     expect(out.loading.size).toBe(0);
+    expect(out.expanded).toBe(d.expanded); // 引用不变：expanded 不参与逐出（IS-2）
     expect(out).not.toBe(d);
     // 原状态不被就地修改（不可变约定）
     expect(d.children.has("a")).toBe(true);
-    expect(d.expanded.has("a")).toBe(true);
+    expect(d.loading.has("a/b/c")).toBe(true);
   });
 
   test("treeInvalidate：无命中返回原引用；空串按规则仅移除根条目", () => {
@@ -400,7 +400,7 @@ describe("useFileTreeController（注入 fetcher）", () => {
     });
     expect(f.pending.map((r) => r.key)).toEqual(["docs", "docs"]);
     expect(h.ctrl().data.children.has("docs")).toBe(false); // 缓存已逐出
-    expect(h.ctrl().data.expanded.has("docs")).toBe(false); // 刷新走 treeInvalidate：展开收回
+    expect(h.ctrl().data.expanded.has("docs")).toBe(true); // 局部刷新保留展开态（IS-2）
     expect(h.ctrl().data.loading.has("docs")).toBe(true);
     const before = h.ctrl().data;
     await act(async () => {
@@ -413,6 +413,63 @@ describe("useFileTreeController（注入 fetcher）", () => {
     });
     expect(h.ctrl().data.children.get("docs")).toEqual([file("新响应.txt")]);
     expect(h.ctrl().data.loading.has("docs")).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test("局部刷新保留展开态：展开中的目录刷新后仍在展开且子项重载（IS-2）", async () => {
+    const f = makeDeferredFetcher();
+    const h = await mountController("p", f.fetcher);
+    await act(async () => {
+      f.settle("", [dir("docs")]);
+    });
+    await act(async () => {
+      h.ctrl().toggleDir("docs");
+    });
+    await act(async () => {
+      f.settle("docs", [file("a.txt")]);
+    });
+    await act(async () => {
+      h.ctrl().refreshDirs(["docs"], []);
+    });
+    expect(h.ctrl().data.expanded.has("docs")).toBe(true); // 刷新不收起
+    expect(h.ctrl().data.loading.has("docs")).toBe(true); // 立即回源
+    await act(async () => {
+      f.settle("docs", [file("b.txt"), file("c.txt")]);
+    });
+    expect(h.ctrl().data.children.get("docs")).toEqual([file("b.txt"), file("c.txt")]);
+    expect(h.ctrl().data.expanded.has("docs")).toBe(true); // 重载完成仍在展开
+    expect(h.ctrl().data.loading.has("docs")).toBe(false);
+  });
+
+  test("纯驱逐（refresh 空）：evict 子树收起与逐出、不回源、根不受牵连", async () => {
+    const f = makeDeferredFetcher();
+    const errors = spyGlobalErrors();
+    const h = await mountController("p", f.fetcher);
+    await act(async () => {
+      f.settle("", [dir("docs")]);
+    });
+    await act(async () => {
+      h.ctrl().toggleDir("docs");
+    });
+    await act(async () => {
+      f.settle("docs", [dir("子目录")]);
+    });
+    await act(async () => {
+      h.ctrl().toggleDir("docs/子目录");
+    });
+    await act(async () => {
+      f.settle("docs/子目录", []);
+    });
+    const callsBefore = f.calls.length;
+    await act(async () => {
+      h.ctrl().refreshDirs([], ["docs"]);
+    });
+    expect(f.calls.length).toBe(callsBefore); // evict 集绝不回源
+    expect(h.ctrl().data.children.has("docs")).toBe(false);
+    expect(h.ctrl().data.children.has("docs/子目录")).toBe(false);
+    expect(h.ctrl().data.expanded.has("docs")).toBe(false); // 死亡子树收起
+    expect(h.ctrl().data.expanded.has("docs/子目录")).toBe(false);
+    expect(h.ctrl().data.children.has("")).toBe(true); // 根缓存不受牵连
     expect(errors).toEqual([]);
   });
 

@@ -10,10 +10,11 @@
 //   被静默丢弃，避免旧数据覆盖新状态；项目切换整体自增 resetRef 代纪元，跨项目迟到
 //   响应同样拦截（gen 快照与 reset 快照任一不符即丢）。
 // - refresh / evict 双集合分离（失效矩阵 dirsAfterOp）：refresh = 操作后父级列表变动、
-//   需要立即可见新内容的目录；evict = 已不存在的路径（删除/移动源）。evict 只做子树
-//   缓存逐出（children/expanded/loading 一并移除）、绝不回源——对旧路径重取必 404，
-//   会产生假错误 toast；refresh 路径也走 treeInvalidate，随后仅对"曾加载过或当前展开"
-//   的目录立即回源，其余只丢缓存（下次展开时懒加载）。
+//   需要立即可见新内容的目录；evict = 已不存在的路径（删除/移动源）。两者都逐出子树
+//   缓存（children/loading）且 evict 绝不回源——对旧路径重取必 404，会产生假错误 toast。
+//   expanded 只对 evict 子树收起（死亡目录不能留在树里）；refresh 路径保留展开并立即
+//   回源（"曾加载过或（逐出前）展开"的目录），这是写操作后树保留展开态（IS-2）的核心；
+//   其余只丢缓存（下次展开时懒加载）。
 // - reveal 用代纪元令牌的状态机：后发 reveal 自增纪元使在途 reveal 逐步作废（superseded）；
 //   每步先验项目快照（project_changed 更具体，优先于 superseded 报告），再验纪元；
 //   中途失败不回滚已展开的祖先目录（保留用户可见的导航进度）。
@@ -71,26 +72,21 @@ export function treeLoadFailed(data: FileTreeData, path: string): FileTreeData {
 
 /**
  * 子树逐出（失效矩阵的执行原语）：paths 中每个 p 及其整棵子树（键 p 与 p+"/" 前缀）
- * 从 children/expanded/loading 一并移除。与 treeLoadFailed 的"收回重试形态"不同：
- * 逐出是"该路径已不存在"的事实落库，不保留行、不回源。空串按同一规则退化为
- * "移除根条目与以 / 开头的键"（树键不含首斜杠，即仅根条目本身，不清后代缓存）。
+ * 从 children/loading 一并移除；expanded 不动——局部刷新必须保留展开态（IS-2），
+ * 驱逐子树的收起由 refreshDirs 用 treeCollapseExpanded 单独处理。
+ * 与 treeLoadFailed 的"收回重试形态"不同：逐出是"该路径已不存在"的事实落库，
+ * 不保留行、不回源。空串按同一规则退化为"移除根条目与以 / 开头的键"（树键不含首
+ * 斜杠，即仅根条目本身，不清后代缓存）。
  */
 export function treeInvalidate(data: FileTreeData, paths: string[]): FileTreeData {
   let touched = false;
   const children = new Map(data.children);
-  const expanded = new Set(data.expanded);
   const loading = new Set(data.loading);
   for (const p of paths) {
     const prefix = `${p}/`;
     for (const key of children.keys()) {
       if (key === p || key.startsWith(prefix)) {
         children.delete(key);
-        touched = true;
-      }
-    }
-    for (const key of expanded) {
-      if (key === p || key.startsWith(prefix)) {
-        expanded.delete(key);
         touched = true;
       }
     }
@@ -101,7 +97,27 @@ export function treeInvalidate(data: FileTreeData, paths: string[]): FileTreeDat
       }
     }
   }
-  return touched ? { ...data, children, expanded, loading } : data;
+  return touched ? { ...data, children, loading } : data;
+}
+
+/**
+ * 驱逐子树的展开收起（refreshDirs 专用）：paths 及其子孙的 expanded 条目移除。
+ * 与 treeInvalidate 分离的原因：局部刷新必须保留展开态（IS-2），只有已死亡的子树
+ * （删除/移动源）才需要收起，避免死目录留在树里；该函数不改 children/loading。
+ */
+function treeCollapseExpanded(data: FileTreeData, paths: Set<string>): FileTreeData {
+  let touched = false;
+  const expanded = new Set(data.expanded);
+  for (const p of paths) {
+    const prefix = `${p}/`;
+    for (const key of expanded) {
+      if (key === p || key.startsWith(prefix)) {
+        expanded.delete(key);
+        touched = true;
+      }
+    }
+  }
+  return touched ? { ...data, expanded } : data;
 }
 
 /** 置 loading 不动 expanded（刷新回源/续载用；与 treeExpand 的展开侧语义分离） */
@@ -292,7 +308,8 @@ export function useFileTreeController(
         inflightRef.current.delete(p); // 旧在途 promise 作废（其回包经 stale 判定丢弃）
       }
       for (const p of evictSet) loadedEverRef.current.delete(p);
-      apply((d) => treeInvalidate(d, all));
+      // 缓存逐出（children/loading）+ 仅 evict 子树收起展开（刷新路径保留展开态，IS-2）
+      apply((d) => treeCollapseExpanded(treeInvalidate(d, all), evictSet));
       // 只回源 refresh 集中"曾加载过或（逐出前）展开中"的目录；evict 集永不回源
       const toRefetch = refresh.filter(
         (p) => !evictSet.has(p) && (snapshotEver.has(p) || snapshotExpanded.has(p)),
