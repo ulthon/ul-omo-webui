@@ -41,7 +41,7 @@ const GIT_ENTRIES = [
 let gitStatusCalls: string[] = [];
 
 function installFetch(opts: { gitStatusStatus?: number } = {}): void {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/git/status")) {
       gitStatusCalls.push(url);

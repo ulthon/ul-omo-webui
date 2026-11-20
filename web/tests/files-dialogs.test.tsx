@@ -172,12 +172,6 @@ function toastTexts(): string[] {
   return useUiStore.getState().globalNotifs.map((t) => t.text);
 }
 
-/** 受控 input 赋值：React value tracker 会吞同值 input 事件，需走原型 setter */
-function typeValue(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  setter.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
 
 async function openMenuAndPick(container: HTMLElement, rowSel: string, menuItemId: string): Promise<void> {
   await act(async () => {
