@@ -665,4 +665,74 @@ describe("useFileTreeController（注入 fetcher）", () => {
       vi.useRealTimers();
     }
   });
+
+  // F3b ADV-1 回归：定位状态与项目绑定，项目偏离挂载值后写入方须携新项目落章，
+  // 否则读侧派生归零永不恢复（旧实现切项目后 reveal 永久失效，切回挂载项目才恢复）
+  test("F3b ADV-1：项目切换后新项目 reveal 定位与高亮永久生效，旧定位不残留", async () => {
+    const { fetcher } = makeFixtureFetcher({
+      "": [dir("web")],
+      web: [dir("tests"), file("app.ts")],
+      "web/tests": [file("a.test.ts")],
+    });
+    const h = await mountController("/proj-a", fetcher);
+    await act(async () => {
+      await h.ctrl().reveal("web/app.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/app.ts");
+    expect(h.ctrl().highlightPath).toBe("web/app.ts");
+
+    // 切到 B：旧项目定位/高亮立即清空（无残留）
+    await h.setProject("/proj-b");
+    expect(h.ctrl().revealTarget).toBeNull();
+    expect(h.ctrl().highlightPath).toBeNull();
+
+    // B 项目的 reveal 永久生效（旧实现此处 revealTarget/highlightPath 恒 null）
+    await act(async () => {
+      await h.ctrl().reveal("web/tests/a.test.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/tests/a.test.ts");
+    expect(h.ctrl().highlightPath).toBe("web/tests/a.test.ts");
+    await act(async () => {
+      await h.ctrl().reveal("web/app.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/app.ts");
+    expect(h.ctrl().highlightPath).toBe("web/app.ts");
+  });
+
+  test("F3b ADV-1：挂载时项目未知，项目就位后 reveal 生效", async () => {
+    const { fetcher } = makeFixtureFetcher({
+      "": [dir("web")],
+      web: [file("app.ts")],
+    });
+    const h = await mountController("", fetcher);
+    await h.setProject("/proj-b");
+    await act(async () => {
+      await h.ctrl().reveal("web/app.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/app.ts");
+    expect(h.ctrl().highlightPath).toBe("web/app.ts");
+  });
+
+  test("F3b ADV-1：切走再切回，旧定位不复活", async () => {
+    const { fetcher } = makeFixtureFetcher({
+      "": [dir("web")],
+      web: [file("app.ts")],
+    });
+    const h = await mountController("/proj-a", fetcher);
+    await act(async () => {
+      await h.ctrl().reveal("web/app.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/app.ts");
+    await h.setProject("/proj-b");
+    await h.setProject("/proj-a");
+    // 旧定位不复活：项目切换即作废，不随切回恢复（旧实现会复活陈旧定位）
+    expect(h.ctrl().revealTarget).toBeNull();
+    expect(h.ctrl().highlightPath).toBeNull();
+    // 切回后的新 reveal 正常生效
+    await act(async () => {
+      await h.ctrl().reveal("web/app.ts");
+    });
+    expect(h.ctrl().revealTarget).toBe("web/app.ts");
+    expect(h.ctrl().highlightPath).toBe("web/app.ts");
+  });
 });

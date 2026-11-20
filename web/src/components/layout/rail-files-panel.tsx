@@ -754,7 +754,7 @@ export function RailFilesPanel() {
   };
 
   const toolbar = (
-    <div data-testid="rail-files-toolbar" className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+    <div data-testid="rail-files-toolbar" className="flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1.5">
       <Button variant="outline" size="sm" data-testid="rail-files-toolbar-new-file" onClick={() => setDialog({ kind: "newFile", value: "" })}>
         {t("files.toolbar.newFile")}
       </Button>
