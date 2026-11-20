@@ -333,22 +333,23 @@ export function SessionList() {
     await attempt(true);
   };
 
-  // 分组排序（C16 docs08-r3 todo 9）：派生活跃项目组置顶规则不变；其余项目按档位排序——
-  // activity=现状（各组最新 modified 降序）、added=createdAt 升序（存量行同值
-  // 保持稳定序，W3 任务 11）、manual=kv 手动序（未列项目按 activity 规则追加）。
+  // 分组排序（2026-11-20 口径修订）：三档纯排序，不再有"当前项目组恒置顶"特权——
+  // 排序所见即所得，当前组靠"当前"徽标与默认展开识别。activity=各组最新 modified
+  // 降序、added=createdAt 升序（存量行同值保持稳定序）、manual=kv 手动序（未列项目
+  // 按 activity 规则追加）。
   // A2 客户端防御过滤（双保险第二道）：hidden 分组在此剔除——服务端聚合已滤
   // hidden 项目会话（byProject 无该键），但空分组渲染自 ui store projects，
   // 不滤则隐藏项目的空分组头仍会出现。
   const sortedProjects = useMemo(
     () =>
-      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, activeProject, {
+      groupOrder(projects.filter((p) => !p.hidden).map((p) => p.projectPath), byProject, {
         mode: projectSort,
         manualOrder: projectOrder,
         meta: Object.fromEntries(
           projects.map((p) => [p.projectPath, { createdAt: p.createdAt ?? null }]),
         ),
       }),
-    [projects, byProject, activeProject, projectSort, projectOrder],
+    [projects, byProject, projectSort, projectOrder],
   );
 
   /** 隐藏/恢复项目（A2 docs08-r3 任务 10）：软标记 PUT 后 refetch projects（hidden 驱动
@@ -393,7 +394,7 @@ export function SessionList() {
     }
   }, [t]);
 
-  /** 把某项目移到当前展示序的目标位（派生活跃项目组置顶规则不动——kv 序仅作用于其余组） */
+  /** 把某项目移到当前展示序的目标位（2026-11-20：无置顶特权组，全部组参与手动序） */
   const moveProjectTo = useCallback(
     (srcPath: string, targetPath: string) => {
       const order = useUiStore.getState().projectOrder;
@@ -401,7 +402,7 @@ export function SessionList() {
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(srcPath);
       const to = base.indexOf(targetPath);
@@ -411,17 +412,18 @@ export function SessionList() {
       next.splice(to, 0, srcPath);
       void persistManualOrder(next);
     },
-    [activeProject, sortedProjects, persistManualOrder],
+    [sortedProjects, persistManualOrder],
   );
 
-  /** 上移/下移一位（manual 档；入口在分组头唯一 DropdownMenu——手机与桌面同菜单） */
+  /** 上移/下移一位（manual 档；入口在分组头唯一 DropdownMenu——手机与桌面同菜单）。
+   * 展示序已无置顶特权组，index 判定与移动基准同一序，可点即可生效 */
   const moveProjectByStep = useCallback(
     (projectPath: string, delta: -1 | 1) => {
       const order = useUiStore.getState().projectOrder;
       const registered = useUiStore.getState().projects.map((p) => p.projectPath);
       const base = [
         ...order.filter((p) => registered.includes(p)),
-        ...sortedProjects.filter((p) => p !== activeProject && !order.includes(p)),
+        ...sortedProjects.filter((p) => !order.includes(p)),
       ].filter((p, i, arr) => arr.indexOf(p) === i);
       const from = base.indexOf(projectPath);
       const to = from + delta;
@@ -431,7 +433,7 @@ export function SessionList() {
       next.splice(to, 0, projectPath);
       void persistManualOrder(next);
     },
-    [activeProject, sortedProjects, persistManualOrder],
+    [sortedProjects, persistManualOrder],
   );
 
   // 桌面拖拽状态（HTML5 DnD，仅 manual 档分组头）：dragger 存被拖路径，drop 目标经

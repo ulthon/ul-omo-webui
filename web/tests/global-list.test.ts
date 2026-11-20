@@ -1,5 +1,5 @@
 // 全局平铺列表纯逻辑单测（todo 10）：
-// - groupOrder 分组排序（当前项目组最前，其余按各组最新 modified 降序）
+// - groupOrder 分组排序（2026-11-20 修订：三档纯排序，无当前项目组置顶特权）
 // - recentTop 最近 8 条选取（跨项目按 modified 降序，置顶自然参与）
 // - 折叠记忆（readCollapsed/writeCollapsed 回环 + isGroupExpanded 优先级）
 // （跨项目点击判定已随会话根架构 W2 任务 6 内联进 sessions store 的 select，
@@ -69,7 +69,7 @@ afterEach(() => {
 });
 
 describe("groupOrder 分组排序", () => {
-  test("当前项目组最前，其余按各组最新 modified 降序", () => {
+  test("activity（缺省）：纯按各组最新 modified 降序，无当前组置顶特权", () => {
     const byProject = {
       "/a": [makeSession("a1", "/a", "2026-01-05T00:00:00.000Z")],
       "/b": [
@@ -78,16 +78,10 @@ describe("groupOrder 分组排序", () => {
       ],
       "/c": [makeSession("c1", "/c", "2026-01-07T00:00:00.000Z")],
     };
-    // 组取最新 modified：a=01-05、b=01-09、c=01-07 → b > c > a
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/a")).toEqual(["/a", "/b", "/c"]);
-    // 当前切到 c：c 最前，其余仍按最新 modified 降序
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/c")).toEqual(["/c", "/b", "/a"]);
-  });
-
-  test("当前项目不在注册集时不产生幽灵组；无数据项目按空 modified 排尾", () => {
-    const byProject = { "/b": [makeSession("b1", "/b", "2026-01-09T00:00:00.000Z")] };
-    expect(groupOrder(["/a", "/b"], byProject, "/ghost")).toEqual(["/b", "/a"]);
-    expect(groupOrder(["/a", "/b"], byProject, null)).toEqual(["/b", "/a"]);
+    // 组取最新 modified：a=01-05、b=01-09、c=01-07 → b > c > a（与传入序无关）
+    expect(groupOrder(["/a", "/b", "/c"], byProject)).toEqual(["/b", "/c", "/a"]);
+    // 无数据项目按空 modified 排尾，不产生幽灵组
+    expect(groupOrder(["/a", "/b"], { "/b": [makeSession("b1", "/b", "2026-01-09T00:00:00.000Z")] })).toEqual(["/b", "/a"]);
   });
 
   test("latestModified：空组为空串（恒排尾）", () => {
@@ -103,9 +97,9 @@ describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
     "/c": [makeSession("c1", "/c", "2026-01-07T00:00:00.000Z")],
   };
 
-  test("activity 档（缺省）与无参数调用同结果：当前置顶 + 最新 modified 降序", () => {
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/a")).toEqual(["/a", "/b", "/c"]);
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/a", { mode: "activity" })).toEqual(["/a", "/b", "/c"]);
+  test("activity 档（缺省）与无参数调用同结果：最新 modified 降序", () => {
+    expect(groupOrder(["/a", "/b", "/c"], byProject)).toEqual(["/b", "/c", "/a"]);
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "activity" })).toEqual(["/b", "/c", "/a"]);
   });
 
   test("added 档：按 createdAt 升序；存量行（createdAt 同值）保持传入稳定序", () => {
@@ -115,9 +109,9 @@ describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
       "/b": { createdAt: "2026-03-03T00:00:00.000Z" },
       "/c": { createdAt: "2026-03-01T00:00:00.000Z" },
     };
-    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
-    // 当前项目组置顶规则不动
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/b", { mode: "added", meta })).toEqual(["/b", "/c", "/a"]);
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
+    // 无置顶特权：排序与哪个组是当前组无关，所见即所得
+    expect(groupOrder(["/b", "/c", "/a"], byProject, { mode: "added", meta })).toEqual(["/c", "/a", "/b"]);
     // 存量行：createdAt 全部同为迁移时刻 → 保持传入稳定序（W3 任务 11：打开链路退化序
     // 已退役，createdAt 是唯一排序依据）
     const legacy = {
@@ -125,32 +119,32 @@ describe("groupOrder 排序三档（C16 docs08-r3 todo 9）", () => {
       "/y": { createdAt: "2026-03-01T00:00:00.000Z" },
       "/z": { createdAt: "2026-03-01T00:00:00.000Z" },
     };
-    expect(groupOrder(["/x", "/y", "/z"], byProject, null, { mode: "added", meta: legacy })).toEqual(["/x", "/y", "/z"]);
+    expect(groupOrder(["/x", "/y", "/z"], byProject, { mode: "added", meta: legacy })).toEqual(["/x", "/y", "/z"]);
     // meta 缺失 defensively 当空值走稳定序（不崩）
-    expect(groupOrder(["/a", "/b"], byProject, null, { mode: "added" })).toEqual(["/a", "/b"]);
+    expect(groupOrder(["/a", "/b"], byProject, { mode: "added" })).toEqual(["/a", "/b"]);
   });
 
-  test("manual 档：kv 序生效，未列项目按 activity 规则追加，未知/重复路径忽略不崩", () => {
+  test("manual 档：kv 序生效（任意组含活跃组均可排任意位），未列项目按 activity 规则追加，未知/重复路径忽略不崩", () => {
     // kv 序 [c, a]：b 未列 → 按 modified 降序追加到尾
-    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual", manualOrder: ["/c", "/a"] })).toEqual([
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "manual", manualOrder: ["/c", "/a"] })).toEqual([
       "/c",
       "/a",
       "/b",
     ]);
     // 未知路径（已注销）与重复项忽略
-    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual", manualOrder: ["/ghost", "/c", "/c", "/a"] })).toEqual([
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "manual", manualOrder: ["/ghost", "/c", "/c", "/a"] })).toEqual([
       "/c",
       "/a",
       "/b",
     ]);
-    // 当前项目组置顶规则不动（kv 序仅作用于其余组）
-    expect(groupOrder(["/a", "/b", "/c"], byProject, "/c", { mode: "manual", manualOrder: ["/a", "/c"] })).toEqual([
+    // 无置顶特权：被拖到末位的组就在末位（修复前活跃组恒被拉回首位）
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "manual", manualOrder: ["/b", "/c"] })).toEqual([
+      "/b",
       "/c",
       "/a",
-      "/b",
     ]);
     // 无 kv 序（undefined）回退 activity 规则
-    expect(groupOrder(["/a", "/b", "/c"], byProject, null, { mode: "manual" })).toEqual(["/b", "/c", "/a"]);
+    expect(groupOrder(["/a", "/b", "/c"], byProject, { mode: "manual" })).toEqual(["/b", "/c", "/a"]);
   });
 
   test("parseProjectSort：合法值透传，缺失/未知/空回退 activity", () => {

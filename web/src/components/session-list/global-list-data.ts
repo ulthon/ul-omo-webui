@@ -65,14 +65,14 @@ export function latestModified(list: SessionListItem[]): string {
   return latest;
 }
 
-/** 分组排序（C16 docs08-r3 todo 9 参数化）：当前项目组置顶规则三档通用、不变。
- * activity（缺省）=其余按各组最新 modified 降序；added=按项目注册时间 createdAt 升序，
+/** 分组排序（2026-11-20 口径修订）：排序就是排序，不再有"当前项目组恒置顶"特权——
+ * 三档所见即所得，当前组靠徽标与默认展开识别（不再靠位置）。
+ * activity（缺省）=按各组最新 modified 降序；added=按项目注册时间 createdAt 升序，
  * createdAt 相同（存量迁移行同值）保持传入稳定序；manual=手动顺序
  * （kv 数组序），未列项目与已注销路径按 activity 规则追加/忽略。 */
 export function groupOrder(
   projectPaths: string[],
   byProject: Record<string, SessionListItem[]>,
-  activeProject: string | null,
   opts?: {
     mode?: ProjectSortMode;
     /** 注册元数据（createdAt），added 档用；缺省视为空值走稳定序 */
@@ -82,21 +82,20 @@ export function groupOrder(
   },
 ): string[] {
   const mode = opts?.mode ?? "activity";
-  const rest = projectPaths.filter((p) => p !== activeProject);
 
   if (mode === "manual" && opts?.manualOrder) {
-    const known = new Set(rest);
+    const known = new Set(projectPaths);
     const seen = new Set<string>();
     const listed = opts.manualOrder.filter((p) => known.has(p) && !seen.has(p) && (seen.add(p), true));
-    const unlisted = rest.filter((p) => !seen.has(p));
+    const unlisted = projectPaths.filter((p) => !seen.has(p));
     unlisted.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
-    const ordered = [...listed, ...unlisted];
-    return activeProject && projectPaths.includes(activeProject) ? [activeProject, ...ordered] : ordered;
+    return [...listed, ...unlisted];
   }
 
+  const list = [...projectPaths];
   if (mode === "added") {
     const meta = opts?.meta ?? {};
-    rest.sort((a, b) => {
+    list.sort((a, b) => {
       const ca = meta[a]?.createdAt ?? "";
       const cb = meta[b]?.createdAt ?? "";
       if (ca !== cb) return ca < cb ? -1 : 1;
@@ -104,12 +103,11 @@ export function groupOrder(
       // 已退役，createdAt 是唯一排序依据）
       return 0;
     });
-    return activeProject && projectPaths.includes(activeProject) ? [activeProject, ...rest] : rest;
+    return list;
   }
 
-  rest.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
-  if (activeProject && projectPaths.includes(activeProject)) return [activeProject, ...rest];
-  return rest;
+  list.sort((a, b) => latestModified(byProject[b] ?? []).localeCompare(latestModified(byProject[a] ?? [])));
+  return list;
 }
 
 export function flattenSessions(byProject: Record<string, SessionListItem[]>): SessionListItem[] {
