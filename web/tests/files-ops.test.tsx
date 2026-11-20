@@ -673,7 +673,6 @@ describe("files-ux-revamp 任务 3：树局部刷新（IS-2 展开态保留 + �
     await act(async () => {
       await Promise.resolve();
     });
-    const treeCallsBefore = calls.tree.length;
     await act(async () => {
       q(document, '[data-testid="files-delete-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });

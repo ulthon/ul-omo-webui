@@ -3,7 +3,7 @@
 // @happy-dom 全局注册 + createRoot/act 真实点击。壳组件为纯派生层级（无栈数组），
 // 覆盖：list/preview/edit 三层渲染、返回钮 dismissed、selectionKey 换令牌重推回归、
 // onBackGuard 只读返回不消费。
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 if (!(globalThis as { window?: unknown }).window) {
