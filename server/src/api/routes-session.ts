@@ -342,7 +342,8 @@ function entryPreview(entry: EngineEntry): string {
   return text.length > TREE_PREVIEW_CHARS ? text.slice(0, TREE_PREVIEW_CHARS) : text;
 }
 
-/** EngineEntry → 轻量节点（childCount 由调用方供：磁盘=parentId 计数，引擎=children 长度） */
+/** EngineEntry → 轻量节点（childCount 由调用方供：projectMessageTree
+ *  重链后的可见子计数） */
 function toTreeNode(entry: EngineEntry, childCount: number): SessionTreeNode {
   return {
     id: entry.id,
@@ -354,14 +355,58 @@ function toTreeNode(entry: EngineEntry, childCount: number): SessionTreeNode {
   };
 }
 
-/** 引擎嵌套树 → 轻量节点平铺（DFS，文件序同构旧→新） */
-function flattenEngineTree(tree: EngineTreeNode[]): SessionTreeNode[] {
-  const out: SessionTreeNode[] = [];
+/** 树口径投影（2026-11-18 手机端截图实证收口）：轻量树仅保留 message 条目——
+ *  引擎内部/配置条目（model_change/thinking_level_change/custom 等）既无文本
+ *  预览也非用户分支点，全量下发只会把对话主干挤出首屏（启动前导链 10 张空卡片）。
+ *  过滤后三件事跟着收口：
+ *  ① parentId 重链——滤掉节点的父子边压缩重接（子挂到最近可见祖先），否则
+ *    前端 pathIdsOf 沿 parentId 回溯断在不可见节点上、当前路径高亮丢失；
+ *  ② childCount 按重链后的可见子数重计（分支点徽标口径同步迁移）；
+ *  ③ activeLeafId 回溯——引擎/文件叶常是被滤掉的非 message 条目（链尾 custom），
+ *    原样下发则前端高亮整条消失，回溯到最近可见条目。
+ *  climb 沿原始 parentId 链上溯（visited 防环：malformed 文件环不死循环，回退 null；
+ *  悬空 parentId 容忍挂根，与前端 groupByParent 同口径） */
+function projectMessageTree(
+  entries: EngineEntry[],
+  rawActiveLeafId: string | null,
+): { nodes: SessionTreeNode[]; activeLeafId: string | null } {
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const visibleIds = new Set(entries.filter((e) => e.type === "message").map((e) => e.id));
+  const climbToVisible = (start: string | null): string | null => {
+    const seen = new Set<string>();
+    let cur = start;
+    while (typeof cur === "string" && cur && !seen.has(cur)) {
+      seen.add(cur);
+      if (visibleIds.has(cur)) return cur;
+      const e = byId.get(cur);
+      cur = e && typeof e.parentId === "string" && e.parentId ? e.parentId : null;
+    }
+    return null;
+  };
+  const projected: EngineEntry[] = [];
+  const childCounts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const parentId = climbToVisible(
+      typeof entry.parentId === "string" && entry.parentId ? entry.parentId : null,
+    );
+    projected.push({ ...entry, parentId });
+    if (parentId) childCounts.set(parentId, (childCounts.get(parentId) ?? 0) + 1);
+  }
+  return {
+    nodes: projected.map((e) => toTreeNode(e, childCounts.get(e.id) ?? 0)),
+    activeLeafId: climbToVisible(rawActiveLeafId),
+  };
+}
+
+/** 引擎嵌套树 → 条目平铺（DFS，文件序同构旧→新）；嵌套 children 仅供遍历序，
+ *  父子关系与 childCount 随后统一由 projectMessageTree 按 entry.parentId 重链重计 */
+function flattenEngineEntries(tree: EngineTreeNode[]): EngineEntry[] {
+  const out: EngineEntry[] = [];
   const walk = (nodes: EngineTreeNode[]): void => {
     for (const node of nodes) {
-      const children = Array.isArray(node.children) ? node.children : [];
-      out.push(toTreeNode(node.entry, children.length));
-      walk(children);
+      out.push(node.entry);
+      walk(Array.isArray(node.children) ? node.children : []);
     }
   };
   walk(tree);
@@ -914,11 +959,13 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
 
   // 会话树视图（session-branching todo 3）：磁盘优先轻量树（messages 三路径同款范式）。
   // 文件在则 readAllEntries 直读构建节点树（引擎零参与不拉起），不在（未落盘新会话/
-  // 别名）回退引擎 getTree RPC。节点 {id,parentId,role,preview,timestamp,childCount}
-  // 全文绝不下发（preview 160 字定死）。activeLeafId 双口径：回合在途
-  // （peekSessionRunning）取引擎 get_tree 叶（流式中文件尾条滞后，引擎是真相源），
-  // 否则文件末条 id——每次请求现读不缓存；unreachableIds 仅拿到引擎树时回填
-  // （磁盘有而引擎树无 = 压缩剪除的不可达节点，树视图禁切依据）。
+  // 别名）回退引擎 getTree RPC。两源统一走 projectMessageTree 口径投影：仅下发
+  // message 条目 + parentId 重链 + 叶回溯（2026-11-18 收口，非消息内部条目不再
+  // 下发）。节点 {id,parentId,role,preview,timestamp,childCount} 全文绝不下发
+  // （preview 160 字定死）。activeLeafId 双口径：回合在途（peekSessionRunning）
+  // 取引擎 get_tree 叶（流式中文件尾条滞后，引擎是真相源），否则文件末条 id——
+  // 每次请求现读不缓存；unreachableIds 仅拿到引擎树时回填（磁盘有而引擎树无 =
+  // 压缩剪除的不可达节点，树视图禁切依据，口径收窄到可见 message 条目）。
   app.get("/api/sessions/:id/tree", route(async (c: Context) => {
     const id = requireParam(c, "id");
     // 磁盘优先（messages 同款）：sessionPath 在则 stat 探文件
@@ -933,13 +980,8 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
     }
     if (sessionPath && stat && stat.size > 0) {
       const all = await readAllEntries(sessionPath);
-      const childCounts = new Map<string, number>();
-      for (const entry of all.entries) {
-        const pid = typeof entry.parentId === "string" && entry.parentId ? entry.parentId : null;
-        if (pid) childCounts.set(pid, (childCounts.get(pid) ?? 0) + 1);
-      }
-      const nodes = all.entries.map((entry) => toTreeNode(entry, childCounts.get(entry.id) ?? 0));
-      let activeLeafId = all.leafId ?? all.entries.at(-1)?.id ?? null;
+      // 现叶口径先定（磁盘末条，在途被引擎叶覆盖），再统一走 message 口径投影
+      let rawLeafId = all.leafId ?? all.entries.at(-1)?.id ?? null;
       let unreachableIds: string[] | undefined;
       const running = deps.engines.peekSessionRunning
         ? await deps.engines.peekSessionRunning(id).catch(() => false)
@@ -947,16 +989,20 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       if (running && deps.engines.treeGet) {
         try {
           const engineTree = await deps.engines.treeGet(id);
-          if (typeof engineTree.leafId === "string" && engineTree.leafId) activeLeafId = engineTree.leafId;
-          // 压缩剪除对账（GAP-6）：磁盘有而引擎树无 = 不可达节点
+          if (typeof engineTree.leafId === "string" && engineTree.leafId) rawLeafId = engineTree.leafId;
+          // 压缩剪除对账（GAP-6）：磁盘有而引擎树无 = 不可达节点；收窄到可见
+          // （message）条目——被滤掉的内部条目本就不渲染，不可达态无从展示
           const engineIds = collectTreeNodeIds(engineTree.tree);
-          const unreachable = all.entries.filter((e) => !engineIds.has(e.id)).map((e) => e.id);
+          const unreachable = all.entries
+            .filter((e) => e.type === "message" && !engineIds.has(e.id))
+            .map((e) => e.id);
           if (unreachable.length > 0) unreachableIds = unreachable;
         } catch (err) {
           // 引擎叶对账失败不炸树读取：activeLeafId 退回文件末条口径
           console.error(`[tree] 引擎叶对账失败，activeLeafId 退回文件末条：`, err);
         }
       }
+      const { nodes, activeLeafId } = projectMessageTree(all.entries, rawLeafId);
       return c.json({
         sessionId: id,
         source: "disk",
@@ -970,11 +1016,15 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       throw new ApiError(501, "tree_unsupported", "当前网关未实现会话树通道");
     }
     const engineTree = await deps.engines.treeGet(id);
+    const { nodes, activeLeafId } = projectMessageTree(
+      flattenEngineEntries(engineTree.tree),
+      engineTree.leafId ?? null,
+    );
     return c.json({
       sessionId: id,
       source: "engine",
-      nodes: flattenEngineTree(engineTree.tree),
-      activeLeafId: engineTree.leafId ?? null,
+      nodes,
+      activeLeafId,
     });
   }));
 

@@ -46,10 +46,7 @@ export const composer = {
   imageChipInline: "Sent inline; visible to vision models",
   imageChipAttach: "Sent as an attachment reference",
   attachmentRemove: "Remove attachment",
-  queueFollowUpAria: "Queue mode: follow up",
-  queueInsertAria: "Queue mode: insert",
-  queueFollowUpTitle: "Queue mode: follow up (runs after the current turn finishes). Click to switch to insert",
-  queueInsertTitle: "Queue mode: insert (merged into current work at the next turn boundary). Click to switch to follow up",
+  // Queue-mode toggle entries retired with the component (2026-11-18): steer lives in the queue bar's "send now"
   sendAria: "Send",
   sendQueuedAria: "Queue send",
   sendQueuedTitle: "Turn in progress: the send will be queued (runs after the current turn ends)",

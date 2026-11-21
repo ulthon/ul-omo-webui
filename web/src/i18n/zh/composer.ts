@@ -48,10 +48,7 @@ export const composer = {
   imageChipInline: "将内联发送，视觉模型可见",
   imageChipAttach: "将作为附件引用发送",
   attachmentRemove: "移除附件",
-  queueFollowUpAria: "排队模式：跟答",
-  queueInsertAria: "排队模式：插入",
-  queueFollowUpTitle: "排队模式：跟答（当前回合做完后执行）。点击切换为插入",
-  queueInsertTitle: "排队模式：插入（下一回合边界并入当前工作）。点击切换为跟答",
+  // 排队模式切换钮四词条已随组件退役（2026-11-18）：steer 语义经排队条「立即发送」
   sendAria: "发送",
   sendQueuedAria: "排队发送",
   sendQueuedTitle: "回合进行中：发送将排队（当前回合结束后执行）",

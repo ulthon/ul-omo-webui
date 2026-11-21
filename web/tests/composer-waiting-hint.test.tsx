@@ -143,11 +143,11 @@ describe("waiting 提示条（桌面档）", () => {
     expect(html).not.toContain('data-testid="queue-mode-btn"');
   });
 
-  test("queueAvailable=true 且 waiting（帧信号新鲜）→ 排队模式钮仍在（排队语义不回退）", () => {
+  test("queueAvailable=true 且 waiting（帧信号新鲜）→ 提示条在；排队切换钮已退役（2026-11-18 双档同删，steer 经排队条立即发送）", () => {
     dispatchSseEvent("extension_ui_request", waitingFrame(), 1);
     const html = renderComposer(true);
     expect(html).toContain('data-testid="composer-waiting-hint"');
-    expect(html).toContain('data-testid="queue-mode-btn"');
+    expect(html).not.toContain('data-testid="queue-mode-btn"');
   });
 });
 

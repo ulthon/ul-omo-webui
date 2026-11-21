@@ -118,7 +118,7 @@ function setCompacting(value) {
 }
 
 describe("SessionTreeOverlay（todo 7）", () => {
-  test("(1) fixture 树渲染：缩进（paddingLeft，缺陷 G 扁平行）/role 徽标/预览/时间戳/分支点子数徽标", async () => {
+  test("(1) fixture 树渲染：缩进（paddingLeft，缺陷 G 扁平行；分叉处才降级）/role 徽标/预览/时间戳/分支点子数徽标", async () => {
     const fetchTree = vi.fn(async () => fixture());
     mount({ sessionId: SID, fetchTree, onClose: () => {} });
     await flush();
@@ -128,10 +128,13 @@ describe("SessionTreeOverlay（todo 7）", () => {
     // 分支点徽标（childCount>1）
     const badge = u1.querySelector('[data-testid="session-tree-branch-count"]');
     expect(badge.textContent).toBe(tSnap("chat.tree.branchCount", { n: 2 }).replace("{n}", "2"));
-    // 缩进（缺陷 G：marginLeft→paddingLeft，按钮 w-full 撑满 li 命中盒）：子代缩进大于根代
+    // 缩进（缺陷 G：marginLeft→paddingLeft；2026-11-18 单链不缩进）：u1→a1 单子链
+    // 同级，a1 下三分叉子代降一级——缩进只承载真分叉信息
     const a1 = q('[data-node-id="a1"] button');
-    expect(parseInt(a1.style.paddingLeft)).toBeGreaterThan(parseInt(u1.style.paddingLeft));
     expect(parseInt(u1.style.paddingLeft)).toBe(8); // 根行与 px-2 等宽（视觉不变）
+    expect(parseInt(a1.style.paddingLeft)).toBe(parseInt(u1.style.paddingLeft)); // 单链同级
+    const u2 = q('[data-node-id="u2"] button');
+    expect(parseInt(u2.style.paddingLeft)).toBeGreaterThan(parseInt(a1.style.paddingLeft)); // 分叉子代更深
     // role 徽标与预览文本（misleading_success_output 防护：断言渲染结构非日志）
     expect(a1.textContent).toContain("assistant");
     expect(a1.textContent).toContain("preview-a1");
@@ -360,5 +363,33 @@ describe("SessionTreeOverlay（todo 7）", () => {
       q('[data-testid="session-tree-overlay"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // ── 2026-11-18 手机端分支树收口回归 ──
+
+  test("(13) 单链不缩进：线性主干各级同缩进（旧逐级 +16px 窄屏塌缩）；「当前分支」整项不拆字", async () => {
+    // 线性链 m1→m2→m3→m4（每级单子）：旧逻辑深度 0..3 逐级缩进，手机端深链内容区
+    // 被挤塌（截图实证：「当前分支」一字一行竖排）；新逻辑单链同级零缩进
+    const fetchTree = vi.fn(async () => ({
+      sessionId: SID,
+      source: "disk",
+      nodes: [node("m1", null), node("m2", "m1"), node("m3", "m2"), node("m4", "m3")],
+      activeLeafId: "m4",
+    }));
+    mount({ sessionId: SID, fetchTree, onClose: () => {} });
+    await flush();
+    const pads = ["m1", "m2", "m3", "m4"].map((id) =>
+      parseInt(q(`[data-node-id="${id}"] button`).style.paddingLeft),
+    );
+    expect(pads[0]).toBe(8);
+    expect(new Set(pads).size).toBe(1); // 全员同级：单链零缩进
+    // 防挤压：路径徽标整项 nowrap + shrink-0（宽度不足时整项换行，永不拆字竖排）
+    const leaf = q('[data-node-id="m4"] button');
+    const badge = Array.from(leaf.querySelectorAll("span")).find(
+      (s) => s.textContent === tSnap("chat.tree.currentLeaf"),
+    );
+    expect(badge.className).toContain("whitespace-nowrap");
+    expect(badge.className).toContain("shrink-0");
+    expect(badge.parentElement.className).toContain("flex-wrap"); // meta 行整项换行容器
   });
 });

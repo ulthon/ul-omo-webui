@@ -17,6 +17,12 @@
 // 命中盒，任意深度行中心必落按钮）；② 卡片层 stopPropagation（卡内非按钮点击
 // 不再关浮层）；③ 生产 onSwitchLeaf 由 chat-view 注入 pager 同款回调
 //（resolveBranchLeaf+switchLeaf resume 单一代码路径），缺省 fallback 仅为测试 DI 缝。
+// 2026-11-18 手机端分支树两处收口（截图实证）：① 深度只在真分叉（子数>1）处 +1，
+// 单链不缩进——旧版线性主干逐级 +16px，深链在窄屏把内容区挤塌（启动前导链把
+// 首屏挤成 10 张空卡片、「当前分支」被压成一字一行竖排）；② meta 行徽标
+// shrink-0+whitespace-nowrap+flex-wrap——CJK 任意断行会把徽标压成竖排，收口为
+// 整项换行永不拆字。服务端同步收口节点口径（仅下发 message 条目，见
+// routes-session.ts projectMessageTree）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ListTree, X } from "lucide-react";
@@ -125,14 +131,16 @@ export function SessionTreeOverlay({
   const pathIds = useMemo(() => pathIdsOf(nodes, payload?.activeLeafId ?? null), [payload]);
   const groups = useMemo(() => groupByParent(nodes), [payload]);
   // 扁平行（缺陷 G ①）：DFS 先序展平，每行 li 只含自身按钮——按钮 w-full 撑满 li
-  // 命中盒（缩进改 paddingLeft），行盒与按钮盒重合，任意深度行中心点击必落按钮
+  // 命中盒（缩进改 paddingLeft），行盒与按钮盒重合，任意深度行中心点击必落按钮。
+  // 单链不缩进（2026-11-18）：深度只在真分叉（子数>1）处 +1，连续单子节点保持
+  // 同级——线性主干逐级缩进不带信息量，纯消耗横向空间（窄屏深链内容区塌缩）
   const rows = useMemo(() => {
     const out: Array<{ node: SessionTreeNode; depth: number }> = [];
     const walk = (list: SessionTreeNode[], depth: number) => {
       for (const n of list) {
         out.push({ node: n, depth });
         const kids = groups.get(n.id) ?? [];
-        if (kids.length > 0) walk(kids, depth + 1);
+        if (kids.length > 0) walk(kids, kids.length > 1 ? depth + 1 : depth);
       }
     };
     walk(groups.get(null) ?? [], 0);
@@ -198,18 +206,18 @@ export function SessionTreeOverlay({
             <span className="block line-clamp-2 break-words text-foreground">
               {node.preview || t("chat.tree.emptyPreview")}
             </span>
-            <span className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
-              {ts && <span>{ts}</span>}
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+              {ts && <span className="whitespace-nowrap tabular-nums">{ts}</span>}
               {node.childCount > 1 && (
                 <span
                   data-testid="session-tree-branch-count"
-                  className="rounded-full bg-muted px-1.5 py-0.5 tabular-nums"
+                  className="shrink-0 whitespace-nowrap rounded-full bg-muted px-1.5 py-0.5 tabular-nums"
                 >
                   {t("chat.tree.branchCount", { n: node.childCount })}
                 </span>
               )}
-              {onPath && <span className="text-primary">{t("chat.tree.currentLeaf")}</span>}
-              {isUnreachable && <span>{t("chat.tree.compacted")}</span>}
+              {onPath && <span className="shrink-0 whitespace-nowrap text-primary">{t("chat.tree.currentLeaf")}</span>}
+              {isUnreachable && <span className="shrink-0 whitespace-nowrap">{t("chat.tree.compacted")}</span>}
             </span>
           </span>
         </button>

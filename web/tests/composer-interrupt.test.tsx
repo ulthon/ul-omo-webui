@@ -141,10 +141,10 @@ describe("中断逃逸口真值表（桌面档）", () => {
     expect(html).toContain('data-testid="abort-btn"');
   });
 
-  test("queueAvailable=true（既有流式/已知运行态）→ 中断钮（原行为不回归）", () => {
+  test("queueAvailable=true（既有流式/已知运行态）→ 中断钮（原行为不回归；排队切换钮 2026-11-18 退役）", () => {
     const html = renderComposer(true);
     expect(html).toContain('data-testid="abort-btn"');
-    expect(html).toContain('data-testid="queue-mode-btn"');
+    expect(html).not.toContain('data-testid="queue-mode-btn"');
   });
 
   test("仅未决提问（queueAvailable=false）→ 有中断钮但无排队模式钮（排队语义不随提问扩展）", () => {

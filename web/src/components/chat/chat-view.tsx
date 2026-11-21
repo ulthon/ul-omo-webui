@@ -469,23 +469,6 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           桌面档 sm+ 保持 p-3 原样 */}
       <div className="shrink-0 border-t px-3 pb-0 pt-3 sm:p-3">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-          {/* 分支树入口（session-branching todo 7）：与叶切换同一忙碌锁口径
-              （branchSwitchDisabled = streaming+运行态并集+navigating），流式中禁用；
-              浮层点击可达叶走 switchLeaf 编排后关闭回消息流（onSwitchLeaf 注入 pager
-              同款 onSwitchSibling，缺陷 G 单一代码路径） */}
-          <div className="flex items-center">
-            <button
-              type="button"
-              data-testid="session-tree-button"
-              aria-label={t("chat.tree.open")}
-              title={t("chat.tree.open")}
-              disabled={branchSwitchDisabled}
-              onClick={() => setTreeOpen(true)}
-              className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
-            >
-              <ListTree className="size-4" aria-hidden />
-            </button>
-          </div>
           {/* 后台活动条（r10 todo 11）：会话页级新表面，双断点同构；无快照不渲染 */}
           <ActivityBar sessionId={sessionId} />
           {/* 排队条（docs08-r4 任务 11）：输入区上方细条，空列表不渲染 */}
@@ -503,6 +486,25 @@ function ChatSession({ sessionId }: { sessionId: string }) {
             queueAvailable={streaming || knownRunning}
             permissionLocked={hasPendingPermission}
             hydrationLocked={hydrationLocked}
+            treeSlot={
+              /* 分支树入口（session-branching todo 7；2026-11-18 迁 Composer 底栏
+                 左组，原输入区上方独占行退役）：与叶切换同一忙碌锁口径
+                 （branchSwitchDisabled = streaming+运行态并集+navigating），流式中
+                 禁用；浮层点击可达叶走 switchLeaf 编排后关闭回消息流（onSwitchLeaf
+                 注入 pager 同款 onSwitchSibling，缺陷 G 单一代码路径）。形态随断点
+                 对齐同组钮：手机 size-9 圆形，桌面 sm: size-11 方角 */
+              <button
+                type="button"
+                data-testid="session-tree-button"
+                aria-label={t("chat.tree.open")}
+                title={t("chat.tree.open")}
+                disabled={branchSwitchDisabled}
+                onClick={() => setTreeOpen(true)}
+                className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40 sm:size-11 sm:rounded-lg"
+              >
+                <ListTree className="size-5" aria-hidden />
+              </button>
+            }
             onSent={() => {
               setInterrupted(false);
               const cur = useSessionsStore.getState();

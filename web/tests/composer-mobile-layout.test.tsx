@@ -102,14 +102,15 @@ describe("手机档上下结构（docs08-r6 任务 13）", () => {
     expect(inputTag).toContain("w-full");
   });
 
-  test("下行：常用语/收纳/排队切换/停止/发送均在 textarea 之后的按钮行", () => {
+  test("下行：常用语/收纳/停止/发送均在 textarea 之后的按钮行（排队切换钮 2026-11-18 退役）", () => {
     stubMatchMedia(true);
     const html = renderComposer(true);
     const inputIdx = html.indexOf('data-testid="composer-input"');
-    for (const tid of ["snippet-btn", "composer-more-btn", "queue-mode-btn", "send-btn"]) {
+    for (const tid of ["snippet-btn", "composer-more-btn", "abort-btn", "send-btn"]) {
       const idx = html.indexOf(`data-testid="${tid}"`);
       expect(idx).toBeGreaterThan(inputIdx);
     }
+    expect(html).not.toContain('data-testid="queue-mode-btn"');
     // 上行容器与下行按钮行之间有分行容器（上行 relative 块先闭合）
     expect(html).toContain('data-testid="composer-capsule"');
   });

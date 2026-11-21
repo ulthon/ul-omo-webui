@@ -238,7 +238,7 @@ function diskGateway(sessionPath: string): FakeGateway {
 // ── GET /api/sessions/:id/tree ────────────────────────────────────────────
 
 describe("GET /api/sessions/:id/tree（session-branching todo 3）", () => {
-  test("磁盘直读：多分支 fixture 树形/childCount/activeLeafId=末条，全文不下发", async () => {
+  test("磁盘直读：多分支 fixture 树形/childCount/activeLeafId=末条，全文不下发；非 message 条目不下发", async () => {
     const gateway = diskGateway(writeSessionFile(FIXTURE_ENTRIES));
     const res = await buildApp(gateway).request("/api/sessions/s1/tree");
     expect(res.status).toBe(200);
@@ -251,15 +251,16 @@ describe("GET /api/sessions/:id/tree（session-branching todo 3）", () => {
     };
     expect(body.sessionId).toBe("s1");
     expect(body.source).toBe("disk");
-    // 文件序全量节点（header 行不计）
-    expect(body.nodes.map((n) => n.id)).toEqual(["e1", "e2", "e3", "e4", "mc1", "e5"]);
+    // 文件序可见节点（header 行、非 message 内部条目均不计——mc1 不下发）
+    expect(body.nodes.map((n) => n.id)).toEqual(["e1", "e2", "e3", "e4", "e5"]);
     // parentId 链：e1 根、e3 有两个子（分支点）、e5 与 e4 同父
     expect(body.nodes[0]).toMatchObject({ id: "e1", parentId: null, role: "user", childCount: 1 });
     expect(body.nodes[2]).toMatchObject({ id: "e3", parentId: "e2", childCount: 2 });
-    expect(body.nodes[3]).toMatchObject({ id: "e4", parentId: "e3", childCount: 1 });
-    expect(body.nodes[5]).toMatchObject({ id: "e5", parentId: "e3", childCount: 0 });
-    // 非 message 型：role 回退 entry.type、preview 空
-    expect(body.nodes[4]).toMatchObject({ id: "mc1", role: "model_change", preview: "", childCount: 0 });
+    expect(body.nodes[3]).toMatchObject({ id: "e4", parentId: "e3", childCount: 0 }); // 唯一子 mc1 被滤，可见子数重计
+    expect(body.nodes[4]).toMatchObject({ id: "e5", parentId: "e3", childCount: 0 });
+    // 口径投影（2026-11-18）：非 message 条目（mc1）绝不下发
+    expect(body.nodes.some((n) => n.id === "mc1")).toBe(false);
+    expect(body.nodes.every((n) => ["user", "assistant"].includes(n.role))).toBe(true);
     // 空闲态（不在途）：activeLeafId = 文件末条 id
     expect(body.activeLeafId).toBe("e5");
     // 全文绝不下发（misleading_success_output：以响应体为准，非日志）
@@ -278,7 +279,7 @@ describe("GET /api/sessions/:id/tree（session-branching todo 3）", () => {
     expect(e4.preview.length).toBe(TREE_PREVIEW_CHARS);
   });
 
-  test("activeLeafId 引擎口径：在途取 RPC 叶 + unreachableIds 压缩剪除回填", async () => {
+  test("activeLeafId 引擎口径：在途取 RPC 叶 + unreachableIds 压缩剪除回填（收窄到可见条目）", async () => {
     const gateway = diskGateway(writeSessionFile(FIXTURE_ENTRIES));
     gateway.runningValue = true;
     // 引擎在 A 支（叶 e4），且压缩后 mc1/e5 不在引擎树中
@@ -292,8 +293,87 @@ describe("GET /api/sessions/:id/tree（session-branching todo 3）", () => {
     // 引擎叶优先于文件末条（流式中文件滞后，引擎是真相源）
     expect(body.activeLeafId).toBe("e4");
     expect(body.source).toBe("disk");
-    // 磁盘有而引擎树无 = 不可达（文件序）
-    expect(body.unreachableIds).toEqual(["mc1", "e5"]);
+    // 磁盘有而引擎树无 = 不可达（文件序）；收窄到可见 message 条目——mc1 被滤不下发，无从展示不可达态
+    expect(body.unreachableIds).toEqual(["e5"]);
+  });
+
+  test("口径投影：非 message 链压缩重链（子挂最近可见祖先），childCount 可见重计", async () => {
+    // e1 → mc1 → mc2 → e6：e6 的父是被滤掉的 mc2，重链挂到 e1
+    const entries: EngineEntry[] = [
+      msgEntry("e1", null, "user", "主干开头"),
+      { type: "model_change", id: "mc1", parentId: "e1", timestamp: "2026-01-01T00:00:09.000Z", model: "p/m" },
+      { type: "custom", id: "mc2", parentId: "mc1", timestamp: "2026-01-01T00:00:09.100Z", data: {} },
+      msgEntry("e6", "mc2", "user", "前导链之后的消息"),
+    ];
+    const gateway = diskGateway(writeSessionFile(entries));
+    const res = await buildApp(gateway).request("/api/sessions/s1/tree");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      nodes: Array<{ id: string; parentId: string | null; childCount: number }>;
+      activeLeafId: string | null;
+    };
+    expect(body.nodes.map((n) => n.id)).toEqual(["e1", "e6"]);
+    expect(body.nodes[0]).toMatchObject({ id: "e1", parentId: null, childCount: 1 });
+    expect(body.nodes[1]).toMatchObject({ id: "e6", parentId: "e1", childCount: 0 }); // 跨滤重链
+    expect(body.activeLeafId).toBe("e6");
+  });
+
+  test("口径投影：叶落在被滤条目时回溯最近可见条目；纯噪声会话空树空叶", async () => {
+    // 叶 = mc3（model_change）：activeLeafId 回溯到 e1，否则前端当前路径高亮丢失
+    const leafOnNoise: EngineEntry[] = [
+      msgEntry("e1", null, "user", "唯一消息"),
+      { type: "model_change", id: "mc3", parentId: "e1", timestamp: "2026-01-01T00:00:09.000Z", model: "p/m" },
+    ];
+    const gateway = diskGateway(writeSessionFile(leafOnNoise));
+    const res = await buildApp(gateway).request("/api/sessions/s1/tree");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { nodes: Array<{ id: string }>; activeLeafId: string | null };
+    expect(body.nodes.map((n) => n.id)).toEqual(["e1"]);
+    expect(body.activeLeafId).toBe("e1");
+
+    // 纯噪声（引擎启动前导链，无任何 message）：空树 + null 叶（前端渲染空态）
+    const noiseOnly: EngineEntry[] = [
+      { type: "model_change", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", model: "p/m" },
+      { type: "thinking_level_change", id: "t1", parentId: "m1", timestamp: "2026-01-01T00:00:01.100Z", level: "off" },
+      { type: "custom", id: "c1", parentId: "t1", timestamp: "2026-01-01T00:00:01.200Z", data: {} },
+    ];
+    const gw2 = diskGateway(writeSessionFile(noiseOnly));
+    const res2 = await buildApp(gw2).request("/api/sessions/s1/tree");
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as { nodes: Array<{ id: string }>; activeLeafId: string | null };
+    expect(body2.nodes).toEqual([]);
+    expect(body2.activeLeafId).toBeNull();
+  });
+
+  test("引擎回退口径投影：嵌套树内非 message 条目同样滤除重链，引擎叶回溯", async () => {
+    const gateway = new FakeGateway();
+    gateway.sessionPathResult = join(mkTemp("routes-tree-missing-"), "missing.jsonl");
+    // e1 → mc1 → e6 嵌套；引擎叶落在 mc1（非 message）
+    gateway.treeGetResult = {
+      tree: [
+        engineNode(
+          msgEntry("e1", null, "user", "主干开头"),
+          [
+            engineNode(
+              { type: "model_change", id: "mc1", parentId: "e1", timestamp: "2026-01-01T00:00:09.000Z", model: "p/m" } as EngineEntry,
+              [engineNode(msgEntry("e6", "mc1", "user", "嵌套树里的消息"))],
+            ),
+          ],
+        ),
+      ],
+      leafId: "mc1",
+    };
+    const res = await buildApp(gateway).request("/api/sessions/s1/tree");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      source: string;
+      activeLeafId: string | null;
+      nodes: Array<{ id: string; parentId: string | null; childCount: number }>;
+    };
+    expect(body.source).toBe("engine");
+    expect(body.nodes.map((n) => n.id)).toEqual(["e1", "e6"]);
+    expect(body.nodes[1]).toMatchObject({ id: "e6", parentId: "e1", childCount: 0 });
+    expect(body.activeLeafId).toBe("e1"); // 引擎叶 mc1 被滤，回溯最近可见 e1
   });
 
   test("引擎叶对账失败退回文件末条（stale_state 兑底不炸读取）", async () => {

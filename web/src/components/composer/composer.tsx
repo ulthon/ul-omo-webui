@@ -19,7 +19,7 @@
 // 原文插入输入框（内容永不丢）+toast。三按钮选择条退役；占位符改语法教学（桌面长版/
 // 手机短版按视口）。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUp, AtSign, ChevronDown, ChevronUp, CornerDownRight, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, RotateCcw, SkipForward, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, ChevronUp, FileText, History, Hourglass, ImagePlus, Loader2, MessageSquareText, Paperclip, Plus, RotateCcw, Square, TriangleAlert, X } from "lucide-react";
 import { ApiError, api, type CommandsResponse, type InputHistoryItem, type PromptReceipt } from "@/lib/api";
 import { WAITING_HINT_SILENCE_MS } from "@/lib/event-dispatch";
 import { diag, sendTrace } from "@/lib/diag";
@@ -122,6 +122,7 @@ export function Composer({
   queueAvailable,
   permissionLocked,
   hydrationLocked,
+  treeSlot,
   onSent,
   onAborted,
 }: {
@@ -133,6 +134,11 @@ export function Composer({
   /** 水合锁（docs08-r5 任务 6）：刷新/会话打开后至首个权威运行态信号前禁发送（悲观默认
    * 按「进行中」阻塞）；只锁发送不换权限锁形态，解锁后不回锁（见 hydration-lock.ts） */
   hydrationLocked: boolean;
+  /** 分支树入口挂载位（2026-11-18 迁入）：chat-view 保留 treeOpen 态与切换锁
+   *  （branchSwitchDisabled），仅按钮节点注入底栏左组（手机 [常用语][+][树]，
+   *  桌面树钮居工具行行首）——会话级编排不下移 Composer，避免状态双源。原
+   *  输入区上方独占行退役（手机端「输入框上方空一行」反馈） */
+  treeSlot?: React.ReactNode;
   onSent: () => void;
   onAborted: () => void;
 }) {
@@ -254,15 +260,10 @@ export function Composer({
   const isCompact = useIsMobile("(max-width: 639.98px)");
   const [toolsOpen, setToolsOpen] = useState(false);
 
-  // 排队发送模式（docs08-r4 任务 11，spike 指引 1）：默认 followUp（做完后继续），
-  // 可切 steer（下一回合边界插入当前工作）；ref 镜像供异步发送读最新值（images 同款）
-  const [queueMode, setQueueMode] = useState<"steer" | "followUp">("followUp");
-  const queueModeRef = useRef<"steer" | "followUp">("followUp");
-  const toggleQueueMode = useCallback(() => {
-    const next = queueModeRef.current === "followUp" ? "steer" : "followUp";
-    queueModeRef.current = next;
-    setQueueMode(next);
-  }, []);
+  // 排队发送模式：预声明切换钮（followUp/steer 双态）已退役（2026-11-18 用户定夺，
+  // 手机/桌面双档同删）——图标语义弱可发现性差，且 steer 语义可经排队条「立即发送」
+  // 达成（restructureQueue 转 steer 排首位，下一循环边界即读取）。回合中发送一律
+  // 以 followUp 入队（下方发送链中字面量直用，无组件态）
 
   // ---------- 斜杠输入提示（docs08-r3 任务 19） ----------
   // 触发纯派生自 textarea 值（/ 开头 + 首 token 未闭合）；slashDismissedToken 记录
@@ -581,7 +582,7 @@ export function Composer({
           receipt = await api.prompt(
             sessionId,
             queuing
-              ? { text: outgoingText, streamingBehavior: queueModeRef.current }
+              ? { text: outgoingText, streamingBehavior: "followUp" }
               : { text: outgoingText, images: outgoingImages },
           );
         } catch (err) {
@@ -594,7 +595,7 @@ export function Composer({
           // 瞬态互斥，排队重试同样会被拒且无意义，直接交下方分流轻提示）。spike
           // F2：实例内回合中带 streamingBehavior 一律 queued（跨进程从不 409），排队
           // 是 already processing 的正确动作。
-          receipt = await api.prompt(sessionId, { text: outgoingText, streamingBehavior: queueModeRef.current });
+          receipt = await api.prompt(sessionId, { text: outgoingText, streamingBehavior: "followUp" });
         }
         sendTrace.receipt(sessionId, { disposition: receipt.disposition });
         // 缺陷修复（新会话首条用户消息不显示）：prompt 成功即本地乐观入列——首条消息
@@ -608,7 +609,7 @@ export function Composer({
           // 项）。docs08-r7 任务 15：消息流不再插“排队中”占位（单显示源=排队条，
           // 零假象）；投递时服务端 user 帧经载荷身份收敛守卫直接入列。
           // 不动 streaming 态（排队回合同一 run，run 尾才 settle 一次——spike (b)-5）。
-          useQueueStore.getState().addPending(sessionId, outgoingText, queueModeRef.current);
+          useQueueStore.getState().addPending(sessionId, outgoingText, "followUp");
           // 入队可见反馈：r10 todo 7 起 queue_update 事件行入消息流（event-dispatch wire
           // 层写入 sessionEvents，切页可回看），此处不再弹 toast（双通道去重）。
           if (opts.clearInputs) {
@@ -1440,26 +1441,7 @@ export function Composer({
     />
   ) : null;
 
-  // 排队模式切换钮（docs08-r4 任务 11）：流式态可见，点击在 followUp/steer 间切换，
-  // 图标+title 明示两档语义（跟答=做完后继续 / 插入=下一回合边界并入当前工作）；
-  // 尺寸/圆角随断点参数化（手机胶囊内 size-9 圆全、桌面工具行 size-11 圆角）
-  const queueModeToggleNode = (buttonClass: string) =>
-    queueAvailable ? (
-      <button
-        type="button"
-        data-testid="queue-mode-btn"
-        aria-label={queueMode === "followUp" ? t("composer.queueFollowUpAria") : t("composer.queueInsertAria")}
-        title={
-          queueMode === "followUp"
-            ? t("composer.queueFollowUpTitle")
-            : t("composer.queueInsertTitle")
-        }
-        onClick={toggleQueueMode}
-        className={buttonClass}
-      >
-        {queueMode === "followUp" ? <SkipForward className="size-4" /> : <CornerDownRight className="size-4" />}
-      </button>
-    ) : null;
+  // 排队模式切换钮已退役（2026-11-18，双档同删）：见上方 queueMode 注释。
   // 停止钮（流式态保留，abort 语义不变：中断当前回合；排队项挂起待下次发送——spike (b)-6）。
   // docs08-r6 任务 6 ①：可见性从 queueAvailable 扩为保守并集 interruptible
   // （queueAvailable || runState running/waiting || hasPendingQuestion），手机/桌面双档
@@ -1480,14 +1462,8 @@ export function Composer({
   const stopButtonSm = stopButtonNode(
     "flex size-9 shrink-0 items-center justify-center rounded-xl border border-border text-destructive transition-colors hover:bg-destructive/10",
   );
-  const queueModeToggleSm = queueModeToggleNode(
-    "flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted",
-  );
   const stopButtonMd = stopButtonNode(
     "flex size-11 shrink-0 items-center justify-center rounded-lg border border-border text-destructive transition-colors hover:bg-destructive/10",
-  );
-  const queueModeToggleMd = queueModeToggleNode(
-    "flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
   );
 
   // ---------- 手机档（<sm）上下结构输入区（docs08-r4 任务 7；docs08-r5 任务 9；
@@ -1495,7 +1471,8 @@ export function Composer({
   // 参考在线 OpenChamber 390 实拍（.omo/evidence/docs08-r5/task-9-oc-390-*.png 与
   // docs08-r4-notes/openchamber-mobile-390-input.png）。任务 13 用户拍板：胶囊三圆钮
   // 同行挤占输入宽度的形态退役，改为上下两行——上行 textarea 占满整行（自增高不变，
-  // 单行汉字容量提升）；下行常用语/收纳/排队切换 + 停止/发送。上方各条（历史/图片/
+  // 单行汉字容量提升）；下行常用语/收纳/分支树 + 停止/发送（排队模式切换钮
+  // 2026-11-18 退役）。上方各条（历史/图片/
   // 附件/粘贴 chip）、聚焦收起、visualViewport 键盘、草稿、斜杠内联、图片附件条、
   // 粘贴转附件全链路不变；桌面档零改动。
   if (isCompact) {
@@ -1550,13 +1527,14 @@ export function Composer({
           >
             <Plus className="size-5" />
           </button>
-          {/* 底栏中间模型区（openchamber 同款）：模型短名 + 思考深度展示 + 专属提示词徽标，
-              点击开模型选择弹层（切换入口保留）；flex-1 居中夹在左右钮组之间 */}
-          <div className="flex min-w-0 flex-1 justify-center">
+          {/* 分支树入口（2026-11-18 迁入底栏左组，slot 由 chat-view 注入） */}
+          {treeSlot}
+          {/* 底栏模型区靠右（2026-11-18 手机反馈：原 openchamber 居中式改贴右组，
+              居中在左组/右组轻重不均时视觉失衡）；flex-1 占位把左组与模型区/右组分开 */}
+          <div className="flex min-w-0 flex-1 justify-end">
             <ComposerModelInfo pendingEffect={modelPendingEffect} />
           </div>
           <div className="ml-auto flex items-center gap-1">
-            {queueModeToggleSm}
             {stopButtonSm}
             <button
               type="button"
@@ -1608,19 +1586,20 @@ export function Composer({
         {attachInputNode}
       <div className="flex items-center gap-1">
         <div className="flex shrink-0 items-center gap-1">
+          {/* 分支树入口（2026-11-18 迁入工具行行首，slot 由 chat-view 注入） */}
+          {treeSlot}
           {toolButtons}
           {/* 常用语钮仍居工具行末位（docs08-r5 任务 9：仅手机档迁出，桌面零改动） */}
           {snippetButtonMd}
         </div>
-        {/* 模型区居中（openchamber 同款底栏布局）：模型短名/思考档并列双内联按钮
-            （2026-11-03 三稿，ThinkingChip 退役）；流式态（docs08-r4 任务 11）：停止钮与排队
-            模式切换钮插队发送钮左侧，发送变排队语义 */}
-        <div className="flex min-w-0 flex-1 justify-center">
+        {/* 模型区靠右（2026-11-18 与手机档同步：原 openchamber 居中式改贴右组）。
+            流式态（docs08-r4 任务 11）：停止钮插队发送钮左侧，发送变排队语义
+            （排队模式切换钮 2026-11-18 退役，steer 经排队条「立即发送」） */}
+        <div className="flex min-w-0 flex-1 justify-end">
           <ComposerModelInfo pendingEffect={modelPendingEffect} />
         </div>
         <div className="ml-auto flex min-w-0 items-center gap-1">
           {stopButtonMd}
-          {queueModeToggleMd}
           {/* 发送钮降视觉比重：outline 风格，仅 canSend 时 accent 填充 */}
           <button
             type="button"

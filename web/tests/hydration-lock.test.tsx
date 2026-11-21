@@ -180,7 +180,7 @@ describe("useHydrationRunLock 水合锁", () => {
 });
 
 describe("Composer 接线（hydrationLocked）", () => {
-  test("水合期：可输入但发送钮禁用；解锁后（排队态）发送钮可用且排队模式钮在场", async () => {
+  test("水合期：可输入但发送钮禁用；解锁后（排队态）发送钮可用（排队切换钮 2026-11-18 退役）", async () => {
     globalThis.fetch = () => new Promise(() => {});
     useUiStore.setState({ modelsLoaded: true });
     const harness = (locked: boolean, queueAvailable: boolean) =>
@@ -204,7 +204,8 @@ describe("Composer 接线（hydrationLocked）", () => {
     expect(sendBtn.disabled).toBe(true); // 有文本仍禁发送：悲观默认
     await lockedView.unmount();
 
-    // 解锁 + 已知 running → 排队态：输入后发送可用，排队模式切换钮（followUp/steer）在场
+    // 解锁 + 已知 running → 排队态：输入后发送可用；排队模式切换钮已退役（2026-11-18），
+    // 入队恒 followUp，steer 经排队条「立即发送」
     const queuedView = await render(harness(false, true));
     const input2 = queuedView.container.querySelector("[data-testid=composer-input]") as HTMLTextAreaElement;
     await act(async () => {
@@ -215,7 +216,7 @@ describe("Composer 接线（hydrationLocked）", () => {
     const sendBtn2 = queuedView.container.querySelector("[data-testid=send-btn]") as HTMLButtonElement;
     const modeBtn = queuedView.container.querySelector("[data-testid=queue-mode-btn]");
     expect(sendBtn2.disabled).toBe(false);
-    expect(modeBtn).not.toBeNull();
+    expect(modeBtn).toBeNull();
     await queuedView.unmount();
   });
 });
