@@ -53,7 +53,7 @@ describe("运行态（状态点数据源）", () => {
     expect(useSessionsStore.getState().runStates["durable-1"]).toBe("idle");
   });
 
-  test("四型与非四型（非 notify）method → waiting；notify 不算（r10 todo 9 收紧覆盖面）", () => {
+  test("四型与非四型（非 notify、非纯状态推送）method → waiting；notify 与纯状态推送不算（r10 todo 9 + 18f6ebc）", () => {
     for (const method of ["select", "confirm", "input", "editor"]) {
       dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method, id: "r1", sessionId: "rpc-1" }, "durable-1"), 1);
       expect(useSessionsStore.getState().runStates["durable-1"]).toBe("waiting");
@@ -63,9 +63,17 @@ describe("运行态（状态点数据源）", () => {
     // （权限/对话框走新 method 名），状态点同落 waiting；回合落定与 30min 无活动
     // 清扫兜底回落。notify 是已记录的 fire-and-forget（计划 249，不应答不阻塞回合），
     // 不落——否则运行中蓝点被误降琥珀。
-    for (const method of ["setStatus", "setWidget", "omo_custom_dialog"]) {
+    for (const method of ["omo_custom_dialog"]) {
       dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method, id: "r2", sessionId: "rpc-1" }, "durable-1"), 2);
       expect(useSessionsStore.getState().runStates["durable-1"]).toBe("waiting");
+      useSessionsStore.getState().clearRunState("durable-1");
+    }
+    // 纯状态推送不落 waiting（18f6ebc 后语义）：setStatus/setWidget/setTitle 不应答
+    // 不阻塞回合、不渲染 UI，与 notify 同待遇——新会话冷启动连发 setStatus 曾把
+    // composer 误判「回合进行中」毒化成排队并剥模型。
+    for (const method of ["setStatus", "setWidget", "setTitle"]) {
+      dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method, id: "r2", sessionId: "rpc-1" }, "durable-1"), 2);
+      expect(useSessionsStore.getState().runStates["durable-1"]).toBeUndefined();
       useSessionsStore.getState().clearRunState("durable-1");
     }
     dispatchSseEvent("extension_ui_request", frame({ type: "extension_ui_request", method: "notify", id: "r3", sessionId: "rpc-1" }, "durable-1"), 3);

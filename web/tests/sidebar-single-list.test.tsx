@@ -237,7 +237,7 @@ describe("SessionList 工具条单列表（分段控件删除 + no-wrap）", () 
 });
 
 describe("分组钉选随派生活跃项目（W3 任务 14 stale_state 对抗）", () => {
-  test("选中切到另一项目后：钉选/置顶/展开标记跟随派生，不读全局项目字段", async () => {
+  test("选中切到另一项目后：「当前」标记跟随派生不读全局字段；组序纯排序不置顶（56bb6a8）", async () => {
     useUiStore.setState({
       projects: [
         { projectPath: "/p1", preferredModel: null },
@@ -260,15 +260,16 @@ describe("分组钉选随派生活跃项目（W3 任务 14 stale_state 对抗）
     const groups = () => [...container.querySelectorAll("[data-project-group]")].map((g) => g.getAttribute("data-project-group"));
     const marker = (p: string) =>
       container.querySelector(`[data-project-group="${p}"] [data-testid="group-toggle"]`)?.textContent ?? "";
-    // 初始：选中 /p2 会话 → /p2 钉选置顶 + 「当前」标记；全局字段同值（行为不变）
+    // 初始：选中 /p2 会话 → /p2 activity 序首位 + 「当前」标记（选中与全局字段同值）
     expect(groups()[0]).toBe("/p2");
     expect(marker("/p2")).toContain("当前");
-    // 切选中到 /p1：钉选跟随派生（全局字段仍为 /p2，若读全局则不随切——stale_state 对抗点）
+    // 切选中到 /p1：「当前」标记跟随派生（全局字段仍为 /p2，若读全局则不随切——stale_state
+    // 对抗点）；组序不随切换变（56bb6a8 三档纯排序移除当前组置顶特权，靠徽标识别当前组）
     await act(async () => {
       useSessionsStore.setState({ selectedId: "pin-a1" });
       await flush();
     });
-    expect(groups()[0]).toBe("/p1");
+    expect(groups()[0]).toBe("/p2");
     expect(marker("/p1")).toContain("当前");
     expect(marker("/p2")).not.toContain("当前");
   });
