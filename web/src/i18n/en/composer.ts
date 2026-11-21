@@ -36,7 +36,7 @@ export const composer = {
   fileRetry: "Retry upload",
   fileUploadInFlight: "Attachment still uploading; wait a moment before sending",
   fileEmptySkipped: "Skipped empty file",
-  fileTooLarge: "File exceeds the 10MB limit: {name}",
+  fileTooLarge: "File exceeds the {limit}MB limit: {name}",
   historyOlder: "Previous entry",
   historyNewer: "Next entry",
   historyEscHint: "Esc to exit",

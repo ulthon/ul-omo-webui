@@ -19,13 +19,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import {
-  ATTACHMENT_BINARY_MAX_BYTES,
   ATTACHMENT_MAX_AGE_MS,
-  ATTACHMENT_MAX_BYTES,
+  DEFAULT_FILE_ATTACHMENT_MAX_MB,
+  DEFAULT_TEXT_PASTE_MAX_MB,
+  FILE_ATTACHMENT_MAX_MB_KV,
+  TEXT_PASTE_MAX_MB_KV,
   projectAttachmentsDir,
   projectAttachmentsHash,
   purgeStaleAttachments,
 } from "../src/api/attachments";
+
+/** 缺省上限的字节口径（2026-11-20 配置化后缺省值不变，缺省行为用例继续覆盖） */
+const TEXT_MAX_BYTES = DEFAULT_TEXT_PASTE_MAX_MB * 1024 * 1024;
+const BINARY_MAX_BYTES = DEFAULT_FILE_ATTACHMENT_MAX_MB * 1024 * 1024;
 import type { EngineGateway } from "../src/api/engine-runtime";
 import { createSessionRoutes } from "../src/api/routes-session";
 import { openMetaDb } from "../src/db/meta";
@@ -117,8 +123,9 @@ function summary(id: string, cwd: string): EngineSessionSummary {
   };
 }
 
-function buildApp(engines: FakeGateway, root: string) {
+function buildApp(engines: FakeGateway, root: string, kvs: Record<string, string> = {}) {
   const meta = openMetaDb({ path: join(mkdtempSync(join(tmpdir(), "att-meta-")), "meta.db") });
+  for (const [key, value] of Object.entries(kvs)) meta.setKv(key, value);
   const app = new Hono();
   app.route("/", createSessionRoutes({ meta, engines, attachmentsRoot: root }));
   return app;
@@ -190,7 +197,7 @@ describe("POST /api/sessions/:id/attachments", () => {
     gateway.sessions.set("s1", summary("s1", PROJECT_A));
     const app = buildApp(gateway, root);
 
-    const exactly = "a".repeat(ATTACHMENT_MAX_BYTES);
+    const exactly = "a".repeat(TEXT_MAX_BYTES);
     const ok = await req(app, "/api/sessions/s1/attachments", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -201,10 +208,35 @@ describe("POST /api/sessions/:id/attachments", () => {
     const over = await req(app, "/api/sessions/s1/attachments", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: "a".repeat(ATTACHMENT_MAX_BYTES + 1) }),
+      body: JSON.stringify({ content: "a".repeat(TEXT_MAX_BYTES + 1) }),
     });
     expect(over.status).toBe(400);
     expect(((await over.json()) as { error: { code: string } }).error.code).toBe("content_too_large");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("上限配置化：textPasteMaxMb=2 时 1.5MB 通过；文案带当前上限", async () => {
+    const root = mkdtempSync(join(tmpdir(), "att-root-"));
+    const gateway = new FakeGateway();
+    gateway.sessions.set("s1", summary("s1", PROJECT_A));
+    const app = buildApp(gateway, root, { [TEXT_PASTE_MAX_MB_KV]: "2" });
+
+    const ok = await req(app, "/api/sessions/s1/attachments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "a".repeat(Math.round(1.5 * 1024 * 1024)) }),
+    });
+    expect(ok.status).toBe(201);
+
+    const over = await req(app, "/api/sessions/s1/attachments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "a".repeat(2 * 1024 * 1024 + 1) }),
+    });
+    expect(over.status).toBe(400);
+    const body = (await over.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("content_too_large");
+    expect(body.error.message).toContain("2MB");
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -455,12 +487,12 @@ describe("POST /api/sessions/:id/attachments（二进制通道）", () => {
 
   test("恰好 10MB 通过；10MB+1 字节 → 413 attachment_too_large", async () => {
     const { app, cleanup } = setup();
-    const ok = await post(app, "big.bin", new Uint8Array(ATTACHMENT_BINARY_MAX_BYTES));
+    const ok = await post(app, "big.bin", new Uint8Array(BINARY_MAX_BYTES));
     expect(ok.status).toBe(201);
-    expect(((await ok.json()) as { bytes: number }).bytes).toBe(ATTACHMENT_BINARY_MAX_BYTES);
+    expect(((await ok.json()) as { bytes: number }).bytes).toBe(BINARY_MAX_BYTES);
 
     // 无 content-length 头依赖（流式计数路径）：构造流式 body 携带超限字节
-    const over = await post(app, "over.bin", new Uint8Array(ATTACHMENT_BINARY_MAX_BYTES + 1));
+    const over = await post(app, "over.bin", new Uint8Array(BINARY_MAX_BYTES + 1));
     expect(over.status).toBe(413);
     expect(((await over.json()) as { error: { code: string } }).error.code).toBe("attachment_too_large");
     cleanup();
@@ -468,7 +500,7 @@ describe("POST /api/sessions/:id/attachments（二进制通道）", () => {
 
   test("content-length 预检：头声明超限 → 413（缓冲前拒绝）", async () => {
     const { app, cleanup } = setup();
-    const res = await post(app, "declared.bin", "x", { "content-length": String(ATTACHMENT_BINARY_MAX_BYTES + 1) });
+    const res = await post(app, "declared.bin", "x", { "content-length": String(BINARY_MAX_BYTES + 1) });
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("attachment_too_large");
     cleanup();
@@ -494,6 +526,33 @@ describe("POST /api/sessions/:id/attachments（二进制通道）", () => {
     expect(auto.status).toBe(201);
     expect(((await auto.json()) as { name: string }).name.endsWith(".bin")).toBe(true);
     cleanup();
+  });
+
+  // ---------- 上传上限配置化（2026-11-20：kv composer.*MaxMb，缺省 10/1，设置页可调） ----------
+
+  test("kv 生效：fileAttachmentMaxMb=1 时 1.5MB → 413 且文案带当前上限 1MB", async () => {
+    const root = mkdtempSync(join(tmpdir(), "att-bin-"));
+    const gateway = new FakeGateway();
+    gateway.sessions.set("s1", summary("s1", PROJECT_A));
+    const app = buildApp(gateway, root, { [FILE_ATTACHMENT_MAX_MB_KV]: "1" });
+    const res = await post(app, "cfg.bin", new Uint8Array(Math.round(1.5 * 1024 * 1024)));
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("attachment_too_large");
+    expect(body.error.message).toContain("1MB");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("kv 非法值回退缺省：非整数/越界/非数值不影响缺省 10MB 门", async () => {
+    for (const raw of ["abc", "0", "-5", "2000", "2.5"]) {
+      const root = mkdtempSync(join(tmpdir(), "att-bin-"));
+      const gateway = new FakeGateway();
+      gateway.sessions.set("s1", summary("s1", PROJECT_A));
+      const app = buildApp(gateway, root, { [FILE_ATTACHMENT_MAX_MB_KV]: raw });
+      const res = await post(app, "fallback.bin", "x", { "content-length": String(BINARY_MAX_BYTES + 1) });
+      expect(res.status).toBe(413);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

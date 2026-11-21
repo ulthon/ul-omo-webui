@@ -64,7 +64,7 @@ export const errors = {
   attachmentEscape: "附件路径越界被拒绝",
   attachmentExpired: "附件已过期（48h 清理），请重新上传",
   attachmentNotFound: "附件不存在或已清理",
-  attachmentTooLarge: "附件超过 10MB 上限",
+  attachmentTooLarge: "附件超过大小上限",
   imageAttachmentFailed: "图片转附件失败，请重试或改用文本描述",
   memoryEscape: "记忆库路径越界被拒绝",
   contentTooLarge: "内容过大，超出上限",

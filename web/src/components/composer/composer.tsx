@@ -45,8 +45,8 @@ import { compactToastText, runCompact } from "@/components/chat/compact-run";
 import { useIsMobile } from "@/lib/use-is-mobile";
 import {
   EMPTY_SLASH_GROUPS,
-  FILE_ATTACHMENT_MAX_BYTES,
   MAX_IMAGES,
+  mbToBytes,
   appendAttachmentLines,
   appendFileAttachmentLines,
   dataUrlToBase64,
@@ -139,6 +139,9 @@ export function Composer({
   const showToast = useUiStore((s) => s.showToast);
   // 粘贴图片发送方式档（任务 20）：bootstrap 读 GET /api/settings 填充，粘贴时取当前值路由
   const pasteImageMode = useUiStore((s) => s.pasteImageMode);
+  // 上传上限三档（kv 配置化，bootstrap 从服务端下发）：图片内联预检与文件附件预检
+  const imageInlineMaxBytes = useUiStore((s) => mbToBytes(s.imageInlineMaxMb));
+  const fileAttachmentMaxBytes = useUiStore((s) => mbToBytes(s.fileAttachmentMaxMb));
   // 发送域项目源（会话根架构 W1 任务 2）：ui store 的全局选中项目字段退役，改由
   // 选中会话派生（useActiveProject：selectedId + byProject 反查）。下游全部自动跟随：
   // 斜杠取数 getCommands、输入历史 append/listInputHistory（跨会话按项目共享的产品
@@ -718,7 +721,7 @@ export function Composer({
     async (files: File[]) => {
       const accepted: ImageAttachment[] = [];
       for (const file of files) {
-        const problem = validateImageFile(file);
+        const problem = validateImageFile(file, imageInlineMaxBytes);
         if (problem) {
           showToast(problem, "error");
           continue;
@@ -743,7 +746,7 @@ export function Composer({
       if (accepted.length > room) showToast(t("composer.imageLimitKept", { n: MAX_IMAGES, kept: room }), "error");
       setImagesBoth([...imagesRef.current, ...accepted.slice(0, room)]);
     },
-    [showToast, setImagesBoth, t],
+    [showToast, setImagesBoth, t, imageInlineMaxBytes],
   );
 
   const removeImage = useCallback(
@@ -799,8 +802,8 @@ export function Composer({
     [sessionId, setFileChipsBoth],
   );
 
-  /** 非图片文件入口（粘贴/选择共用）：空文件与超限（10MB）跳过 + toast（重试也必败，
-   * 不出 chip）；其余挂上传中 chip 后立即 POST */
+  /** 非图片文件入口（粘贴/选择共用）：空文件与超限（当前配置上限）跳过 + toast
+   * （重试也必败，不出 chip）；其余挂上传中 chip 后立即 POST */
   const addFileFiles = useCallback(
     (files: File[]) => {
       for (const file of files) {
@@ -808,8 +811,8 @@ export function Composer({
           showToast(t("composer.fileEmptySkipped"), "error");
           continue;
         }
-        if (file.size > FILE_ATTACHMENT_MAX_BYTES) {
-          showToast(t("composer.fileTooLarge", { name: file.name }), "error");
+        if (file.size > fileAttachmentMaxBytes) {
+          showToast(t("composer.fileTooLarge", { name: file.name, limit: Math.round(fileAttachmentMaxBytes / 1024 / 1024) }), "error");
           continue;
         }
         const id = `file-${++attachmentSeq}`;
@@ -820,7 +823,7 @@ export function Composer({
         void uploadFileAttachment(id);
       }
     },
-    [showToast, t, setFileChipsBoth, uploadFileAttachment],
+    [showToast, t, setFileChipsBoth, uploadFileAttachment, fileAttachmentMaxBytes],
   );
 
   /** 失败重试：回上传中态后重新 POST（重用 fileSourcesRef 里的原始 File） */

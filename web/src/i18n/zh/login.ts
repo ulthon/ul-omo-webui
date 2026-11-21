@@ -228,6 +228,14 @@ export const login = {
     pasteImageInline: "总是内联",
     pasteImageNote: "控制粘贴截图时的发送方式：自动分流与总是内联将图片随消息内联发送（视觉模型可见）；总是附件将图片上传后以附件引用路径发送。粘贴后的预览图上会标注实际去向。",
     pasteImageSaveFailed: "保存粘贴图片设置失败",
+    // 上传上限分区（2026-11-20：三条 composer 上限可调，MB 整数 1..1024）
+    uploadLimitsHeading: "上传上限",
+    uploadLimitFileLabel: "文件附件上限（MB）",
+    uploadLimitImageLabel: "图片内联上限（MB）",
+    uploadLimitTextLabel: "大段文本粘贴上限（MB）",
+    uploadLimitNote: "粘贴或选择文件的单附件大小上限，范围 1-1024 的整数，改动即时生效，跨设备一致。文件附件与文本上限由服务端强制，图片上限在发送前预检。",
+    uploadLimitInvalid: "请输入 1-1024 之间的整数",
+    uploadLimitSaveFailed: "保存上传上限失败",
     // 站点名分区（小修 A：kv 覆盖 env 部署默认，留空回退）
     siteNameHeading: "站点名",
     siteNamePlaceholder: "留空则使用部署默认（环境变量注入值）",

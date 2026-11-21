@@ -227,6 +227,14 @@ export const login = {
     pasteImageInline: "Always inline",
     pasteImageNote: "Controls how pasted screenshots are sent: Auto and Always inline send images inline with the message (visible to vision models); Always attach uploads the image and sends it as an attachment reference path. The preview chip shows the actual destination.",
     pasteImageSaveFailed: "Failed to save paste image settings",
+    // Upload limits section (2026-11-20: three composer limits, integer MB 1..1024)
+    uploadLimitsHeading: "Upload limits",
+    uploadLimitFileLabel: "File attachment limit (MB)",
+    uploadLimitImageLabel: "Inline image limit (MB)",
+    uploadLimitTextLabel: "Large text paste limit (MB)",
+    uploadLimitNote: "Per-item size limits for pasted or selected files, integer 1-1024. Changes take effect immediately and sync across devices. File and text limits are enforced server-side; the image limit is checked before sending.",
+    uploadLimitInvalid: "Enter an integer between 1 and 1024",
+    uploadLimitSaveFailed: "Failed to save upload limits",
     // 站点名分区（小修 A：kv 覆盖 env 部署默认，留空回退）
     siteNameHeading: "Site name",
     siteNamePlaceholder: "Leave empty to use the deployment default (env-injected value)",

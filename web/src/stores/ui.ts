@@ -74,6 +74,27 @@ export function parsePasteImageMode(raw: string | null | undefined): PasteImageM
   return raw === "attach" || raw === "inline" || raw === "auto" ? raw : "attach";
 }
 
+// ---------- 上传上限三档（2026-11-20 设置页可调批） ----------
+// 与服务端 server/src/api/attachments.ts 同键同口径（MB 整数字符串，1..1024，
+// 非法回退缺省）：文件附件 10、图片内联 5、大段文本粘贴 1（历史硬编码值定缺省）。
+// 服务端逐请求读 kv 强制（文本/二进制通道），前端预检值经 bootstrap 从同一 kv 下发。
+
+export const UPLOAD_LIMIT_MB_MIN = 1;
+export const UPLOAD_LIMIT_MB_MAX = 1024;
+export const FILE_ATTACHMENT_MAX_MB_KV = "composer.fileAttachmentMaxMb";
+export const IMAGE_INLINE_MAX_MB_KV = "composer.imageInlineMaxMb";
+export const TEXT_PASTE_MAX_MB_KV = "composer.textPasteMaxMb";
+export const DEFAULT_FILE_ATTACHMENT_MAX_MB = 10;
+export const DEFAULT_IMAGE_INLINE_MAX_MB = 5;
+export const DEFAULT_TEXT_PASTE_MAX_MB = 1;
+
+/** 上限解析：整数字符串 MB，1..1024；键缺失/空串/非整数/越界回退缺省（与服务端
+ * parseUploadLimitMb 同口径，双端各自实现单一契约） */
+export function parseUploadLimitMb(raw: string | null | undefined, fallbackMb: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= UPLOAD_LIMIT_MB_MIN && n <= UPLOAD_LIMIT_MB_MAX ? n : fallbackMb;
+}
+
 /** 仅 "grid" 视为色格；键缺失/其他任何值回退 text（缺省文字，与历史行为一致） */
 export function parseTagDisplayMode(raw: string | null | undefined): TagDisplayMode {
   return raw === "grid" ? "grid" : "text";
@@ -159,6 +180,11 @@ interface UiState {
   /** 粘贴图片发送方式：meta_kv composer.pasteImageMode 持久（缺省 attach=优先不进模型，#29）；
    * composer onPaste 路由与图片 chip 徽标共同消费。 */
   pasteImageMode: PasteImageMode;
+  /** 上传上限三档（MB，kv composer.*MaxMb 持久，缺省 10/5/1）：composer 预检消费
+   * （文件附件 chip 出列门与图片内联校验门），服务端同 kv 强制；设置页改档即 PUT。 */
+  fileAttachmentMaxMb: number;
+  imageInlineMaxMb: number;
+  textPasteMaxMb: number;
   /** 站点名覆盖（kv ui.siteName，缺省 null=回退 env 注入默认）；
    * 顶栏小字/标签页标题与设置页共同消费（resolveSiteName 取值）。 */
   siteName: string | null;
@@ -210,6 +236,7 @@ interface UiState {
   setTagDisplayMode(mode: TagDisplayMode): void;
   setTipsEnabled(enabled: boolean): void;
   setPasteImageMode(mode: PasteImageMode): void;
+  setUploadLimits(limits: Partial<Pick<UiState, "fileAttachmentMaxMb" | "imageInlineMaxMb" | "textPasteMaxMb">>): void;
   setSiteName(name: string | null): void;
   setOverviewNotesCount(n: number): void;
   bumpSlashCommandsVersion(): void;
@@ -285,6 +312,9 @@ export const useUiStore = create<UiState>()((set) => ({
   tagDisplayMode: "text",
   tipsEnabled: true,
   pasteImageMode: "auto",
+  fileAttachmentMaxMb: DEFAULT_FILE_ATTACHMENT_MAX_MB,
+  imageInlineMaxMb: DEFAULT_IMAGE_INLINE_MAX_MB,
+  textPasteMaxMb: DEFAULT_TEXT_PASTE_MAX_MB,
   siteName: null,
   overviewNotesCount: DEFAULT_OVERVIEW_NOTES_COUNT,
   slashCommandsVersion: 0,
@@ -323,6 +353,8 @@ export const useUiStore = create<UiState>()((set) => ({
   setTagDisplayMode: (tagDisplayMode) => set({ tagDisplayMode }),
   setTipsEnabled: (tipsEnabled) => set({ tipsEnabled }),
   setPasteImageMode: (pasteImageMode) => set({ pasteImageMode }),
+  setUploadLimits: (limits: Partial<Pick<UiState, "fileAttachmentMaxMb" | "imageInlineMaxMb" | "textPasteMaxMb">>) =>
+    set(limits),
   setSiteName: (siteName) => set({ siteName }),
   setOverviewNotesCount: (overviewNotesCount) => set({ overviewNotesCount }),
   bumpSlashCommandsVersion: () => set((s) => ({ slashCommandsVersion: s.slashCommandsVersion + 1 })),

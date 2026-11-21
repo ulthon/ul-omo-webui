@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, useUiStore, type PasteImageMode, FILE_ATTACHMENT_MAX_MB_KV, IMAGE_INLINE_MAX_MB_KV, TEXT_PASTE_MAX_MB_KV, UPLOAD_LIMIT_MB_MAX, UPLOAD_LIMIT_MB_MIN } from "@/stores/ui";
 import { LANGUAGE_KV, useLocaleStore, useT, type Locale, type MessageKey } from "@/i18n/i18n";
 import type { SettingsGroupId } from "@/stores/ui";
 import { apiErrorMessage } from "@/i18n/errors";
@@ -708,6 +708,111 @@ export function PasteImageModeSection() {
   );
 }
 
+/** 设置页"上传上限"分区（2026-11-20）：三条 composer 上传上限（文件附件/图片内联/
+ * 大段文本粘贴，MB 整数 1..1024）改档即存即生效——meta_kv composer.*MaxMb，
+ * 服务端逐请求读 kv 强制（文本/二进制通道），前端预检值经 ui store 同 kv 同源。
+ * 导出供单测。 */
+function UploadLimitRow(props: {
+  testid: string;
+  labelKey: MessageKey;
+  kvKey: string;
+  field: "fileAttachmentMaxMb" | "imageInlineMaxMb" | "textPasteMaxMb";
+  value: number;
+}) {
+  const { testid, labelKey, kvKey, field, value } = props;
+  const t = useT();
+  const [draft, setDraft] = useState(String(value));
+  const [invalid, setInvalid] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // 失焦/回车提交：非法（非整数/越界）行内提示不落库；合法且变化才 PUT
+  const commit = async () => {
+    const n = Number(draft);
+    if (!Number.isInteger(n) || n < UPLOAD_LIMIT_MB_MIN || n > UPLOAD_LIMIT_MB_MAX) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (n === value || saving) return;
+    setSaving(true);
+    try {
+      await api.putSettings({ [kvKey]: String(n) });
+      useUiStore.getState().setUploadLimits({ [field]: n });
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) {
+        useUiStore.getState().pushGlobalError(apiErrorMessage(err, "login.topbar.uploadLimitSaveFailed"));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1" data-testid={testid}>
+      <div className="flex min-h-11 items-center justify-between gap-3 lg:min-h-7">
+        <label htmlFor={`upload-limit-${testid}`} className="text-sm">
+          {t(labelKey)}
+        </label>
+        <Input
+          id={`upload-limit-${testid}`}
+          type="number"
+          inputMode="numeric"
+          min={UPLOAD_LIMIT_MB_MIN}
+          max={UPLOAD_LIMIT_MB_MAX}
+          step={1}
+          value={draft}
+          disabled={saving}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          className="w-28 text-right"
+          aria-label={t(labelKey)}
+        />
+      </div>
+      {invalid && <p className="text-xs text-destructive">{t("login.topbar.uploadLimitInvalid")}</p>}
+    </div>
+  );
+}
+
+export function UploadLimitsSection() {
+  const fileAttachmentMaxMb = useUiStore((s) => s.fileAttachmentMaxMb);
+  const imageInlineMaxMb = useUiStore((s) => s.imageInlineMaxMb);
+  const textPasteMaxMb = useUiStore((s) => s.textPasteMaxMb);
+  const t = useT();
+
+  return (
+    <div className="border-t pt-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">{t("login.topbar.uploadLimitsHeading")}</p>
+        <UploadLimitRow
+          testid="upload-limit-file"
+          labelKey="login.topbar.uploadLimitFileLabel"
+          kvKey={FILE_ATTACHMENT_MAX_MB_KV}
+          field="fileAttachmentMaxMb"
+          value={fileAttachmentMaxMb}
+        />
+        <UploadLimitRow
+          testid="upload-limit-image"
+          labelKey="login.topbar.uploadLimitImageLabel"
+          kvKey={IMAGE_INLINE_MAX_MB_KV}
+          field="imageInlineMaxMb"
+          value={imageInlineMaxMb}
+        />
+        <UploadLimitRow
+          testid="upload-limit-text"
+          labelKey="login.topbar.uploadLimitTextLabel"
+          kvKey={TEXT_PASTE_MAX_MB_KV}
+          field="textPasteMaxMb"
+          value={textPasteMaxMb}
+        />
+        <p className="text-xs text-muted-foreground">{t("login.topbar.uploadLimitNote")}</p>
+      </div>
+    </div>
+  );
+}
+
 /** 设置页"对话"分区（docs08-r5 任务 13）：思考块默认展开开关。
  * 布尔存 meta_kv chat.thinkingDefaultExpanded（"true"/"false" 字符串，走既有
  * PUT /api/settings，跨设备一致）；改档即存即生效（ThinkingBlock 挂载时读 ui store
@@ -901,7 +1006,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{
   {
     id: "appearance",
     labelKey: "login.settingsPage.group.appearance",
-    sections: [SiteNameSection, SidebarSortSection, SessionSortSection, TagDisplaySection, PasteImageModeSection, ConversationSection, TipsSection, LanguageSection],
+    sections: [SiteNameSection, SidebarSortSection, SessionSortSection, TagDisplaySection, PasteImageModeSection, UploadLimitsSection, ConversationSection, TipsSection, LanguageSection],
   },
   {
     id: "integration",

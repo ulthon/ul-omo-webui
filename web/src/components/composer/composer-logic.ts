@@ -10,10 +10,13 @@ import { CHAT_COMMANDS } from "@/components/chat/commands";
 /** 防抖落库间隔（计划 todo 21：1s） */
 export const DRAFT_DEBOUNCE_MS = 1000;
 
-/** 图片大小上限：超过拒绝并提示（自定值，记录于 .omo/qa/W4/composer.md） */
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** 单条 prompt 图片数上限（与服务端 parseImages 上限一致，routes-session.ts） */
+/** 单条 prompt 图片数上限（与服务端 parseImages 上限一致，routes-session.ts）；
+ * 图片字节上限已配置化（kv composer.imageInlineMaxMb，缺省 5，设置页可调），
+ * 预检值由调用方从 ui store 传入。 */
 export const MAX_IMAGES = 8;
+
+/** MB → 字节（上限预检与文案共用口径） */
+export const mbToBytes = (mb: number): number => mb * 1024 * 1024;
 
 const DRAFT_KEY_PREFIX = "ul-omo-webui:draft:";
 
@@ -90,10 +93,11 @@ export function dataUrlToBase64(dataUrl: string): string {
   return comma === -1 ? dataUrl : dataUrl.slice(comma + 1);
 }
 
-/** 校验待上传图片，返回错误提示文案；null 表示通过 */
-export function validateImageFile(file: { size: number; type: string }): string | null {
+/** 校验待上传图片，返回错误提示文案；null 表示通过。maxBytes 为当前生效上限
+ * （kv composer.imageInlineMaxMb，缺省 5MB；调用方从 ui store 读入） */
+export function validateImageFile(file: { size: number; type: string }, maxBytes: number): string | null {
   if (!file.type.startsWith("image/")) return "仅支持图片文件";
-  if (file.size > MAX_IMAGE_BYTES) return `图片超过 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB，已拒绝`;
+  if (file.size > maxBytes) return `图片超过 ${Math.round(maxBytes / 1024 / 1024)}MB，已拒绝`;
   return null;
 }
 
@@ -215,9 +219,9 @@ export function sendablePasteChips(chips: readonly PasteChip[]): Array<{ path: s
 // 与 PasteChip（大段文本）完全分离：无「取消勾选回插」语义（文件内容不可回插
 // 输入框），失败态改为行内重试/移除。图片仍走内联链路（分流是任务 19）。
 
-/** 二进制通道单附件上限（与服务端 ATTACHMENT_BINARY_MAX_BYTES 对齐）：客户端预检，
- * 超限不出 chip（重试也必败，无意义）；服务端流式计数仍是唯一真相 */
-export const FILE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+// 单附件字节上限已配置化（kv composer.fileAttachmentMaxMb，缺省 10MB，设置页可调）：
+// 客户端预检值由 composer.tsx 从 ui store 读入（与服务端同 kv 同源），超限不出
+// chip（重试也必败，无意义）；服务端流式计数仍是唯一真相
 
 export type FileChipStage = "uploading" | "ready" | "failed";
 

@@ -3,7 +3,6 @@
 import { describe, expect, test } from "vitest";
 import type { DraftInfo } from "@/lib/api";
 import {
-  MAX_IMAGE_BYTES,
   PASTE_ATTACHMENT_THRESHOLD,
   appendAttachmentLines,
   appendFileAttachmentLines,
@@ -69,16 +68,23 @@ describe("dataUrlToBase64", () => {
 });
 
 describe("validateImageFile", () => {
+  /** 缺省档字节口径（kv composer.imageInlineMaxMb 配置化后上限由调用方传入） */
+  const MAX = 5 * 1024 * 1024;
   test("合法图片通过", () => {
-    expect(validateImageFile({ size: 1024, type: "image/png" })).toBeNull();
-    expect(validateImageFile({ size: MAX_IMAGE_BYTES, type: "image/jpeg" })).toBeNull();
+    expect(validateImageFile({ size: 1024, type: "image/png" }, MAX)).toBeNull();
+    expect(validateImageFile({ size: MAX, type: "image/jpeg" }, MAX)).toBeNull();
   });
   test("超过大小上限拒绝并提示上限值", () => {
-    const err = validateImageFile({ size: MAX_IMAGE_BYTES + 1, type: "image/png" });
+    const err = validateImageFile({ size: MAX + 1, type: "image/png" }, MAX);
     expect(err).toContain("5MB");
   });
   test("非图片类型拒绝", () => {
-    expect(validateImageFile({ size: 10, type: "text/plain" })).toContain("图片");
+    expect(validateImageFile({ size: 10, type: "text/plain" }, MAX)).toContain("图片");
+  });
+  test("上限已配置化：传入 20MB 档时 6MB 通过、超限提示当前档位", () => {
+    const twentyMb = 20 * 1024 * 1024;
+    expect(validateImageFile({ size: 6 * 1024 * 1024, type: "image/png" }, twentyMb)).toBeNull();
+    expect(validateImageFile({ size: twentyMb + 1, type: "image/png" }, twentyMb)).toContain("20MB");
   });
 });
 

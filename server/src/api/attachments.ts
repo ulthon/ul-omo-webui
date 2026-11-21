@@ -14,10 +14,50 @@ import { join } from "node:path";
 import { DATA_DIR } from "../config";
 import { ApiError } from "./http";
 
-/** 单附件大小上限（UTF-8 字节）：1MB —— 仅限 JSON 文本通道，行为不变 */
-export const ATTACHMENT_MAX_BYTES = 1024 * 1024;
-/** 二进制通道单附件大小上限：10MB（任意格式，原始 body 流式计数预检） */
-export const ATTACHMENT_BINARY_MAX_BYTES = 10 * 1024 * 1024;
+/** 上传上限可调范围（MB）：设置页输入钝制与两端解析回退共用同口径 */
+export const UPLOAD_LIMIT_MB_MIN = 1;
+export const UPLOAD_LIMIT_MB_MAX = 1024;
+
+/** 粘贴/选择文件的二进制附件通道单附件上限（MB）：meta_kv composer.fileAttachmentMaxMb，
+ * 缺省 10。前端 composer 预检与服务端流式计数共同消费（服务端是唯一真相）。 */
+export const FILE_ATTACHMENT_MAX_MB_KV = "composer.fileAttachmentMaxMb";
+export const DEFAULT_FILE_ATTACHMENT_MAX_MB = 10;
+/** 粘贴图片内联链路大小上限（MB）：meta_kv composer.imageInlineMaxMb，缺省 5。
+ * 现状仅前端预检强制（内联图片随 prompt JSON 入参，服务端无字节门槛），配置化后
+ * 预检值经 bootstrap 从服务端 kv 下发，两端同源。 */
+export const IMAGE_INLINE_MAX_MB_KV = "composer.imageInlineMaxMb";
+export const DEFAULT_IMAGE_INLINE_MAX_MB = 5;
+/** 大段文本粘贴 JSON 通道单附件上限（MB）：meta_kv composer.textPasteMaxMb，缺省 1 */
+export const TEXT_PASTE_MAX_MB_KV = "composer.textPasteMaxMb";
+export const DEFAULT_TEXT_PASTE_MAX_MB = 1;
+
+/** 上限解析：整数字符串 MB，1..1024 钝制；键缺失/空串/非整数/越界回退缺省。
+ * 与前端 stores/ui.ts parseUploadLimitMb 同口径（双端各自实现，键与范围单一契约）。 */
+export function parseUploadLimitMb(raw: string | null | undefined, fallbackMb: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= UPLOAD_LIMIT_MB_MIN && n <= UPLOAD_LIMIT_MB_MAX ? n : fallbackMb;
+}
+
+type KvReader = { getKv?(key: string): string | null } | undefined;
+
+function limitBytes(meta: KvReader, kv: string, fallbackMb: number): number {
+  return parseUploadLimitMb(meta?.getKv?.(kv), fallbackMb) * 1024 * 1024;
+}
+
+/** 二进制通道单附件上限（字节）：逐调用读 kv，设置页改完即生效不重启 */
+export function fileAttachmentMaxBytes(meta: KvReader): number {
+  return limitBytes(meta, FILE_ATTACHMENT_MAX_MB_KV, DEFAULT_FILE_ATTACHMENT_MAX_MB);
+}
+
+/** 图片内联上限（字节）：服务端不强制，仅为单源下发口径保留取值口 */
+export function imageInlineMaxBytes(meta: KvReader): number {
+  return limitBytes(meta, IMAGE_INLINE_MAX_MB_KV, DEFAULT_IMAGE_INLINE_MAX_MB);
+}
+
+/** 文本通道单附件上限（字节）：逐调用读 kv */
+export function textPasteMaxBytes(meta: KvReader): number {
+  return limitBytes(meta, TEXT_PASTE_MAX_MB_KV, DEFAULT_TEXT_PASTE_MAX_MB);
+}
 /** 临时附件按龄清理阈值：48h（引擎按需读取窗口，过期文件启动时清扫；
  * 清扫后 GET 服务端返回 410 attachment_expired —— 死链语义在 API 面显式化） */
 export const ATTACHMENT_MAX_AGE_MS = 48 * 60 * 60 * 1000;

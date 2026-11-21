@@ -14,12 +14,12 @@ import type {
 } from "../adapter/engine-adapter";
 import { EngineAdapterError } from "../adapter/engine-adapter";
 import {
-  ATTACHMENT_BINARY_MAX_BYTES,
-  ATTACHMENT_MAX_BYTES,
   attachmentsRoot,
+  fileAttachmentMaxBytes,
   generatedAttachmentName,
   generatedBinaryAttachmentName,
   projectAttachmentsDir,
+  textPasteMaxBytes,
   validateAttachmentName,
 } from "./attachments";
 import type { SessionMeta, SessionTagRef } from "../db/meta";
@@ -1125,17 +1125,24 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
         throw new ApiError(400, "invalid_content", "content 必填且不能为空");
       }
       bytes = Buffer.byteLength(body.content, "utf8");
-      if (bytes > ATTACHMENT_MAX_BYTES) {
-        throw new ApiError(400, "content_too_large", `content 超过 1MB 上限（${bytes} 字节）`);
+      const textMaxBytes = textPasteMaxBytes(deps.meta);
+      if (bytes > textMaxBytes) {
+        throw new ApiError(
+          400,
+          "content_too_large",
+          `content 超过 ${Math.round(textMaxBytes / 1024 / 1024)}MB 上限（${bytes} 字节）`,
+        );
       }
       data = body.content;
       name = validateAttachmentName(body.name);
     } else {
       // 二进制通道：先看 content-length 头预检（超限在缓冲前拒绝，不占内存），
       // 再流式读取计数（头缺失/撒谎时实际字节数仍是唯一真相）
+      const binaryMaxBytes = fileAttachmentMaxBytes(deps.meta);
+      const binaryMaxMb = Math.round(binaryMaxBytes / 1024 / 1024);
       const declared = Number(c.req.header("content-length"));
-      if (Number.isFinite(declared) && declared > ATTACHMENT_BINARY_MAX_BYTES) {
-        throw new ApiError(413, "attachment_too_large", `附件超过 10MB 上限（content-length ${declared} 字节）`);
+      if (Number.isFinite(declared) && declared > binaryMaxBytes) {
+        throw new ApiError(413, "attachment_too_large", `附件超过 ${binaryMaxMb}MB 上限（content-length ${declared} 字节）`);
       }
       const raw = c.req.raw.body;
       if (!raw) throw new ApiError(400, "invalid_content", "请求体不能为空");
@@ -1147,9 +1154,9 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
         if (done) break;
         if (value) {
           total += value.byteLength;
-          if (total > ATTACHMENT_BINARY_MAX_BYTES) {
+          if (total > binaryMaxBytes) {
             await reader.cancel().catch(() => {});
-            throw new ApiError(413, "attachment_too_large", `附件超过 10MB 上限（≥${total} 字节）`);
+            throw new ApiError(413, "attachment_too_large", `附件超过 ${binaryMaxMb}MB 上限（≥${total} 字节）`);
           }
           chunks.push(value);
         }

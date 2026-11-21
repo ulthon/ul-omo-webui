@@ -13,7 +13,7 @@ import {
   parseProjectSort,
   parseSessionSort,
 } from "@/components/session-list/global-list-data";
-import { PASTE_IMAGE_MODE_KV, OVERVIEW_NOTES_COUNT_KV, parseOverviewNotesCount, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parsePasteImageMode, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore } from "@/stores/ui";
+import { PASTE_IMAGE_MODE_KV, OVERVIEW_NOTES_COUNT_KV, parseOverviewNotesCount, SITE_NAME_KV, THINKING_EXPANDED_KV, TAG_DISPLAY_MODE_KV, TIPS_ENABLED_KV, parsePasteImageMode, parseTagDisplayMode, parseThinkingExpanded, parseTipsEnabled, useUiStore, FILE_ATTACHMENT_MAX_MB_KV, IMAGE_INLINE_MAX_MB_KV, TEXT_PASTE_MAX_MB_KV, DEFAULT_FILE_ATTACHMENT_MAX_MB, DEFAULT_IMAGE_INLINE_MAX_MB, DEFAULT_TEXT_PASTE_MAX_MB, parseUploadLimitMb } from "@/stores/ui";
 import { LANGUAGE_KV, parseLocale, useLocaleStore } from "@/i18n/i18n";
 
 /** 模型加载请求序号（docs08-r5 任务 2 竞态守卫）：单调递增 token，快速切换项目时
@@ -97,6 +97,13 @@ export async function bootstrap(): Promise<void> {
     ui.setTipsEnabled(parseTipsEnabled(settings[TIPS_ENABLED_KV]));
     // 粘贴图片发送方式（任务 20，#29 改档）：键缺失/非法值回退 attach（优先不进模型）
     ui.setPasteImageMode(parsePasteImageMode(settings[PASTE_IMAGE_MODE_KV]));
+    // 上传上限三档（2026-11-20 设置页可调批）：键缺失/非法回退缺省 10/5/1；服务端
+    // 同 kv 强制，前端预检值与此同源（composer 消费）
+    ui.setUploadLimits({
+      fileAttachmentMaxMb: parseUploadLimitMb(settings[FILE_ATTACHMENT_MAX_MB_KV], DEFAULT_FILE_ATTACHMENT_MAX_MB),
+      imageInlineMaxMb: parseUploadLimitMb(settings[IMAGE_INLINE_MAX_MB_KV], DEFAULT_IMAGE_INLINE_MAX_MB),
+      textPasteMaxMb: parseUploadLimitMb(settings[TEXT_PASTE_MAX_MB_KV], DEFAULT_TEXT_PASTE_MAX_MB),
+    });
     // 站点名覆盖（小修 A）：键缺失/空串回退 null（顶栏 resolveSiteName 退 env 注入默认）
     ui.setSiteName(settings[SITE_NAME_KV]?.trim() || null);
     // 总览笔记显示条数（平铺直编批）：键缺失/非法回退 3

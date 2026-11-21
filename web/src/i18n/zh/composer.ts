@@ -38,7 +38,7 @@ export const composer = {
   fileRetry: "重试上传",
   fileUploadInFlight: "附件上传中，请稍候再发送",
   fileEmptySkipped: "已跳过空文件",
-  fileTooLarge: "文件超过 10MB 上限：{name}",
+  fileTooLarge: "文件超过 {limit}MB 上限：{name}",
   historyOlder: "更早一条",
   historyNewer: "更新一条",
   historyEscHint: "Esc 退出",
