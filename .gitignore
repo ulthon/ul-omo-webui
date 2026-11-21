@@ -15,6 +15,7 @@ server/data/
 
 # 工作区与会话产物（本产品运行/开发工具状态，不入库）
 .omo/
+.omo-tmp/
 .senpi/
 .ul-omo-webui.json
 .codegraph/
