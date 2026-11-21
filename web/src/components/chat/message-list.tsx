@@ -407,6 +407,7 @@ export function MessageList({
         mergeSessionEventLines(
           mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
           sessionEvents ?? [],
+          entries ?? [],
         ),
         streamErrors ?? [],
       ),

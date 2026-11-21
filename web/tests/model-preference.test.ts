@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError, api } from "@/lib/api";
 import { diag } from "@/lib/diag";
+import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -24,6 +25,7 @@ const ONE_MODEL = [{ provider: "p", id: "m1", contextWindow: 1000, reasoning: fa
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
   useUiStore.setState({ models: [], modelsLoaded: false, selectedModel: null, selectedThinkingLevel: null });
+  useSessionsStore.setState({ appliedModels: {}, modelStickies: {} });
 });
 
 describe("api.prompt 模型防呆与偏好注入", () => {
@@ -192,5 +194,37 @@ describe("api.prompt 思考档注入（W2 todo 8）", () => {
     });
     await api.prompt("s1", { text: "hi", thinkingLevel: "high" });
     expect(body.thinkingLevel).toBe("high");
+  });
+});
+
+describe("api.prompt 排队剥模型留痕（模型切换排查批 2026-11-18）", () => {
+  test("排队请求不带 model（铁律）且选中≠生效 → queued_stripped warn", async () => {
+    useUiStore.setState({ models: ONE_MODEL, modelsLoaded: true, selectedModel: "p/m2" });
+    useSessionsStore.setState({ appliedModels: { s1: "p/m1" } });
+    let body: Record<string, unknown> = {};
+    mockFetch(async (_input, init) => {
+      body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return okJson({ disposition: "queued", queued: true });
+    });
+    const warnSpy = vi.spyOn(diag, "warn");
+    await api.prompt("s1", { text: "hi", streamingBehavior: "followUp" });
+    expect(body).toEqual({ text: "hi", streamingBehavior: "followUp" });
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith("model-select", "queued_stripped", {
+      session: "s1",
+      selected: "p/m2",
+      applied: "p/m1",
+    });
+    warnSpy.mockRestore();
+  });
+
+  test("选中与生效一致 → 不告警（无丢失可言）", async () => {
+    useUiStore.setState({ models: ONE_MODEL, modelsLoaded: true, selectedModel: "p/m1" });
+    useSessionsStore.setState({ appliedModels: { s1: "p/m1" } });
+    mockFetch(async () => okJson({ disposition: "queued", queued: true }));
+    const warnSpy = vi.spyOn(diag, "warn");
+    await api.prompt("s1", { text: "hi", streamingBehavior: "followUp" });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });

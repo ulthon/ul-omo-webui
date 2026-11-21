@@ -39,6 +39,9 @@ function hydrateAppliedModel(sessionId: string, entries: ReadonlyArray<WireEntry
   if (change === null) return;
   const model = `${change.provider}/${change.modelId}`;
   useSessionsStore.getState().setAppliedModel(sessionId, model);
+  // 粘性手选不冲（模型粘性批 2026-11-18）：未生效的显式手选不被水合对齐洗回——粘性
+  // 生效时 setAppliedModel 已同步解除，走到这里说明手选仍待下一条 prompt
+  if (useSessionsStore.getState().modelStickies[sessionId] !== undefined) return;
   if (useSessionsStore.getState().selectedId === sessionId) {
     const ui = useUiStore.getState();
     if (ui.selectedModel !== model) ui.setSelectedModel(model);
@@ -240,8 +243,9 @@ interface MessagesState {
   /** 压缩进行位置位/消除（docs08-r6 任务 18 ①，event-dispatch 由 compaction_* 帧转译）；
    *  true 布防超时兑底（end 帧丢失自愈），false/会话清理拆防 */
   setCompacting(sessionId: string, compacting: boolean): void;
-  /** 会话级事件行追加（r10 todo 7，event-dispatch 由三类 wire 事件转译）：尾部入列，
-   *  重放窗口重复帧由调用侧守卫（与 autoStarted toast 同守卫） */
+  /** 会话级事件行追加（r10 todo 7，event-dispatch 由三类 wire 事件转译）：锚点入列
+   *  （事件行锚点化批：记当时消息流末条 entry id，渲染层插在锚后随流上移），重放窗口
+   *  重复帧由调用侧守卫（与 autoStarted toast 同守卫） */
   appendSessionEvent(
     sessionId: string,
     summary: SessionEventLine["summary"],
@@ -783,15 +787,27 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
     },
 
     appendSessionEvent: (sessionId, summary) => {
-      // 尾部入列（事件行即最新发生的事实）；id 单调递增作流内 key。重放窗口重复帧由
-      // 调用侧守卫（与 autoStarted toast 同守卫），此处不再按内容去重。
+      // 锚点入列（事件行锚点化批 2026-11-18）：事件发生时刻的消息流末条 entry id 记为
+      // 锚（与提问卡 lastStreamEntryId 同口径）——渲染层插在锚条目后随消息流上移，不再
+      // 恒钉列表底部（用户反馈：模型已切换提示应像 CLI 一样随消息上移）；id 单调递增
+      // 作流内 key。重放窗口重复帧由调用侧守卫（与 autoStarted toast 同守卫），此处
+      // 不再按内容去重。
+      const entries = useMessagesStore.getState().bySession[sessionId]?.entries ?? [];
+      let anchorEntryId: string | null = null;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const eid = entries[i]!.id;
+        if (typeof eid === "string" && eid !== "") {
+          anchorEntryId = eid;
+          break;
+        }
+      }
       const id = `ev-${++sessionEventSeq}`;
       set((s) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
         return {
           bySession: {
             ...s.bySession,
-            [sessionId]: { ...cur, sessionEvents: [...cur.sessionEvents, { id, summary }] },
+            [sessionId]: { ...cur, sessionEvents: [...cur.sessionEvents, { id, summary, anchorEntryId }] },
           },
         };
       });

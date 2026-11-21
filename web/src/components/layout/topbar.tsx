@@ -230,7 +230,7 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
   useEffect(() => {
     if (siteName) document.title = siteName;
   }, [siteName]);
-  const identityPad = siteName ? "py-0.5" : "py-1";
+  const identityPad = "py-1";
   const noModels = modelsLoaded && models.length === 0;
   const modelLabel = noModels
     ? t("login.topbar.noModels")
@@ -280,17 +280,19 @@ export function Topbar({ onToggleTodoPanel }: { onToggleTodoPanel: () => void })
                   : t("login.topbar.chooseProject")}
               </span>
               <ChevronDown className="size-3 shrink-0" aria-hidden />
+              {/* 站点名并入本行右侧（2026-11-18 用户反馈：站点名/项目名一般都短，不值得
+                  独占一行）：ml-auto 右对齐 + max-w 截断，两短名中间自然留白，任一过长
+                  各自截断不挤行；未设置不渲染。原第三行（todo3）删除，手机档回到两行，
+                  identityPad 统一 py-1（三行压高档退役） */}
+              {siteName && (
+                <span
+                  data-testid="topbar-site-name"
+                  className="ml-auto max-w-[45%] truncate pl-2 text-[11px] leading-none text-muted-foreground"
+                >
+                  {siteName}
+                </span>
+              )}
             </span>
-            {/* 站点名小字第三行（todo3）：text-[11px] leading-none 控制三行总高，
-                配合上方 py-0.5 仍收在 h-14 顶栏内；未设置整行不渲染 */}
-            {siteName && (
-              <span
-                data-testid="topbar-site-name"
-                className="block w-full truncate text-[11px] leading-none text-muted-foreground"
-              >
-                {siteName}
-              </span>
-            )}
           </button>
           <SessionSwitcherSheet open={switcherOpen} onOpenChange={setSwitcherOpen} />
         </>

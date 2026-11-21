@@ -44,6 +44,10 @@ interface SessionsState {
    * 与 prompt 回执 appliedModel 双路写入；adoptSessionId 随换 key 迁移。不在此 = 未知
    * （胶囊待生效徽标按「选中 ≠ 生效」判定、水位环 tooltip/分母校准降级处理）。 */
   appliedModels: Record<string, string>;
+  /** 手选模型粘性（模型粘性批 2026-11-18）：会话 id → 用户显式手选模型。切换被排队
+   *  剥离（排队剥模型铁律）或回合未落地时，切会话/水合不得回洗——2026-11-18 日志
+   *  实证四次 user_change 的 from 全为旧模型即此洗回循环。生效即解除（setAppliedModel）。 */
+  modelStickies: Record<string, string>;
   /** 运行态活动时刻账本（W1 缺陷 #3，与 runStates 同键并行）：setRunState 写入、
    * 该会话任何 SSE 事件刷新（touchRunStateAt），周期清扫据此判无活动超时回落。
    * 组件不消费本字段（状态点仍读 runStates，值形状因此不被破坏）。 */
@@ -106,10 +110,18 @@ interface SessionsState {
   /** 未读计数 +1（SSE 新消息且非查看态；跨项目查找） */
   bumpUnread(id: string): void;
   removeSession(id: string): void;
-  /** 运行态写入/清除（todo 15 event-dispatch 调用） */
-  setRunState(id: string, state: SessionRunState): void;
-  /** 会话生效模型写入（幂等：同值不产生新引用，订阅者不重渲染） */
+  /** 运行态写入/清除（todo 15 event-dispatch 调用）；src 为写入来源标注（观测面补点：
+   *  frame:<type>[/method]、reconcile、resync、stale-<caller> 等），随迁移日志落盘 */
+  setRunState(id: string, state: SessionRunState, src?: string): void;
+  /** 会话生效模型写入（幂等：同值不产生新引用，订阅者不重渲染）；生效值命中该会话
+   *  手选粘性（modelStickies）时同步解除——粘性使命完成 */
   setAppliedModel(id: string, model: string): void;
+  /** 手选模型粘性写入（模型粘性批 2026-11-18）：显式手选对该会话保持粘性——切会话
+   *  （applyProjectDecision）与消息水合（hydrateAppliedModel）不再把手选洗回已生效
+   *  模型；生效（setAppliedModel 同值）或再次手选时解除/覆盖 */
+  setModelSticky(id: string, model: string): void;
+  /** 手选粘性解除（选回已生效模型等场景） */
+  clearModelSticky(id: string): void;
   clearRunState(id: string): void;
   /** 该会话任一 SSE 事件的活动记账（event-dispatch 调用；无运行态时 no-op） */
   touchRunStateAt(id: string): void;
@@ -177,6 +189,15 @@ function mergeKeys(s: Pick<SessionsState, "aliasIds" | "pendingIds">): Record<st
   return Object.keys(s.pendingIds).length === 0 ? s.aliasIds : { ...s.aliasIds, ...s.pendingIds };
 }
 
+/** 键值表剔除单键（返回新引用；粘性/生效模型等小表用） */
+function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (k !== key) next[k] = v;
+  }
+  return next;
+}
+
 function replaceIn(list: SessionListItem[], session: SessionListItem): SessionListItem[] {
   const idx = list.findIndex((s) => s.id === session.id);
   if (idx >= 0) {
@@ -242,8 +263,11 @@ function applyProjectDecision(sessionId: string, targetProject: string): void {
   const s = useSessionsStore.getState();
   const ui = useUiStore.getState();
   const applied = s.appliedModels[sessionId] || null;
+  const sticky = s.modelStickies[sessionId] ?? null;
   const pref = ui.projects.find((p) => p.projectPath === targetProject);
-  ui.setSelectedModel(applied ?? pref?.preferredModel ?? null);
+  // 粘性优先（模型粘性批 2026-11-18）：显式手选在生效前不被切会话洗回——链：手选
+  // 粘性 > 会话生效模型 > 项目偏好 > null（交回退链兜底）
+  ui.setSelectedModel(sticky ?? applied ?? pref?.preferredModel ?? null);
   // 思考档不置 null：applied 命中时取项目偏好（无则 null）——2026-11-09 日志实证
   // （model_change 后紧跟 explicit high）：置 null 后切模型的 prompt 不带档，引擎对
   // 未带档的切模型回落自身默认 high 并记 explicit，手选 max 被洗掉（三链修复漏的
@@ -280,6 +304,7 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   byProject: {},
   runStates: {},
   appliedModels: {},
+  modelStickies: {},
   runStateAt: {},
   runStateSeq: {},
   lastFrameAt: {},
@@ -454,11 +479,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return changed ? { byProject } : s;
     }),
 
-  setRunState: (id, state) => {
-    // 采集增强批：runState 迁移埋点（runState 不回落类缺陷的直接观测面）
+  setRunState: (id, state, src) => {
+    // 采集增强批：runState 迁移埋点（runState 不回落类缺陷的直接观测面）；src 写入
+    // 来源（观测面补点：frame:<type>[/method]、reconcile/resync/sweep 等）——只凭
+    // from/to 无法区分「哪条路径写的」，waiting 毒化排查的归因缺口在此补齐
     const prevRun = useSessionsStore.getState().runStates[id];
     if (prevRun !== state) {
-      diag.info("run", "state", { session: id.slice(0, 8), from: prevRun ?? "-", to: state });
+      diag.info("run", "state", { session: id.slice(0, 8), from: prevRun ?? "-", to: state, src: src ?? "-" });
     }
     set((s) => {
       const now = Date.now();
@@ -481,7 +508,23 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
   },
 
   setAppliedModel: (id, model) =>
-    set((s) => (s.appliedModels[id] === model ? s : { appliedModels: { ...s.appliedModels, [id]: model } })),
+    set((s) => {
+      const appliedSame = s.appliedModels[id] === model;
+      const stickyDone = s.modelStickies[id] === model;
+      if (appliedSame && !stickyDone) return s;
+      const next: Partial<Pick<SessionsState, "appliedModels" | "modelStickies">> = {};
+      if (!appliedSame) next.appliedModels = { ...s.appliedModels, [id]: model };
+      // 生效值命中粘性：解除（选中已生效，粘性使命完成）；粘性为其他模型（如异端
+      // 切走）保留——用户手选意图仍在等下一条 prompt
+      if (stickyDone) next.modelStickies = withoutKey(s.modelStickies, id);
+      return next.appliedModels === undefined && next.modelStickies === undefined ? s : next;
+    }),
+
+  setModelSticky: (id, model) =>
+    set((s) => (s.modelStickies[id] === model ? s : { modelStickies: { ...s.modelStickies, [id]: model } })),
+
+  clearModelSticky: (id) =>
+    set((s) => (id in s.modelStickies ? { modelStickies: withoutKey(s.modelStickies, id) } : s)),
 
   clearRunState: (id) =>
     set((s) => {
@@ -514,20 +557,26 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return { waitingHintHidden };
     }),
 
-  sweepStaleRunStates: (now = Date.now()) =>
-    set((s) => {
-      let next: Record<string, SessionRunState> | null = null;
-      for (const [id, state] of Object.entries(s.runStates)) {
-        if (state !== "running" && state !== "waiting" && state !== "background_running") continue;
-        const at = s.runStateAt[id];
-        if (at === undefined) continue; // 账本缺时刻（外部直写残留）不判超时，宁可不回落
-        const staleMs =
-          state === "running" ? RUNNING_STALE_MS : state === "waiting" ? WAITING_STALE_MS : BACKGROUND_STALE_MS;
-        if (now - at <= staleMs) continue;
-        (next ??= { ...s.runStates })[id] = "idle";
-      }
-      return next === null ? s : { runStates: next };
-    }),
+  sweepStaleRunStates: (now = Date.now()) => {
+    // 清扫留痕（观测面补点）：实际回落的会话补一行 from→to（src=sweep；不增序号的
+    // 既有语义不变——对账回包仍是权威链上层）
+    const cur = useSessionsStore.getState();
+    let next: Record<string, SessionRunState> | null = null;
+    for (const [id, state] of Object.entries(cur.runStates)) {
+      if (state !== "running" && state !== "waiting" && state !== "background_running") continue;
+      const at = cur.runStateAt[id];
+      if (at === undefined) continue; // 账本缺时刻（外部直写残留）不判超时，宁可不回落
+      const staleMs =
+        state === "running" ? RUNNING_STALE_MS : state === "waiting" ? WAITING_STALE_MS : BACKGROUND_STALE_MS;
+      if (now - at <= staleMs) continue;
+      (next ??= { ...cur.runStates })[id] = "idle";
+    }
+    if (next === null) return;
+    for (const [id, state] of Object.entries(next)) {
+      diag.info("run", "state", { session: id.slice(0, 8), from: cur.runStates[id] ?? "-", to: state, src: "sweep" });
+    }
+    set({ runStates: next });
+  },
 
   adoptSessionId: (oldId, newId) => {
     const wasSelected = useSessionsStore.getState().selectedId === oldId;
@@ -550,10 +599,16 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       let runStates = s.runStates;
       let runStateAt = s.runStateAt;
       let appliedModels = s.appliedModels;
+      let modelStickies = s.modelStickies;
       if (oldId in s.appliedModels) {
         appliedModels = { ...s.appliedModels };
         appliedModels[newId] = appliedModels[oldId];
         delete appliedModels[oldId];
+      }
+      if (oldId in s.modelStickies) {
+        modelStickies = { ...s.modelStickies };
+        modelStickies[newId] = modelStickies[oldId];
+        delete modelStickies[oldId];
       }
       if (oldId in s.runStates) {
         runStates = { ...s.runStates };
@@ -575,8 +630,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         delete aliasIds[oldId];
         pendingIds = { ...pendingIds, [newId]: true };
       }
-      return changed || selectedId !== s.selectedId || runStates !== s.runStates || appliedModels !== s.appliedModels || aliasIds !== s.aliasIds || pendingIds !== s.pendingIds
-        ? { byProject, selectedId, runStates, runStateAt, appliedModels, aliasIds, pendingIds }
+      return changed || selectedId !== s.selectedId || runStates !== s.runStates || appliedModels !== s.appliedModels || modelStickies !== s.modelStickies || aliasIds !== s.aliasIds || pendingIds !== s.pendingIds
+        ? { byProject, selectedId, runStates, runStateAt, appliedModels, modelStickies, aliasIds, pendingIds }
         : s;
     });
     // 选中态换 key：URL 同步换写真实 id（URL 里若是别名 id，此处原地纠正）
@@ -602,8 +657,13 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
       return s;
     }),
 
-  markAliasId: (id) =>
-    set((s) => {
+  markAliasId: (id) => {
+    // 入口归零留痕（观测面补点）：清掉的运行态残留入迁移日志（from→"-"）
+    const prevRun = useSessionsStore.getState().runStates[id];
+    if (prevRun !== undefined) {
+      diag.info("run", "state", { session: id.slice(0, 8), from: prevRun, to: "-", src: "markAlias-clear" });
+    }
+    return set((s) => {
       let aliasIds = s.aliasIds;
       let runStates = s.runStates;
       let runStateAt = s.runStateAt;
@@ -625,10 +685,16 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         changed = true;
       }
       return changed ? { aliasIds, runStates, runStateAt } : s;
-    }),
+    });
+  },
 
-  markPendingId: (id) =>
-    set((s) => {
+  markPendingId: (id) => {
+    // 入口归零留痕（观测面补点）：同 markAliasId
+    const prevRun = useSessionsStore.getState().runStates[id];
+    if (prevRun !== undefined) {
+      diag.info("run", "state", { session: id.slice(0, 8), from: prevRun, to: "-", src: "markPending-clear" });
+    }
+    return set((s) => {
       let pendingIds = s.pendingIds;
       let runStates = s.runStates;
       let runStateAt = s.runStateAt;
@@ -647,7 +713,8 @@ export const useSessionsStore = create<SessionsState>()((set) => ({
         changed = true;
       }
       return changed ? { pendingIds, runStates, runStateAt } : s;
-    }),
+    });
+  },
 }));
 
 /** 活跃项目派生（会话根架构 W1 任务 1；W3 任务 12 起为全应用唯一项目源）：当前选中

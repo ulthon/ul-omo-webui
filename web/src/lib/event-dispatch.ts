@@ -393,7 +393,7 @@ export function resyncQueues(): void {
  * 超阈值回落 idle。账本缺时刻或阈值内不动——活跃会话的任何帧都在刷新账本
  * （touchRunStateAt），永不被对账节拍误杀。对账兜底复用既有对账节拍（游标回退
  * resync / 回前台 reconcile），零新增轮询。 */
-function fallBackStaleRunState(id: string): boolean {
+function fallBackStaleRunState(id: string, caller: string): boolean {
   const store = useSessionsStore.getState();
   const state = store.runStates[id];
   if (state !== "running" && state !== "waiting" && state !== "background_running") return false;
@@ -402,7 +402,7 @@ function fallBackStaleRunState(id: string): boolean {
   const staleMs =
     state === "running" ? RUNNING_STALE_MS : state === "waiting" ? WAITING_STALE_MS : BACKGROUND_STALE_MS;
   if (Date.now() - at <= staleMs) return false;
-  store.setRunState(id, "idle");
+  store.setRunState(id, "idle", `stale-${caller}`);
   return true;
 }
 
@@ -433,10 +433,10 @@ function resyncRunStatesFromServer(): void {
         ) {
           // 缺席 / null（引擎未就绪）：权威不动保留；叠加陈旧判定兑底（r11 todo 12a）——
           // 收尾帧丢失且账本超阈值时在此回落 idle，不再干等周期清扫
-          fallBackStaleRunState(id);
+          fallBackStaleRunState(id, "resync");
           continue;
         }
-        if (state !== server) store.setRunState(id, server);
+        if (state !== server) store.setRunState(id, server, "resync");
       }
     })
     .catch(() => {
@@ -475,10 +475,10 @@ export function reconcileRunStateOnVisible(): void {
         server !== "background_running"
       ) {
         // null / 缺席（引擎未就绪）：权威不动保持未知灰；叠加陈旧判定兑底（r11 todo 12a）
-        fallBackStaleRunState(sessionId);
+        fallBackStaleRunState(sessionId, "reconcile");
         return;
       }
-      store.setRunState(sessionId, server);
+      store.setRunState(sessionId, server, "reconcile");
     })
     .catch(() => {
       // 网络瞬断 / 引擎未就绪静默：下次回前台或断线重连 resync 兜底
@@ -650,14 +650,39 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
 
   // 会话级运行状态（active 语义对齐 GET /api/sessions 的引擎活跃探询；runStates 供状态点）
   const sessions = useSessionsStore.getState();
+  const isEndFrame = wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle";
+  // 状态写入帧留痕（观测面补点 2026-11-18）：凡会写运行态的帧记一行身份（type/method/
+  // 等待应答/双路由键），info 级随批量上报落服务端日志——此前帧级调试仅 ul_omo_debug_sse
+  // 的 console 输出，日志文件无从归因（waiting 毒化的未知 method 帧、收尾帧竞态的
+  // 直接证据面）。量级：agent 生命周期帧每回合数条、ui_request 低频，无流式噪音。
+  if (
+    wire.type === "agent_start" ||
+    isEndFrame ||
+    wire.type === "extension_ui_request" ||
+    wire.type === "error" ||
+    wire.type.endsWith("_error")
+  ) {
+    diag.info("run", "frame", {
+      session: sessionId.slice(0, 8),
+      type: wire.type,
+      ...(wire.type === "extension_ui_request"
+        ? {
+            method: typeof wire.method === "string" ? wire.method.slice(0, 40) : "-",
+            wait: wire.waitForAnswer === true,
+          }
+        : {}),
+      durable: durableSessionId?.slice(0, 8) ?? "-",
+      wire: wireSessionId?.slice(0, 8) ?? "-",
+    });
+  }
   if (wire.type === "agent_start") {
     sessions.patchSession(sessionId, { active: true });
-    sessions.setRunState(sessionId, "running");
+    sessions.setRunState(sessionId, "running", "frame:agent_start");
     // 发消息即上浮·多时点刷新（docs08 2026-10-23/24 批次任务 13 ③）：回合启动即拉
     // 服务端真相——排队投递 / 异端发送后列表元数据（modified、消息计数）即时对齐；
     // 失败静默（回合落定路径 refreshSessions 兜底）。
     void sessions.refreshSessions();
-  } else if (wire.type === "agent_end" || wire.type === "agent_settled" || wire.type === "agent_idle") {
+  } else if (isEndFrame) {
     sendTrace.settled(sessionId, wire.type);
     // B 收尾帧归属兜底（engine-upgrade 2026-10-30）：路由键是 store 不认识的孤儿键
     // （wire 键映射缺席的 holder 别名）时，清态兜底落到唯一活跃会话（rescue，不写
@@ -671,7 +696,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       }
       // r11 todo 12b 契约保留：孤儿键留痕落 idle（诚实记录该 handle 回合已收束，
       // 垃圾键由周期清扫/对账自然兑底，跨纪元帧不误清旧会话）；叠加本批对账（缺陷 B）
-      sessions.setRunState(sessionId, "idle");
+      sessions.setRunState(sessionId, "idle", `frame:${wire.type}`);
       resyncRunStatesFromServer();
     } else if (orphan !== null) {
       // 唯一活跃候选：清态落到真实归属（patchSession 对不在列表的键自然 no-op）
@@ -679,13 +704,13 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
         console.debug(`[sse-dispatch] orphan end frame type=${wire.type} route=${sessionId} → rescue ${orphan}`);
       }
       sessions.patchSession(orphan, { active: false });
-      sessions.setRunState(orphan, "idle");
+      sessions.setRunState(orphan, "idle", `frame:${wire.type}`);
       usePermissionsStore.getState().clearSession(orphan);
     } else {
       sessions.patchSession(sessionId, { active: false });
       // 回合落定即落 idle（权威空闲：GET sessions 的 active 不回落，learnings todo 14；
       // 权限门阻塞回合，P0-2 实证：挂起权限回合不结束——agent_end 到达即权限已落定）
-      sessions.setRunState(sessionId, "idle");
+      sessions.setRunState(sessionId, "idle", `frame:${wire.type}`);
       // 回合自然结束补拉会话列表（task 19h，fire-and-forget）：对齐服务端真相——
       // durable=true 创建的占位行由 pendingIds 保护至列表带回，此后真实行落位，
       // 消息计数/标题等元数据同步；失败静默（下次回合结束/手动刷新兜底）。
@@ -708,7 +733,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       // 首帧锚点为准不漂移。
       const questions = narrowQuestionSpecs(wire.questions);
       if (typeof wire.id === "string" && wire.id && questions) {
-        if (wire.waitForAnswer === true) sessions.setRunState(sessionId, "waiting");
+        if (wire.waitForAnswer === true) sessions.setRunState(sessionId, "waiting", "frame:extension_ui_request/question");
         const request: QuestionRequest = {
           id: wire.id,
           waitForAnswer: wire.waitForAnswer === true,
@@ -721,7 +746,7 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
         useQuestionsStore.getState().pushRequest(sessionId, request);
       }
     } else if (method !== null && DIALOG_UI_METHODS.has(method)) {
-      sessions.setRunState(sessionId, "waiting");
+      sessions.setRunState(sessionId, "waiting", `frame:extension_ui_request/${method}`);
       // 四型载荷入权限队列（todo 18）：无 toolCallId，按会话内未决请求建模
       const request = wire as unknown as PermissionRequest & { id?: unknown; method?: unknown };
       if (typeof request.id === "string" && request.id) {
@@ -749,7 +774,8 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
         useUiStore.getState().showToast(message, tone === "error" ? "error" : "info");
       }
     } else if (method !== null && STATUS_PUSH_UI_METHODS.has(method)) {
-      // 纯状态推送：忽略不渲染不写状态（见 STATUS_PUSH_UI_METHODS 注释）
+      // 纯状态推送：忽略不渲染不写状态（见 STATUS_PUSH_UI_METHODS 注释；帧级留痕
+      // 由上方 run/frame info 级埋点覆盖，归因不缺失）
     } else if (method !== null) {
       // r10 todo 9（docs/08:61 候选①）：其余非四型 method 同落 waiting——未知 method 可能
       // 是前端未渲染的阻塞式请求（权限/对话框走新 method 名时状态点不得静默灰）；回合
@@ -757,14 +783,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       // 畸形帧不写（无 method 语义可依）。notify 与 setStatus/setWidget/setTitle 已在上方
       // 分支排除：它们不应答不阻塞回合，落 waiting 会把运行中蓝点误降琥珀、把空闲会话
       // 毒化成 waiting（新会话首条直发被误判排队剥模型）。
-      sessions.setRunState(sessionId, "waiting");
+      sessions.setRunState(sessionId, "waiting", `frame:extension_ui_request/${method.slice(0, 40)}`);
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
     // 引擎 wire 类型为开放集且无专用出错事件；容错识别 error 尾缀类型映射出错状态点。
     // 文本进常驻错误卡（#31：429 限流等引擎错误帧此前只亮状态点、文本被丢弃致 UI 展示为空）——
     // 对齐“错误类提示合成进会话消息流常驻错误卡”约定；无文本帧仅置状态点（重连快照对账
     // 不含错误卡，重放面不存在重复入卡路径）
-    sessions.setRunState(sessionId, "error");
+    sessions.setRunState(sessionId, "error", "frame:error");
     const errorText = typeof wire.message === "string" ? wire.message.trim() : "";
     if (errorText) useMessagesStore.getState().pushError(sessionId, errorText);
   }

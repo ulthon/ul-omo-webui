@@ -6,6 +6,7 @@
 // 模块求值期零绑定解引用，无 TDZ 风险。
 import { useUiStore } from "@/stores/ui";
 import { useMessagesStore } from "@/stores/messages";
+import { useSessionsStore } from "@/stores/sessions";
 import { effectiveThinkingLevel } from "@/lib/thinking-level";
 import { t } from "@/i18n/i18n";
 import { diag, newRid8 } from "@/lib/diag";
@@ -775,6 +776,18 @@ export const api = {
     // 排队请求铁律（spike 实证）：只带 streamingBehavior——不注入模型/思考档偏好
     //（排队 prompt 带 thinkingLevel 引擎直接拒绝；模型切换属会话级操作，排队窗口不做）
     if (body.streamingBehavior) {
+      // 排队剥模型留痕（模型切换排查批 2026-11-18）：铁律不变，但用户此时若有未生效的
+      // 手选切换，这个静默丢弃正是「切了但没换」的盲区——warn 一行让丢失在服务端日志
+      // 可见（receipt_mismatch 对排队路径按设计不比对，无法覆盖此处）。
+      const stickySelected = ui.selectedModel;
+      const applied = useSessionsStore.getState().appliedModels[sessionId] ?? null;
+      if (stickySelected !== null && applied !== null && stickySelected !== applied) {
+        diag.warn("model-select", "queued_stripped", {
+          session: sessionId.slice(0, 8),
+          selected: stickySelected,
+          applied,
+        });
+      }
       return request(
         `/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
         jsonInit("POST", { text: body.text, streamingBehavior: body.streamingBehavior }),

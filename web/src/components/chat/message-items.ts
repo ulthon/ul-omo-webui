@@ -319,17 +319,82 @@ export function mergeStreamErrors(
 export interface SessionEventLine {
   id: string;
   summary: { key: MessageKey; vars?: Record<string, unknown> };
+  /** 流内锚点（事件行锚点化批 2026-11-18）：事件发生时刻的消息流末条 entry id；
+   *  渲染时插在锚条目之后随消息流上移（CLI 同构，不再恒钉列表底部）。null/锚解析
+   *  失败回落流末（流式气泡之前，与提问卡同口径）。可选字段：存量/测试字面量缺省
+   *  时按 null 处理。 */
+  anchorEntryId?: string | null;
 }
 
-/** 事件行并入 items（r10 todo 7）：尾部追加（事件行 = 最新发生的事实，接在全部已
- *  落库条目与流式气泡之后，按到达序即时间序）。无事件行时原样返回（引用不变，
- *  订阅方不重算），同 mergeMemoryItems 口径。纯函数。 */
+/** 行→条目身份工具（提问卡/事件行共用）：从 ChatListItem 提取其归属 entry id（null =
+ *  无条目身份的行，如流式气泡/错误卡）。 */
+function anchoredEntryIdOf(it: ChatListItem): string | null {
+  if (it.kind === "entry" || it.kind === "customMessage") return it.entryId;
+  if (it.kind === "memoryMarker") return it.marker.entryId;
+  if (it.kind === "compactionMarker") return it.marker.entryId;
+  if (it.kind === "noticeCard") return it.notice.entryId;
+  if (it.kind === "loopGuardGroup") return it.entryIds[0] ?? null;
+  if (it.kind === "memoryMarkerCluster") return it.markers[0]?.entryId ?? null;
+  return null;
+}
+
+/** 事件行并入 items（事件行锚点化批 2026-11-18）：按 anchorEntryId 插在锚条目之后
+ *  （同锚多行保持到达序）——事件发生在回答回来之前时随消息流上移，不再恒钉列表
+ *  底部；锚解析不出（事件先于任何消息/锚条目被压缩出窗/无 entries 序信息）回落流末
+ *  （流式气泡之前，与提问卡同口径）。无事件行时原样返回（引用不变，订阅方不重算），
+ *  同 mergeMemoryItems 口径。纯函数。 */
 export function mergeSessionEventLines(
   items: ChatListItem[],
   lines: readonly SessionEventLine[],
+  entries: readonly WireEntry[] = [],
 ): ChatListItem[] {
   if (lines.length === 0) return items;
-  return [...items, ...lines.map((line) => ({ key: `session-event-${line.id}`, kind: "sessionEvent", line }) as const)];
+  if (entries.length === 0) {
+    // 无条目序信息（空流）：维持尾部并入（锚必为 null，兑底即尾部）
+    return [...items, ...lines.map((line) => ({ key: `session-event-${line.id}`, kind: "sessionEvent" as const, line }))];
+  }
+  const ordOf = new Map<string, number>();
+  entries.forEach((e, i) => {
+    if (typeof e.id === "string" && e.id !== "" && !ordOf.has(e.id)) ordOf.set(e.id, i);
+  });
+  // 已插入事件行的锚序（后续同锚插入保持到达序，不反序）——与提问卡 cardOrd 同构
+  const lineOrd = new Map<ChatListItem, number>();
+  const ordOfItem = (it: ChatListItem): number | null => {
+    if (lineOrd.has(it)) return lineOrd.get(it)!;
+    const eid = anchoredEntryIdOf(it);
+    return eid === null ? null : (ordOf.get(eid) ?? null);
+  };
+  let out = items.slice();
+  for (const line of lines) {
+    const anchorOrd = line.anchorEntryId != null ? ordOf.get(line.anchorEntryId) : undefined;
+    const item: ChatListItem = { key: `session-event-${line.id}`, kind: "sessionEvent", line };
+    let at: number;
+    if (anchorOrd !== undefined) {
+      // 自尾向前找最后一个锚序 ≤ 锚点的可见行，插其后（锚条目不可见时落到其后首个
+      // 可见行之前；全部晚于锚点时插首位）——与提问卡同构
+      at = 0;
+      for (let i = out.length - 1; i >= 0; i--) {
+        const o = ordOfItem(out[i]!);
+        if (o !== null && o <= anchorOrd) {
+          at = i + 1;
+          break;
+        }
+      }
+      lineOrd.set(item, anchorOrd);
+    } else {
+      // 兑底挂流末：流式气泡之前，无流式则末尾（与提问卡同口径）
+      at = out.length;
+      for (let i = 0; i < out.length; i++) {
+        if (out[i]!.kind === "streaming") {
+          at = i;
+          break;
+        }
+      }
+      lineOrd.set(item, Number.MAX_SAFE_INTEGER);
+    }
+    out.splice(at, 0, item);
+  }
+  return out;
 }
 
 /** 提问卡合成层（r11 todo 6d）：每张 pending 卡各自渲染于各自锚点 entry 之后（不做
@@ -352,13 +417,7 @@ export function mergeQuestionCards(
   const cardOrd = new Map<ChatListItem, number>();
   const ordOfItem = (it: ChatListItem): number | null => {
     if (cardOrd.has(it)) return cardOrd.get(it)!;
-    let id: string | null = null;
-    if (it.kind === "entry" || it.kind === "customMessage") id = it.entryId;
-    else if (it.kind === "memoryMarker") id = it.marker.entryId;
-    else if (it.kind === "compactionMarker") id = it.marker.entryId;
-    else if (it.kind === "noticeCard") id = it.notice.entryId;
-    else if (it.kind === "loopGuardGroup") id = it.entryIds[0] ?? null;
-    else if (it.kind === "memoryMarkerCluster") id = it.markers[0]?.entryId ?? null;
+    const id = anchoredEntryIdOf(it);
     if (id === null) return null;
     return ordOf.get(id) ?? null;
   };

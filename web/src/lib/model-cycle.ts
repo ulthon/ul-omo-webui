@@ -44,6 +44,15 @@ export function selectModel(value: string): void {
     to: value,
     session: useSessionsStore.getState().selectedId ?? "unknown",
   });
+  // 手选粘性（模型粘性批 2026-11-18）：显式手选对该会话记粘性——切会话（applyProjectDecision）
+  // 与消息水合不再把手选洗回已生效模型；选回已生效模型时解除（无粘性需求）；生效
+  // （setAppliedModel 同值）自动解除
+  const sess = useSessionsStore.getState().selectedId;
+  if (sess !== null) {
+    const applied = useSessionsStore.getState().appliedModels[sess] ?? null;
+    if (value !== applied) useSessionsStore.getState().setModelSticky(sess, value);
+    else useSessionsStore.getState().clearModelSticky(sess);
+  }
   ui.setSelectedModel(value);
   scheduleModelPreferencePersist();
 }

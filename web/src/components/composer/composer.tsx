@@ -167,6 +167,9 @@ export function Composer({
   // 生效挂标不被冲掉。刻意不写偏好持久化（scheduleModelPreferencePersist 只属显式
   // 选择，localStorage 初值语义不变）。
   useEffect(() => {
+    // 粘性手选不参与挂载对齐（模型粘性批 2026-11-18）：切回会话保持用户显式选中，
+    // 基线对齐只服务无手选的回归路径
+    if (useSessionsStore.getState().modelStickies[sessionId] !== undefined) return;
     const applied = useSessionsStore.getState().appliedModels[sessionId];
     const next = alignSelectionToApplied(typeof applied === "string" && applied !== "" ? applied : null, useUiStore.getState().selectedModel);
     if (next !== null) useUiStore.getState().setSelectedModel(next);

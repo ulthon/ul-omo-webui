@@ -984,7 +984,7 @@ class ProjectRuntime {
               this.durableSessionIdFor(wire.sessionId, state.sessionPath) ?? wire.sessionId,
             )
           : null;
-      if (turn) this.settleTurn(turn);
+      if (turn) this.settleTurn(turn, `frame:${type}`);
       if (settleInfo) this.opts.onRoundSettled?.(this.projectPath, settleInfo, type);
       return;
     }
@@ -1166,7 +1166,7 @@ class ProjectRuntime {
     // 合成路径 sessionId 即回合行 id（knownDurable 令信封 durableLookup 直认
     // durable 形态）；settleInfo 清位前捕获，onRoundSettled reason="settle_watchdog"
     const settleInfo = { sessionId, sessionPath: turn.sessionPath };
-    this.settleTurn(turn);
+    this.settleTurn(turn, "settle_watchdog");
     this.opts.onRoundSettled?.(this.projectPath, settleInfo, "settle_watchdog");
     this.opts.publishSyntheticEvent?.(this.projectPath, {
       type: "agent_settled",
@@ -1176,10 +1176,20 @@ class ProjectRuntime {
     });
   }
 
-  /** 回合落定：清回合行（GET /api/sessions active/runState 随之清位）+ 停该回合监视 */
-  private settleTurn(turn: TurnRow): void {
+  /** 回合落定：清回合行（GET /api/sessions active/runState 随之清位）+ 停该回合监视；
+   *  reason 为结算路径留痕（观测面补点 2026-11-18：回合簿记与前端 [fe.run] 迁移日志
+   *  对齐，runState 三态的回合侧证据） */
+  private settleTurn(turn: TurnRow, reason = "settled"): void {
     this.stopTurnWatch(turn);
-    if (this.runningTurns.get(turn.sessionPath) === turn) this.runningTurns.delete(turn.sessionPath);
+    if (this.runningTurns.get(turn.sessionPath) === turn) {
+      this.runningTurns.delete(turn.sessionPath);
+      log.info("gw", "turn.end", {
+        session: turn.sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        reason,
+        rid: currentRid(),
+      });
+    }
   }
 
   /** 单会话引擎崩溃/不可用（multi-session-parallel T3 必修：事件按 sessionPath 路由
@@ -1191,7 +1201,7 @@ class ProjectRuntime {
     const turn = this.runningTurns.get(sessionPath);
     if (turn) {
       const sessionId = turn.sessionId;
-      this.settleTurn(turn);
+      this.settleTurn(turn, "engine_crash");
       this.opts.publishSyntheticEvent?.(this.projectPath, {
         type: "agent_settled",
         synthetic: true,
@@ -1229,6 +1239,12 @@ class ProjectRuntime {
     for (const turn of [...this.runningTurns.values()]) {
       this.stopTurnWatch(turn);
       this.runningTurns.delete(turn.sessionPath);
+      log.info("gw", "turn.end", {
+        session: turn.sessionId.slice(0, 8),
+        proj: projHash8(this.projectPath),
+        reason: "invalidate_all",
+        rid: currentRid(),
+      });
     }
     for (const path of [...this.engines.keys()]) this.invalidateEngine(path);
     this.aliases.clear();
@@ -1252,6 +1268,7 @@ class ProjectRuntime {
     const states = this.readyEngines();
     if (states.length === 0) return null;
     const out = new Map<string, ServerSessionRunState>();
+    const probes: string[] = [];
     for (const state of states) {
       const turn = this.runningTurns.get(state.sessionPath);
       if (!turn) continue;
@@ -1271,6 +1288,15 @@ class ProjectRuntime {
         // get_state 失败按无未决提问降级：runState 落 running，不因探询失败炸整个列表
       }
       out.set(state.sessionPath, deriveSessionRunState({ streaming: true, permission, question }));
+      probes.push(
+        `${state.sessionPath.slice(-16)}:${out.get(state.sessionPath)}(${permission ? "perm" : question ? "question" : "streaming"})`,
+      );
+    }
+    // 探询留痕（观测面补点 2026-11-18）：非 idle 结果落一行推导证据（回合占用 +
+    // permission/question 源），服务端真相源与前端 resync/reconcile 对账的衔接证据；
+    // 仅非空时记（空闲列表零噪音）
+    if (out.size > 0) {
+      log.info("gw", "probe", { proj: projHash8(this.projectPath), rows: probes, rid: currentRid() });
     }
     return out;
   }
@@ -1882,6 +1908,14 @@ class ProjectRuntime {
           this.runningTurns.set(state.sessionPath, turn);
           state.activeId = sessionId;
           this.startSettleWatch(turn);
+          // 回合建账留痕（观测面补点 2026-11-18）：GET /api/sessions runState 三态的
+          // 回合侧证据——waiting 毒化排查时与前端 [fe.run] state 帧序列对齐
+          log.info("gw", "turn.begin", {
+            session: sessionId.slice(0, 8),
+            proj: projHash8(this.projectPath),
+            disposition: receipt.disposition,
+            rid: currentRid(),
+          });
         }
         // 首条消息落盘回执补全（缺陷修复：新会话首条用户消息不显示）：未落盘别名会话
         // 此刻已被引擎写盘，durable id 就绪。立即回填 handle→durable 映射——本轮后续
@@ -2209,7 +2243,7 @@ class ProjectRuntime {
       const turn = this.runningTurns.get(row.path);
       if (turn) {
         await bound.adapter.abort().catch(() => undefined);
-        this.settleTurn(turn);
+        this.settleTurn(turn, "session_delete");
       }
       await bound.adapter.closeSession().catch(() => undefined);
       await this.manager.stop(row.path).catch(() => undefined);
