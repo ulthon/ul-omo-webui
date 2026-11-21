@@ -8,6 +8,7 @@ import {
   usePermissionsStore,
   type PermissionRequest,
 } from "@/stores/permissions";
+import { useSessionsStore } from "@/stores/sessions";
 import { useUiStore } from "@/stores/ui";
 
 const SID = "sess-perm-1";
@@ -29,6 +30,7 @@ beforeEach(() => {
   resetDispatchState();
   usePermissionsStore.setState({ bySession: {}, autoAllow: {} });
   useUiStore.setState({ toast: null });
+  useSessionsStore.setState({ runStates: {} });
 });
 
 describe("extension_ui_request 分发路由", () => {
@@ -83,6 +85,18 @@ describe("extension_ui_request 分发路由", () => {
     dispatchRequest("id-w", "setWidget", {});
     expect(queue().length).toBe(0);
     expect(useUiStore.getState().toasts.at(-1)?.text).toBe("Editor submitted (4 lines)");
+  });
+
+  test("纯状态推送（setStatus/setWidget/setTitle）不落 waiting（runState 毒化修复，2026-11-21 事故）", () => {
+    dispatchRequest("id-s", "setStatus", { statusText: "busy" });
+    dispatchRequest("id-w", "setWidget", {});
+    dispatchRequest("id-t", "setTitle", {});
+    expect(useSessionsStore.getState().runStates[SID]).toBeUndefined();
+  });
+
+  test("未知 method 仍落 waiting（r10 todo 9 兜底不回归）", () => {
+    dispatchRequest("id-u", "futureBlockingDialog", { title: "?" });
+    expect(useSessionsStore.getState().runStates[SID]).toBe("waiting");
   });
 
   test("回合落定（agent_end）整队清空", () => {

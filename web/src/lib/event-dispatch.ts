@@ -156,13 +156,21 @@ function sweepWaitingHintSuppression(): void {
   }
 }
 
-/** 四型对话框 UI method（verification/02）；extension_ui_request 其余非 notify 的
- *  method 现同样落 waiting 状态点（r10 todo 9，docs/08:61 候选①：未知 method 可能是
- *  前端未渲染的阻塞请求，状态点不得静默灰），但四型之外的载荷不入权限队列（不渲染
- *  对话框）。question（q1 提问卡片）单独分支处理——结构化载荷（questions 数组）与四型的
- *  title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。
+/** 四型对话框 UI method（verification/02）；extension_ui_request 其余非 notify、
+ *  非纯状态推送的 method 现同样落 waiting 状态点（r10 todo 9，docs/08:61 候选①：
+ *  未知 method 可能是前端未渲染的阻塞请求，状态点不得静默灰），但四型之外的载荷不入
+ *  权限队列（不渲染对话框）。question（q1 提问卡片）单独分支处理——结构化载荷（questions
+ *  数组）与四型的 title/options 平铺不同，且 waitForAnswer 语义不同（false 不阻塞回合）。
  *  notify 是已记录的 fire-and-forget（计划 249），做轻提示不应答不阻塞回合，不落 waiting。 */
 const DIALOG_UI_METHODS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
+
+/** 纯状态推送 method（notify 分支同源名单，learnings todo 18 决策）：setStatus/
+ *  setWidget/setTitle 不应答不阻塞回合、不渲染任何 UI，也不得落 waiting——2026-11-21
+ *  00:42 事故实录：新会话冷启动后插件初始化连发一串 setStatus（wait=false），
+ *  兼落 waiting 挂了几十秒，composer 误判「回合进行中」把首条直发改排队并剥模型
+ *  （queued_stripped），用户切换的新模型首句不生效。与 notify 的差别仅是连轻提示
+ *  都不弹；r10 todo 9 兜底只针对未知 method，这三个是已知非阻塞 method。 */
+const STATUS_PUSH_UI_METHODS: ReadonlySet<string> = new Set(["setStatus", "setWidget", "setTitle"]);
 
 /** 排队事件行文本片段（r10 todo 7）：取首行非空文本，超长截断加省略号；
  *  行内摘要非全文，全文在投递后的 user 消息内可回看 */
@@ -740,12 +748,15 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       if (message && tone !== "warning") {
         useUiStore.getState().showToast(message, tone === "error" ? "error" : "info");
       }
+    } else if (method !== null && STATUS_PUSH_UI_METHODS.has(method)) {
+      // 纯状态推送：忽略不渲染不写状态（见 STATUS_PUSH_UI_METHODS 注释）
     } else if (method !== null) {
       // r10 todo 9（docs/08:61 候选①）：其余非四型 method 同落 waiting——未知 method 可能
       // 是前端未渲染的阻塞式请求（权限/对话框走新 method 名时状态点不得静默灰）；回合
       // 落定（agent_end/settled/idle→idle）与 30min 无活动清扫兜底回落。method 缺席的
-      // 畸形帧不写（无 method 语义可依）。notify 已在上方分支排除：它不应答不阻塞回合，
-      // 落 waiting 会把运行中蓝点误降琥珀。
+      // 畸形帧不写（无 method 语义可依）。notify 与 setStatus/setWidget/setTitle 已在上方
+      // 分支排除：它们不应答不阻塞回合，落 waiting 会把运行中蓝点误降琥珀、把空闲会话
+      // 毒化成 waiting（新会话首条直发被误判排队剥模型）。
       sessions.setRunState(sessionId, "waiting");
     }
   } else if (wire.type === "error" || wire.type.endsWith("_error")) {
