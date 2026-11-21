@@ -168,6 +168,9 @@ const engines = new EngineRuntimeRegistry(manager, {
   // 思考档三链 A：既有会话重开时若会话 jsonl 无落定记录，取项目偏好档随 open 下发
   //（损坏降级 null = 不传，与 routes-project 同一合并读链）
   projectThinkingLevel: (projectPath) => readProjectPreferences(projectConfigs, meta, projectPath).preferredThinkingLevel,
+  // 入口 B（senpi#6670 族）：项目权限预设随 open_session 以 client 来源下发，子代理
+  // 继承命名模式不再落 ask；项目未配置时由 engine-runtime 回退 full-access
+  projectPermissionPreset: (projectPath) => readProjectPreferences(projectConfigs, meta, projectPath).permissionPreset,
   // 回合落定 → 自动生成标题（正常事件路径 + watchdog 合成路径，crashSettle 排除）。
   // 强制 .catch：Bun 未处理 rejection 默认退出进程（凭证缺失/超时/断网皆常见）
   onRoundSettled: (projectPath, settleInfo, reason) => {

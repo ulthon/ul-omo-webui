@@ -106,6 +106,7 @@ export interface SenpiRpcClient {
     provider?: string
     modelId?: string
     thinkingLevel?: string
+    permissionPreset?: string
   }): Promise<{ sessionId: string; state: { sessionId?: string; sessionFile?: string; [k: string]: unknown }; attached?: boolean }>
   closeSession(sessionId?: string): Promise<void>
   listSessions(): Promise<Array<Record<string, unknown>>>
@@ -504,7 +505,7 @@ export class SenpiAdapter implements EngineAdapter {
   private reopenActiveSession(): Promise<EngineOpenSessionResult> {
     const sessionPath = this.active?.sessionPath ?? this.lastSessionPath
     if (!sessionPath) return Promise.reject(new EngineAdapterError("no_active_session", "无活跃会话且无历史路径可重开"))
-    this.reopening ??= this.openSession({ sessionPath }).finally(() => {
+    this.reopening ??= this.openSession({ sessionPath, permissionPreset: this.lastPermissionPreset }).finally(() => {
       this.reopening = null
     })
     return this.reopening
@@ -631,8 +632,13 @@ export class SenpiAdapter implements EngineAdapter {
     }
   }
 
+  /** 首次显式 open_session 携带的权限预设（client 来源命名模式）：adapter 内部兑底重开时
+   *  原样重发，保证重开后的会话仍带命名模式（子代继承链不断）。 */
+  private lastPermissionPreset: string | undefined
+
   private async doOpenSession(options: EngineOpenSessionOptions): Promise<EngineOpenSessionResult> {
     const client = this.rpc()
+    this.lastPermissionPreset = options.permissionPreset
     // session_path_in_use 有界退避（任务 10）：仅「本 adapter 曾绑定过同一路径」的重开
     // 面生效（rpcOp 兜底重开与 runTraced forceOpen 重开都汇到此处）；首开（新路径/
     // 新 adapter）不退避行为不变——不碰上层 openLane 单车道（t6 范围）
@@ -648,6 +654,7 @@ export class SenpiAdapter implements EngineAdapter {
               provider: options.provider ?? this.options.provider,
               modelId: options.modelId ?? this.options.modelId,
               thinkingLevel: options.thinkingLevel,
+              permissionPreset: options.permissionPreset,
             }),
             OPEN_TIMEOUT_MS,
             "open_session",

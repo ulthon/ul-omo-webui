@@ -325,12 +325,17 @@ export class EngineAdapterError extends Error {
   }
 }
 
-/** 打开会话的参数：新建（provider/model/thinkingLevel）或按路径打开既有会话（二选一） */
+/** 打开会话的参数：新建（provider/model/thinkingLevel）或按路径打开既有会话（二选一）。
+ *  permissionPreset：随 open_session 下发的权限预设（client 来源命名模式）——引擎的
+ *  clientNamedPreset 只认 client 来源，spawn 参数（host_default）不计入；只有 client
+ *  来源的命名模式才会被委派子代理继承（否则子代落 ask 档，无宿主应答时永久卡死，
+ *  senpi#6670 族）。 */
 export interface EngineOpenSessionOptions {
   sessionPath?: string
   provider?: string
   modelId?: string
   thinkingLevel?: EngineThinkingLevel
+  permissionPreset?: string
 }
 
 /** 已打开会话的描述 */

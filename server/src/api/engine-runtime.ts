@@ -293,6 +293,11 @@ export interface EngineRuntimeOptions {
    *  落定记录则取此档随 open 下发；组合根接 readProjectPreferences）。可选面：
    *  测试 fake 可省略——缺席时跳过项目偏好档。 */
   projectThinkingLevel?(projectPath: string): PreferredThinkingLevel | null;
+  /** 项目权限预设（入口 B，senpi#6670 族修复）：随 open_session 以 client 来源下发，
+ *  使委派子代理继承命名模式而非落 ask 档。spawn 参数（host_default）被引擎
+ *  clientNamedPreset 明确排除在命名模式外，救不了子代理（2026-11-19 实测）。可选面：
+ *  测试 fake 可省略——缺席时回退 full-access（与引擎无命名模式的根会话缺省同档）。 */
+  projectPermissionPreset?(projectPath: string): string | null;
 }
 
 function defaultAgentDir(): string {
@@ -704,7 +709,7 @@ interface TurnRow {
  *  解析值），开门成功后点亮 activeId；forceOpen = 绑定态已在也要真实重开（runTraced
  *  撞 no_active_session 的兑底重开 / forkSession 的绑定还原开），快路径不复用。 */
 interface OpenLaneRequest {
-  open?: { provider?: string; modelId?: string; thinkingLevel?: EngineThinkingLevel };
+  open?: { provider?: string; modelId?: string; thinkingLevel?: EngineThinkingLevel; permissionPreset?: string };
   durableHint?: string;
   forceOpen?: boolean;
 }
@@ -866,8 +871,14 @@ class ProjectRuntime {
     try {
       // 绑定 open（attach 幂等）：首开/重开不携 provider/model（沿用会话自身存档，
       // 与 T1 管理器裸 open 同形态，process-manager session bind 不携 provider/model）；
-      // createSession 的参数开随车道直达
-      const opened = await state.adapter.openSession({ sessionPath, ...request.open });
+      // createSession 的参数开随车道直达。permissionPreset 全路径携带（入口 B）：车道
+      // 请求显式值优先，缺省回落项目偏好 → full-access——client 来源命名模式是子代
+      // 继承的唯一通道，不携带则子代落 ask（无宿主应答即永久卡死）
+      const opened = await state.adapter.openSession({
+        sessionPath,
+        permissionPreset: this.resolvePermissionPreset(),
+        ...request.open,
+      });
       // 落表后置（02:53 病灶真身）：open 成功才落表——旧序先 set 后 open，落败
       //  adapter 占住 engines 表（active=null 永不自愈）→ 连环 no_active_session
       //  33 秒（webui-2026-11-06.log seq 0239-0326）；失败路径车道槽 finally 清空、
@@ -1009,6 +1020,17 @@ class ProjectRuntime {
         this.recordUnreadFor(handle, entryId, state.sessionPath);
       }
     }
+  }
+
+  /** 入口 B（senpi#6670 族）：本项目 open_session 应携带的权限预设。
+   *  链：车道请求显式值（调用方传入）> 项目偏好（组合根接 readProjectPreferences）
+   *  > full-access（与引擎无名会话根档同档：根行为不变，子代从 ask 升到与根同级）。
+   *  非法档位名回退 full-access（引擎对未知名字报 invalid_launch_profile 拒开）。 */
+  private resolvePermissionPreset(): string {
+    const pref = this.opts.projectPermissionPreset?.(this.projectPath) ?? null;
+    return PERMISSION_PRESET_NAMES.includes(pref as (typeof PERMISSION_PRESET_NAMES)[number])
+      ? (pref as string)
+      : "full-access";
   }
 
   /** 驾驶操作路由：解析目标会话 → 确保其专属引擎就绪并返回绑定态（T3 会话路由：
@@ -2059,7 +2081,7 @@ class ProjectRuntime {
         rid: currentRid(),
       });
       try {
-        await state.adapter.openSession({ sessionPath: state.sessionPath });
+        await state.adapter.openSession({ sessionPath: state.sessionPath, permissionPreset: this.resolvePermissionPreset() });
       } catch (reopenErr) {
         // 重开失败（如 session_path_in_use / open_failed）结构化 503 上抛，不裸 500
         throw new ApiError(
