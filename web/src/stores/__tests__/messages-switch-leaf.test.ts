@@ -1029,13 +1029,13 @@ describe("缺陷 H：发送即回跟活回合 + 迟到整替不回旧叶（task-
       message: { role: "assistant", content: [{ type: "text", text: "分支四" }] },
     });
 
-    // 缺陷 I 症状位（修复动作缺席时的断链态）：u4 已入列但悬空——直发变体（message
-    // 通道孪生吸收把叶拖到 u4，estep2 排队变体则叶冻死嫁接尾 0 气泡，同一断链两形态）：
-    // 路径自 u4 回溯撞悬空 tbk 即断——主干掉出路径、pager 无从派生
+    // 同步态（webui-refetch-storm 任务 7 后）：u4 已入列且不冻叶——重链即时延伸当前路径，
+    // 缺口以上主干经中段缺口平铺兑底保持可见（任务 7 前的「仅 u4 截断态」已随根修更新）：
+    // 混显由下方图谱修复收敛为完整路径
     const broken = st();
     expect(broken.entries.some((e) => e.id === "u4")).toBe(true);
-    expect(broken.leafId).toBe("u4"); // 孪生吸收拖叶（悬空链上继任，非路径延伸）
-    expect(renderablePath()).toEqual(["u4"]); // 路径截断：主干不在场（悬空父断链）
+    expect(broken.leafId).toBe("u4"); // 悬空链重链继任（不再冻死嫁接尾）
+    expect(renderablePath()).toEqual(["t1", "a1", "u3", "a3", "u4"]); // 主干在写（缺口以上平铺）+ u4 可见
     expect(deriveSiblingPositions(broken.entries).get("u4")).toBeUndefined();
 
     // 图谱修复：full=1 返回完整服务端真相（含 tbk 簿记链与 a4 回合尾）

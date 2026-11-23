@@ -103,11 +103,13 @@ describe("缺陷 I（fix7）：悬空父增量触发图谱修复", () => {
       sessionId: SID,
       entry: { type: "message", id: "u4", parentId: "tbk", message: u4Msg() },
     });
-    // 症状位（触发前同步态）：叶冻死嫁接尾（排队变体无孪生吸收拖叶）
+    // 同步态（webui-refetch-storm 任务 7 后）：悬空父不再冻叶——u4 经重链即时延伸当前
+    // 路径，缺口以上主干经中段缺口平铺兑底保持可见（混显由下方修复页收敛）；
+    // 图谱修复照常触发补齐祖先链（任务 7 前的冻死态断言已随根修更新）
     const st0 = useMessagesStore.getState().bySession[SID];
     expect(st0.entries.some((e) => e.id === "u4")).toBe(true);
-    expect(st0.leafId).toBe("bk4");
-    expect(renderableIds()).toEqual(["t1", "a1"]); // 0 新气泡（u4 悬空掉路径外）
+    expect(st0.leafId).toBe("u4");
+    expect(renderableIds()).toEqual(["t1", "a1", "u3", "a3", "u4"]); // 主干在写（缺口以上平铺）+ u4 可见
 
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));

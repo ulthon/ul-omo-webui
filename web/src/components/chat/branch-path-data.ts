@@ -47,17 +47,32 @@ export function lastEntryId(
  *  当前叶引用随本次变更被移除（listAfterRemovals 为移除后的列表——乐观占位被吸收/
  *  合成孪生被真值收敛，新条目即真值继任）；新条目即当前叶（幂等）。其余不拽：
  *  离径追加（他端分支操作，视图保持当前分支，等 setEntries 全量整替对齐）、
- *  existed（新条目此前已在列——重放幂等回填）永不推进。 */
+ *  existed（新条目此前已在列——重放幂等回填）永不推进。
+ *  悬空父重链（webui-refetch-storm 任务 7，F3 stage-B 实锤）：relinkDanglingParent
+ *  开启时，第五种情形——新条目 parentId 为非空串且不在 listAfterRemovals 中（父节点
+ *  不在本地图谱）→ 视为当前路径的延伸（叶推进）。依据：活回合增量按追加式文件语义
+ *  只会续在文件尾，父缺席是准入缺口而非分支分叉（分叉点的父必在图谱内）；引擎叶
+ *  解析同口径沿 parentId 上溯穿过 session-lifecycle/work-custody/child-lifecycle
+ *  簿记条目——这些条目经 wire type "session_lifecycle" 发布（载荷为运行快照，不携
+ *  磁盘条目 id/parentId），store 永不准入，不改叶将永久冻在上一次可见条目处，叶→根
+ *  路径投影把本轮全部后代排除（F3：用户消息+助手回复 live 不可见，重载才见）。
+ *  仅活回合增量调用点（entry_appended 全族/消息通道）开启；REST 窗口增量
+ *  （appendEntries：首条父在本窗外的悬空是常态）与本地乐观占位不开启，既有四情形
+ *  与其余不拽契约完全不变。 */
 export function advanceLeaf(
   currentLeafId: string | null,
   listAfterRemovals: ReadonlyArray<WireEntry>,
   entryId: string,
   parentId: string | null,
   existed: boolean,
+  relinkDanglingParent = false,
 ): string | null {
   if (existed || currentLeafId === entryId) return currentLeafId;
   if (currentLeafId === null) return entryId;
   if (parentId === currentLeafId) return entryId;
+  if (relinkDanglingParent && parentId !== null && !listAfterRemovals.some((e) => e.id === parentId)) {
+    return entryId;
+  }
   return listAfterRemovals.some((e) => e.id === currentLeafId) ? currentLeafId : entryId;
 }
 
@@ -244,7 +259,12 @@ export interface PathWindow {
 /** chat-view messageEntries 的计算体：先用全类型 entries 推导路径集（类型过滤在路径
  *  推导之后），再过滤 typeOk && 在路径。路径集为空（空会话 leafId null / 悬空叶）时
  *  不启用过滤——全量平铺兜底（宁可短暂混显也不空屏，缺叶由下次 setEntries 对齐）。
- *  无 id 条目防御保留（挂不上树，但也不可能是兄弟分支泄漏，不因过滤丢数据）。 */
+ *  无 id 条目防御保留（挂不上树，但也不可能是兄弟分支泄漏，不因过滤丢数据）。
+ *  中段缺口平铺兜底（webui-refetch-storm 任务 7，F3 同源）：hasPartialPath 时回溯
+ *  在缺口处停走，缺口以上的祖先段不可判支——将文件序上首个路径条目之前的段落一并
+ *  放行（typeOk 过滤不变，混显由全量对齐收敛）。边界不变量：窗口头缺口（触顶翻页
+ *  形态，缺口=已加载窗外）首个路径条目即 entries[0]，前缀为空，输出与原过滤完全
+ *  一致——本分支仅对中段缺口（准入缺口，叶侧在缺口下方）生效。 */
 export function filterEntriesToPath(
   entries: ReadonlyArray<WireEntry>,
   viewLeafId: string | null,
@@ -254,6 +274,23 @@ export function filterEntriesToPath(
   const path = derivePathEntryIds(entries, viewLeafId ?? storeLeafId);
   if (path.ids.size === 0) {
     return { windowEntries: entries.filter(typeOk), path };
+  }
+  if (path.hasPartialPath) {
+    let firstIdx = entries.length;
+    for (let i = 0; i < entries.length; i++) {
+      const id = entries[i].id;
+      if (typeof id === "string" && path.ids.has(id)) {
+        firstIdx = i;
+        break;
+      }
+    }
+    return {
+      windowEntries: entries.filter(
+        (e, i) =>
+          typeOk(e) && (i < firstIdx || (typeof e.id === "string" && path.ids.has(e.id))),
+      ),
+      path,
+    };
   }
   const windowEntries = entries.filter(
     (e) =>

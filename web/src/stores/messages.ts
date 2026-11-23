@@ -599,24 +599,36 @@ function stripSyntheticTwins(list: WireEntry[], incoming: ReadonlyArray<WireEntr
 
 /** entry_appended 通用入列 + 叶推进（session-branching todo 4）：真实条目原样入列
  *  （parentId 引擎真相）；延伸当前路径或替换当前叶引用（listAfterRemovals 为孪生/
- *  占位收敛后的列表）时推叶，重放幂等回填（已在列）不推。 */
+ *  占位收敛后的列表）时推叶，重放幂等回填（已在列）不推。调用面全部是活回合 SSE
+ *  增量（entry_appended 全族）与其并集重放（图谱修复/续跑刷新）。任务 7（F3 实锤）：
+ *  新到条目 wire 载荷缺 parentId（载荷截断形态，F3 实测零修复请求反推）时挂当前尾条
+ *  ——追加式文件语义下新条目必续在尾条之后，与消息通道 lastEntryId 同口径；磁盘非
+ *  首条必有父，null 不再表达「根声明」而是链路缺失。已在列的幂等回填携无父载荷时保
+ *  持既有条目原样（REST/先到帧的父链接更完整，不被截断载荷整替洗掉），叶也不拽。
+ *  悬空父重链开启（准入缺口不冻叶，见 advanceLeaf 注）。 */
 function appendEntryWithLeaf(
   cur: SessionMessages,
   stored: WireEntry,
   listAfterRemovals: WireEntry[],
 ): { entries: WireEntry[]; leafId: string | null } {
   const id = typeof stored.id === "string" && stored.id !== "" ? stored.id : null;
-  const parentId = typeof stored.parentId === "string" && stored.parentId !== "" ? stored.parentId : null;
   if (id === null) return { entries: upsertEntry(listAfterRemovals, stored), leafId: cur.leafId };
+  const wireParentId = typeof stored.parentId === "string" && stored.parentId !== "" ? stored.parentId : null;
+  const existed = listAfterRemovals.some((e) => e.id === id);
+  let entryToStore = stored;
+  if (wireParentId === null && existed) {
+    // 幂等回填携无父载荷：保持既有条目原样（REST/先到帧的父链接更完整，不被截断载荷洗掉）
+    entryToStore = listAfterRemovals.find((e) => e.id === id) ?? stored;
+  } else if (wireParentId === null) {
+    // 新到条目 wire 缺父：挂当前尾条（追加式文件语义，磁盘非首条必有父；与消息通道同口径）
+    const tailId = lastEntryId(listAfterRemovals, id);
+    if (tailId !== null) entryToStore = { ...stored, parentId: tailId };
+  }
+  const parentId =
+    typeof entryToStore.parentId === "string" && entryToStore.parentId !== "" ? entryToStore.parentId : null;
   return {
-    entries: upsertEntry(listAfterRemovals, stored),
-    leafId: advanceLeaf(
-      cur.leafId,
-      listAfterRemovals,
-      id,
-      parentId,
-      listAfterRemovals.some((e) => e.id === id),
-    ),
+    entries: upsertEntry(listAfterRemovals, entryToStore),
+    leafId: advanceLeaf(cur.leafId, listAfterRemovals, id, parentId, existed, true),
   };
 }
 
@@ -1085,6 +1097,9 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               // parentId 注入 + 叶推进（session-branching todo 4）：事件携 parentId
               //（引擎真相）保留，缺席（message 通道帧常态）挂当前尾条；吸收/孪生收敛
               // 移除当前叶引用（乐观占位被吸收）时叶随真值推进；重放幂等回填不推。
+              // 活回合消息通道开启悬空父重链（任务 7）：帧父链接落在 store 永不准入的
+              // 簿记节点（session-lifecycle 等）时不冻叶——echo 孪生即时可见，entry_
+              // appended 真值收敛沿移除叶规则续推，投影不回退。
               const parentId =
                 typeof entry.parentId === "string" && entry.parentId !== ""
                   ? entry.parentId
@@ -1096,7 +1111,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
                   [sessionId]: {
                     ...cur,
                     entries: upsertEntry(list, stored),
-                    leafId: advanceLeaf(cur.leafId, list, id, parentId, list.some((e) => e.id === id)),
+                    leafId: advanceLeaf(cur.leafId, list, id, parentId, list.some((e) => e.id === id), true),
                   },
                 },
               };
