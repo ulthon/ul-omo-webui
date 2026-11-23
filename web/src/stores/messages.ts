@@ -86,6 +86,10 @@ export interface SessionMessages {
   hasMore: boolean;
   /** 任务 16：当前已加载窗口最旧条目 id（向上翻页 ?before= 游标；全量加载为 null） */
   oldestId: string | null;
+  /** 整替换代序号（重取风暴任务 3）：setEntries 全量整替落在既有可见窗口（prev 有条目）
+   *  上时自增，首载水合不计数。视图层换代检测的 store 级信号，优先于 items 长度差
+   *  后备启发（GAP-3 落地滚动补偿的换代判据；亦为口径 A「稳态零整替」验收的计数器）。 */
+  swapSeq: number;
   streaming: boolean;
   /** 流式中的 assistant 消息（part 级就地更新；定格时并入 entries） */
   streamingMessage: WireMessage | null;
@@ -379,6 +383,7 @@ function emptySessionMessages(): SessionMessages {
     loaded: false,
     hasMore: false,
     oldestId: null,
+    swapSeq: 0,
     streaming: false,
     streamingMessage: null,
     streamingEntryId: null,
@@ -892,6 +897,8 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               cursor,
               leafId,
               loaded: true,
+              // 换代序号（任务 3）：落在既有可见窗口上自增，首载水合归零
+              swapSeq: prev?.entries.length ? (prev.swapSeq ?? 0) + 1 : 0,
               ...(paging ?? { hasMore: false, oldestId: null }),
             },
           },
@@ -1251,8 +1258,10 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
                   },
                 };
               });
+              break;
             }
-            break;
+            // 内层 role 非 user/assistant（多腿回合 toolResult 等簿记内层）：不再就地
+            // 丢弃，落到下方准入兜底同治——入列为不可见图节点，子消息 parentId 链不断。
           }
           // 压缩摘要条目增量（docs08-r6 任务 19g）：引擎压缩完成后经 entry_appended 携
           // 顶层 type:"compaction" 条目到达（F3 实测 compaction_end 后紧跟 entry_appended，
@@ -1282,7 +1291,8 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
           // task completion 条目（JSONL 顶层 type:"custom_message" 携 id，历史 GET
           // messages 同形同构）——此前不消费，页签卡永停 spawn 回执。放行入列供
           // subagent-data 按 taskId 配对转真终态；其余 wake 载荷（ulw 续跑引导等）
-          // 与未知噪音照旧不消费（宁漏勿错，判定单一真相源 lib/task-completion.ts）。
+          // 不按完成通知消费（宁漏勿错，判定单一真相源 lib/task-completion.ts），
+          // 携有效 id 时照下方准入兜底入列为不可见图节点。
           if (parseTaskCompletionEntry(entry) !== null) {
             set((s) => {
               const cur = s.bySession[sessionId] ?? emptySessionMessages();
@@ -1294,15 +1304,36 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
             });
             break;
           }
-          if (!isMemoryAppendedEntry(entry)) break;
-          set((s) => {
-            const cur = s.bySession[sessionId] ?? emptySessionMessages();
-            // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
-            const merged = appendEntryWithLeaf(cur, entry, cur.entries);
-            return {
-              bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
-            };
-          });
+          if (isMemoryAppendedEntry(entry)) {
+            set((s) => {
+              const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
+              const merged = appendEntryWithLeaf(cur, entry, cur.entries);
+              return {
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+              };
+            });
+            break;
+          }
+          // 准入兜底（webui-refetch-storm 任务 1，GAP-1 主/GAP-2 半）：白名单外的簿记
+          // 条目（custom/custom_message/其他顶层类型，含上方改道的非 user/assistant
+          // message 内层）携有效字符串 id 一律入列为不可见图节点——引擎在嫁接位/多腿
+          // 回合插入的簿记链（graft/turn-context/oauth 等）此前被丢弃，后续消息
+          // parentId 悬空：advanceLeaf「延伸当前路径」永不命中 + 修复全量重取风暴。
+          // 可见性口径（决策 D7）不变：渲染分类门在 message-items 收紧（未知 custom、
+          // display!=true 的 custom_message、toolResult 内层一律零渲染行），REST 全量
+          // 态本就不筛 store 入列，窗口态与全量态可见集不发散。只动图节点与叶推进，
+          // 不写 runState 等任何运行态；repairEntriesGraph 修复面与孪生收敛不动。
+          if (typeof entry.id === "string" && entry.id !== "") {
+            set((s) => {
+              const cur = s.bySession[sessionId] ?? emptySessionMessages();
+              // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
+              const merged = appendEntryWithLeaf(cur, entry, cur.entries);
+              return {
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+              };
+            });
+          }
           break;
         }
 

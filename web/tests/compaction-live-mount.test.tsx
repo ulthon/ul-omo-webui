@@ -132,14 +132,17 @@ describe("摘要标记（19g 面二）：entry_appended 白名单放行 → 派�
     expect(merged.some((i) => i.kind === "compactionMarker")).toBe(true);
   });
 
-  test("非 compaction 条目（custom 噪音）仍被白名单丢弃，不回归", () => {
+  test("非 compaction 条目（custom 噪音）零可见行，不回归（webui-refetch-storm 任务 1 兜底：入列为不可见图节点）", () => {
     dispatchSseEvent(
       "entry_appended",
       JSON.stringify({ projectPath: "/p", event: { type: "entry_appended", sessionId: "rpc-1", entry: { type: "custom", id: "x1", customType: "pi-rules.scan", data: {} } }, durableSessionId: SID }),
       1,
     );
     const entries = useMessagesStore.getState().bySession[SID]?.entries ?? [];
-    expect(entries.find((e) => e.id === "x1")).toBeUndefined();
+    // 任务 1 准入兜底：噪条目携有效 id 照兜底入列（不可见图节点，路径链不断）
+    expect(entries.some((e) => e.id === "x1")).toBe(true);
+    // 渲染白名单不回归：custom 噪音零可见 item
+    expect(buildMessageItems(entries as never, { hasStreamingMessage: false, interrupted: false })).toEqual([]);
   });
 
   test("compaction_end（completed）补拉 GET messages 对账（帧丢失场景标记收敛）；declined 不补拉", async () => {

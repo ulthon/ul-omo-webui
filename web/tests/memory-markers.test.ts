@@ -15,7 +15,7 @@ import {
 } from "@/lib/memory-entries";
 import { dispatchSseEvent, resetDispatchState } from "@/lib/event-dispatch";
 import { EventsClient, disconnectEvents } from "@/lib/events";
-import { mergeMemoryItems, type ChatListItem } from "@/components/chat/message-items";
+import { mergeMemoryItems, buildMessageItems, type ChatListItem } from "@/components/chat/message-items";
 import { useMessagesStore } from "@/stores/messages";
 import { MockEventSource, MockScheduler } from "./helpers/mock-sse";
 
@@ -236,10 +236,17 @@ describe("store entry_appended 白名单入列", () => {
     });
   });
 
-  test("非白名单 custom 条目不入列（senpi-task.usage 形态即 spike 列表外类型）", () => {
+  test("非白名单 custom 条目入列为不可见图节点，渲染零可见 item（webui-refetch-storm 任务 1 准入兜底；渲染白名单不回归）", () => {
     frame({ type: "entry_appended", entry: customEntry("pi-rules.scan", {}, "43ed27eb"), sessionId: "rpc-1" }, 1);
     frame({ type: "entry_appended", entry: customEntry("senpi.hooks.stop-state", {}, "cf5cd724"), sessionId: "rpc-1" }, 2);
-    expect(useMessagesStore.getState().bySession["d-13"].entries.length).toBe(0);
+    const entries = useMessagesStore.getState().bySession["d-13"].entries;
+    // 兜底语义：白名单外条目携有效 id 照兜底入列（不可见图节点，路径链不断）
+    expect(entries.map((e) => e.id)).toEqual(["43ed27eb", "cf5cd724"]);
+    // 渲染白名单语义不变：非白名单 customType 不派生记忆标记、零可见 item
+    for (const e of entries) {
+      expect(memoryMarkerOf(e)).toBeNull();
+    }
+    expect(buildMessageItems(entries as never, { hasStreamingMessage: false, interrupted: false })).toEqual([]);
   });
 
   test("entry 载荷缺失容错忽略", () => {

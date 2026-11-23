@@ -606,6 +606,23 @@ function pureErrorTextOf(e: WireEntry): string {
   return text;
 }
 
+/** 换代后备启发阈值（可调）：合并投影条目净增超过该值视为整替窗跃迁（尾窗→全量）；
+ * 普通小增量 append（一两条）不触发。store 级信号（swapSeq）缺席时的兑底，防中体型
+ * 会话（窗≈全量、长度差低于阈值）漏检——那类换代由 swapSeq 信号补位检出。 */
+export const SWAP_LENGTH_DIFF_THRESHOLD = 24;
+
+/** 换代检测（重取风暴任务 3，GAP-3/4）：store 级信号优先（setEntries 整替计数增长），
+ * items 长度差仅作后备启发。返回 true=全量整替落地，非跟随态需落地滚动补偿。
+ * 纯函数：无时序、不改入参。 */
+export function detectProjectionSwap(
+  prev: { swapSeq: number; items: number },
+  next: { swapSeq: number; items: number },
+): boolean {
+  if (next.swapSeq > prev.swapSeq) return true;
+  return next.items - prev.items > SWAP_LENGTH_DIFF_THRESHOLD;
+
+}
+
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
  *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
  *  interrupted 标记挂最后一个 assistant 条目。

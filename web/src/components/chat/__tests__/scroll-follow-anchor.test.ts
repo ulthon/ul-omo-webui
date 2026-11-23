@@ -95,6 +95,7 @@ describe("store 锚点槽（#26）", () => {
           loaded: true,
           hasMore: false,
           oldestId: null,
+          swapSeq: 0,
           streaming: false,
           streamingMessage: null,
           streamingEntryId: null,

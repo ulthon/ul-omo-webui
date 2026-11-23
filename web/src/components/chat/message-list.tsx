@@ -16,7 +16,7 @@ import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, ERROR_KIND_KEYS, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
+import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, ERROR_KIND_KEYS, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem, detectProjectionSwap } from "./message-items";
 import type { SiblingPosition } from "./branch-path-data";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
@@ -420,6 +420,15 @@ export function MessageList({
   // scroll 事件不把跟随态提前翻回跟随（锚点暂不在渲染窗属正常）；解除方向改由用户输入
   // 监听（wheel/touch/key，见 attachUserScrollDisengage）直接负责，不受护栏影响。
   const programmaticUntilRef = useRef(0);
+  // 落地滚动补偿（重取风暴任务 3，GAP-3）状态：首个可见 virtualItem 快照（key+内容位
+  // start）、换代检测基线（store 整替序号 + 提交时条目数）、武装标志与未决补偿 rAF 句柄
+  const swapFirstVisibleRef = useRef<{ key: string; start: number } | null>(null);
+  const swapSeqRef = useRef(0);
+  const swapItemsLenRef = useRef(0);
+  const swapArmedRef = useRef(false);
+  const swapRafRef = useRef(0);
+  // 初始值空数组：真实值由检测 effect 每次提交顶部写入（rAF 读取前必有写入）
+  const mergedItemsRef = useRef<ChatListItem[]>([]);
   const [showJump, setShowJump] = useState(false);
 
   // 白名单 memory 条目与 compaction 条目并入 items（docs08-r4 任务 13 / 任务 18 ③）：
@@ -568,6 +577,79 @@ export function MessageList({
     [virtualizer, anchorIndex, mergedItems.length],
   );
 
+  // scrollToAnchor 引用化（重取风暴 GAP-2/4 fix 2026-11-23）：identity 随条目增长高频
+  // 变化，经 ref 消费使定位 effect 无需把它入 deps——deps 污染正是旧实现随 items
+  // 增长重跑 session_open 定位的根因。
+  const scrollToAnchorRef = useRef(scrollToAnchor);
+  useEffect(() => {
+    scrollToAnchorRef.current = scrollToAnchor;
+  });
+
+  // 换代落地检测与滚动补偿（重取风暴任务 3，GAP-3/4）：mergedItems 每次提交后运行——
+  // 上一提交记录的首个可见 virtualItem（key+内容位 start）即本次落地前的视口快照
+  // （相对容器顶偏移 = start - 落地时实时 scrollTop，用户提交间滚动也计入）。换代检测
+  // store 级信号优先（swapSeq）、items 长度差后备（detectProjectionSwap）；仅非跟随态
+  // 补偿，rAF 内 scrollToIndex(key, align:start) 再补偏移差，纳入程序滚动护栏窗。
+  useEffect(() => {
+    mergedItemsRef.current = mergedItems;
+    const seq = useMessagesStore.getState().bySession[sessionId]?.swapSeq ?? 0;
+    // 记录首个可见 virtualItem（本次提交后的布局=下一次落地的“落地前”快照；无布局/
+    // 虚拟窗为空时为 null，补偿随之跳过）
+    const first = virtualizer.getVirtualItems()[0];
+    const firstVisible =
+      first !== undefined ? { key: mergedItems[first.index].key, start: first.start } : null;
+    if (!swapArmedRef.current) {
+      // 首次提交只建基线（武装），不检测不补偿：挂载首载定位归 session_open 通道管
+      swapArmedRef.current = true;
+      swapSeqRef.current = seq;
+      swapItemsLenRef.current = mergedItems.length;
+      swapFirstVisibleRef.current = firstVisible;
+      return;
+    }
+    const swapped = detectProjectionSwap(
+      { swapSeq: swapSeqRef.current, items: swapItemsLenRef.current },
+      { swapSeq: seq, items: mergedItems.length },
+    );
+    swapSeqRef.current = seq;
+    swapItemsLenRef.current = mergedItems.length;
+    const preLanding = swapFirstVisibleRef.current;
+    swapFirstVisibleRef.current = firstVisible;
+    if (!swapped || followRef.current || preLanding === null) return;
+    // 最新换代取代未决补偿（连发换代只补最后一次）；rAF 不入 effect cleanup——
+    // 落地后流式增量继续提交时不至取消刚排程的补偿，卸载由专项 cleanup 收
+    if (swapRafRef.current) cancelAnimationFrame(swapRafRef.current);
+    swapRafRef.current = requestAnimationFrame(() => {
+      swapRafRef.current = 0;
+      const el = scrollRef.current;
+      // 执行时复核跟随态：快照与执行间用户已回底则交还既有锚底路径
+      if (!el || followRef.current) return;
+      const index = mergedItemsRef.current.findIndex((it) => it.key === preLanding.key);
+      // key 在新投影缺席（窗口外裁剪/整替剔除）：无从对齐，放弃本次补偿
+      if (index < 0) return;
+      const offset = preLanding.start - el.scrollTop;
+      diag.info("scroll", "swap_compensate", {
+        key: preLanding.key,
+        index,
+        offset,
+        items: mergedItemsRef.current.length,
+      });
+      programmaticUntilRef.current = Date.now() + 600;
+      virtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+      // 补偏移差：scrollToIndex(align:start) 同步把 scrollTop 推到锚行新坐标 start（
+      // virtual-core 同步 elementScroll 语义），恢复原视位 = S_new − d（d = 快照 start −
+      // 落地前 scrollTop，锚行屏位），落在 el.scrollTop − offset
+      if (offset !== 0) el.scrollTo({ top: el.scrollTop - offset, behavior: "auto" });
+    });
+  }, [mergedItems, sessionId, virtualizer]);
+
+  // 补偿 rAF 专项卸载清理：不挂在检测 effect 上（见上，落地后增量提交不可取消补偿）
+  useEffect(
+    () => () => {
+      if (swapRafRef.current) cancelAnimationFrame(swapRafRef.current);
+    },
+    [],
+  );
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -638,23 +720,50 @@ export function MessageList({
   useEffect(() => {
     followRef.current = true;
     setShowJump(false);
+    // 换代补偿状态不跨会话携带（任务 3）：重武装（下一提交重建基线）并撤销未决补偿
+    swapArmedRef.current = false;
+    if (swapRafRef.current) {
+      cancelAnimationFrame(swapRafRef.current);
+      swapRafRef.current = 0;
+    }
   }, [sessionId]);
 
   // 打开会话 / 从空到有内容：定位到底部（测量异步完成，两段式补齐）
   const t = useT();
   const hasItems = mergedItems.length > 0;
+  // 已定位会话标记（重取风暴 GAP-2/4 fix 2026-11-23）：定位只在 hasItems 首真或
+  // sessionId 变化时执行一次；旧实现 deps 带 scrollToAnchor（identity 随条目增长
+  // 漂移），items 每次增长都重发 session_open 定位、在非跟随态把用户强拉回底部。
+  // StrictMode 双跑（dev effect→cleanup→effect）安全：stage1 未执行前的 cleanup
+  // 回滚标记，紧随的二次执行重新定位；生产单跑无回滚路径。
+  const locatedSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!hasItems) return;
-    // 会话打开快照（26d）：hasItems 首真时 follow 标志与条目数（deps 保持原语义：
-    // 只在首条到达/会话切换时跑，不为新消息重跑——避免把两段式定位变成强拉滚底）
+    if (!hasItems || locatedSessionRef.current === sessionId) return;
+    const prevLocated = locatedSessionRef.current;
+    locatedSessionRef.current = sessionId;
+    // 会话打开快照（26d）：follow 标志与条目数（定位一次性：首条到达/会话切换各记一次）
     diag.info("scroll", "session_open", { follow: followRef.current, items: mergedItems.length, sessionId: sessionId.slice(0, 8) });
-    const raf = requestAnimationFrame(() => {
-      scrollToAnchor();
-      window.setTimeout(() => scrollToAnchor(), 100);
+    let raf = 0;
+    let tid = 0;
+    let stage1Done = false;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      stage1Done = true;
+      // 两段式程序滚动前均尊重跟随态：非跟随（用户已上滚）不执行定位滚动
+      if (followRef.current) scrollToAnchorRef.current();
+      tid = window.setTimeout(() => {
+        tid = 0;
+        if (followRef.current) scrollToAnchorRef.current();
+      }, 100);
     });
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mergedItems.length 仅快照读取，入 deps 会改变定位触发语义（见上注）
-  }, [hasItems, sessionId, scrollToAnchor]);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      // 旧实现只清 rAF：100ms 补滚句柄脱离清理，卸载/切会话后仍迟到滚底
+      if (tid) window.clearTimeout(tid);
+      if (!stage1Done && locatedSessionRef.current === sessionId) locatedSessionRef.current = prevLocated;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mergedItems.length 仅为快照读取，入 deps 会把定位变成随条目增长重跑（GAP-2 旧根因）
+  }, [hasItems, sessionId]);
 
   // 页面重新可见（手机切出再切回）：原本贴底则回底——防止系统滚动恢复/SSE 重连重排后停在旧位置
   useEffect(() => {
