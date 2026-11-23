@@ -454,8 +454,22 @@ sseRoutes.get("/events", (c) => {
   const { bus, heartbeatMs, durableLookup, isEngineRunning } = runtime
 
   // Last-Event-ID：原生 EventSource 重连自动携带；非法值按 0 处理
-  //（0 = 从头/从缓冲最旧开始，越界时自然走 gap 路径）
-  const raw = c.req.header("Last-Event-ID")
+  //（0 = 从头/从缓冲最旧开始，越界时自然走 gap 路径）。
+  // ?afterId=（webui-refetch-storm 任务 4，GAP-6）：整页重载引导重连的游标查询参数
+  // ——EventSource 首连无法携带自定义头，前端把 sessionStorage 持久化的全局事件游标
+  // 放进 URL。对 afterId 推导与 header 等价（优先级 header > query；非法值同样按 0
+  // 处理），但连接分类上携 query 游标恒为非首连（带游标 = 断点续传，不走新连接
+  // 尾窗截断——否则尾窗把带游标重连伪装成首连、长缺被截窗掩盖，重载照样发大缺口
+  // 全量对账，游标持久化收益归零）。空 query 值（?afterId=）视为缺席，不影响无游标
+  // 首连的原有行为；header 语义完全不变。
+  const headerRaw = c.req.header("Last-Event-ID")
+  const queryRaw = c.req.query("afterId")
+  const raw =
+    headerRaw !== undefined
+      ? headerRaw
+      : queryRaw !== undefined && queryRaw !== ""
+        ? queryRaw
+        : undefined
   const parsed = raw === undefined ? 0 : Number.parseInt(raw, 10)
   const afterId = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
   const sessionFilter = c.req.query("session")

@@ -69,6 +69,9 @@ function sweepDeferredReplaces(): void {
     }
     if (!turnInFlightOf(sessions.runStates[sid], pickActive(sessions, sid))) {
       deferredFullReplaces.delete(sid);
+      // 任务 5：迟滞落地完全豁免冷却——不经触发点、不读写冷却账本（页面即时并集
+      // 落地不延迟），只发落地原因计数
+      diag.info("run", "graph_repair", { session: sid.slice(0, 8), reason: "deferred-landing" });
       void useMessagesStore.getState().repairEntriesGraph(sid, {
         fetchFull: () => Promise.resolve(page),
       });
@@ -83,6 +86,90 @@ function deferFullReplaceUntilTurnEnd(sessionId: string, page: MessagesPage): vo
     deferredReplaceUnsub = useSessionsStore.subscribe(() => sweepDeferredReplaces());
   }
   sweepDeferredReplaces(); // 布防时刻即可能已不在回合（亮转算毫秒级）
+}
+
+/** 悬空修复触发冷却（webui-refetch-storm 任务 5，修订决策 D3'）：同会话悬空触发点
+ *  冷却窗内只发起一次修复——多腿回合簿记链悬空帧高频连击时不再逐帧全量重取（修复
+ *  动作在途去重 + 并集合并幂等，重复取数纯浪费）。D3' 无条件实施 + 计数埋点，替代
+ *  原「观测门控」：条件任务会留执行器判断，冷却廉价可逆且豁免路径已隔离，计数埋点
+ *  本身即观测面（diag run/graph_repair 按 reason 计数）。
+ *  边界：冷却只作用于分发层悬空触发点；回合末迟滞落地（sweepDeferredReplaces）与
+ *  修复函数本体（repairEntriesGraph 在途去重/并集合并）完全豁免不涉。冷却不吞记账：
+ *  冷却期内被抑制的悬空观察记入待修账本，期满复检（dangling-recheck）时悬空仍在
+ *  （父 id 仍不在图且在途判据成立）则再触发一次——真丢帧场景无新帧到达也能恢复。 */
+export const SESSION_REPAIR_COOLDOWN_MS = 1500;
+
+/** 每会话最近一次悬空修复触发时刻（迟滞落地不记账，完全豁免） */
+const lastRepairTriggerAt = new Map<string, number>();
+
+/** 冷却期内被抑制的悬空观察（记账不吞）：最新悬空父 id + 期满复检定时器 */
+const pendingDanglingRepairs = new Map<
+  string,
+  { parentId: string; timer: ReturnType<typeof setTimeout> | null }
+>();
+
+/** 悬空触发门（原触发判据的状态条件抽出，期满复检复用同一判据——载荷形状校验
+ *  留在触发点，状态条件两处同源不漂移） */
+function danglingRepairGateOf(sessionId: string, danglingParentId: string): boolean {
+  const slot = useMessagesStore.getState().bySession[sessionId];
+  if (slot === undefined || slot.viewLeafId !== null) return false;
+  const sessions = useSessionsStore.getState();
+  const runState = sessions.runStates[sessionId];
+  if (
+    !(
+      slot.streaming ||
+      runState === "running" ||
+      runState === "waiting" ||
+      turnInFlightOf(runState, pickActive(sessions, sessionId))
+    )
+  ) {
+    return false;
+  }
+  return !slot.entries.some((e) => e.id === danglingParentId);
+}
+
+/** 发起图谱修复（悬空触发点唯一出口；迟滞落地不经此——豁免冷却与记账） */
+function fireGraphRepair(sessionId: string, reason: string): void {
+  lastRepairTriggerAt.set(sessionId, Date.now());
+  diag.info("run", "graph_repair", { session: sessionId.slice(0, 8), reason });
+  void useMessagesStore.getState().repairEntriesGraph(sessionId, {
+    fetchFull: () => api.listMessages(sessionId, { full: true }),
+  });
+}
+
+/** 悬空触发点入口（任务 5）：冷却窗内不重复发起，抑制观察入待修账本并布防期满复检 */
+function triggerDanglingRepair(sessionId: string, danglingParentId: string): void {
+  const last = lastRepairTriggerAt.get(sessionId);
+  if (last !== undefined && Date.now() - last < SESSION_REPAIR_COOLDOWN_MS) {
+    diag.debug("run", "graph_repair", {
+      session: sessionId.slice(0, 8),
+      reason: "cooldown-suppressed",
+    });
+    const pending = pendingDanglingRepairs.get(sessionId);
+    if (pending === undefined) {
+      const entry: { parentId: string; timer: ReturnType<typeof setTimeout> | null } = {
+        parentId: danglingParentId,
+        timer: null,
+      };
+      pendingDanglingRepairs.set(sessionId, entry);
+      // 期满复检（记账不吞）：冷却期满时悬空仍在则兜底再触发（无新帧到达也恢复）
+      entry.timer = setTimeout(() => {
+        if (pendingDanglingRepairs.get(sessionId) !== entry) return;
+        pendingDanglingRepairs.delete(sessionId);
+        if (danglingRepairGateOf(sessionId, entry.parentId)) {
+          fireGraphRepair(sessionId, "dangling-recheck");
+        }
+      }, SESSION_REPAIR_COOLDOWN_MS);
+      // bun 单测环境不挂住进程退出（同 sweepTimer 惯例，可选调用自动跳过）
+      (entry.timer as unknown as { unref?: () => void }).unref?.();
+    } else {
+      pending.parentId = danglingParentId; // 以最新悬空证据为准
+    }
+    return;
+  }
+  // 冷却已过（或从未触发）：正常发起；遗留待修账本一并清（本次触发即覆盖记账）
+  pendingDanglingRepairs.delete(sessionId);
+  fireGraphRepair(sessionId, "dangling");
 }
 
 /** wire handle → durable id 学习账本（r11 todo 12b 收尾帧归属）：任何同时携带 wire
@@ -241,6 +328,42 @@ export function getDispatchCursor(): number | null {
   return lastCursor;
 }
 
+// ---------- 事件游标会话级持久化（webui-refetch-storm 任务 4，GAP-6） ----------
+
+/** 全局事件游标的 sessionStorage 键：单一键、无 sessionId 分量——/api/events 是
+ * 页面级单条多路复用连接，事件 id 空间全局（events.ts 单连接），游标不按会话分键。
+ * sessionStorage（不用 localStorage）：游标只在标签页会话生命周期内有意义，换标签页 /
+ * 新窗口本就是新订阅者，不该携带别的页面的进度。 */
+export const EVENT_CURSOR_STORAGE_KEY = "ul_omo_event_cursor";
+
+/** 读取持久化游标：缺失 / 空串 / 非整数 / 负数一律 null（按无游标处理，重载回退
+ * 首连行为）；存储不可用（隐私模式 / 无 DOM 环境）静默 null。 */
+export function readPersistedEventCursor(): number | null {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    const raw = (sessionStorage.getItem(EVENT_CURSOR_STORAGE_KEY) ?? "").trim();
+    if (raw === "") return null;
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 内存游标落盘（events.ts 的 visibilitychange→hidden / pagehide 钩子调用——先例
+ * diag.ts flush-on-hidden：转后台 / 离页瞬间是浏览器最可靠的送达时机；帧级推进只记
+ * 内存态不逐帧同步写）。lastCursor 为 null（尚未见任何帧）时不动存储，不清洗旧值：
+ * 旧游标仍是有效的全局续传基点。失败静默——存储不可用时内存游标照常工作，只是
+ * 重载退化为无游标首连。 */
+export function persistEventCursor(): void {
+  try {
+    if (lastCursor === null || typeof sessionStorage === "undefined") return;
+    sessionStorage.setItem(EVENT_CURSOR_STORAGE_KEY, String(lastCursor));
+  } catch {
+    // 配额满 / 隐私模式：跳过落盘，不影响实时流
+  }
+}
+
 /** 重置分发层状态（单测隔离用） */
 export function resetDispatchState(): void {
   lastCursor = null;
@@ -250,6 +373,11 @@ export function resetDispatchState(): void {
   wireToDurable.clear();
   epochActiveSessions.clear();
   deferredFullReplaces.clear();
+  lastRepairTriggerAt.clear();
+  for (const pending of pendingDanglingRepairs.values()) {
+    if (pending.timer !== null) clearTimeout(pending.timer);
+  }
+  pendingDanglingRepairs.clear();
   if (deferredReplaceUnsub !== null) {
     deferredReplaceUnsub();
     deferredReplaceUnsub = null;
@@ -954,21 +1082,14 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
   // 判据分层互不影响。门条件另一腿：viewLeafId=null（回跟活叶的用户；钉住视图
   // 的用户不受他端回合批拽，todo 4 离径不拽契约保持）。修复动作在途去重、并集
   // 合并不丢 SSE 活条目，与 fix6 双门正交（门拦过期投影，修复只落新鲜页）。
+  // 任务 5（决策 D3'）：触发点加会话级冷却（SESSION_REPAIR_COOLDOWN_MS，语义与豁免
+  // 边界见冷却块注释）——门判据抽出为 danglingRepairGateOf，触发经 triggerDanglingRepair。
   if (wire.type === "entry_appended") {
     const appended = wire.entry as
       | { type?: unknown; id?: unknown; parentId?: unknown }
       | null
       | undefined;
-    const slot = useMessagesStore.getState().bySession[sessionId];
-    const sessions = useSessionsStore.getState();
-    const runState = sessions.runStates[sessionId];
     if (
-      slot !== undefined &&
-      slot.viewLeafId === null &&
-      (slot.streaming ||
-        runState === "running" ||
-        runState === "waiting" ||
-        turnInFlightOf(runState, pickActive(sessions, sessionId))) &&
       appended !== null &&
       typeof appended === "object" &&
       appended.type === "message" &&
@@ -976,11 +1097,9 @@ export function dispatchSseEvent(eventType: string, data: string, cursor: number
       appended.id !== "" &&
       typeof appended.parentId === "string" &&
       appended.parentId !== "" &&
-      !slot.entries.some((e) => e.id === appended.parentId)
+      danglingRepairGateOf(sessionId, appended.parentId)
     ) {
-      void useMessagesStore.getState().repairEntriesGraph(sessionId, {
-        fetchFull: () => api.listMessages(sessionId, { full: true }),
-      });
+      triggerDanglingRepair(sessionId, appended.parentId);
     }
   }
 }

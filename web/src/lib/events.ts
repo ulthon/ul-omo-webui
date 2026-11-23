@@ -12,6 +12,10 @@
 //   2. fetch 流（降级路径）——fetch('/api/events', {headers: Last-Event-ID}) + ReadableStream
 //      手写 SSE 帧解析（event/data/id 行、多行 data 合并、心跳注释行跳过、chunk 边界缓冲），
 //      断线走同一套指数退避，重连请求自带 Last-Event-ID 头（游标取自分发层记账）。
+//   两传输的重连游标同源同值（webui-refetch-storm 任务 4 GAP-6）：内存分发游标优先，
+//   整页重载后回落 sessionStorage 持久化值（EVENT_CURSOR_STORAGE_KEY，visibilitychange
+//   →hidden / pagehide 节流落盘，不逐帧写）——ES 路径以 ?afterId= 查询参数携带
+//   （首连无法带自定义头），fetch 路径以 Last-Event-ID 头携带，服务端两处推导等价。
 //   QA 强制开关：localStorage ul_omo_sse_transport=fetch 或 URL ?transport=fetch（生产用户无感）。
 //
 // 服务端契约（server/src/api/sse.ts）：event 行 = wire type（心跳为具名 hb 帧，占用 id
@@ -19,7 +23,14 @@
 // {projectPath, event, durableSessionId?}；id 行 = 全局自增游标；游标越界先发 event: gap
 // 再从最旧可用续发。分发层据 gap 帧与游标回退做活动会话全量重取兜底；停摆/半死触发的
 // 重连额外强制 refetchLoadedSessions 全量对账（防御纵深，见 dispatch 侧游标回退路径）。
-import { dispatchSseEvent, getDispatchCursor, reconcileRunStateOnVisible, refetchLoadedSessions } from "@/lib/event-dispatch";
+import {
+  dispatchSseEvent,
+  getDispatchCursor,
+  persistEventCursor,
+  readPersistedEventCursor,
+  reconcileRunStateOnVisible,
+  refetchLoadedSessions,
+} from "@/lib/event-dispatch";
 import { diag } from "@/lib/diag";
 import { useMessagesStore } from "@/stores/messages";
 import { useUiStore } from "@/stores/ui";
@@ -218,13 +229,29 @@ export class EventsClient {
 
   // ---------- 传输 1：EventSource ----------
 
+  /** 重连游标来源（任务 4 GAP-6）：内存分发游标优先（本页已见帧，最准），整页重载后
+   * 内存清零，回落 sessionStorage 持久化值（上一页周期落盘的全局游标）引导重连。 */
+  private resumeCursor(): number | null {
+    return getDispatchCursor() ?? readPersistedEventCursor();
+  }
+
+  /** 连接 URL：已知游标时携带 ?afterId= 查询参数（任务 4 GAP-6）——EventSource 首
+   * 连无法携带自定义头，重载引导重连只能把游标放进 URL；服务端把它视同 Last-Event-ID
+   * 推导续传基点且恒判非首连（不做新连接尾窗截断，见 sse.ts afterId 解析）。 */
+  private connectUrl(): string {
+    const cursor = this.resumeCursor();
+    if (cursor === null) return this.url;
+    return `${this.url}${this.url.includes("?") ? "&" : "?"}afterId=${cursor}`;
+  }
+
   private openEventSource(): void {
     if (this.stopped || this.es) return;
     this.openedAt = Date.now();
     this.gotFrame = false;
     this.opened = false;
-    dlog(`es connecting url=${this.url}`);
-    const es = this.createEs(this.url);
+    const url = this.connectUrl();
+    dlog(`es connecting url=${url}`);
+    const es = this.createEs(url);
     this.es = es;
     es.onopen = () => {
       dlog("es open");
@@ -306,7 +333,9 @@ export class EventsClient {
     const controller = new AbortController();
     this.abortController = controller;
     const headers: Record<string, string> = {};
-    const cursor = getDispatchCursor();
+    // 任务 4 GAP-6：与 ES 路径 ?afterId= 同源同值——重载后内存游标缺席时以持久化
+    // 游标种子 Last-Event-ID，两传输引导行为一致
+    const cursor = this.resumeCursor();
     if (cursor !== null) headers["Last-Event-ID"] = String(cursor);
     dlog(`fetch connecting lastEventId=${cursor ?? "-"}`);
     void this.fetchImpl(this.url, { headers, signal: controller.signal })
@@ -468,6 +497,9 @@ export class EventsClient {
     this.wakeHooked = true;
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("pageshow", this.onPageShow);
+    // 任务 4 GAP-6：游标落盘节流面——pagehide 时写 sessionStorage（先例 diag.ts
+    // flush-on-hidden）；hidden 分支折进 onVisibilityChange，不另挂监听
+    window.addEventListener("pagehide", this.onPageHide);
   }
 
   private unhookWake(): void {
@@ -475,19 +507,27 @@ export class EventsClient {
     this.wakeHooked = false;
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("pageshow", this.onPageShow);
+    window.removeEventListener("pagehide", this.onPageHide);
   }
 
   private onVisibilityChange = (): void => {
-    if (document.visibilityState === "visible") {
-      this.wake();
-      // r10 todo 9：回前台对账当前会话运行态——独立于连接健康（SSE 存活但后台期间丢帧
-      // 的场景同样需要对账）；仅 visible 转换触发，零轮询定时器。
-      reconcileRunStateOnVisible();
+    if (document.visibilityState === "hidden") {
+      // GAP-6：转后台瞬间落盘游标（浏览器最可靠的送达时机；帧级推进只记内存态）
+      persistEventCursor();
+      return;
     }
+    this.wake();
+    // r10 todo 9：回前台对账当前会话运行态——独立于连接健康（SSE 存活但后台期间丢帧
+    // 的场景同样需要对账）；仅 visible 转换触发，零轮询定时器。
+    reconcileRunStateOnVisible();
   };
 
   private onPageShow = (): void => {
     this.wake();
+  };
+
+  private onPageHide = (): void => {
+    persistEventCursor();
   };
 }
 
