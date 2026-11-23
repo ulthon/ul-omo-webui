@@ -226,23 +226,21 @@ function parseDiagLines(serverLogFile, windowStart, windowEnd) {
     return { available: false, note: "服务端日志不可读" };
   }
   const counts = { graphRepair: 0, graphRepairFailed: 0, sessionOpen: 0, scroll: 0, items: 0, totalFe: 0 };
+  // 实际日志为 logfmt 行：<iso时间> <级别> seq=N [<scope>] <事件名> [key=value ...]
+  // 形如：2026-11-23T17:36:43.710Z I seq=10301 [fe.scroll] session_open ft=... items=51
+  const LINE_RE = /^(\S+) \S+ seq=\d+ \[([^\]]+)\] (\S+)/;
   for (const line of text.split("\n")) {
-    if (!line.includes("fe.")) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const t = Date.parse(entry.t ?? "");
+    const m = LINE_RE.exec(line);
+    if (!m) continue;
+    if (!m[2].startsWith("fe.")) continue;
+    const t = Date.parse(m[1]);
     if (!(t >= windowStart && t <= windowEnd)) continue;
-    const ev = String(entry.ev ?? "");
-    if (!ev.startsWith("fe.")) continue;
+    const ev = m[3];
     counts.totalFe += 1;
     if (ev.includes("graph-repair-failed")) counts.graphRepairFailed += 1;
     else if (ev.includes("graph-repair")) counts.graphRepair += 1;
     else if (ev.includes("session_open")) counts.sessionOpen += 1;
-    else if (ev.includes("scroll")) counts.scroll += 1;
+    else if (ev.includes("scroll") || ev === "to_anchor") counts.scroll += 1;
     else if (ev.includes("items")) counts.items += 1;
   }
   return { available: true, ...counts };
