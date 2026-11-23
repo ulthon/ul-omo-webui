@@ -293,6 +293,7 @@ export type ChatListItem =
   | { key: string; kind: "sessionEvent"; line: SessionEventLine }
   | { key: string; kind: "questionCard"; request: QuestionRequest; position: number; total: number }
   | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary }
+  | { key: string; kind: "errorRun"; text: string; count: number; lastTs: number | null; category: ErrorCategory | null }
   | { key: string; kind: "streamError"; error: StreamErrorItem };
 
 /** 流内错误卡（发送失败常驻卡，对齐 CLI 信息流行为）：纯数据形态，messages store
@@ -301,6 +302,9 @@ export interface StreamErrorItem {
   id: string;
   text: string;
   ts: number;
+  /** 同文重复计数（罗列收敛批 2026-11-21）：相同文本未消时再报不加卡，计数 +1 刷新
+   *  时间戳，渲染 ×N 徽标 + 最近一次时间 */
+  count: number;
 }
 
 /** 错误卡并入 items（尾部追加：错误 = 最新发生的事实，接在全部条目/事件行之后）。
@@ -557,6 +561,51 @@ export function isAnchorCoveredByRange(
   return virtualItems.some((vi) => vi.index >= anchorIndex);
 }
 
+/** 错误归类（罗列收敛批 2026-11-21）：只读引擎随消息下发的现成结构化字段——
+ *  errorCause.type（引擎供应商适配层归一，如 usage_limit）与
+ *  providerDiagnostic.httpStatus（429/402/401/403）。识别不出返回 null，渲染层不贴
+ *  标签只显原文；不做任何按厂家定制的文本解析（保守口径，用户拍板）。 */
+export type ErrorCategory = "rateLimit" | "usageLimit" | "billing" | "auth";
+
+/** 归类 → 词典键（渲染层翻译用；键增补需同步 zh/en chat.ts） */
+export const ERROR_KIND_KEYS: Record<ErrorCategory, MessageKey> = {
+  rateLimit: "chat.errorKind.rateLimit",
+  usageLimit: "chat.errorKind.usageLimit",
+  billing: "chat.errorKind.billing",
+  auth: "chat.errorKind.auth",
+};
+
+export function errorCategoryOf(message?: WireMessage | null): ErrorCategory | null {
+  if (!message) return null;
+  if (message.errorCause?.type === "usage_limit") return "usageLimit";
+  const diag = message.providerDiagnostic as { httpStatus?: unknown } | undefined;
+  const status = typeof diag?.httpStatus === "number" ? diag.httpStatus : null;
+  if (status === 429) return "rateLimit";
+  if (status === 402) return "billing";
+  if (status === 401 || status === 403) return "auth";
+  return null;
+}
+
+/** 纯错误消息判定（罗列收敛批 2026-11-21）：stopReason==="error" 且 errorMessage 非空
+ *  且 content 无可见渲染物（空 content / 全空 text，判据与 parts.tsx isRenderablePart
+ *  的不可见侧同构；保守口径：含 error part 一律不折叠，消息级 banner 主路径数据实测
+ *  content 为空或全空 text）的 assistant 消息。命中返回错误文本，否则空串。
+ *  与 parts.tsx messageErrorText 同语义的本地窄化（本模块保持纯逻辑，不反向依赖组件层）。 */
+function pureErrorTextOf(e: WireEntry): string {
+  if (e.type !== "message") return "";
+  const msg = e.message as WireMessage | undefined;
+  if (!msg || msg.role !== "assistant" || msg.stopReason !== "error") return "";
+  const text = typeof msg.errorMessage === "string" ? msg.errorMessage : "";
+  if (text === "") return "";
+  const parts = Array.isArray(msg.content) ? msg.content : [];
+  for (const p of parts) {
+    if (p === null || typeof p !== "object") continue;
+    if (p.type !== "text") return "";
+    if (typeof p.text === "string" && p.text !== "") return "";
+  }
+  return text;
+}
+
 /** items 组装：toolResult 不单独入列（结果由 ToolCard 按 toolCallId 关联展示）；
  *  custom_message 条目按 display 分类（docs08-r6 任务 10 ③）；
  *  interrupted 标记挂最后一个 assistant 条目。
@@ -645,6 +694,30 @@ export function buildMessageItems(
     // ToolResultLine 恒空）；入列只会渲染出带"助手+时间"头部的空壳行，每个工具调用
     // 多占一行死空间（任务 10 走查发现，390/1920 同样存在）。
     if (msg.role === "toolResult") continue;
+    // 罗列收敛批（2026-11-21）：纯错误 assistant 消息（限流/额度失败落库形态，实测
+    // 429 连发 content 为空或全空 text）不再逐条入列——相邻同文折叠为单卡 ×N；
+    // 任何可见条目（用户消息等）打断折叠，非相邻不合并；中间不入列的不可见条目
+    // （custom/toolResult 等）不阻断——用户所见相邻即折叠（loopGuard 同口径）。
+    // 含可见 content 的失败消息（带部分输出后报错）不走此分支，维持逐条气泡。
+    const errText = pureErrorTextOf(e);
+    if (errText !== "") {
+      const errTs = typeof msg.timestamp === "number" ? msg.timestamp : null;
+      const last = list[list.length - 1];
+      if (last !== undefined && last.kind === "errorRun" && last.text === errText) {
+        last.count += 1;
+        if (errTs !== null) last.lastTs = errTs;
+      } else {
+        list.push({
+          key: `error-run-${e.id}`,
+          kind: "errorRun",
+          text: errText,
+          count: 1,
+          lastTs: errTs,
+          category: errorCategoryOf(msg),
+        });
+      }
+      continue;
+    }
     list.push({
       key: e.id,
       kind: "entry",

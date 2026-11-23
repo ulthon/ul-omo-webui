@@ -27,19 +27,48 @@ window.matchMedia = ((query: string) =>
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { PartsView, MessageErrorBanner, StreamingErrorBanner, messageErrorText } = await import("../parts");
+const { ErrorRunCardBlock, StreamErrorCardBlock } = await import("../message-list");
 const { useMessagesStore } = await import("@/stores/messages");
+const { useLocaleStore } = await import("@/i18n/i18n");
+
+useLocaleStore.setState({ locale: "zh-CN" });
 
 const RATE_LIMIT_TEXT = "429 rate limit exceeded: too many requests, retry in 30s";
 
 describe("消息级 stopReason 错误渲染", () => {
   test("定格：stopReason=error + errorMessage 渲染 banner 与原文", () => {
-    const text = messageErrorText({ role: "assistant", stopReason: "error", errorMessage: RATE_LIMIT_TEXT });
+    const msg = { role: "assistant", stopReason: "error", errorMessage: RATE_LIMIT_TEXT };
+    const text = messageErrorText(msg);
     expect(text).toBe(RATE_LIMIT_TEXT);
-    const html = renderToStaticMarkup(createElement(MessageErrorBanner, { text }));
+    const html = renderToStaticMarkup(createElement(MessageErrorBanner, { message: msg }));
     expect(html).toContain('data-testid="message-error-banner"');
     expect(html).not.toContain('data-testid="message-error-part"');
     expect(html).toContain("retry in 30s");
     expect(html).toContain("whitespace-pre-wrap");
+  });
+
+  test("归类标签（罗列收敛批 2026-11-21）：引擎结构化字段命中时贴标签前缀，缺席不贴", () => {
+    // errorCause.type=usage_limit → 额度用完
+    const usage = renderToStaticMarkup(
+      createElement(MessageErrorBanner, {
+        message: { role: "assistant", stopReason: "error", errorMessage: "limit reached", errorCause: { type: "usage_limit" } },
+      })
+    );
+    expect(usage).toContain("额度用完 · ");
+    // providerDiagnostic.httpStatus=429 → 限流
+    const rate = renderToStaticMarkup(
+      createElement(MessageErrorBanner, {
+        message: { role: "assistant", stopReason: "error", errorMessage: "429 boom", providerDiagnostic: { httpStatus: 429 } },
+      })
+    );
+    expect(rate).toContain("限流 · ");
+    // 无结构化字段 → 不贴标签只显原文
+    const bare = renderToStaticMarkup(
+      createElement(MessageErrorBanner, { message: { role: "assistant", stopReason: "error", errorMessage: "429 boom" } })
+    );
+    expect(bare).not.toContain("限流 · ");
+    expect(bare).not.toContain("额度用完 · ");
+    expect(bare).toContain("429 boom");
   });
 
   test("流式：streamingMessage stopReason=error 时 StreamingErrorBanner 可见", () => {
@@ -92,6 +121,48 @@ describe("消息级 stopReason 错误渲染", () => {
     expect(messageErrorText({ role: "assistant", stopReason: "error" })).toBe("");
     expect(messageErrorText({ role: "assistant", errorMessage: RATE_LIMIT_TEXT })).toBe("");
     expect(messageErrorText(undefined)).toBe("");
-    expect(renderToStaticMarkup(createElement(MessageErrorBanner, { text: "" }))).toBe("");
+    expect(renderToStaticMarkup(createElement(MessageErrorBanner, { message: undefined }))).toBe("");
+    expect(renderToStaticMarkup(createElement(MessageErrorBanner, { message: { role: "assistant", stopReason: "error" } }))).toBe("");
+  });
+});
+
+describe("折叠卡与计数徽标渲染（罗列收敛批 2026-11-21）", () => {
+  test("ErrorRunCardBlock：×N 徽标 + 归类标签 + 末次时间 + 原文", () => {
+    const html = renderToStaticMarkup(
+      createElement(ErrorRunCardBlock, {
+        item: {
+          key: "error-run-e1",
+          kind: "errorRun",
+          text: RATE_LIMIT_TEXT,
+          count: 3,
+          lastTs: new Date("2026-11-21T07:00:00Z").getTime(),
+          category: "rateLimit",
+        },
+      })
+    );
+    expect(html).toContain('data-testid="error-run-card"');
+    expect(html).toContain("×3");
+    expect(html).toContain("限流 · ");
+    expect(html).toContain(RATE_LIMIT_TEXT);
+  });
+
+  test("ErrorRunCardBlock：count=1 无徽标，无归类不贴标签", () => {
+    const html = renderToStaticMarkup(
+      createElement(ErrorRunCardBlock, {
+        item: { key: "error-run-e1", kind: "errorRun", text: RATE_LIMIT_TEXT, count: 1, lastTs: null, category: null },
+      })
+    );
+    expect(html).not.toContain("×");
+    expect(html).not.toContain("限流");
+    expect(html).toContain(RATE_LIMIT_TEXT);
+  });
+
+  test("StreamErrorCardBlock：同文计数 >1 显示 ×N 与最近一次时间", () => {
+    const html = renderToStaticMarkup(
+      createElement(StreamErrorCardBlock, { sessionId: "s1", error: { id: "err-1", text: "发送失败", ts: 1_000_000, count: 4 } })
+    );
+    expect(html).toContain('data-testid="stream-error-card"');
+    expect(html).toContain("×4");
+    expect(html).toContain("发送失败");
   });
 });

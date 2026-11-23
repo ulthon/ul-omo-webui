@@ -214,7 +214,7 @@ function MessageContent({
     <>
       <PartsView parts={message.content} sessionId={sessionId} live={live} entryId={entryId} suppressErrorText={messageErrorText(message)} />
       {/* 消息级 stopReason 错误 banner（限流/额度主路径）；与 error part 文本相等时已去重 */}
-      <MessageErrorBanner text={messageErrorText(message)} />
+      <MessageErrorBanner message={message} />
     </>
   );
 }

@@ -394,4 +394,13 @@ export const chat = {
     sendFailed: "Failed to send",
     sessionBusy: "This session is occupied by another engine turn; wait for it to settle or interrupt it from the CLI before sending",
   },
+  /** Error category labels (dedup batch 2026-11-21): light labels read from
+   *  engine-native structured fields (errorCause / providerDiagnostic.httpStatus);
+   *  unmatched errors show raw text with no label — no per-provider text parsing */
+  errorKind: {
+    rateLimit: "Rate limited",
+    usageLimit: "Usage limit reached",
+    billing: "Billing issue",
+    auth: "Auth failed",
+  },
 } as const;

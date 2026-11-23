@@ -817,12 +817,26 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
       const id = `err-${++streamErrorSeq}`;
       set((s) => {
         const cur = s.bySession[sessionId] ?? emptySessionMessages();
-        // 同文去重：相同 text 的错误卡未消时不重复加（同刻多次失败不堆叠）
-        if (cur.errors.some((e) => e.text === text)) return s;
+        // 同文计数（罗列收敛批 2026-11-21）：相同 text 的错误卡未消时不重复加卡，
+        // 计数 +1 并刷新时间戳（渲染 ×N 徽标 + 最近一次时间）；不同文本仍各自成卡
+        const existing = cur.errors.find((e) => e.text === text);
+        if (existing !== undefined) {
+          return {
+            bySession: {
+              ...s.bySession,
+              [sessionId]: {
+                ...cur,
+                errors: cur.errors.map((e) =>
+                  e.id === existing.id ? { ...e, count: e.count + 1, ts: Date.now() } : e,
+                ),
+              },
+            },
+          };
+        }
         return {
           bySession: {
             ...s.bySession,
-            [sessionId]: { ...cur, errors: [...cur.errors, { id, text, ts: Date.now() }] },
+            [sessionId]: { ...cur, errors: [...cur.errors, { id, text, ts: Date.now(), count: 1 }] },
           },
         };
       });

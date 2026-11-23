@@ -46,4 +46,18 @@ describe("引擎 error 帧文本进常驻错误卡（#31）", () => {
     emit("s4", { type: "error", message: "Error: 429: limit" }, 101);
     expect(useMessagesStore.getState().bySession["s4"]?.errors ?? []).toHaveLength(1);
   });
+
+  test("同文重复计数（罗列收敛批 2026-11-21）：计数 +1 刷新时间戳，不同文本各自成卡", () => {
+    const before = Date.now();
+    emit("s5", { type: "error", message: "Error: 429: limit" }, 100);
+    emit("s5", { type: "error", message: "Error: 429: limit" }, 101);
+    emit("s5", { type: "error", message: "Error: 402: billing" }, 102);
+    const errors = useMessagesStore.getState().bySession["s5"]?.errors ?? [];
+    expect(errors).toHaveLength(2);
+    expect(errors[0].text).toBe("Error: 429: limit");
+    expect(errors[0].count).toBe(2);
+    expect(errors[0].ts).toBeGreaterThanOrEqual(before);
+    expect(errors[1].text).toBe("Error: 402: billing");
+    expect(errors[1].count).toBe(1);
+  });
 });

@@ -21,6 +21,7 @@ import { ToolCard } from "./tool-card";
 import { ImagePart, ImageRefPlaceholder } from "./image-lightbox";
 import { TodoList } from "./todo-list";
 import { CircleAlert } from "lucide-react";
+import { errorCategoryOf, ERROR_KIND_KEYS } from "./message-items";
 
 /** part 可见性判据（PartView null 分支的同构镜像，防 drift：新增 null 分支须同步此处；
  *  模块私有——仅 PartsView 计数分支消费，导出会破 fast-refresh 纯组件约束）。
@@ -60,8 +61,9 @@ function errorPartText(part: WirePart): string {
 
 /** 模型错误 part 错误卡：destructive 色系，定格与流式共用（StreamingPart 走同一
  *  PartView 分发），历史回看同路径自然覆盖。testid 可换（消息级 banner 复用同卡样式，
- *  22c1426 part 级卡与消息级 banner 两路径并存）。 */
-export function ErrorPartCard({ text, testid = "message-error-part" }: { text: string; testid?: string }) {
+ *  22c1426 part 级卡与消息级 banner 两路径并存）。label（罗列收敛批 2026-11-21）：
+ *  归类标签前缀（已翻译），由消息级 banner 按引擎结构化字段计算传入，缺席不贴。 */
+export function ErrorPartCard({ text, testid = "message-error-part", label }: { text: string; testid?: string; label?: string }) {
   return (
     <div
       data-testid={testid}
@@ -69,7 +71,10 @@ export function ErrorPartCard({ text, testid = "message-error-part" }: { text: s
       className="my-1 flex max-w-full items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
     >
       <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <span className="whitespace-pre-wrap break-words min-w-0">{text}</span>
+      <span className="whitespace-pre-wrap break-words min-w-0">
+        {label ? <span className="font-medium">{label} · </span> : null}
+        {text}
+      </span>
     </div>
   );
 }
@@ -213,17 +218,37 @@ export function messageErrorText(message?: WireMessage | null): string {
 }
 
 /** 消息级错误 banner：复用 ErrorPartCard 样式，testid=message-error-banner。
- *  定格（message-bubble MessageContent）与流式（StreamingErrorBanner）共用。 */
-export function MessageErrorBanner({ text }: { text: string }) {
+ *  定格（message-bubble MessageContent）与流式（StreamingErrorBanner）共用。
+ *  罗列收敛批（2026-11-21）：入参改携 message（原 text），归类标签读引擎现成
+ *  结构化字段（errorCategoryOf），识别不出不贴；非错误态稳定返 null 不重渲。 */
+export function MessageErrorBanner({ message }: { message?: WireMessage | null }) {
+  const t = useT();
+  const text = messageErrorText(message);
   if (!text) return null;
-  return <ErrorPartCard text={text} testid="message-error-banner" />;
+  const category = errorCategoryOf(message);
+  return (
+    <ErrorPartCard
+      text={text}
+      testid="message-error-banner"
+      label={category !== null ? t(ERROR_KIND_KEYS[category]) : undefined}
+    />
+  );
 }
 
 /** 流式消息级错误 banner：单订阅 streamingMessage 的 stopReason/errorMessage，
- *  非错误态返回稳定空串不重渲。 */
+ *  非错误态返回稳定空串不重渲（归类标签同理稳定 null 不重渲）。 */
 export function StreamingErrorBanner({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const text = useMessagesStore((s) => messageErrorText(s.bySession[sessionId]?.streamingMessage));
-  return <MessageErrorBanner text={text} />;
+  const category = useMessagesStore((s) => errorCategoryOf(s.bySession[sessionId]?.streamingMessage));
+  if (!text) return null;
+  return (
+    <ErrorPartCard
+      text={text}
+      testid="message-error-banner"
+      label={category !== null ? t(ERROR_KIND_KEYS[category]) : undefined}
+    />
+  );
 }
 
 /** 流式 part 计数订阅：只随 content 长度变化重渲染（新 part 出现时挂载新 StreamingPart） */

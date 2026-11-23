@@ -392,4 +392,13 @@ export const chat = {
     sendFailed: "发送失败",
     sessionBusy: "该会话正被另一个引擎回合占用：等外部回合落定或去 CLI 侧中断后再发送",
   },
+  /** 错误归类标签（罗列收敛批 2026-11-21）：读引擎现成结构化字段（errorCause /
+   *  providerDiagnostic.httpStatus）贴的轻标签；识别不出不贴标签、原文显示，
+   *  不做按厂家定制的文本解析 */
+  errorKind: {
+    rateLimit: "限流",
+    usageLimit: "额度用完",
+    billing: "欠费",
+    auth: "认证失败",
+  },
 } as const;

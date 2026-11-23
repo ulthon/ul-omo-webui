@@ -16,7 +16,7 @@ import type { MemoryMarker, MemoryMarkerKind } from "@/lib/memory-entries";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
-import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
+import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, ERROR_KIND_KEYS, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem } from "./message-items";
 import type { SiblingPosition } from "./branch-path-data";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
@@ -213,7 +213,11 @@ export const StreamErrorCardBlock = memo(function StreamErrorCardBlock({ session
         <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="break-words">{error.text}</div>
-          <div className="mt-0.5 text-xs opacity-70 tabular-nums">{new Date(error.ts).toLocaleTimeString()}</div>
+          <div className="mt-0.5 text-xs opacity-70 tabular-nums">
+            {/* 罗列收敛批 2026-11-21：同文重复计数（×N · 最近一次时间） */}
+            {error.count > 1 ? `×${error.count} · ` : ""}
+            {new Date(error.ts).toLocaleTimeString()}
+          </div>
         </div>
         <button
           type="button"
@@ -224,6 +228,37 @@ export const StreamErrorCardBlock = memo(function StreamErrorCardBlock({ session
         >
           <X className="size-3.5" aria-hidden />
         </button>
+      </div>
+    </div>
+  );
+});
+
+/** 连续纯错误消息折叠卡（罗列收敛批 2026-11-21）：引擎连续落库的同文失败回合
+ *  （限流连发等）在 items 层折叠为单卡 ×N（message-items errorRun），对齐 CLI 不
+ *  罗列的观感；归类标签读引擎现成结构化字段（errorCategoryOf），识别不出不贴。 */
+export const ErrorRunCardBlock = memo(function ErrorRunCardBlock({
+  item,
+}: {
+  item: Extract<ChatListItem, { kind: "errorRun" }>;
+}) {
+  const t = useT();
+  return (
+    <div
+      data-testid="error-run-card"
+      className="my-1 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
+      <div className="flex items-start gap-2">
+        <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="whitespace-pre-wrap break-words">
+            {item.category !== null ? <span className="font-medium">{t(ERROR_KIND_KEYS[item.category])} · </span> : null}
+            {item.text}
+            {item.count > 1 ? <span className="ml-1.5 font-medium tabular-nums">×{item.count}</span> : null}
+          </div>
+          {item.lastTs !== null && (
+            <div className="mt-0.5 text-xs opacity-70 tabular-nums">{new Date(item.lastTs).toLocaleTimeString()}</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -261,6 +296,7 @@ const Row = memo(function Row({
     );
   if (item.kind === "questionResolved") return <QuestionResolvedLineBlock summary={item.summary} />;
   if (item.kind === "streamError") return <StreamErrorCardBlock sessionId={sessionId} error={item.error} />;
+  if (item.kind === "errorRun") return <ErrorRunCardBlock item={item} />;
   return (
     <EntryBubble
       sessionId={sessionId}
