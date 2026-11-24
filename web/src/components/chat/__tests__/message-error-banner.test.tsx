@@ -133,6 +133,7 @@ describe("折叠卡与计数徽标渲染（罗列收敛批 2026-11-21）", () =>
         item: {
           key: "error-run-e1",
           kind: "errorRun",
+          entryId: "e1",
           text: RATE_LIMIT_TEXT,
           count: 3,
           lastTs: new Date("2026-11-21T07:00:00Z").getTime(),
@@ -149,7 +150,7 @@ describe("折叠卡与计数徽标渲染（罗列收敛批 2026-11-21）", () =>
   test("ErrorRunCardBlock：count=1 无徽标，无归类不贴标签", () => {
     const html = renderToStaticMarkup(
       createElement(ErrorRunCardBlock, {
-        item: { key: "error-run-e1", kind: "errorRun", text: RATE_LIMIT_TEXT, count: 1, lastTs: null, category: null },
+        item: { key: "error-run-e1", kind: "errorRun", entryId: "e1", text: RATE_LIMIT_TEXT, count: 1, lastTs: null, category: null },
       })
     );
     expect(html).not.toContain("×");

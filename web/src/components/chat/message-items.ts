@@ -293,7 +293,7 @@ export type ChatListItem =
   | { key: string; kind: "sessionEvent"; line: SessionEventLine }
   | { key: string; kind: "questionCard"; request: QuestionRequest; position: number; total: number }
   | { key: string; kind: "questionResolved"; summary: QuestionResolvedSummary }
-  | { key: string; kind: "errorRun"; text: string; count: number; lastTs: number | null; category: ErrorCategory | null }
+  | { key: string; kind: "errorRun"; entryId: string; text: string; count: number; lastTs: number | null; category: ErrorCategory | null }
   | { key: string; kind: "streamError"; error: StreamErrorItem };
 
 /** 流内错误卡（发送失败常驻卡，对齐 CLI 信息流行为）：纯数据形态，messages store
@@ -333,7 +333,7 @@ export interface SessionEventLine {
 /** 行→条目身份工具（提问卡/事件行共用）：从 ChatListItem 提取其归属 entry id（null =
  *  无条目身份的行，如流式气泡/错误卡）。 */
 function anchoredEntryIdOf(it: ChatListItem): string | null {
-  if (it.kind === "entry" || it.kind === "customMessage") return it.entryId;
+  if (it.kind === "entry" || it.kind === "customMessage" || it.kind === "errorRun") return it.entryId;
   if (it.kind === "memoryMarker") return it.marker.entryId;
   if (it.kind === "compactionMarker") return it.marker.entryId;
   if (it.kind === "noticeCard") return it.notice.entryId;
@@ -727,6 +727,7 @@ export function buildMessageItems(
         list.push({
           key: `error-run-${e.id}`,
           kind: "errorRun",
+          entryId: e.id,
           text: errText,
           count: 1,
           lastTs: errTs,
@@ -838,7 +839,9 @@ export function mergeMemoryItems(items: ChatListItem[], entries: readonly WireEn
   if (markers.length === 0) return items;
   const scored = markers.slice();
   for (const item of items) {
-    const anchor = item.kind === "entry" ? item.entryId : null;
+    // 锚位只认条目身份的种类（entry / errorRun 折叠卡携首条记录 id）：无锚种类落 LAST
+    // 沉底是既有口径不动；errorRun 曾漏认致翻页后报错卡全部被甩到列表末尾（2026-11-24）
+    const anchor = item.kind === "entry" || item.kind === "errorRun" ? item.entryId : null;
     const ord = anchor !== null ? (ordOf.get(anchor) ?? LAST) : LAST;
     scored.push({ ord, seq: seq++, item });
   }

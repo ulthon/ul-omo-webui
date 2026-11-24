@@ -95,4 +95,28 @@ describe("errorRun 折叠（罗列收敛批）", () => {
     expect(items).toHaveLength(2);
     expect(items.every((it) => it.kind === "entry")).toBe(true);
   });
+
+  test("折叠卡携首条记录 id（翻页后排序归位用）", () => {
+    const items = build([errEntry("e1", 1000), errEntry("e2", 2000)]);
+    expect(items[0]).toMatchObject({ kind: "errorRun", entryId: "e1", count: 2 });
+  });
+
+  test("有记忆标记触发 mergeMemoryItems 重排时，折叠卡留在历史位置不被甩到末尾（2026-11-24 回归）", async () => {
+    const { mergeMemoryItems } = await import("@/components/chat/message-items");
+    const { memoryMarkerOf } = await import("@/lib/memory-entries");
+    // 记忆标记条目（omo-memory:accepted-turns）：buildMessageItems 不入列，由 mergeMemoryItems 生成标记
+    const markerEntry = { type: "custom", id: "m1", customType: "omo-memory:accepted-turns", data: {} } as never;
+    expect(memoryMarkerOf(markerEntry)).not.toBeNull();
+    const entries = [
+      userEntry("u1"),
+      errEntry("e1", 1000),
+      markerEntry,
+      userEntry("u2"),
+    ];
+    const items = build(entries as never);
+    expect(items.map((it) => it.kind)).toEqual(["entry", "errorRun", "entry"]);
+    const merged = mergeMemoryItems(items, entries as never);
+    // 修复前：errorRun 无锚被赋 LAST，重排后沉到末尾 [entry, entry, memoryMarker, errorRun]
+    expect(merged.map((it) => it.kind)).toEqual(["entry", "errorRun", "memoryMarker", "entry"]);
+  });
 });
