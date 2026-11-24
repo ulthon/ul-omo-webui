@@ -868,17 +868,18 @@ class ProjectRuntime {
       existing && existing.client === client
         ? existing
         : await this.buildEngine(sessionPath, client);
+    // 绑定 open（attach 幂等）：首开/重开不携 provider/model（沿用会话自身存档，
+    // 与 T1 管理器裸 open 同形态，process-manager session bind 不携 provider/model）；
+    // createSession 的参数开随车道直达。permissionPreset 全路径携带（入口 B）：车道
+    // 请求显式值优先，缺省回落项目偏好 → full-access——client 来源命名模式是子代
+    // 继承的唯一通道，不携带则子代落 ask（无宿主应答即永久卡死）
+    const openArgs = {
+      sessionPath,
+      permissionPreset: this.resolvePermissionPreset(),
+      ...request.open,
+    };
     try {
-      // 绑定 open（attach 幂等）：首开/重开不携 provider/model（沿用会话自身存档，
-      // 与 T1 管理器裸 open 同形态，process-manager session bind 不携 provider/model）；
-      // createSession 的参数开随车道直达。permissionPreset 全路径携带（入口 B）：车道
-      // 请求显式值优先，缺省回落项目偏好 → full-access——client 来源命名模式是子代
-      // 继承的唯一通道，不携带则子代落 ask（无宿主应答即永久卡死）
-      const opened = await state.adapter.openSession({
-        sessionPath,
-        permissionPreset: this.resolvePermissionPreset(),
-        ...request.open,
-      });
+      const opened = await state.adapter.openSession(openArgs);
       // 落表后置（02:53 病灶真身）：open 成功才落表——旧序先 set 后 open，落败
       //  adapter 占住 engines 表（active=null 永不自愈）→ 连环 no_active_session
       //  33 秒（webui-2026-11-06.log seq 0239-0326）；失败路径车道槽 finally 清空、
@@ -887,10 +888,40 @@ class ProjectRuntime {
       const resolution = await this.fanOutAfterOpen(state, opened, request.durableHint);
       return { state, ...resolution };
     } catch (err) {
-      // 新造绑定态未落表即失败：退订 wire 监听防悬挂；已落表的 forceOpen 重开失败
-      // 不清表（条目保留，后续 op 重走车道自愈——与旧 runTraced 兑底语义一致）
-      if (state !== existing) state.detachEvents();
-      throw err;
+      // 三码可重开兜底（2026-11-24 事故修复）：开门阶段撞 session_closing 等三码（引
+      // 擎侧 session worker 隔离态）时，既有三层兜底全部旁路——adapter rpcOp 只包会
+      // 话 op、runTraced runBody 兑底在 ensure 之后、switchModel 只包模型切换——错误
+      // 直达 500 internal（11-22 14:42 / 11-24 10:58:40 实录：引擎拉起后首个操作即
+      // 撞 closing，全部会话端点同症）。此处车道内单点兑底：同 state/adapter 立即真
+      // 实重开一次（重开=换新 worker 恢复会话，落盘 jsonl 不受损，与 rpcOp/runTraced
+      // 兑底同语义），仍败映射 503 session_reopen_failed（对齐 switchModel 映射语
+      // 义，客户端净错可重试）。注意重试在车道内进行，并发调用仍共享同一次 in-flight，
+      // 不开重开风暴。
+      if (!isSessionReopenableError(err)) {
+        // 新造绑定态未落表即失败：退订 wire 监听防悬挂；已落表的 forceOpen 重开失败
+        // 不清表（条目保留，后续 op 重走车道自愈——与旧 runTraced 兑底语义一致）
+        if (state !== existing) state.detachEvents();
+        throw err;
+      }
+      log.warn("gw", "openLane.reopen", {
+        proj: projHash8(this.projectPath),
+        session: sessionPath,
+        reason: err instanceof Error ? err.message : String(err),
+        rid: currentRid(),
+      });
+      try {
+        const reopened = await state.adapter.openSession(openArgs);
+        this.engines.set(sessionPath, state);
+        const resolution = await this.fanOutAfterOpen(state, reopened, request.durableHint);
+        return { state, ...resolution };
+      } catch (reopenErr) {
+        if (state !== existing) state.detachEvents();
+        throw new ApiError(
+          503,
+          "session_reopen_failed",
+          `会话重开失败（${reopenErr instanceof Error ? reopenErr.message : String(reopenErr)}），请稍后重试或重启引擎`,
+        );
+      }
     }
   }
 

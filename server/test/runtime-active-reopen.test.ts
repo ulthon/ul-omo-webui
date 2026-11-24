@@ -49,6 +49,8 @@ class FakeReopenRpc {
   setModelFailTimes = 0
   /** 连续撞 session_path_in_use 的 open 次数（Infinity=持久占位，任务 10） */
   pathInUseOpens = 0
+  /** 连续撞 session_closing 的 open 次数（Infinity=持久隔离；2026-11-24 三码车道兑底用） */
+  closingOpens = 0
   private routing = 1
   private lastOpenPath = ""
 
@@ -87,6 +89,13 @@ class FakeReopenRpc {
     if (this.pathInUseOpens > 0) {
       this.pathInUseOpens -= 1
       throw new Error("session_path_in_use")
+    }
+    // 2026-11-24 三码事故形态：引擎侧 session worker 隔离态（open_session 即抛
+    // session_closing；message 全等命中 isSessionReopenableError 鸭子判定，与真实
+    // RpcCommandError 到达路径同形）
+    if (this.closingOpens > 0) {
+      this.closingOpens -= 1
+      throw new Error("session_closing")
     }
     if (this.openShouldFail) {
       return { sessionId: "", state: { sessionId: "", sessionFile: undefined } }
@@ -392,6 +401,67 @@ describe("switchModel 兜底重开重试（2026-11-06 04:09 prompt 三连 500 �
       // 非三码错误：零重开零重试，错误原样上抛
       expect(rpc.openCalls).toBe(1)
       expect(rpc.setModelCalls).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("openLane 开门三码兑底（2026-11-24 事故回归：引擎拉起后首个操作撞 session_closing）", () => {
+  test("首开撞 session_closing 一次 → 车道内立即重开成功，op 不抛", async () => {
+    const { root, sessionPath, rpc, registry } = setup()
+    try {
+      // engines 表无绑定态（未先行 op）：ensure 链首次 openSession 即撞 closing——
+      // 修复前错误发生在 runTraced runBody 兑底之前，直接 500 internal（11-22 14:42 /
+      // 11-24 10:58:40 实录形态）；修复后车道内同 adapter 立即重开一次成功
+      rpc.closingOpens = 1
+      const page = await registry.messages(DURABLE_ID)
+      expect(page.entries).toEqual([])
+      // 首开 1 次撞 closing + 兑底重开 1 次成功，无风暴
+      expect(rpc.openCalls).toBe(2)
+      const st = boundStateOf(registry, sessionPath)
+      expect(st).toBeDefined()
+      expect(st!.adapter.active).not.toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("首开持续撞 session_closing → 503 session_reopen_failed（恰好一次重开，无风暴）", async () => {
+    const { root, rpc, registry } = setup()
+    try {
+      rpc.closingOpens = Number.POSITIVE_INFINITY
+      const err = await registry.messages(DURABLE_ID).then(
+        () => {
+          throw new Error("应当 503 拒绝，不应成功")
+        },
+        (e: unknown) => e,
+      )
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).status).toBe(503)
+      expect((err as ApiError).code).toBe("session_reopen_failed")
+      expect((err as ApiError).message).toContain("会话重开失败")
+      // 有界：首开 1 次 + 兑底重开 1 次，无重试风暴
+      expect(rpc.openCalls).toBe(2)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("非三码 open 失败不触发车道兑底：open_failed 原样上抛且不重试", async () => {
+    const { root, rpc, registry } = setup()
+    try {
+      // 首开即响应畸形（open_failed，非三码）：不得被兑底吞掉或重试
+      rpc.openShouldFail = true
+      const err = await registry.messages(DURABLE_ID).then(
+        () => {
+          throw new Error("应当按原错误拒绝")
+        },
+        (e: unknown) => e as { code?: string },
+      )
+      expect(err.code).toBe("open_failed")
+      // 非三码：零重试，恰好一次首开
+      expect(rpc.openCalls).toBe(1)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
