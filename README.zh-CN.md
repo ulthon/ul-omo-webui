@@ -112,13 +112,25 @@ senpi-webui/
 
 ## 截图
 
-<!-- TODO: 真图后补，放到 docs/screenshots/ 下 -->
+桌面端（1920x1080）：会话列表、带工具卡片的对话流、右栏的任务/笔记/统计。
 
-<!--
-<img src="docs/screenshots/desktop-session.png" alt="桌面端会话" width="800">
-<img src="docs/screenshots/mobile-session.png" alt="手机端会话" width="390">
-<img src="docs/screenshots/permission-card.png" alt="权限确认卡片" width="390">
--->
+<img src="docs/screenshots/zh-CN/desktop-session.png" alt="桌面端：会话列表、对话流与右栏" width="880">
+
+右栏文件树与只读预览：
+
+<img src="docs/screenshots/zh-CN/desktop-files.png" alt="桌面端：右栏文件树与文件预览" width="880">
+
+手机端（390x844）：会话视图、会话抽屉、任务与笔记面板：
+
+<img src="docs/screenshots/zh-CN/mobile-session.png" alt="手机端：会话视图" width="290">
+<img src="docs/screenshots/zh-CN/mobile-sessions.png" alt="手机端：会话抽屉" width="290">
+<img src="docs/screenshots/zh-CN/mobile-panel.png" alt="手机端：任务与笔记面板" width="290">
+
+权限确认卡片：允许一次 / 总是允许 / 拒绝 / 拒绝并反馈，不应答则回合保持阻塞：
+
+<img src="docs/screenshots/zh-CN/permission-card.png" alt="手机端：权限确认卡片" width="290">
+
+英文界面的同组截图见 [README.md](README.md)。
 
 ## 开发指南
 

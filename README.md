@@ -112,13 +112,25 @@ senpi-webui/
 
 ## Screenshots
 
-<!-- TODO: add real images under docs/screenshots/ later -->
+Desktop (1920x1080): session list, chat stream with tool cards, right rail with tasks, notes and stats.
 
-<!--
-<img src="docs/screenshots/desktop-session.png" alt="Desktop session" width="800">
-<img src="docs/screenshots/mobile-session.png" alt="Mobile session" width="390">
-<img src="docs/screenshots/permission-card.png" alt="Permission card" width="390">
--->
+<img src="docs/screenshots/en/desktop-session.png" alt="Desktop: session list, chat stream with tool cards and the right rail" width="880">
+
+File tree with read-only preview in the right rail:
+
+<img src="docs/screenshots/en/desktop-files.png" alt="Desktop: file tree and file preview in the right rail" width="880">
+
+Mobile (390x844): session view, session drawer, tasks and notes panel:
+
+<img src="docs/screenshots/en/mobile-session.png" alt="Mobile: session view" width="290">
+<img src="docs/screenshots/en/mobile-sessions.png" alt="Mobile: session drawer" width="290">
+<img src="docs/screenshots/en/mobile-panel.png" alt="Mobile: tasks and notes panel" width="290">
+
+Permission prompt: allow once, allow always, deny or deny with feedback; the turn stays blocked until it is answered.
+
+<img src="docs/screenshots/en/permission-card.png" alt="Mobile: permission prompt card" width="290">
+
+The same screens with the Chinese UI are in [README.zh-CN.md](README.zh-CN.md).
 
 ## Development
 
