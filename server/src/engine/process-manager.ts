@@ -237,7 +237,11 @@ const DEFAULTS = {
   // 2026-11-05 深夜事故：重负载下引擎冷启 10-26s（F3 实测两次超窗）致 session_bind
   // probe 超时连续失败 5 次打穿 unavailable（23:28 journal 实证）。窗放宽到 45s 覆盖
   // 观测最坏值仍有界防挂；读探针周期不变。
-  probeWriteTimeoutMs: 45000,
+  // 2026-11-24 再修：45s 正好卡在实测冷启临界线（正常冷启 open_session 就要 40-60s，
+  // 11-22~11-24 三起同型事故：10-55:02 发消息拉起 → 10-55:41 探针超时判死 → backoff
+  // 循环 2-4 分钟才 ready，期间还叠加 senpi rpc host stall）。放宽到 90s 覆盖实测
+  // 最坏值仍有界；判死后 backoff 重试链不变。
+  probeWriteTimeoutMs: 90000,
 } as const
 
 interface ProjectEngine {
