@@ -337,6 +337,7 @@ function anchoredEntryIdOf(it: ChatListItem): string | null {
   if (it.kind === "memoryMarker") return it.marker.entryId;
   if (it.kind === "compactionMarker") return it.marker.entryId;
   if (it.kind === "noticeCard") return it.notice.entryId;
+  if (it.kind === "restoreDigest") return it.digest.entryId;
   if (it.kind === "loopGuardGroup") return it.entryIds[0] ?? null;
   if (it.kind === "memoryMarkerCluster") return it.markers[0]?.entryId ?? null;
   return null;
@@ -839,9 +840,11 @@ export function mergeMemoryItems(items: ChatListItem[], entries: readonly WireEn
   if (markers.length === 0) return items;
   const scored = markers.slice();
   for (const item of items) {
-    // 锚位只认条目身份的种类（entry / errorRun 折叠卡携首条记录 id）：无锚种类落 LAST
-    // 沉底是既有口径不动；errorRun 曾漏认致翻页后报错卡全部被甩到列表末尾（2026-11-24）
-    const anchor = item.kind === "entry" || item.kind === "errorRun" ? item.entryId : null;
+    // 锚位统一走 anchoredEntryIdOf：所有携条目身份的种类（entry / customMessage / errorRun /
+    // noticeCard / restoreDigest / loopGuardGroup / marker 族）按各自条目序归位；无锚种类
+    // （streaming）落 LAST 仍在末尾。此前只认 entry，其余一律 LAST 沉底——errorRun 翻页后
+    // 报错卡、noticeCard 整理暂停警示卡等都被甩到列表末尾（2026-11-24 两次同病，一并收口）
+    const anchor = anchoredEntryIdOf(item);
     const ord = anchor !== null ? (ordOf.get(anchor) ?? LAST) : LAST;
     scored.push({ ord, seq: seq++, item });
   }

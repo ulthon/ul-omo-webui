@@ -119,4 +119,30 @@ describe("errorRun 折叠（罗列收敛批）", () => {
     // 修复前：errorRun 无锚被赋 LAST，重排后沉到末尾 [entry, entry, memoryMarker, errorRun]
     expect(merged.map((it) => it.kind)).toEqual(["entry", "errorRun", "memoryMarker", "entry"]);
   });
+
+  test("重排归位覆盖全部携条目身份的种类：警示卡（整理暂停）与报错卡同样不被甩到末尾（2026-11-24 第二次同病）", async () => {
+    const { mergeMemoryItems } = await import("@/components/chat/message-items");
+    // 整理暂停警示条目（notice-card.test 同形样本）
+    const parkedEntry = {
+      type: "custom",
+      customType: "senpi-memory.reflection-parked",
+      data: { schemaVersion: 1, identity: "senpi-webui-cd6e6588", streak: 6, parkedAt: "2026-11-24T00:07:10.696Z", nextProbeAt: "2026-11-24T06:07:10.696Z", retryable: true, lastReason: "failed", recommendation: "inspect runtime/reflection-sessions/<runId>/child-stderr.log" },
+      id: "p1",
+      parentId: null,
+      timestamp: "2026-11-24T06:07:27.893Z",
+    } as never;
+    const markerEntry = { type: "custom", id: "m1", customType: "omo-memory:accepted-turns", data: {} } as never;
+    const entries = [
+      userEntry("u1"),
+      errEntry("e1", 1000),
+      parkedEntry,
+      markerEntry,
+      userEntry("u2"),
+    ];
+    const items = build(entries as never);
+    expect(items.map((it) => it.kind)).toEqual(["entry", "errorRun", "noticeCard", "entry"]);
+    const merged = mergeMemoryItems(items, entries as never);
+    // 修复前：noticeCard 同样只拿 LAST → [entry, memoryMarker, entry, errorRun, noticeCard]
+    expect(merged.map((it) => it.kind)).toEqual(["entry", "errorRun", "noticeCard", "memoryMarker", "entry"]);
+  });
 });
