@@ -1,4 +1,4 @@
-// 右栏「总览」页签（r9 w2-t8）：聚合计划 / 引擎 / 任务 / 笔记 / 统计 / 子代理六块的一屏速览。
+// 右栏「总览」页签（r9 w2-t8）：聚合统计 / 计划 / 任务 / 后台任务 / 笔记 / 子代理 / 引擎的一屏速览。
 // 计划/任务/统计/子代理只读复用各页签既有数据源，不复制数据逻辑：计划走 GET /api/sessions/:id/plan-progress
 //（r10 todo 12，会话绑定 goal 的计划勾选态，无绑定整块隐藏），引擎走 GET /api/engines/metrics
 //（engine-ux-visibility 任务 3，当前会话绑定引擎状态速览+停止，overview-engine.tsx），任务走 todo-panel 导出的
@@ -7,14 +7,15 @@
 // GET /api/usage 快照（status-bar-data 容错解析），笔记走 notes-api。
 // 不新建后端接口。笔记块（r11 直接编辑改造）复用笔记 tab 同款 NoteInlineEditor：
 // 条目点击就地展开编辑器，收起/点外部自动保存；其余四块各自限高（max-h-64）内部滚动、
-// 独立空态文案（zh/en 词条在 login.rightRail.overview），块间 border-b 分隔。
+// 独立空态文案（zh/en 词条在 login.rightRail.overview），块间 border-b 分隔；统计块例外
+//（2026-11-25 用户定版：置顶，未选会话/无快照整块不渲染，回合落定重拉）。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMessagesStore } from "@/stores/messages";
 import { useTasksStore, type BackgroundTask } from "@/stores/tasks";
 import { MAX_OVERVIEW_NOTES_COUNT, OVERVIEW_NOTES_COUNT_KV, useUiStore } from "@/stores/ui";
-import { useActiveProject } from "@/stores/sessions";
+import { useActiveProject, useSessionsStore } from "@/stores/sessions";
 import { useT } from "@/i18n/i18n";
 import { extractLatestTodoPhases } from "@/components/chat/todo-panel";
 import { collectSubagentCalls, summaryOfCall } from "@/components/chat/subagent-data";
@@ -351,10 +352,14 @@ function OverviewNotes() {
 }
 
 // —— 统计块：GET /api/usage 快照摘要（总 tokens / 上下文水位 / 累计成本） ——
+// 2026-11-25 用户定版：置顶；未选会话/无快照整块不渲染（不再显示空态文案）；回合落定
+//（running→idle 边沿，stat-panel 同款 prev-ref 模式）重拉，数字不随回合过期。
 function OverviewStats({ sessionId }: { sessionId: string | null }) {
   const t = useT();
-  const [stats, setStats] = useState<UsageStats | null>(null);
-  const [failed, setFailed] = useState(false);
+  // 快照绑定取数会话：切换会话期间旧会话数字不串显（渲染按 sessionId 匹配）
+  const [snap, setSnap] = useState<{ sessionId: string; stats: UsageStats } | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const runState = useSessionsStore((s) => (sessionId ? s.runStates[sessionId] : undefined));
   // 专属提示词提示行（2026-11-03 用户定版：从 composer 迁来）——当前选中模型命中
   // prompt-preset 时显示，未命中不占行
   const models = useUiStore((s) => s.models);
@@ -370,55 +375,53 @@ function OverviewStats({ sessionId }: { sessionId: string | null }) {
       .getUsage(sessionId)
       .then((r) => {
         if (cancelled) return;
-        setStats(toUsageStats(r.usage));
-        setFailed(false);
+        setSnap({ sessionId, stats: toUsageStats(r.usage) });
       })
       .catch(() => {
-        if (!cancelled) setFailed(true);
+        // 取数失败保留上次成功快照（无快照即整块不显示）
       });
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, reloadTick]);
 
+  // 回合落定沿（stat-panel 同款 prev-ref 模式）：running→idle 边沿触发权威快照重拉
+  const prevRunRef = useRef(runState);
+  useEffect(() => {
+    const prev = prevRunRef.current;
+    prevRunRef.current = runState;
+    if (runState !== "idle" || prev === "idle") return;
+    setReloadTick((n) => n + 1);
+  }, [runState]);
+
+  const stats = snap !== null && snap.sessionId === sessionId ? snap.stats : null;
+  if (!sessionId || !stats?.tokens) return null;
   return (
     <section data-testid="overview-stats" className={OVERVIEW_SECTION_CLASS}>
       <h3 className={OVERVIEW_TITLE_CLASS}>{t("login.rightRail.overview.statsTitle")}</h3>
       <div className={OVERVIEW_BODY_CLASS}>
-        {sessionId == null || failed || !stats || !stats.tokens ? (
-          <OverviewEmpty
-            text={
-              sessionId == null
-                ? t("login.rightRail.overview.statsNoSession")
-                : failed || !stats
-                  ? t("login.rightRail.overview.statsUnavailable")
-                  : t("login.rightRail.overview.statsEmpty")
-            }
-          />
-        ) : (
-          <ul className="space-y-0.5 text-sm">
-            {preset !== null && (
-              <li data-testid="overview-preset" className="flex items-baseline justify-between gap-2">
-                <span className="text-muted-foreground">{t("login.rightRail.overview.promptPreset")}</span>
-                <span className="truncate">{preset}</span>
-              </li>
-            )}
-            <li data-testid="overview-stats-tokens" className="flex items-baseline justify-between gap-2">
-              <span className="text-muted-foreground">{t("login.rightRail.overview.statsTokens")}</span>
-              <span className="tabular-nums">{stats.tokens.total.toLocaleString()}</span>
+        <ul className="space-y-0.5 text-sm">
+          {preset !== null && (
+            <li data-testid="overview-preset" className="flex items-baseline justify-between gap-2">
+              <span className="text-muted-foreground">{t("login.rightRail.overview.promptPreset")}</span>
+              <span className="truncate">{preset}</span>
             </li>
-            <li data-testid="overview-stats-context" className="flex items-baseline justify-between gap-2">
-              <span className="text-muted-foreground">{t("login.rightRail.overview.statsContext")}</span>
-              <span className="tabular-nums">
-                {stats.context ? `${Math.round(stats.context.percent)}%` : "—"}
-              </span>
-            </li>
-            <li data-testid="overview-stats-cost" className="flex items-baseline justify-between gap-2">
-              <span className="text-muted-foreground">{t("login.rightRail.overview.statsCost")}</span>
-              <span className="tabular-nums">${stats.cost.toFixed(4)}</span>
-            </li>
-          </ul>
-        )}
+          )}
+          <li data-testid="overview-stats-tokens" className="flex items-baseline justify-between gap-2">
+            <span className="text-muted-foreground">{t("login.rightRail.overview.statsTokens")}</span>
+            <span className="tabular-nums">{stats.tokens.total.toLocaleString()}</span>
+          </li>
+          <li data-testid="overview-stats-context" className="flex items-baseline justify-between gap-2">
+            <span className="text-muted-foreground">{t("login.rightRail.overview.statsContext")}</span>
+            <span className="tabular-nums">
+              {stats.context ? `${Math.round(stats.context.percent)}%` : "—"}
+            </span>
+          </li>
+          <li data-testid="overview-stats-cost" className="flex items-baseline justify-between gap-2">
+            <span className="text-muted-foreground">{t("login.rightRail.overview.statsCost")}</span>
+            <span className="tabular-nums">${stats.cost.toFixed(4)}</span>
+          </li>
+        </ul>
       </div>
     </section>
   );
@@ -471,16 +474,17 @@ function OverviewAgents({ sessionId }: { sessionId: string | null }) {
   );
 }
 
-/** 总览面板：计划（r10 todo 12，无绑定 goal 整块隐藏）+ 引擎/任务/后台任务/笔记/统计/子代理纵排，
- *  块间分隔线；整页不滚动（各块内部滚动），外层 p-0 贴齐页签体系 */
+/** 总览面板：统计（usage 快照，2026-11-25 置顶）+ 计划（r10 todo 12，无绑定 goal 整块隐藏）
+ *  + 任务/后台任务/笔记/子代理纵排，引擎两块收尾（#30）；块间分隔线；整页不滚动
+ *  （各块内部滚动），外层 p-0 贴齐页签体系 */
 export function OverviewPanel({ sessionId }: { sessionId: string | null }) {
   return (
     <div data-testid="overview-panel" className="h-full overflow-y-auto">
+      <OverviewStats sessionId={sessionId} />
       <OverviewPlan sessionId={sessionId} />
       <OverviewTasks sessionId={sessionId} />
       <OverviewBackgroundTasks sessionId={sessionId} />
       <OverviewNotes />
-      <OverviewStats sessionId={sessionId} />
       <OverviewAgents sessionId={sessionId} />
       {/* #30：引擎状态/引擎诊断两块下移至面板尾部（用户定调不置顶；业务区块在前） */}
       <OverviewEngine sessionId={sessionId} />

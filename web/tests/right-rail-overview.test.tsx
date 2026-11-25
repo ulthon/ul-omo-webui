@@ -1,12 +1,20 @@
 // 右栏「总览」页签测试（r9 w2-t8）：
-// - 无持久化页签偏好时默认选中总览，四块（任务/笔记/统计/子代理）渲染
+// - 无持久化页签偏好时默认选中总览，任务/笔记/子代理三块渲染；统计块未选会话不渲染
 // - 有存量偏好时尊重存量不覆盖；切换页签写回同一键（读写一致）
-// - 四块各自空态文案（sessionId 为 null 档）
+// - 三块各自空态文案（sessionId 为 null 档）
+// - 统计块置顶（2026-11-25）：选中会话且 usage 快照就绪后为面板首块
 // 环境说明同 right-rail-drawer-close.test.tsx：@happy-dom/global-registrator +
 // createRoot + act，matchMedia 用 stub 控制视口档位。
 // @ts-nocheck
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+
+// 统计块置顶用例：api.getUsage 打桩喂快照（其余 api 成员保留真实实现）
+const getUsageMock = vi.fn();
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return { ...actual, api: { ...actual.api, getUsage: (...args: unknown[]) => getUsageMock(...args) } };
+});
 
 // bun/vitest 单进程跑多文件：其他测试文件可能已注册，双注册会抛错
 if (!(globalThis as { window?: unknown }).window) {
@@ -29,7 +37,7 @@ interface Handle {
   unmount: () => void;
 }
 
-function renderRail(): Handle {
+function renderRail(sessionId: string | null = null): Handle {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -38,7 +46,7 @@ function renderRail(): Handle {
       createElement(RightRail, {
         open: true,
         onToggle: () => {},
-        sessionId: null,
+        sessionId,
       }),
     );
   });
@@ -66,7 +74,7 @@ function selectedTab(): string | null {
 }
 
 describe("右栏总览页签（r9 w2-t8）", () => {
-  test("无持久化偏好：默认选中总览且四块渲染", () => {
+  test("无持久化偏好：默认选中总览且三块渲染，统计块未选会话不渲染", () => {
     window.localStorage.removeItem(TAB_PREF_KEY);
     const h = renderRail();
     try {
@@ -74,7 +82,7 @@ describe("右栏总览页签（r9 w2-t8）", () => {
       expect(h.q('[data-testid="overview-panel"]')).not.toBeNull();
       expect(h.q('[data-testid="overview-tasks"]')).not.toBeNull();
       expect(h.q('[data-testid="overview-notes"]')).not.toBeNull();
-      expect(h.q('[data-testid="overview-stats"]')).not.toBeNull();
+      expect(h.q('[data-testid="overview-stats"]')).toBeNull();
       expect(h.q('[data-testid="overview-agents"]')).not.toBeNull();
       // 独立页签仍在且可切
       expect(h.q('[data-testid="right-rail-tab-todo"]')).not.toBeNull();
@@ -109,7 +117,7 @@ describe("右栏总览页签（r9 w2-t8）", () => {
     }
   });
 
-  test("四块空态文案（未选会话 / 未选项目）", () => {
+  test("空态文案（未选会话 / 未选项目）；统计块未选会话整块不渲染", () => {
     window.localStorage.removeItem(TAB_PREF_KEY);
     const h = renderRail();
     try {
@@ -117,12 +125,35 @@ describe("右栏总览页签（r9 w2-t8）", () => {
       expect(h.q('[data-testid="overview-tasks"]')!.textContent).toContain("未选择会话");
       // 笔记块：未添加项目
       expect(h.q('[data-testid="overview-notes"]')!.textContent).toContain("请先添加项目");
-      // 统计块：未选择会话
-      expect(h.q('[data-testid="overview-stats"]')!.textContent).toContain("未选择会话");
+      // 统计块：未选择会话整块不渲染（2026-11-25）
+      expect(h.q('[data-testid="overview-stats"]')).toBeNull();
       // 子代理块：未选择会话
       expect(h.q('[data-testid="overview-agents"]')!.textContent).toContain("未选择会话");
     } finally {
       h.unmount();
+    }
+  });
+
+  test("统计块置顶：选中会话且 usage 快照就绪后为面板首块", async () => {
+    window.localStorage.removeItem(TAB_PREF_KEY);
+    getUsageMock.mockResolvedValue({
+      sessionId: "s1",
+      usage: {
+        tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 123456 },
+        cost: 0.5,
+        contextUsage: { tokens: 123456, contextWindow: 1_000_000, percent: 12.3 },
+      },
+    });
+    const h = renderRail("s1");
+    try {
+      await act(async () => {});
+      const panel = h.q('[data-testid="overview-panel"]')!;
+      const stats = h.q('[data-testid="overview-stats"]')!;
+      expect(panel.firstElementChild).toBe(stats);
+      expect(h.q('[data-testid="overview-stats-tokens"]')).not.toBeNull();
+    } finally {
+      h.unmount();
+      getUsageMock.mockReset();
     }
   });
 });
