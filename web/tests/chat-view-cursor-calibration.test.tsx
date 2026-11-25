@@ -115,31 +115,31 @@ describe("增量校准撞 cursor_invalid 自动升级全量重取（t12）", () 
   });
 });
 
-describe("增量异常顶替守卫（2026-11-11 循环防护卡独占会话修复）", () => {
-  test("增量窗 4 条远少于槽内既有 200 条且无 hasMore 佐证 → 强制 full=1 全量整替（不 append）", async () => {
-    // 槽内 200 条已加载；引擎重启重放场景：增量只带回 4 条防护条目
+describe("增量对账守卫（2026-11-11 立，2026-11-25 收窄为仅游标未推进）", () => {
+  test("增量窗 4 条远少于槽内既有 200 条（带新消息的正常切回补漏）→ 按 id 合并，不整份重拉", async () => {
+    // 槽内 200 条已加载；离开期间会话新增 4 条，切回补漏只带回这 4 条——增量条数与
+    // 槽内总数无关，旧判定（条数变少即异常）把每次带新消息的切回都升级成整份重拉
     const seeded = Array.from({ length: 200 }, (_, i) => userEntry(`e${i}`));
     useMessagesStore.getState().setEntries(SID, seeded as never, "old-cursor", "e199", {
       hasMore: false,
       oldestId: null,
     });
-    const fullEntries = Array.from({ length: 216 }, (_, i) => userEntry(`f${i}`));
-    listMessages
-      .mockResolvedValueOnce(page([userEntry("g1"), userEntry("g2"), userEntry("g3"), userEntry("g4")], "replay-cursor") as never)
-      .mockResolvedValueOnce(page(fullEntries, "full-cursor") as never);
+    listMessages.mockResolvedValueOnce(
+      page([userEntry("g1"), userEntry("g2"), userEntry("g3"), userEntry("g4")], "new-cursor") as never,
+    );
 
     await mount();
-    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
-    expect(listMessages.mock.calls[0][1]).toEqual({ cursor: "old-cursor" });
-    expect(listMessages.mock.calls[1][1]).toEqual({ full: true });
     await vi.waitFor(() => {
       const st = useMessagesStore.getState().bySession[SID];
-      // 全量整替：不是 200+4 的 append，也不是 4 条顶替，而是服务端真值 216 条
-      expect(st.entries).toHaveLength(216);
-      expect(st.entries[0].id).toBe("f0");
-      expect(st.cursor).toBe("full-cursor");
-      expect(st.loaded).toBe(true);
+      expect(st.entries.map((e) => e.id).slice(-4)).toEqual(["g1", "g2", "g3", "g4"]);
+      expect(st.cursor).toBe("new-cursor");
     });
+    // 只发一次带游标的补漏请求，没有 full=1；既有 200 条原样保留
+    expect(listMessages).toHaveBeenCalledTimes(1);
+    expect(listMessages.mock.calls[0][1]).toEqual({ cursor: "old-cursor" });
+    const st = useMessagesStore.getState().bySession[SID];
+    expect(st.entries).toHaveLength(204);
+    expect(st.entries[0].id).toBe("e0");
   });
 
   test("增量带回条目但 cursor 未推进（leafId 不连续）→ 强制 full=1 全量整替", async () => {
@@ -163,7 +163,7 @@ describe("增量异常顶替守卫（2026-11-11 循环防护卡独占会话修�
     });
   });
 
-  test("正常增量（新增条目数不少于既有 / 有 hasMore 佐证）不触发全量重拉", async () => {
+  test("正常增量（游标推进）不触发全量重拉", async () => {
     // 小槽场景：增量带回条目数 >= 既有数，走常规 append
     const seeded = Array.from({ length: 2 }, (_, i) => userEntry(`e${i}`));
     useMessagesStore.getState().setEntries(SID, seeded as never, "old-cursor", "e1", {
@@ -180,6 +180,59 @@ describe("增量异常顶替守卫（2026-11-11 循环防护卡独占会话修�
       const st = useMessagesStore.getState().bySession[SID];
       expect(st.entries.map((e) => e.id)).toEqual(["e0", "e1", "n1", "n2"]);
       expect(st.cursor).toBe("new-cursor");
+    });
+    expect(listMessages).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("实时入列推进游标（2026-11-25 切回整份重拉修复）", () => {
+  function liveMessage(id: string, parentId: string): Record<string, unknown> {
+    return {
+      type: "entry_appended",
+      entry: { type: "message", id, parentId, message: { role: "assistant", content: [{ type: "text", text: `msg ${id}` }] } },
+    };
+  }
+
+  test("推送入列推叶时游标同步到新叶；离径条目与幂等回填叶未动，游标不动", () => {
+    useMessagesStore.getState().setEntries(SID, [userEntry("e0"), userEntry("e1"), userEntry("e2")] as never, "e2", "e2", {
+      hasMore: false,
+      oldestId: null,
+    });
+    const apply = (ev: Record<string, unknown>) => useMessagesStore.getState().applyWireEvent(SID, ev as never);
+    apply(liveMessage("e3", "e2"));
+    apply(liveMessage("e4", "e3"));
+    let st = useMessagesStore.getState().bySession[SID];
+    expect(st.leafId).toBe("e4");
+    expect(st.cursor).toBe("e4");
+    // 离径条目（他端分支/重放）：父不是当前叶，叶与游标都不动
+    apply(liveMessage("x1", "e0"));
+    // 幂等回填：已在列的条目重放，叶与游标都不动
+    apply(liveMessage("e2", "e1"));
+    st = useMessagesStore.getState().bySession[SID];
+    expect(st.leafId).toBe("e4");
+    expect(st.cursor).toBe("e4");
+  });
+
+  test("首载后推送 3 条再切回：补漏请求带最新游标、回 0 条、不发 full=1", async () => {
+    useMessagesStore.getState().setEntries(SID, [userEntry("e0"), userEntry("e1"), userEntry("e2")] as never, "e2", "e2", {
+      hasMore: false,
+      oldestId: null,
+    });
+    const apply = (ev: Record<string, unknown>) => useMessagesStore.getState().applyWireEvent(SID, ev as never);
+    apply(liveMessage("e3", "e2"));
+    apply(liveMessage("e4", "e3"));
+    apply(liveMessage("e5", "e4"));
+    // 切回补漏：游标已是最新，服务端游标之后 0 条
+    listMessages.mockResolvedValueOnce(page([], "e5") as never);
+
+    await mount();
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    expect(listMessages.mock.calls[0][1]).toEqual({ cursor: "e5" });
+    await vi.waitFor(() => {
+      const st = useMessagesStore.getState().bySession[SID];
+      expect(st.entries.map((e) => e.id)).toEqual(["e0", "e1", "e2", "e3", "e4", "e5"]);
+      expect(st.cursor).toBe("e5");
+      expect(st.loaded).toBe(true);
     });
     expect(listMessages).toHaveBeenCalledTimes(1);
   });

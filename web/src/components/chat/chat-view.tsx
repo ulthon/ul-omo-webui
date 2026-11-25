@@ -206,22 +206,18 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         if (cancelled) return;
         const store = useMessagesStore.getState();
         if (cursor) {
-          // 增量对账守卫（循环防护卡独占会话 2026-11-11）：引擎重启/重放会向会话文件
-          // 重复投递 custom 条目，增量窗可能只带回这几条重放条目。若直接落库，切回后
-          // 槽内看起来“最新”，全量历史永不补齐（实测会话只剩 4 张防护卡、105 条消息
-          // 全消失）。判定二选一即异常：① 增量窗条目数少于槽内既有且无 hasMore 佐证
-          // （正常的尾窗/全量页要么条目占优要么 hasMore=true）；② 带回条目但 cursor
-          // 未推进（leafId 不连续，服务端语义自相矛盾）。异常时强制 full=1 全量重拉
-          // 再落库，并记 diag 取证行。
-          const prevCount = existing?.entries.length ?? 0;
+          // 增量对账守卫（2026-11-11 立，2026-11-25 收窄）：?cursor= 只回游标之后的增量
+          // 且不带 hasMore，增量条数与槽内既有总数本就无关。原「增量条数少于槽内既有」
+          // 判定把每次带新消息的切回都判成异常升级 full=1（11-24 实测 85 次整份重拉、
+          // 单次 8.7/15.8MB）。切回增量按 id 合并只增不减，冲不掉既有条目；只保留
+          // 「带回条目但游标未推进」（服务端语义自相矛盾）一种真异常升级全量整替。
           const notAdvanced = page.entries.length > 0 && page.cursor === cursor;
-          const shrink = page.entries.length > 0 && !(page.hasMore ?? false) && page.entries.length < prevCount;
-          if (notAdvanced || shrink) {
+          if (notAdvanced) {
             diag.info("messages", "refetch-full", {
               sessionId,
-              reason: notAdvanced ? "leaf-not-advanced" : "incremental-shrink",
+              reason: "leaf-not-advanced",
               incremental: page.entries.length,
-              existing: prevCount,
+              existing: existing?.entries.length ?? 0,
             });
             const fullPage = await api.listMessages(sessionId, { full: true });
             if (cancelled) return;

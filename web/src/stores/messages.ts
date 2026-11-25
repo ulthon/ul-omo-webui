@@ -605,14 +605,16 @@ function stripSyntheticTwins(list: WireEntry[], incoming: ReadonlyArray<WireEntr
  *  ——追加式文件语义下新条目必续在尾条之后，与消息通道 lastEntryId 同口径；磁盘非
  *  首条必有父，null 不再表达「根声明」而是链路缺失。已在列的幂等回填携无父载荷时保
  *  持既有条目原样（REST/先到帧的父链接更完整，不被截断载荷整替洗掉），叶也不拽。
- *  悬空父重链开启（准入缺口不冻叶，见 advanceLeaf 注）。 */
+ *  悬空父重链开启（准入缺口不冻叶，见 advanceLeaf 注）。游标随叶（2026-11-25 切回整份
+ *  重拉修复）：推叶即入列条目成为文件最新一条，cursor 同步到新叶；叶未动（重放回填/
+ *  离径）游标不动——切回补漏只取其后真漏的条目。 */
 function appendEntryWithLeaf(
   cur: SessionMessages,
   stored: WireEntry,
   listAfterRemovals: WireEntry[],
-): { entries: WireEntry[]; leafId: string | null } {
+): { entries: WireEntry[]; leafId: string | null; cursor: string | null } {
   const id = typeof stored.id === "string" && stored.id !== "" ? stored.id : null;
-  if (id === null) return { entries: upsertEntry(listAfterRemovals, stored), leafId: cur.leafId };
+  if (id === null) return { entries: upsertEntry(listAfterRemovals, stored), leafId: cur.leafId, cursor: cur.cursor };
   const wireParentId = typeof stored.parentId === "string" && stored.parentId !== "" ? stored.parentId : null;
   const existed = listAfterRemovals.some((e) => e.id === id);
   let entryToStore = stored;
@@ -626,9 +628,11 @@ function appendEntryWithLeaf(
   }
   const parentId =
     typeof entryToStore.parentId === "string" && entryToStore.parentId !== "" ? entryToStore.parentId : null;
+  const leafId = advanceLeaf(cur.leafId, listAfterRemovals, id, parentId, existed, true);
   return {
     entries: upsertEntry(listAfterRemovals, entryToStore),
-    leafId: advanceLeaf(cur.leafId, listAfterRemovals, id, parentId, existed, true),
+    leafId,
+    cursor: leafId !== cur.leafId ? leafId : cur.cursor,
   };
 }
 
@@ -1269,7 +1273,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
                 return {
                   bySession: {
                     ...s.bySession,
-                    [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId },
+                    [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId, cursor: merged.cursor },
                   },
                 };
               });
@@ -1290,7 +1294,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               // 当前路径可见）；重放幂等回填不推
               const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId, cursor: merged.cursor } },
               };
             });
             break;
@@ -1314,7 +1318,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
               const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId, cursor: merged.cursor } },
               };
             });
             break;
@@ -1325,7 +1329,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
               const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId, cursor: merged.cursor } },
               };
             });
             break;
@@ -1345,7 +1349,7 @@ export const useMessagesStore = create<MessagesState>()((set, get) => {
               // 叶推进（todo 4）：同口径入列推叶（延伸当前路径时推，重放回填不推）
               const merged = appendEntryWithLeaf(cur, entry, cur.entries);
               return {
-                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId } },
+                bySession: { ...s.bySession, [sessionId]: { ...cur, entries: merged.entries, leafId: merged.leafId, cursor: merged.cursor } },
               };
             });
           }
