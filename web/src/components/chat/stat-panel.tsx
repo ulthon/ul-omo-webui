@@ -3,12 +3,14 @@
 // 按模型拆分；缓存区补命中率；速度区补末回合 tok/s；新增耗时估算（模型 vs 工具）与
 // 子代理逐个花费（含合计）分区。数据源全部现成：usage 快照 + messages store 条目
 // （SSE/REST 已填充，仅订阅），无新端点无新拉取；缺数据行/区省略（stat-panel-data 口径）。
+// 上下文压缩分区（2026-11-25）：压缩次数 + 每次压缩前后水位，另拉 GET /api/sessions/:id/compactions
+// （服务端读会话文件精筛，不经引擎）；无压缩记录/取数失败整区省略，与快照同节奏刷新。
 // 数据源 GET /api/usage（会话级快照 + 服务端内存速度环 turnSpeed）；形状解析复用
 // status-bar-data 的 toUsageStats/parseTurnSpeed（容错缺字段/NaN 不崩）；接口失败显示
 // "用量不可用"降级不白屏；无回合时速度区"暂无数据"。回合落定（runState→idle）自动刷新。
 // 布局按右栏窄容器（320-560px）自适应：单列分区卡片，行内两端对齐 + 数值 tabular-nums。
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api } from "@/lib/api";
+import { api, type CompactionSummary } from "@/lib/api";
 import { useSessionsStore } from "@/stores/sessions";
 import { useMessagesStore } from "@/stores/messages";
 import {
@@ -34,6 +36,14 @@ function shortTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "--:--";
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** ISO → "MM-DD HH:MM"（压缩发生时刻，跨天可辨；无效时间戳降级 "--:--"） */
+function shortDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--:--";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function StatSection({ title, testid, children }: { title: string; testid: string; children: ReactNode }) {
@@ -70,6 +80,10 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
   const [speed, setSpeed] = useState<TurnSpeedStats | null>(null);
   const [failed, setFailed] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // 压缩记录绑定取数会话（切换会话期间旧会话记录不串显，渲染按 sessionId 匹配）
+  const [compactions, setCompactions] = useState<{ sessionId: string; items: CompactionSummary[] } | null>(
+    null,
+  );
   // 今日窗口基准（快照拉取时刻）：与整卡数据同节奏（回合落定刷新收敛）；避免渲染期取墙钟
   const [usageAt, setUsageAt] = useState(0);
   const runState = useSessionsStore((s) => (sessionId ? s.runStates[sessionId] : undefined));
@@ -89,6 +103,15 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
+      });
+    // 压缩记录与快照同节奏拉取；失败只省略压缩分区，不影响面板其余部分
+    api
+      .getCompactions(sessionId)
+      .then((r) => {
+        if (!cancelled) setCompactions({ sessionId, items: r.items });
+      })
+      .catch(() => {
+        // 保留上次成功记录（无记录即整区不显示）
       });
     return () => {
       cancelled = true;
@@ -136,6 +159,7 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
   const ctx = stats?.context ?? null;
   const pct = ctx ? Math.min(100, Math.max(0, ctx.percent)) : 0;
   const turns = speed?.turns ?? [];
+  const compactionRows = compactions !== null && compactions.sessionId === sessionId ? compactions.items : null;
 
   return (
     <div data-testid="stat-panel" className="h-full space-y-3 overflow-y-auto p-3">
@@ -190,6 +214,30 @@ export function StatPanel({ sessionId }: { sessionId: string | null }) {
           <p className="text-xs text-muted-foreground">{t("chat.statPanel.noContext")}</p>
         )}
       </StatSection>
+
+      {compactionRows !== null && compactionRows.length > 0 ? (
+        <StatSection title={t("chat.statPanel.compactionTitle")} testid="stat-compactions">
+          <StatRow
+            label={t("chat.statPanel.compactionCount")}
+            value={String(compactionRows.length)}
+            testid="stat-compactions-count"
+          />
+          <ul className="mt-2 space-y-1">
+            {[...compactionRows].reverse().map((row) => (
+              <li
+                key={row.id}
+                data-testid="stat-compaction-row"
+                className="flex min-w-0 items-baseline justify-between gap-2 text-xs"
+              >
+                <span className="shrink-0 tabular-nums text-muted-foreground">{shortDateTime(row.timestamp)}</span>
+                <span className="min-w-0 truncate text-right tabular-nums">
+                  {formatTokens(row.tokensBefore)} → {row.tokensAfter === null ? "—" : formatTokens(row.tokensAfter)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </StatSection>
+      ) : null}
 
       <StatSection title={t("chat.statPanel.costTitle")} testid="stat-cost">
         <StatRow label={t("chat.statPanel.costTotal")} value={formatCost(breakdown.cumulative)} testid="stat-cost-value" />

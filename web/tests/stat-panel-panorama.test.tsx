@@ -15,9 +15,18 @@ if (!(globalThis as { window?: unknown }).window) {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const getUsageMock = vi.fn();
+// 压缩分区（2026-11-25）另有独立拉取：本文件不打桩压缩行为，固定回空（分区省略）
+const getCompactionsMock = vi.fn();
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, api: { ...actual.api, getUsage: (...args: unknown[]) => getUsageMock(...args) } };
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getUsage: (...args: unknown[]) => getUsageMock(...args),
+      getCompactions: (...args: unknown[]) => getCompactionsMock(...args),
+    },
+  };
 });
 
 const { act } = await import("react");
@@ -124,12 +133,14 @@ function seedMessages(entries: WireEntry[]): void {
 
 beforeEach(() => {
   vi.setSystemTime(FIXED_NOW);
+  getCompactionsMock.mockResolvedValue({ sessionId: S, items: [] });
 });
 
 afterEach(async () => {
   for (const unmount of roots) await unmount();
   roots.length = 0;
   getUsageMock.mockReset();
+  getCompactionsMock.mockReset();
   document.body.innerHTML = "";
 });
 

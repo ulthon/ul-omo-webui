@@ -136,6 +136,8 @@ export const chat = {
     contextTitle: "Context level",
     contextUsage: "Used",
     noContext: "No context data yet",
+    compactionTitle: "Context compaction",
+    compactionCount: "Compactions",
     costTitle: "Cost",
     costTotal: "Total cost",
     costToday: "Today's cost",

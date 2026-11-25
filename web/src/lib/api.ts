@@ -239,6 +239,22 @@ export interface CompactReceipt {
   usage: UsageInfo;
 }
 
+/** 压缩记录行（GET /api/sessions/:id/compactions，服务端读会话文件精筛，不经引擎）：
+ *  tokensBefore 为引擎落库的压缩前上下文水位；tokensAfter 为压缩后首条有效回复的
+ *  上下文 token（与上下文水位同口径），压缩后尚无回复为 null */
+export interface CompactionSummary {
+  id: string;
+  timestamp: string;
+  tokensBefore: number;
+  tokensAfter: number | null;
+}
+
+export interface CompactionSummaries {
+  sessionId: string;
+  /** 文件序（旧→新） */
+  items: CompactionSummary[];
+}
+
 export interface DraftInfo {
   content: string;
   updatedAt: string;
@@ -929,6 +945,10 @@ export const api = {
   },
   async getUsage(session: string): Promise<{ sessionId: string; usage: UsageInfo }> {
     return request(`/api/usage?session=${encodeURIComponent(session)}`);
+  },
+  /** 会话压缩记录（统计页签「上下文压缩」分区）：服务端磁盘精筛，不经引擎不拉起 */
+  async getCompactions(sessionId: string): Promise<CompactionSummaries> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/compactions`);
   },
   /** 计划执行进度（r10 todo 12）：会话绑定的 goal 计划 todo 勾选态速览（只读） */
   async getPlanProgress(sessionId: string): Promise<PlanProgressSnapshot> {

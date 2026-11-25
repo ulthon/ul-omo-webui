@@ -16,6 +16,7 @@
 // 反向读实现：fs.open + 64KB 步进从文件尾向前，行边界按 \n 切；文件末尾无换行的
 // 不完整行（写入进行中）丢弃——与引擎侧"读到即完整条目"语义一致。
 import { open } from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import type { EngineEntry } from "./engine-adapter";
 
 /** 尾窗条目数（计划钦定 200） */
@@ -237,6 +238,96 @@ export async function readModelChangeEntries(sessionPath: string): Promise<Engin
   } finally {
     await fh.close();
   }
+}
+
+/** 压缩记录行（GET /api/sessions/:id/compactions）：tokensBefore 为引擎落库的压缩前
+ *  上下文水位（CompactionEntry.tokensBefore，真实值）；tokensAfter 为压缩后首条有效
+ *  assistant 回复的请求上下文 token（引擎 calculateContextTokens 同口径：provider 报的
+ *  contextUsage 优先，否则 totalTokens 或四项之和；中止/出错回复跳过——引擎
+ *  _measureContextTokens 同款判定），压缩后尚无回复回 null。 */
+export interface CompactionSummaryRow {
+  id: string;
+  timestamp: string;
+  tokensBefore: number;
+  tokensAfter: number | null;
+}
+
+/** 流式逐行扫描助手：分块顺序读 + StringDecoder 拼接（多字节字符跨块不坏）+ 行边界
+ *  切分；header/损坏行由 visit 自行经 parseEntryLine 处理；末尾无换行残行丢弃。 */
+async function scanEntryLines(sessionPath: string, visit: (line: string) => void): Promise<void> {
+  const fh = await open(sessionPath, "r");
+  try {
+    const size = (await fh.stat()).size;
+    const decoder = new StringDecoder("utf8");
+    let pos = 0;
+    let carry = "";
+    while (pos < size) {
+      const step = Math.min(CHUNK_BYTES, size - pos);
+      const buf = Buffer.alloc(step);
+      const { bytesRead: read } = await fh.read(buf, 0, step, pos);
+      if (read <= 0) break;
+      pos += read;
+      const text = carry + decoder.write(buf.subarray(0, read));
+      const parts = text.split("\n");
+      carry = parts.pop() ?? "";
+      for (const part of parts) visit(part);
+    }
+  } finally {
+    await fh.close();
+  }
+}
+
+/** assistant 回复的请求上下文 token（引擎 calculateContextTokens 同口径）；非 assistant、
+ *  中止/出错回复、无用量回 0 */
+function contextTokensOf(message: unknown): number {
+  const msg = message as
+    | { role?: string; stopReason?: string; usage?: Record<string, unknown> }
+    | null
+    | undefined;
+  if (!msg || msg.role !== "assistant" || msg.stopReason === "aborted" || msg.stopReason === "error") return 0;
+  const usage = msg.usage;
+  if (!usage || typeof usage !== "object") return 0;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  if (usage.contextUsage !== undefined) {
+    const ctx = usage.contextUsage as { input?: unknown; output?: unknown } | null;
+    return ctx === null ? 0 : num(ctx.input) + num(ctx.output);
+  }
+  const total = num(usage.totalTokens);
+  return total || num(usage.input) + num(usage.output) + num(usage.cacheRead) + num(usage.cacheWrite);
+}
+
+/**
+ * 压缩记录精筛读（2026-11-25 统计页签「上下文压缩」分区）：只收集 compaction 条目与
+ * 其后首条有效 assistant 回复的上下文用量，供 GET /api/sessions/:id/compactions 磁盘
+ * 直读——会话统计 RPC（get_session_stats）不带压缩计数，压缩事实只落在会话文件的
+ * compaction 条目上。行先按引擎紧凑序列化子串预筛再解析（"type":"compaction" /
+ * "role":"assistant"），全量 assistant 大行不进解析器；header/损坏行跳过、末尾残行
+ * 丢弃，与 readModelChangeEntries 同约定。按整个会话文件计数（不按当前分支过滤，
+ * 2026-11-25 用户定口径）。
+ */
+export async function readCompactionSummaries(sessionPath: string): Promise<CompactionSummaryRow[]> {
+  const rows: CompactionSummaryRow[] = [];
+  let awaitingReply = false;
+  await scanEntryLines(sessionPath, (line) => {
+    if (line.includes('"type":"compaction"')) {
+      const entry = parseEntryLine(line);
+      if (!entry || entry.type !== "compaction") return;
+      rows.push({
+        id: entry.id,
+        timestamp: entry.timestamp,
+        tokensBefore: typeof entry.tokensBefore === "number" ? entry.tokensBefore : 0,
+        tokensAfter: null,
+      });
+      awaitingReply = true;
+      return;
+    }
+    if (!awaitingReply || !line.includes('"role":"assistant"')) return;
+    const tokens = contextTokensOf(parseEntryLine(line)?.message);
+    if (tokens <= 0) return;
+    rows[rows.length - 1]!.tokensAfter = tokens;
+    awaitingReply = false;
+  });
+  return rows;
 }
 
 /** 前向增量读结果（任务 13 / F4 IS-2 切回校准磁盘优先）：entries 为 afterId 之后

@@ -35,7 +35,16 @@ import { readSessionPreview, readSessionLastActive } from "./session-preview";
 import { ApiError, parseJsonBody, requireParam, route, toErrorResponse } from "./http";
 import { validateProjectInput } from "./paths";
 import { sessionTagsRevision } from "./routes-tags";
-import { CursorInvalidError, readAllEntries, readEntriesAfter, readEntriesBefore, readModelChangeEntries, readTailEntries } from "../adapter/session-file";
+import {
+  CursorInvalidError,
+  readAllEntries,
+  readCompactionSummaries,
+  readEntriesAfter,
+  readEntriesBefore,
+  readModelChangeEntries,
+  readTailEntries,
+  type CompactionSummaryRow,
+} from "../adapter/session-file";
 import { debugPerfOn } from "../conf/diagnostics-flags";
 import { logPerfHttp } from "./perf";
 
@@ -683,6 +692,28 @@ export function createSessionRoutes(deps: ApiDeps & { titleGen?: TitleGenService
       }
     }
     return c.json({ sessionId: id, entries });
+  }));
+
+  // 压缩记录回读（2026-11-25 统计页签「上下文压缩」分区）：会话统计 RPC 不带压缩
+  // 计数，压缩事实只落在会话文件 compaction 条目——本端点磁盘流式精筛只回每次压缩的
+  // 时间与压缩前后水位（KB 级）。文件不在（未落盘/别名）或网关无直读面返回空列表，
+  // 不经引擎不拉起（与 model-changes 同一路数）。
+  app.get("/api/sessions/:id/compactions", route(async (c: Context) => {
+    const id = requireParam(c, "id");
+    let items: CompactionSummaryRow[] = [];
+    const sessionPath = deps.engines.sessionPath ? await deps.engines.sessionPath(id) : null;
+    if (sessionPath) {
+      let stat: { size: number } | null = null;
+      try {
+        stat = statSync(sessionPath);
+      } catch {
+        stat = null;
+      }
+      if (stat && stat.size > 0) {
+        items = await readCompactionSummaries(sessionPath);
+      }
+    }
+    return c.json({ sessionId: id, items });
   }));
 
   // 发送 prompt（body: text 必填、images 可选、model 可选 "provider/model"、

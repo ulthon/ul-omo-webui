@@ -19,6 +19,7 @@ import {
   WINDOW_BYTE_CAP,
   CursorInvalidError,
   readAllEntries,
+  readCompactionSummaries,
   readEntriesAfter,
   readEntriesBefore,
   readModelChangeEntries,
@@ -695,5 +696,131 @@ describe("GET model-changes 轻量回读路由", () => {
     const res = await app.request("/api/sessions/s1/model-changes");
     expect(res.status).toBe(200);
     expect(((await res.json()) as { entries: unknown[] }).entries).toEqual([]);
+  });
+});
+
+// ---- 2026-11-25 统计页签「上下文压缩」分区：压缩记录精筛 ----
+function cpLine(i: number, tokensBefore: number): string {
+  return JSON.stringify({
+    type: "compaction",
+    id: `cp-${i}`,
+    parentId: null,
+    timestamp: new Date(Date.UTC(2026, 0, 2, 0, 0, 0, i)).toISOString(),
+    summary: `摘要${i}`,
+    firstKeptEntryId: `e0000${i}`,
+    tokensBefore,
+    details: { schema: "senpi.compaction.summary.v1" },
+  });
+}
+
+function assistantUsageLine(id: string, usage: Record<string, unknown>, stopReason = "stop"): string {
+  return JSON.stringify({
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "2026-01-02T00:00:01.000Z",
+    message: { role: "assistant", stopReason, content: [{ type: "text", text: "回复" }], usage },
+  });
+}
+
+/** 无 provider contextUsage 的常规用量：totalTokens = 输入侧 + 输出 */
+function billed(input: number, cacheRead = 0, output = 10): Record<string, unknown> {
+  return { input, output, cacheRead, cacheWrite: 0, totalTokens: input + cacheRead + output };
+}
+
+describe("readCompactionSummaries 压缩记录精筛读", () => {
+  function write(lines: string[]): string {
+    const dir = mkTemp("t-cp-");
+    const path = join(dir, "s.jsonl");
+    writeFileSync(path, lines.join("\n") + "\n", "utf8");
+    return path;
+  }
+
+  test("每次压缩一行（文件序）：压缩前水位取条目，压缩后水位取其后首条有效回复（中止回复跳过、contextUsage 优先）", async () => {
+    const path = write([
+      header("h"),
+      line(0),
+      cpLine(1, 293620),
+      mcLine(9),
+      assistantUsageLine("a-aborted", billed(999999), "aborted"),
+      assistantUsageLine("a-ok", billed(42000, 3000)),
+      line(2),
+      cpLine(2, 309392),
+      assistantUsageLine("a-ok-2", { ...billed(100), contextUsage: { input: 45000, output: 800 } }),
+    ]);
+    const rows = await readCompactionSummaries(path);
+    expect(rows).toEqual([
+      { id: "cp-1", timestamp: "2026-01-02T00:00:00.001Z", tokensBefore: 293620, tokensAfter: 45010 },
+      { id: "cp-2", timestamp: "2026-01-02T00:00:00.002Z", tokensBefore: 309392, tokensAfter: 45800 },
+    ]);
+  });
+
+  test("压缩后尚无回复：tokensAfter 为 null；无压缩的会话回空数组", async () => {
+    const path = write([header("h"), line(0), cpLine(1, 1000), line(1)]);
+    expect(await readCompactionSummaries(path)).toEqual([
+      { id: "cp-1", timestamp: "2026-01-02T00:00:00.001Z", tokensBefore: 1000, tokensAfter: null },
+    ]);
+    const plain = write([header("h"), line(0), assistantUsageLine("a", billed(500)), "{broken", mcLine(1)]);
+    expect(await readCompactionSummaries(plain)).toEqual([]);
+  });
+
+  test("行内提及压缩子串的普通消息/损坏行不误计；超 64KB 的压缩条目跨块解析不丢", async () => {
+    const noise = (id: string) =>
+      JSON.stringify({
+        type: "message",
+        id,
+        parentId: null,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        message: { role: "user", content: [{ type: "text", text: '含 "type":"compaction" 与 "role":"assistant" 子串' }] },
+      });
+    const noisy = write([header("h"), noise("n1"), "{broken", noise("n2")]);
+    expect(await readCompactionSummaries(noisy)).toEqual([]);
+
+    const cp = JSON.parse(cpLine(7, 7777)) as { summary: string };
+    cp.summary = "摘要".repeat(30000); // 180KB 多字节文本，必跨 64KB 块边界
+    const pad = JSON.stringify({
+      type: "message",
+      id: "pad",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "x".repeat(70000) }] },
+    });
+    const big = write([header("h"), pad, JSON.stringify(cp), assistantUsageLine("a", billed(30000))]);
+    expect(await readCompactionSummaries(big)).toEqual([
+      { id: "cp-7", timestamp: "2026-01-02T00:00:00.007Z", tokensBefore: 7777, tokensAfter: 30010 },
+    ]);
+  });
+});
+
+describe("GET compactions 压缩记录回读路由", () => {
+  test("磁盘精筛只回压缩记录，引擎零参与", async () => {
+    const dir = mkTemp("t-cp-route-");
+    const path = join(dir, "s.jsonl");
+    writeFileSync(
+      path,
+      [header("h"), line(0), cpLine(1, 293620), assistantUsageLine("a", billed(42000, 3000)), mcLine(1)].join("\n"),
+      "utf8",
+    );
+    const engines = new TailFakeGateway([row("s1", path)]);
+    const app = buildApp(engines);
+    const res = await app.request("/api/sessions/s1/compactions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sessionId: string;
+      items: Array<{ id: string; tokensBefore: number; tokensAfter: number | null }>;
+    };
+    expect(body.sessionId).toBe("s1");
+    expect(body.items).toEqual([
+      { id: "cp-1", timestamp: "2026-01-02T00:00:00.001Z", tokensBefore: 293620, tokensAfter: 45010 },
+    ]);
+    expect(engines.engineCalls).toBe(0);
+  });
+
+  test("文件不在（未落盘/别名）：回空列表不报错", async () => {
+    const engines = new TailFakeGateway([row("s1", "/nonexistent/cp.jsonl")]);
+    const app = buildApp(engines);
+    const res = await app.request("/api/sessions/s1/compactions");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { items: unknown[] }).items).toEqual([]);
   });
 });

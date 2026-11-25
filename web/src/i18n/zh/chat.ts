@@ -136,6 +136,8 @@ export const chat = {
     contextTitle: "上下文水位",
     contextUsage: "占用",
     noContext: "暂无上下文数据",
+    compactionTitle: "上下文压缩",
+    compactionCount: "压缩次数",
     costTitle: "成本",
     costTotal: "累计费用",
     costToday: "今日费用",
