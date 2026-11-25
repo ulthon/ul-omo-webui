@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/i18n";
 import { mergeMemoryItems, mergeQuestionCards, mergeSessionEventLines, mergeStreamErrors, isAnchorCoveredByRange, shouldShowStickyUser, stickyCandidateAboveViewport, ERROR_KIND_KEYS, type ChatListItem, type CompactionMarker, type ReflectionParkedNotice, type SessionEventLine, type StreamErrorItem, detectProjectionSwap } from "./message-items";
 import type { SiblingPosition } from "./branch-path-data";
+import { decideFollowOnScroll } from "./scroll-follow";
 import { CustomMessageBubble, EntryBubble, LoopGuardGroupBubble, RestoreDigestLine, StreamingBubble } from "./message-bubble";
 import { QuestionCard } from "./question-card";
 import { TipCard } from "./tip-card";
@@ -420,6 +421,9 @@ export function MessageList({
   // scroll 事件不把跟随态提前翻回跟随（锚点暂不在渲染窗属正常）；解除方向改由用户输入
   // 监听（wheel/touch/key，见 attachUserScrollDisengage）直接负责，不受护栏影响。
   const programmaticUntilRef = useRef(0);
+  // 上一滚动事件的 scrollTop（2026-11-25）：判定位置是否真的往上走（用户回看）的依据
+  // ——内容变高不改它、锚定补位只让它增大；切会话清空，首个事件不判方向
+  const lastScrollTopRef = useRef<number | null>(null);
   // 落地滚动补偿（重取风暴任务 3，GAP-3）状态：首个可见 virtualItem 快照（key+内容位
   // start）、换代检测基线（store 整替序号 + 提交时条目数）、武装标志与未决补偿 rAF 句柄
   const swapFirstVisibleRef = useRef<{ key: string; start: number } | null>(null);
@@ -584,6 +588,18 @@ export function MessageList({
   useEffect(() => {
     scrollToAnchorRef.current = scrollToAnchor;
   });
+  // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚锚，不经 React 渲染路径。
+  // 2026-11-25：rAF 槽共享给内容尺寸监听与 scroll 事件回底判定（同帧多次触发只滚一次）；
+  // scrollToAnchor 经 ref 消费（identity 随条目增长漂移），调度器自身引用稳定
+  const followRafRef = useRef(0);
+  const scheduleFollowScroll = useCallback(() => {
+    if (!followRef.current || followRafRef.current) return;
+    followRafRef.current = requestAnimationFrame(() => {
+      followRafRef.current = 0;
+      if (followRef.current) scrollToAnchorRef.current();
+    });
+  }, []);
+
 
   // 换代落地检测与滚动补偿（重取风暴任务 3，GAP-3/4）：mergedItems 每次提交后运行——
   // 上一提交记录的首个可见 virtualItem（key+内容位 start）即本次落地前的视口快照
@@ -665,15 +681,30 @@ export function MessageList({
     const remaining = el.scrollHeight - Math.min(el.scrollTop, maxScroll) - el.clientHeight;
     const atBottom = remaining < 8 && (covered || virtualItems.length === 0);
     const programmatic = Date.now() < programmaticUntilRef.current;
-    // followRef 翻转埋点（26d）：只在翻转那一刻记（低频），带锚点快照与触发源 scroll。
-    // 职责收窄（fix 2026-11-11）：解除方向由用户输入监听直接负责（见 disengageFollow），
-    // scroll 只负责滚回底部重新置 true；程序护栏窗口内不置 true（程序滚锚途中锚点
-    // 暂未入渲染窗属正常，避免提前恢复跟随）
+    // followRef 决策（2026-11-25 收窄，纯函数 decideFollowOnScroll）：scroll 事件本身不再
+    // 解除跟随——离底只剩两类：位置真的往上走（用户滚轮/触摸/回看键/拖滚动条；前三者
+    // 另有直接解除通道，此处兜底同口径）解除；内容变高把视角顶离底部（位置不动、
+    // scrollHeight 涨）或浏览器滚动锚定补位（scrollTop 增大）保持跟随并回底。此前
+    // 「离底即解除」把行高晚到都当成用户上滚，打开会话后视角停在旧位置。程序护栏
+    // 窗口内不改跟随态（程序滚锚途中锚点暂未入渲染窗属正常）；埋点只在翻转那一刻记。
+    const prevTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
     if (!programmatic) {
-      if (followRef.current !== atBottom) {
-        diag.info("scroll", "follow_flip", { from: followRef.current, to: atBottom, src: "scroll", anchorIndex, items: mergedItems.length, scrollTop: Math.round(el.scrollTop) });
+      const movedUp = prevTop !== null && el.scrollTop < prevTop - 1;
+      const decision = decideFollowOnScroll({ follow: followRef.current, atBottom, movedUp });
+      if (decision.changed) {
+        diag.info("scroll", "follow_flip", {
+          from: !decision.follow,
+          to: decision.follow,
+          src: "scroll",
+          movedUp,
+          anchorIndex,
+          items: mergedItems.length,
+          scrollTop: Math.round(el.scrollTop),
+        });
       }
-      followRef.current = atBottom;
+      followRef.current = decision.follow;
+      if (decision.repin) scheduleFollowScroll();
     }
     // 回底钮可见性不受程序化护栏拦截（护栏只护 followRef 不被中途解除）：用户在程序
     // 滚动途中上滚时回底钮必须即时出现，否则 600ms 窗口内滚动状态不可见（02a629e
@@ -697,28 +728,46 @@ export function MessageList({
       setStickyUser(null);
     }
     if (el.scrollTop < BOTTOM_THRESHOLD) onReachTop();
-  }, [onReachTop, mergedItems, entries, virtualizer, anchorIndex]);
+  }, [onReachTop, mergedItems, entries, virtualizer, anchorIndex, scheduleFollowScroll]);
 
-  // 自动跟随：store 任意变化（delta/新条目）且用户在底部 → rAF 滚锚，不经 React 渲染路径
+  // store 任意变化（delta/新条目）且用户在底部 → 共享 rAF 槽滚锚，不经 React 渲染路径。
+  // deps 沿用 scrollToAnchor（identity 随条目增长漂移）保持与改动前相同的重订阅时机：
+  // 条目增长的提交里跟随锚点槽的写入落在重订阅间隙，不另起一次滚锚（首开定位归
+  // session_open 通道，两段式计数不变）。
   useEffect(() => {
-    let raf = 0;
-    const unsub = useMessagesStore.subscribe(() => {
-      if (!followRef.current || raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (followRef.current) scrollToAnchor();
-      });
-    });
+    const unsub = useMessagesStore.subscribe(scheduleFollowScroll);
     return () => {
       unsub();
-      if (raf) cancelAnimationFrame(raf);
+      if (followRafRef.current) cancelAnimationFrame(followRafRef.current);
+      followRafRef.current = 0;
     };
-  }, [scrollToAnchor]);
+  }, [scrollToAnchor, scheduleFollowScroll]);
+  // 内容尺寸兜底（2026-11-25）：行高晚到不一定伴随 scroll 事件（锚节点在变化行之上时
+  // 浏览器滚动锚定补位，其余情形只涨 scrollHeight）。跟随态下内容尺寸一变即走共享 rAF
+  // 回底，非跟随态零动作；observe 起始的那次通知不是尺寸变化（首开定位归 session_open
+  // 通道），跳过。回调引用稳定（不随条目增长重挂监听）。
+  const contentResizeObserverRef = useRef<ResizeObserver | null>(null);
+  const contentRef = useCallback((node: HTMLDivElement | null) => {
+    contentResizeObserverRef.current?.disconnect();
+    contentResizeObserverRef.current = null;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    let first = true;
+    const ro = new ResizeObserver(() => {
+      if (first) {
+        first = false;
+        return;
+      }
+      scheduleFollowScroll();
+    });
+    ro.observe(node);
+    contentResizeObserverRef.current = ro;
+  }, [scheduleFollowScroll]);
 
   // 切会话恢复跟随（#26）：跟随标志不跨会话携带——上一会话上滚解除的跟随态不得压住
   // 新会话的回底定位；回底钮随之复位。组件未按 sessionId 重挂，必须显式复位。
   useEffect(() => {
     followRef.current = true;
+    lastScrollTopRef.current = null;
     setShowJump(false);
     // 换代补偿状态不跨会话携带（任务 3）：重武装（下一提交重建基线）并撤销未决补偿
     swapArmedRef.current = false;
@@ -793,7 +842,12 @@ export function MessageList({
             <TipCard />
           </div>
         ) : (
-          <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>
+          <div
+            ref={contentRef}
+            data-testid="chat-scroll-content"
+            className="relative mx-auto max-w-3xl"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
             {virtualizer.getVirtualItems().map((vi) => (
               <div
                 key={vi.key}
