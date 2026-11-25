@@ -226,6 +226,63 @@ export function installDiagGlobalCapture(): void {
   window.addEventListener("pagehide", () => void flushDiagReport());
 }
 
+// ---------- 卡死探测（longtask，2026-11-25 记忆卡闪烁排查批） ----------
+// 浏览器主线程被单个任务冻住 >=50ms 会产生 longtask 性能条目；此处订阅并记 warn 级
+// 事件（默认 120ms 起记，短卡顿不刷屏），触发时附挂 chat 层注册的渲染现场快照
+// （投影条目数/合并 items/渲染行数/可见记忆卡数/跟随态/流式态），把「页面卡死」和
+// 「冒出一堆卡」对到同一条日志。快照 provider 由渲染层注册（diag 不 import store，
+// 防依赖环）；provider 抛错不影响记录本身。PerformanceObserver/longtask 不支持时
+// 静默不装（旧浏览器/测试环境无副作用）。
+
+let longtaskInstalled = false;
+let renderSnapshotProvider: (() => Record<string, DiagVal>) | null = null;
+
+/** 注册/注销渲染现场快照提供者（chat 挂载时注册；读取时机为 longtask 回调，惰性求值） */
+export function setDiagRenderSnapshotProvider(provider: (() => Record<string, DiagVal>) | null): void {
+  renderSnapshotProvider = provider;
+}
+
+/** 安装 longtask 卡死探测（幂等；shell 引导期调用一次）。thresholdMs = 起记阈值 */
+export function installDiagLongtaskCapture(thresholdMs = 120): void {
+  if (longtaskInstalled || typeof window === "undefined") return;
+  longtaskInstalled = true;
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (e.duration < thresholdMs) continue;
+        const f: Record<string, DiagVal> = { ms: Math.round(e.duration), start: Math.round(e.startTime) };
+        try {
+          if (renderSnapshotProvider !== null) Object.assign(f, renderSnapshotProvider());
+        } catch {
+          // 快照失败不影响 longtask 本身的记录
+        }
+        write("warn", "perf", "longtask", f);
+      }
+    });
+    po.observe({ entryTypes: ["longtask"] });
+  } catch {
+    // PerformanceObserver 或 longtask 条目类型不支持：静默不装
+  }
+}
+
+// ---------- 合并耗时打点（2026-11-25 记忆卡闪烁排查批） ----------
+// items 合并链（记忆标记归并 → 事件行 → 提问卡 → 错误卡）单次耗时超帧预算（20ms）时
+// 记 warn（诊断导出可见）；500ms 节流窗内不重复记录、聚合计数（n = 期间累计次数，
+// 兼看频率与单次量级）。now 可注入供单测。无 DOM 依赖，与渲染解耦。
+
+const SLOW_MERGE_MS = 20;
+let slowMergeCount = 0;
+let slowMergeLastLogAt = 0;
+
+export function logSlowMergeTiming(ms: number, entriesLen: number, itemsLen: number, now = Date.now()): void {
+  if (ms < SLOW_MERGE_MS) return;
+  slowMergeCount++;
+  if (now - slowMergeLastLogAt < 500) return;
+  diag.warn("perf", "merge_slow", { ms: Math.round(ms), entries: entriesLen, items: itemsLen, n: slowMergeCount });
+  slowMergeCount = 0;
+  slowMergeLastLogAt = now;
+}
+
 // ---------- 发送链追踪：点发送 → 回执 → SSE 首帧 → 回合落定 ----------
 
 interface SendSpan {
@@ -348,4 +405,8 @@ export function resetDiagForTest(): void {
     reportTimer = null;
   }
   sendSpans.clear();
+  longtaskInstalled = false;
+  renderSnapshotProvider = null;
+  slowMergeCount = 0;
+  slowMergeLastLogAt = 0;
 }

@@ -6,7 +6,7 @@
 // 记忆标记（docs08-r4 任务 13）：entries 中白名单 memory 条目经 mergeMemoryItems 并入 items，
 // 标记块随虚拟化正常测量渲染。
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { diag } from "@/lib/diag";
+import { diag, logSlowMergeTiming, setDiagRenderSnapshotProvider } from "@/lib/diag";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Archive, ArrowDown, Bell, BookOpen, ChevronDown, CircleCheck, CirclePause, CircleAlert, Database, Lightbulb, BookCheck, Pin, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -450,18 +450,20 @@ export function MessageList({
   // 流内错误卡（发送失败入流）：store 每会话错误尾部并入（重取不冲、带关闭钮），
   // 无错误时原样返回不建数组（mergeStreamErrors 内部口径）
   const streamErrors = useMessagesStore((s) => s.bySession[sessionId]?.errors);
-  const mergedItems = useMemo(
-    () =>
-      mergeStreamErrors(
-        mergeSessionEventLines(
-          mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
-          sessionEvents ?? [],
-          entries ?? [],
-        ),
-        streamErrors ?? [],
+  const mergedItems = useMemo(() => {
+    // 耗时打点（2026-11-25 排查批）：整条合并链单次耗时，超帧预算时记入诊断日志
+    const t0 = performance.now();
+    const out = mergeStreamErrors(
+      mergeSessionEventLines(
+        mergeQuestionCards(mergeMemoryItems(items, entries ?? []), entries ?? [], pendingQuestions, resolvedSummaries),
+        sessionEvents ?? [],
+        entries ?? [],
       ),
-    [items, entries, sessionEvents, pendingQuestions, resolvedSummaries, streamErrors],
-  );
+      streamErrors ?? [],
+    );
+    logSlowMergeTiming(performance.now() - t0, entries?.length ?? 0, out.length);
+    return out;
+  }, [items, entries, sessionEvents, pendingQuestions, resolvedSummaries, streamErrors]);
   // 压缩进行态（docs08-r6 任务 18 ①）：compaction_start/progress 置位、end 消除
   // （帧丢失由 store 兑底回落），消息流顶部浮条呈现
   const compacting = useMessagesStore((s) => s.bySession[sessionId]?.compacting ?? false);
@@ -600,6 +602,33 @@ export function MessageList({
     });
   }, []);
 
+  // 卡死探测现场快照（2026-11-25 记忆卡闪烁排查批）：向 diag 注册渲染现场提供者，
+  // longtask 触发时惰性求值——投影条目数/合并 items/渲染行数/可见记忆卡数/跟随态/
+  // 流式态，把「页面卡死」与「冒出一堆卡」对到同一条日志。DOM 查询运行在 longtask
+  // 回调（主线程空闲期）安全；无 DOM 环境（测试）逐字段 -1 降级不抛。
+  useEffect(() => {
+    setDiagRenderSnapshotProvider(() => {
+      const sess = useMessagesStore.getState().bySession[sessionId];
+      let rows = -1;
+      let cards = -1;
+      try {
+        rows = document.querySelectorAll("[data-entry-key]").length;
+        cards = document.querySelectorAll("[data-testid=memory-marker],[data-testid=memory-cluster]").length;
+      } catch {
+        // 无 DOM 环境（测试）：留 -1 占位
+      }
+      return {
+        session: sessionId.slice(0, 8),
+        entries: sess?.entries.length ?? -1,
+        items: mergedItemsRef.current.length,
+        rows,
+        cards,
+        follow: followRef.current,
+        streaming: sess?.streamingMessage != null ? 1 : 0,
+      };
+    });
+    return () => setDiagRenderSnapshotProvider(null);
+  }, [sessionId]);
 
   // 换代落地检测与滚动补偿（重取风暴任务 3，GAP-3/4）：mergedItems 每次提交后运行——
   // 上一提交记录的首个可见 virtualItem（key+内容位 start）即本次落地前的视口快照
